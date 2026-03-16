@@ -1,0 +1,5 @@
+*-config.local.yml
+__pycache__/
+*.py[cod]
+.DS_Store
+.superpowers/

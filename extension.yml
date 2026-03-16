@@ -1,0 +1,63 @@
+schema_version: "1.0"
+
+extension:
+  id: "cognitive-squad"
+  name: "Cognitive Squad"
+  version: "0.1.0"
+  description: "19-function cognitive agent squad for autonomous pre-code analysis"
+  author: "Testimonial"
+  repository: "https://github.com/Testimonial/cognitive-squad"
+  license: "MIT"
+
+requires:
+  speckit_version: ">=0.3.0"
+  tools:
+    - name: "understanding"
+      version: ">=3.4.0"
+      required: false
+    - name: "spec-kit-reverse-eng"
+      version: ">=1.0.0"
+      required: false
+
+provides:
+  commands:
+    - name: "speckit.squad.run"
+      file: "commands/squad.run.md"
+      description: "Full autonomous cognitive squad run"
+    - name: "speckit.squad.status"
+      file: "commands/squad.status.md"
+      description: "Check current squad state and progress"
+    - name: "speckit.squad.innovate"
+      file: "commands/squad.innovate.md"
+      description: "Manually trigger INNOVATE specialist"
+    - name: "speckit.squad.investigate"
+      file: "commands/squad.investigate.md"
+      description: "Manually trigger SCIENTIST for a specific question"
+    - name: "speckit.squad.ground"
+      file: "commands/squad.ground.md"
+      description: "Manually trigger reality check on artifacts"
+    - name: "speckit.squad.feedback"
+      file: "commands/squad.feedback.md"
+      description: "Post-implementation feedback intake"
+    - name: "speckit.squad.resume"
+      file: "commands/squad.resume.md"
+      description: "Provide answer to human escalation"
+
+  config:
+    - name: "squad-config.yml"
+      template: "config-template.yml"
+      description: "Squad configuration"
+      required: false
+
+hooks:
+  after_tasks:
+    command: "speckit.squad.run"
+    optional: true
+    prompt: "Run cognitive squad analysis on generated tasks?"
+    description: "Automatically analyze tasks with the cognitive squad"
+
+tags:
+  - "ai-agents"
+  - "cognitive"
+  - "pre-code"
+  - "analysis"

@@ -1,0 +1,52 @@
+# Cognitive Squad Configuration
+# Copy to squad-config.yml and customize
+
+# Analysis settings
+analysis:
+  # Auto-detect greenfield vs brownfield
+  mode: auto  # auto | greenfield | brownfield
+
+  # Maximum squad iterations before forced convergence
+  max_iterations: 5
+
+  # Token budget (approximate, in thousands)
+  token_budget_k: 1000
+
+  # Convergence threshold for Understanding score delta
+  convergence_delta: 0.02
+
+# Specialist settings
+specialists:
+  # Max active specialists per run (to control token cost)
+  max_active: 3
+
+  # Always summon TEST ARCHITECT
+  always_test_architect: true
+
+  # Auto-summon SCIENTIST for unknowns
+  auto_scientist: true
+
+# Quality gates (Understanding thresholds)
+quality_gates:
+  overall: 0.70
+  structure: 0.70
+  testability: 0.70
+  semantic: 0.60
+  cognitive: 0.60
+  readability: 0.50
+
+# Knowledge base settings
+knowledge_base:
+  # Pruning: entries older than this (months) flagged stale
+  stale_threshold_months: 6
+
+  # Pruning: accuracy below this flagged low_confidence
+  low_confidence_threshold: 0.4
+
+  # Max active entries per file
+  max_entries: 200
+
+# Tool paths (override if not on PATH)
+tools:
+  understanding_cli: "understanding"
+  reverse_eng_cli: "specify"

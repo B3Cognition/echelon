@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Squad State",
+  "type": "object",
+  "required": ["run_id", "status", "phase", "iteration", "created_at"],
+  "properties": {
+    "run_id": { "type": "string", "pattern": "^squad-[0-9]{3}-[0-9]+$" },
+    "status": { "enum": ["running", "blocked", "done", "error", "killed"] },
+    "phase": { "enum": [
+      "init", "discover", "why1", "what", "why2", "assess",
+      "specialists", "how", "test-architect", "plan",
+      "consensus", "finalize", "done"
+    ]},
+    "mode": { "enum": ["greenfield", "brownfield"] },
+    "iteration": { "type": "integer", "minimum": 0, "maximum": 5 },
+    "spec_id": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" },
+    "token_usage": { "type": "integer", "minimum": 0 },
+    "quality_scores": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pass": { "type": "integer" },
+          "overall": { "type": "number" },
+          "structure": { "type": "number" },
+          "testability": { "type": "number" }
+        }
+      }
+    },
+    "active_specialists": { "type": "array", "items": { "type": "string" } },
+    "issues_log": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "severity": { "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"] },
+          "source": { "type": "string" },
+          "description": { "type": "string" },
+          "resolved": { "type": "boolean" },
+          "occurrences": { "type": "integer" }
+        }
+      }
+    },
+    "blocked_reason": { "type": "string" },
+    "escalation_question": { "type": "string" }
+  }
+}
