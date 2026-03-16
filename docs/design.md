@@ -370,7 +370,7 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 
 **What it does:** Post-run analysis — extracts what assumptions were wrong, which patterns worked, what the squad should do differently next time. Logs reusable patterns to the knowledge base.
 
-**Outputs:** Updates to `knowledge-base/patterns.md`, `knowledge-base/pitfalls.md`.
+**Outputs:** Updates to `knowledge-base/patterns.json`, `knowledge-base/pitfalls.json`.
 
 ---
 
@@ -409,7 +409,7 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 - Flags low-confidence domains for human input or SCIENTIST investigation
 
 **Outputs:**
-- `knowledge-base/calibration-profile.md` — accuracy per domain
+- `knowledge-base/calibration-profile.json` — accuracy per domain
 - `confidence-flags.md` — per-artifact confidence scores
 
 ---
@@ -456,12 +456,12 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 ```
 knowledge-base/
 ├── feedback/
-│   ├── 001-{project-name}.md
-│   ├── 002-{project-name}.md
+│   ├── 001-{project-name}.json
+│   ├── 002-{project-name}.json
 │   └── ...
-├── calibration-profile.md      # updated with real accuracy
-├── estimates-log.md            # predicted vs actual
-└── patterns.md                 # validated (proven in production)
+├── calibration-profile.json    # updated with real accuracy
+├── estimates-log.json          # predicted vs actual
+└── patterns.json               # validated (proven in production)
 ```
 
 **The closed loop:**
@@ -622,10 +622,10 @@ Each agent receives a **compiled context pack** — not the raw repository. MANA
 
 | Agent | Receives |
 |-------|----------|
-| DISCOVER | User input or codebase path + knowledge-base/calibration-profile.md |
+| DISCOVER | User input or codebase path + knowledge-base/calibration-profile.json |
 | WHAT | glossary.md + mental-model.md + boundaries.md + assumptions.md + unknowns.md |
-| WHY | All current artifacts + Understanding CLI access + calibration-profile.md |
-| ASSESS | spec.md + glossary.md + assumptions.md + issues.md (from WHY₂) + calibration-profile.md + estimates-log.md |
+| WHY | All current artifacts + Understanding CLI access + calibration-profile.json |
+| ASSESS | spec.md + glossary.md + assumptions.md + issues.md (from WHY₂) + calibration-profile.json + estimates-log.json |
 | HOW | spec.md + feasibility.md + prioritization.md + constitution.md + specialist outputs |
 | TEST ARCHITECT | plan.md + data-model.md + spec.md (acceptance criteria) + contracts/ |
 | PLAN | plan.md + research.md + data-model.md + contracts/ + test-strategy.md + risk data |
@@ -819,7 +819,7 @@ On completion, the squad delivers to `.specify/specs/{feature}/`:
 ├── alternatives.md            ← INNOVATE (on re-runs)
 ├── implementability-report.md  ← ASSESS₂ (per-task: READY / NEEDS_CLARIFICATION / BLOCKED)
 ├── reasoning-journal.json     ← ALL AGENTS (shared structured reasoning log)
-├── calibration-profile.md     ← CALIBRATE
+├── calibration-profile.json    ← CALIBRATE
 └── evolution-report.md        ← EVOLVE (on re-runs)
 ```
 
