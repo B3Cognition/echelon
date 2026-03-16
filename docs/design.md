@@ -370,7 +370,7 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 
 **What it does:** Post-run analysis — extracts what assumptions were wrong, which patterns worked, what the squad should do differently next time. Logs reusable patterns to the knowledge base.
 
-**Outputs:** Updates to `knowledge-base/patterns.json`, `knowledge-base/pitfalls.json`.
+**Outputs:** Updates to `knowledge-base/patterns.yaml`, `knowledge-base/pitfalls.yaml`.
 
 ---
 
@@ -409,7 +409,7 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 - Flags low-confidence domains for human input or SCIENTIST investigation
 
 **Outputs:**
-- `knowledge-base/calibration-profile.json` — accuracy per domain
+- `knowledge-base/calibration-profile.yaml` — accuracy per domain
 - `confidence-flags.md` — per-artifact confidence scores
 
 ---
@@ -456,12 +456,12 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 ```
 knowledge-base/
 ├── feedback/
-│   ├── 001-{project-name}.json
-│   ├── 002-{project-name}.json
+│   ├── 001-{project-name}.yaml
+│   ├── 002-{project-name}.yaml
 │   └── ...
-├── calibration-profile.json    # updated with real accuracy
-├── estimates-log.json          # predicted vs actual
-└── patterns.json               # validated (proven in production)
+├── calibration-profile.yaml    # updated with real accuracy
+├── estimates-log.yaml          # predicted vs actual
+└── patterns.yaml               # validated (proven in production)
 ```
 
 **The closed loop:**
@@ -622,10 +622,10 @@ Each agent receives a **compiled context pack** — not the raw repository. MANA
 
 | Agent | Receives |
 |-------|----------|
-| DISCOVER | User input or codebase path + knowledge-base/calibration-profile.json |
+| DISCOVER | User input or codebase path + knowledge-base/calibration-profile.yaml |
 | WHAT | glossary.md + mental-model.md + boundaries.md + assumptions.md + unknowns.md |
-| WHY | All current artifacts + Understanding CLI access + calibration-profile.json |
-| ASSESS | spec.md + glossary.md + assumptions.md + issues.md (from WHY₂) + calibration-profile.json + estimates-log.json |
+| WHY | All current artifacts + Understanding CLI access + calibration-profile.yaml |
+| ASSESS | spec.md + glossary.md + assumptions.md + issues.md (from WHY₂) + calibration-profile.yaml + estimates-log.yaml |
 | HOW | spec.md + feasibility.md + prioritization.md + constitution.md + specialist outputs |
 | TEST ARCHITECT | plan.md + data-model.md + spec.md (acceptance criteria) + contracts/ |
 | PLAN | plan.md + research.md + data-model.md + contracts/ + test-strategy.md + risk data |
@@ -749,15 +749,15 @@ This is the shared memory that prevents lossy handoffs between subagents.
 │       └── migrate-kb-v{N}.sh      # knowledge base schema migrations
 │
 └── knowledge-base/                  # persists across runs, grows over time (JSON)
-    ├── patterns.json                # validated patterns (queryable by domain/tags)
-    ├── estimates-log.json           # predicted vs actual effort
-    ├── pitfalls.json                # known failure modes
-    ├── calibration-profile.json     # AI accuracy per domain
+    ├── patterns.yaml                # validated patterns (queryable by domain/tags)
+    ├── estimates-log.yaml           # predicted vs actual effort
+    ├── pitfalls.yaml                # known failure modes
+    ├── calibration-profile.yaml     # AI accuracy per domain
     ├── archive/                     # pruned stale/low-confidence entries
     ├── domain-glossaries/           # accumulated domain vocabularies
-    │   └── {domain}.json
+    │   └── {domain}.yaml
     └── feedback/                    # post-implementation reports
-        └── {NNN}-{project-name}.json
+        └── {NNN}-{project-name}.yaml
 ```
 
 ---
@@ -819,7 +819,7 @@ On completion, the squad delivers to `.specify/specs/{feature}/`:
 ├── alternatives.md            ← INNOVATE (on re-runs)
 ├── implementability-report.md  ← ASSESS₂ (per-task: READY / NEEDS_CLARIFICATION / BLOCKED)
 ├── reasoning-journal.json     ← ALL AGENTS (shared structured reasoning log)
-├── calibration-profile.json    ← CALIBRATE
+├── calibration-profile.yaml    ← CALIBRATE
 └── evolution-report.md        ← EVOLVE (on re-runs)
 ```
 
@@ -922,75 +922,90 @@ RUN 5 → calibrated squad → better estimates, grounded decisions,
 
 ## 16. Knowledge Base Management
 
-### Format: JSON (not markdown)
+### Format: YAML
 
-The knowledge base uses **JSON** for all data files. Markdown is lossy and not queryable — when ASSESS needs "estimation accuracy for backend projects with PostgreSQL," it shouldn't parse prose. JSON enables structured queries, filtering, and aggregation.
+The knowledge base uses **YAML** for all data files. Consistent with the spec-kit ecosystem (extension.yml, preset.yml), human-readable, supports comments (critical for explaining *why* an entry exists), and clean git diffs. LLM agents parse YAML as easily as any other format.
 
-**Schema:**
+**Why YAML over alternatives:**
+- **vs Markdown:** Not queryable, lossy, no structure
+- **vs JSON:** No comments, verbose, noisy git diffs on arrays
+- **vs JSONL:** Not human-readable, no comments, bad for config-style data
+- **vs SQLite:** Binary, not git-diffable, not human-inspectable
 
-```json
-// knowledge-base/estimates-log.json
-{
-  "schema_version": 1,
-  "last_updated": "2026-03-16",
-  "updated_by": "squad-run-003",
-  "entries": [
-    {
-      "id": "EST-001",
-      "project": "001-photo-album",
-      "date": "2026-03-16",
-      "domain": "backend",
-      "tech_stack": ["typescript", "nestjs", "postgresql"],
-      "estimated_effort_days": 15,
-      "actual_effort_days": 23,
-      "accuracy_ratio": 0.65,
-      "notes": "Underestimated database migration complexity",
-      "tags": ["backend", "postgresql", "migration"]
-    }
-  ]
-}
+**Schemas:**
+
+```yaml
+# knowledge-base/estimates-log.yaml
+schema_version: 1
+last_updated: "2026-03-16"
+updated_by: squad-run-003
+
+entries:
+  # Photo album project — first squad run, uncalibrated
+  - id: EST-001
+    project: 001-photo-album
+    date: "2026-03-16"
+    domain: backend
+    tech_stack: [typescript, nestjs, postgresql]
+    estimated_effort_days: 15
+    actual_effort_days: 23
+    accuracy_ratio: 0.65
+    notes: Underestimated database migration complexity
+    tags: [backend, postgresql, migration]
 ```
 
-```json
-// knowledge-base/patterns.json
-{
-  "schema_version": 1,
-  "entries": [
-    {
-      "id": "PAT-001",
-      "name": "Event sourcing for audit trails",
-      "domain": "fintech",
-      "evidence_grade": "B",
-      "source": "SCIENTIST investigation RJ-042",
-      "validated_by_feedback": true,
-      "feedback_project": "002-payment-system",
-      "confidence": 0.88,
-      "description": "Event sourcing pattern validated for audit trail requirements in regulated domains",
-      "tags": ["event-sourcing", "audit", "compliance", "fintech"],
-      "status": "active"
-    }
-  ]
-}
+```yaml
+# knowledge-base/patterns.yaml
+schema_version: 1
+
+entries:
+  # Validated by SCIENTIST in project 002-payment-system
+  # Confirmed by FEEDBACK: reduced audit incidents by 60%
+  - id: PAT-001
+    name: Event sourcing for audit trails
+    domain: fintech
+    evidence_grade: B
+    source: SCIENTIST investigation RJ-042
+    validated_by_feedback: true
+    feedback_project: 002-payment-system
+    confidence: 0.88
+    description: Event sourcing pattern validated for audit trail requirements in regulated domains
+    tags: [event-sourcing, audit, compliance, fintech]
+    status: active
 ```
 
-```json
-// knowledge-base/calibration-profile.json
-{
-  "schema_version": 1,
-  "domains": {
-    "rest-api-design": { "accuracy": 0.92, "sample_size": 12, "trend": "stable" },
-    "distributed-systems": { "accuracy": 0.58, "sample_size": 5, "trend": "improving" },
-    "frontend-state-mgmt": { "accuracy": 0.63, "sample_size": 8, "trend": "stable" },
-    "effort-estimation": { "accuracy": 0.41, "sample_size": 15, "trend": "improving", "correction_factor": 1.4 }
-  }
-}
+```yaml
+# knowledge-base/calibration-profile.yaml
+schema_version: 1
+
+domains:
+  rest-api-design:
+    accuracy: 0.92
+    sample_size: 12
+    trend: stable
+
+  distributed-systems:
+    accuracy: 0.58
+    sample_size: 5
+    trend: improving
+
+  frontend-state-mgmt:
+    accuracy: 0.63
+    sample_size: 8
+    trend: stable
+
+  effort-estimation:
+    accuracy: 0.41
+    sample_size: 15
+    trend: improving
+    correction_factor: 1.4  # multiply AI estimates by this
 ```
 
 **Querying:** Agents can filter by `tags`, `domain`, `tech_stack`, `evidence_grade`, `confidence`, `status`. MANAGER compiles relevant subsets into context packs. For example, ASSESS receives only entries matching the current project's domain and tech stack, not the entire log.
 
 ### Versioning
 
-Each JSON file has a `schema_version` field. When the format changes:
+Each YAML file has a `schema_version` field. When the format changes:
 1. `schema_version` increments
 2. MANAGER runs a migration function on first read (old → new format)
 3. Migration functions are stored in `scripts/bash/migrate-kb-v{N}.sh`
@@ -1001,12 +1016,12 @@ The knowledge base lives at the extension level (`.specify/extensions/squad/know
 
 - **Same repo, different features:** Knowledge accumulates naturally (shared knowledge-base directory).
 - **Different repos:** Each repo has its own knowledge base. Cross-repo learning requires manual copying or a shared preset that includes a knowledge base seed.
-- **Domain glossaries** are namespaced: `domain-glossaries/{domain}.json` to prevent fintech terms contaminating a game engine project.
+- **Domain glossaries** are namespaced: `domain-glossaries/{domain}.yaml` to prevent fintech terms contaminating a game engine project.
 
 ### Pruning Strategy
 
-- **EVOLVE** flags entries older than 6 months with no matching feedback as `"status": "stale"`.
-- **CALIBRATE** flags entries with accuracy < 0.4 as `"status": "low_confidence"`.
+- **EVOLVE** flags entries older than 6 months with no matching feedback as `status: stale`.
+- **CALIBRATE** flags entries with accuracy < 0.4 as `status: low_confidence`.
 - Entries flagged `stale` + `low_confidence` for 2 consecutive runs are moved to `knowledge-base/archive/`.
 - The `archive/` directory is never auto-deleted — humans can review and restore.
 - Maximum active entries per file: 200. Oldest entries archived when limit exceeded.
