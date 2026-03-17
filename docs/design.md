@@ -17,7 +17,7 @@ The initial phase of software development — understanding requirements, mappin
 - No feedback loop — the AI never learns whether its output was correct
 - Equal confidence whether right or wrong
 
-This design specifies a **Cognitive Agent Squad** — a system of 25 specialized cognitive functions packaged as a Spec-Kit extension that handles the complete development lifecycle: from initial idea through to validated, tested implementation.
+This design specifies a **Cognitive Agent Squad** — a system of 26 specialized cognitive functions packaged as a Spec-Kit extension that handles the complete development lifecycle: from initial idea through to validated, tested implementation.
 
 ---
 
@@ -60,6 +60,7 @@ This design specifies a **Cognitive Agent Squad** — a system of 25 specialized
 │                         → TEST GUARDIAN                        │
 │  Per phase: INTEGRATOR                                         │
 │  Continuous: PROGRESS TRACKER                                  │
+│  On change: CHANGE CONTROLLER                                  │
 └────────────────────────┬─────────────────────────────────────┘
                          │ working code + tests
                          ↓
@@ -69,7 +70,7 @@ This design specifies a **Cognitive Agent Squad** — a system of 25 specialized
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Totals:** 7 core + 7 specialists + 6 build + 4 learning + 1 feedback = **25 cognitive functions** in 1 Spec-Kit extension.
+**Totals:** 7 core + 7 specialists + 7 build + 4 learning + 1 feedback = **26 cognitive functions** in 1 Spec-Kit extension.
 
 ---
 
@@ -1203,3 +1204,21 @@ The knowledge base lives at the extension level (`.specify/extensions/squad/know
 - Entries flagged `stale` + `low_confidence` for 2 consecutive runs are moved to `knowledge-base/archive/`.
 - The `archive/` directory is never auto-deleted — humans can review and restore.
 - Maximum active entries per file: 200. Oldest entries archived when limit exceeded.
+
+---
+
+## Standards Alignment
+
+The Cognitive Squad aligns with established software engineering standards:
+
+| Standard | Version | Coverage in Squad |
+|----------|---------|------------------|
+| ISO/IEC/IEEE 12207 | 2017 (DIS 2027 in progress) | Full lifecycle: requirements, design, implementation, testing, configuration management |
+| ISO/IEC 25010 | 2023 | 31 quality metrics via Understanding covering structure, testability, readability, cognitive, semantic, behavioral |
+| SWEBOK | v4.0 (Oct 2024) | 14 of 18 Knowledge Areas: Requirements (WHAT), Design (HOW), Architecture (HOW), Testing (TEST ARCHITECT + TEST GUARDIAN), Quality (WHY), Management (ASSESS + PLAN + PROGRESS TRACKER) |
+| CMMI | v3.0 (2023) | REQM (WHAT), VER (SPEC GUARD), VAL (WHY), PM (PLAN), MA (PROGRESS TRACKER), CM (CHANGE CONTROLLER), OT (REFLECT knowledge transfer) |
+| V-Model | — | Bidirectional traceability matrix, verification at each level, validation against requirements |
+| ATAM / ATRAF | 2025 | Architecture decisions documented as ADRs with rationale, alternatives, quality attribute analysis |
+| IEEE 830 / ISO 29148 | 2018 | Understanding CLI enforces quality gates derived from these standards |
+| Reference Class Forecasting | Kahneman/Flyvbjerg | GROUND applies outside view correction to all effort estimates |
+| ICSA Conference Series | 2025-2026 | Architecture sustainability, AI-driven development, architecture erosion detection |

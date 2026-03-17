@@ -4,7 +4,7 @@ extension:
   id: "cognitive-squad"
   name: "Cognitive Squad"
   version: "0.1.0"
-  description: "25-function cognitive agent squad for complete development lifecycle"
+  description: "26-function cognitive agent squad for complete development lifecycle"
   author: "Testimonial"
   repository: "https://github.com/Testimonial/cognitive-squad"
   license: "MIT"
@@ -45,6 +45,9 @@ provides:
     - name: "speckit.squad.resume"
       file: "commands/squad.resume.md"
       description: "Provide answer to human escalation"
+    - name: "speckit.squad.change"
+      file: "commands/squad.change.md"
+      description: "Handle specification change during build phase"
 
   config:
     - name: "squad-config.yml"

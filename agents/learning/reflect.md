@@ -140,3 +140,70 @@ Append entries with:
 - Do NOT delete or downgrade existing knowledge base entries. Only add, confirm, or flag.
 - Keep entries concise. Description should be 1-3 sentences, not paragraphs.
 - Maximum 5 new patterns and 5 new pitfalls per run. If you find more, prioritize by confidence.
+
+---
+
+## Knowledge Transfer Validation
+
+Based on CMMI v3.0 Organizational Training (OT) practice area. After completing pattern and pitfall extraction, REFLECT must assess whether the project's knowledge is transferable — could a new developer (or a fresh agent run) understand the system well enough to maintain, extend, and debug it?
+
+### Assessment Criteria
+
+For each knowledge area, evaluate:
+
+1. **Architecture understanding** — Is there sufficient documentation (ADRs, design rationale, component diagrams) for a new developer to understand the system's structure, key decisions, and trade-offs without reading every source file?
+
+2. **Feature extension path** — Can a new developer add a new feature (e.g., a new widget, a new API endpoint, a new data source) by following documented patterns? Are there examples and conventions documented?
+
+3. **Debug pipeline** — When something breaks, is the diagnostic path documented? Are error codes meaningful? Are logging conventions consistent? Can a new developer trace a bug from symptom to root cause?
+
+4. **Domain knowledge** — Is the domain glossary complete enough that a non-domain-expert can read the spec and understand the terminology? Are implicit assumptions made explicit?
+
+5. **Knowledge concentration risk** — Are there components that only one agent (or one human) deeply understood during the build? If that knowledge holder is unavailable, can the work continue?
+
+### Knowledge Transfer Assessment
+
+Produce `.specify/specs/{feature}/knowledge-transfer-assessment.md`:
+
+```markdown
+## Knowledge Transfer Assessment
+
+**Date:** {ISO-8601}
+**Assessed by:** REFLECT
+**Project:** {feature name}
+
+### Risk Table
+
+| Knowledge Area | Documentation Level | Concentration Risk | Transfer Ready | Action Needed |
+|---------------|--------------------|--------------------|---------------|---------------|
+| Architecture | {HIGH/MEDIUM/LOW} | {single-agent/distributed} | {YES/NO} | {action or NONE} |
+| Feature extension | {HIGH/MEDIUM/LOW} | {single-agent/distributed} | {YES/NO} | {action or NONE} |
+| Debug pipeline | {HIGH/MEDIUM/LOW} | {single-agent/distributed} | {YES/NO} | {action or NONE} |
+| Domain knowledge | {HIGH/MEDIUM/LOW} | {single-agent/distributed} | {YES/NO} | {action or NONE} |
+| Test strategy | {HIGH/MEDIUM/LOW} | {single-agent/distributed} | {YES/NO} | {action or NONE} |
+| Deployment/config | {HIGH/MEDIUM/LOW} | {single-agent/distributed} | {YES/NO} | {action or NONE} |
+
+### Documentation Level Criteria
+- **HIGH**: Comprehensive docs exist — ADRs, guides, examples, glossary entries
+- **MEDIUM**: Partial docs — some decisions documented, but gaps in rationale or examples
+- **LOW**: Tribal knowledge only — understanding exists in reasoning journal or agent context, not in durable docs
+
+### Concentration Risk Criteria
+- **single-agent**: Only one agent (or one specialist) worked with this area; no cross-validation occurred
+- **distributed**: Multiple agents interacted with this area; knowledge is redundant
+
+### Overall Verdict
+- **TRANSFER_READY**: All areas HIGH or MEDIUM with no single-agent concentration
+- **AT_RISK**: One or more areas LOW, or critical areas have single-agent concentration
+- **NOT_READY**: Multiple areas LOW with single-agent concentration — significant knowledge loss risk
+
+### Recommended Actions
+1. {Specific action to close the most critical gap}
+2. {Next priority action}
+```
+
+### Integration with Learning Cycle
+
+- If overall verdict is AT_RISK or NOT_READY, append an entry to `reasoning-journal.json` with `type: "knowledge_transfer_risk"` and flag for human review.
+- Knowledge transfer gaps are candidate pitfall entries (e.g., "PIT-XXX: No debug guide for payment subsystem — single-agent knowledge concentration").
+- On subsequent runs, REFLECT should check whether previously flagged gaps have been closed.

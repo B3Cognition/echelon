@@ -156,3 +156,76 @@ When a threshold is breached, append an alert to the progress report AND to `rea
 3. **Do not block on drift** — Drift warnings are informational. The MANAGER decides whether to act. You report; you do not stop the build.
 4. **Update calibration every time** — Even if the task was on-target, the data point matters for accuracy tracking.
 5. **Be honest about uncertainty** — A prediction based on 3 data points is less reliable than one based on 15. Report confidence alongside predictions.
+
+---
+
+## Process Metrics
+
+After each task completion, PROGRESS TRACKER must also update `.specify/specs/{feature}/process-metrics.md` with quantitative process health indicators. These metrics provide early warning of quality degradation, schedule risk, and architecture erosion.
+
+### Metrics to Track
+
+#### Quality Metrics
+
+- **Defect escape rate** — `spec_guard_catches / total_tasks_completed`. Measures how often SPEC GUARD finds gaps. A rising rate indicates declining implementation quality.
+- **First-pass approval rate** — `tasks_approved_first_pass / total_tasks_completed`. Percentage of tasks that pass SPEC GUARD and CODE REVIEWER on the first attempt without rework.
+- **Review cycle time** — Average number of IMPLEMENTER → SPEC GUARD → fix iterations before a task reaches APPROVED status. Target: < 2.0 cycles.
+- **Constitution violation rate** — `tasks_with_constitution_violations / total_tasks_completed`. Any upward trend triggers an immediate alert.
+
+#### Schedule Metrics (Earned Value)
+
+- **CPI (Cost Performance Index)** — `planned_effort_completed / actual_effort_spent`. CPI < 1.0 means over budget. CPI > 1.0 means under budget.
+- **SPI (Schedule Performance Index)** — `planned_tasks_by_now / actual_tasks_by_now`. SPI < 1.0 means behind schedule.
+- **EAC (Estimate at Completion)** — `total_planned_effort / CPI`. Predicted total effort based on current performance.
+- **ETC (Estimate to Complete)** — `EAC - actual_effort_spent`. Remaining effort predicted.
+
+#### Trend Detection
+
+Maintain a trend table updated after every task:
+
+```markdown
+### Trend Table
+
+| Task # | Task ID | CPI | SPI | First-Pass | Defect Rate | Violations | Notes |
+|--------|---------|-----|-----|------------|-------------|------------|-------|
+| 1 | T-001 | 1.00 | 1.00 | YES | 0% | 0 | baseline |
+| 2 | T-002 | 0.95 | 0.90 | NO | 50% | 0 | review rework |
+| 3 | T-003 | 0.88 | 0.85 | YES | 33% | 0 | DRIFT WARNING |
+```
+
+### Alerts
+
+Generate alerts in `process-metrics.md` and `reasoning-journal.json` when:
+
+| Alert | Trigger | Severity |
+|-------|---------|----------|
+| **Schedule drift** | SPI < 0.85 for 2 consecutive tasks | HIGH |
+| **Cost overrun** | CPI < 0.80 | HIGH |
+| **Quality warning** | First-pass rate drops below 50% over 4+ tasks | MEDIUM |
+| **Defect spike** | Defect escape rate > 60% over 3+ tasks | HIGH |
+| **Architecture erosion** | Constitution violations in 2+ consecutive tasks | CRITICAL |
+| **Improving trend** | CPI and SPI both > 1.0 for 3 consecutive tasks | INFO (positive) |
+
+### Process Metrics Report Format
+
+```markdown
+## Process Metrics — Updated {ISO-8601}
+
+### Current Indicators
+| Metric | Value | Status |
+|--------|-------|--------|
+| CPI | {value} | {OK / AT_RISK / CRITICAL} |
+| SPI | {value} | {OK / AT_RISK / CRITICAL} |
+| EAC | {value} | {WITHIN_BUDGET / OVER_BUDGET} |
+| ETC | {value} | — |
+| First-pass approval rate | {%} | {OK / DECLINING} |
+| Defect escape rate | {%} | {OK / ELEVATED / CRITICAL} |
+| Avg review cycles | {value} | {OK / HIGH} |
+| Constitution violations | {count} | {CLEAN / WARNING / CRITICAL} |
+
+### Trend Table
+{see above}
+
+### Active Alerts
+{list of unresolved alerts with trigger details}
+```

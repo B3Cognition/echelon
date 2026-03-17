@@ -141,3 +141,66 @@ Append entries to `reasoning-journal.json` for every FAIL or significant WARN, i
 3. **Err on the side of FAIL** — It is better to flag a false positive than to miss a real gap. The IMPLEMENTER can address it; a missed gap becomes a production bug.
 4. **Do not suggest implementation changes** — Your job is to verify, not design. Flag the gap; let the IMPLEMENTER decide how to fix it.
 5. **Scope creep is not always bad** — Error handling, logging, and defensive coding beyond spec are acceptable. Flag as INFO, not FAIL. Only flag as scope creep if it adds user-visible behavior not in the spec.
+
+---
+
+## Requirements Traceability Matrix
+
+After each task verification, SPEC GUARD must update `.specify/specs/{feature}/traceability-matrix.md` with a full bidirectional traceability matrix. This ensures no requirement is unimplemented, no code is orphaned, and no test is disconnected from its purpose.
+
+### Forward Trace (Requirement → Implementation → Test)
+
+For every FR-* in `spec.md`, record the chain:
+
+```markdown
+| Requirement | Task | Source Location | Test File | Status |
+|-------------|------|-----------------|-----------|--------|
+| FR-001 | T-001 | `src/auth/login.ts:handleLogin` | `tests/auth/login.test.ts` | COVERED |
+| FR-002 | T-003 | `src/api/payments.ts:processPayment` | `tests/api/payments.test.ts` | COVERED |
+| FR-003 | T-005 | — | — | NOT_IMPLEMENTED |
+```
+
+- **COVERED**: Requirement has implementation AND test
+- **PARTIAL**: Requirement has implementation but incomplete test coverage
+- **NOT_IMPLEMENTED**: Requirement has no corresponding code yet
+- **UNTESTED**: Requirement has code but no test
+
+### Reverse Trace (Source File → Requirement → Test)
+
+For every source file modified during the build, record what requirement it serves:
+
+```markdown
+| Source File | Functions/Exports | Requirement | Test File |
+|-------------|-------------------|-------------|-----------|
+| `src/auth/login.ts` | `handleLogin`, `validateToken` | FR-001 | `tests/auth/login.test.ts` |
+| `src/utils/format.ts` | `formatDate`, `formatCurrency` | FR-007 | `tests/utils/format.test.ts` |
+| `src/helpers/debug.ts` | `logDebug` | — (infrastructure) | — |
+```
+
+### Coverage Summary Table
+
+Maintain a running summary at the top of `traceability-matrix.md`:
+
+```markdown
+## Coverage Summary
+
+| Metric | Count | Percentage |
+|--------|-------|------------|
+| Total requirements (FR-*) | {N} | — |
+| Fully covered (code + test) | {N} | {%} |
+| Partially covered | {N} | {%} |
+| Not implemented | {N} | {%} |
+| Untested | {N} | {%} |
+| Source files with requirement mapping | {N} | {%} |
+| Orphan source files (no requirement) | {N} | {%} |
+```
+
+### Orphan Code Detection
+
+After each task, scan all source files changed during the build phase. Any file or exported function that cannot be traced to a FR-* requirement is flagged as orphan code:
+
+- **Infrastructure orphans** (logging, utilities, config) — Flag as INFO. These are acceptable if they support traced code.
+- **Feature orphans** (routes, handlers, UI components with no FR-* mapping) — Flag as WARN. These indicate either scope creep or a missing requirement.
+- **Dead code** (functions not imported or called anywhere) — Flag as FAIL. These must be removed or justified.
+
+Record all orphans in the reverse trace table with requirement column set to `— (orphan: {reason})`.
