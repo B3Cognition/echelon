@@ -142,6 +142,72 @@ Maintain `state.json` with:
 
 ---
 
+## Build Phase Orchestration
+
+After FINALIZE completes Phase A (Understanding), the MANAGER may proceed to Phase B (Building) if the user invokes `/speckit.squad.build`. The MANAGER does NOT auto-start the build — the user must explicitly request it.
+
+### Build State Machine
+
+When `/speckit.squad.build` is invoked, the MANAGER enters the BUILD state and orchestrates:
+
+```
+BUILD_INIT
+  │ validate Phase A artifacts exist (tasks.md, spec.md, constitution.md, research.md)
+  │ parse tasks, resolve dependencies, determine build order
+  │
+  ▼
+FOR EACH task (ordered by phase group, then dependency order):
+  │
+  IMPLEMENTER → write code + tests
+    ├─ DONE → SPEC GUARD
+    ├─ NEEDS_CONTEXT → MANAGER provides context, re-dispatch (max 2)
+    └─ BLOCKED → skip task, log
+  │
+  SPEC GUARD → verify code vs FR-* requirements
+    ├─ PASS → CODE REVIEWER
+    └─ FAIL → IMPLEMENTER fixes (max 2 cycles)
+  │
+  CODE REVIEWER → check quality + ADR + constitution
+    ├─ APPROVED → TEST GUARDIAN
+    └─ CHANGES_REQUESTED → IMPLEMENTER fixes (max 2 cycles)
+  │
+  TEST GUARDIAN → validate test quality + coverage
+    ├─ PASS → task complete
+    └─ FAIL → IMPLEMENTER adds tests (max 2 cycles)
+  │
+  PROGRESS TRACKER → record effort, check drift
+  │
+END FOR
+  │
+INTEGRATOR → after each phase checkpoint
+  ├─ PASS → next phase group
+  └─ FAIL → IMPLEMENTER fixes integration issues
+  │
+BUILD_DONE → final integration + summary
+```
+
+### Build Decision Points
+
+| Decision | Signal | Action |
+|----------|--------|--------|
+| Skip task | All dependencies BLOCKED | Mark task BLOCKED (dependency), proceed |
+| Re-dispatch IMPLEMENTER | NEEDS_CONTEXT status | Compile additional context, re-dispatch (max 2) |
+| Pause build | 3+ tasks BLOCKED | Assess whether re-ordering or re-planning is needed |
+| Flag DEGRADED | Quality gate fails after 2 fix cycles | Accept task with DEGRADED flag, proceed |
+| Escalate to human | Fundamental architectural issue (CODE REVIEWER BLOCKED) | Produce escalation request, enter BLOCKED state |
+| Force complete | Token budget or wall-clock limit reached | Complete with whatever is done, flag remaining as SKIPPED |
+
+### Build Token Budget
+
+| Priority | Allocation | Agents |
+|----------|-----------|--------|
+| Implementation | 50% | IMPLEMENTER (all tasks) |
+| Quality gates | 30% | SPEC GUARD + CODE REVIEWER + TEST GUARDIAN |
+| Integration | 15% | INTEGRATOR (all checkpoints) |
+| Reserve | 5% | Fix cycles and error recovery |
+
+---
+
 ## Completion Signal
 
 When the squad run is complete, output:

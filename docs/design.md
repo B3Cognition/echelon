@@ -17,7 +17,7 @@ The initial phase of software development — understanding requirements, mappin
 - No feedback loop — the AI never learns whether its output was correct
 - Equal confidence whether right or wrong
 
-This design specifies a **Cognitive Agent Squad** — a system of 19 specialized cognitive functions packaged as a Spec-Kit extension that handles the complete pre-code phase: from initial idea or existing codebase through to validated, estimated, reality-checked implementation artifacts.
+This design specifies a **Cognitive Agent Squad** — a system of 25 specialized cognitive functions packaged as a Spec-Kit extension that handles the complete development lifecycle: from initial idea through to validated, tested implementation.
 
 ---
 
@@ -35,31 +35,41 @@ This design specifies a **Cognitive Agent Squad** — a system of 19 specialized
 
 ## 3. Architecture Overview
 
-### Three-Tier System
+### Two-Phase System with Four Tiers
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  TIER 1: CORE SQUAD (7 agents, always active)           │
-│                                                          │
-│  MANAGER → DISCOVER → WHAT → WHY → ASSESS → HOW → PLAN │
-└────────────────────────┬────────────────────────────────┘
-                         │ summons on demand
-┌────────────────────────▼────────────────────────────────┐
-│  TIER 2: SPECIALIST POOL (7 specialists)                 │
-│                                                          │
-│  SCIENTIST · SECURITY · TEST ARCHITECT · PERFORMANCE     │
-│  DOMAIN EXPERT · UX/A11Y · INNOVATE                      │
-└────────────────────────┬────────────────────────────────┘
-                         │ runs after/between
-┌────────────────────────▼────────────────────────────────┐
-│  TIER 3: LEARNING LAYER (4 functions + feedback)         │
-│                                                          │
-│  REFLECT · EVOLVE · CALIBRATE · GROUND                   │
-│  + FEEDBACK intake (post-implementation)                  │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE A: UNDERSTANDING                                       │
+│                                                                │
+│  TIER 1: CORE SQUAD (7 agents)                                │
+│  MANAGER → DISCOVER → WHAT → WHY → ASSESS → HOW → PLAN      │
+│                                                                │
+│  TIER 2: SPECIALIST POOL (7 specialists)                      │
+│  SCIENTIST · SECURITY · TEST ARCHITECT · PERFORMANCE          │
+│  DOMAIN EXPERT · UX/A11Y · INNOVATE                           │
+│                                                                │
+│  TIER 3: LEARNING LAYER (4 + feedback)                        │
+│  REFLECT · EVOLVE · CALIBRATE · GROUND · FEEDBACK             │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ validated plan + tasks
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE B: BUILDING                                             │
+│                                                                │
+│  Per task:  IMPLEMENTER → SPEC GUARD → CODE REVIEWER          │
+│                         → TEST GUARDIAN                        │
+│  Per phase: INTEGRATOR                                         │
+│  Continuous: PROGRESS TRACKER                                  │
+└────────────────────────┬─────────────────────────────────────┘
+                         │ working code + tests
+                         ↓
+┌──────────────────────────────────────────────────────────────┐
+│  PHASE C: LEARNING (existing learning layer)                   │
+│  FEEDBACK → CALIBRATE → EVOLVE → REFLECT                      │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Totals:** 7 core + 7 specialists + 4 learning functions + 1 feedback intake = **19 cognitive functions** in 1 Spec-Kit extension.
+**Totals:** 7 core + 7 specialists + 6 build + 4 learning + 1 feedback = **25 cognitive functions** in 1 Spec-Kit extension.
 
 ---
 
@@ -606,7 +616,165 @@ When the squad must escalate to a human (same issue 3x, CALIBRATE < 0.5 after SC
 
 ---
 
-## 8. Tool Integration
+## 8. Phase B: Building
+
+Phase A (Understanding) produces a validated plan with tasks, specs, ADRs, constitution, and test strategy. Phase B (Building) executes that plan with role-based agents and quality gates. The MANAGER orchestrates both phases but uses different agent pools for each.
+
+### 8.1 Build Agents (6 agents)
+
+#### IMPLEMENTER
+
+**Cognitive role:** Developer — writes production code and tests for a single task from `tasks.md`.
+
+**Key science:** Test-Driven Development (Kent Beck), Clean Code (Robert Martin).
+
+**Process:** Reads the task, referenced FR-* requirements, ADRs, and constitution. Writes failing tests first, then minimal passing code, then refactors. Verifies all acceptance criteria, `tsc --noEmit`, and `vitest run`.
+
+**Outputs:** Source files, test files, status report (DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED).
+
+**Agent file:** `agents/build/implementer.md`
+
+#### SPEC GUARD
+
+**Cognitive role:** Traceability enforcer — verifies that implemented code matches specification requirements.
+
+**Key science:** Requirements Traceability (IEEE 830), Specification by Example (Gojko Adzic).
+
+**Process:** For each FR-* requirement referenced by the task, verifies the code implements the correct actor/action/object/outcome/constraints. Checks acceptance criteria have corresponding tests. Detects scope creep (code not traced to any requirement).
+
+**Verdict:** PASS / FAIL (with specific gaps) / WARN (edge cases uncovered).
+
+**Outputs:** Appends to `spec-compliance-report.md` with traceability matrix (FR-* to file:line).
+
+**Agent file:** `agents/build/spec-guard.md`
+
+#### CODE REVIEWER
+
+**Cognitive role:** Quality gate — reviews code for bugs, security, patterns, and architectural compliance.
+
+**Key science:** Google Engineering Practices, OWASP Secure Coding Guidelines.
+
+**Review checklist:** Constitution compliance, ADR compliance, code quality (function length < 30 lines, nesting < 3 levels, no magic numbers), security (no XSS, no injection, no hardcoded secrets), TypeScript strictness, performance (no memory leaks, no N+1), accessibility (ARIA, keyboard handlers).
+
+**Verdict:** APPROVED / CHANGES_REQUESTED (with specific issues) / BLOCKED (architectural redesign needed).
+
+**Outputs:** Appends to `code-review-report.md`.
+
+**Agent file:** `agents/build/code-reviewer.md`
+
+#### TEST GUARDIAN
+
+**Cognitive role:** Test quality gate — validates that tests are sufficient, meaningful, and cover edge cases.
+
+**Key science:** Test Pyramid (Mike Cohn), Mutation Testing principles.
+
+**Process:** Counts tests against minimums (2 per function, 3 per component, 4 per API endpoint). Checks tests test behavior not implementation. Verifies meaningful assertions (not just "doesn't throw"). Checks edge case coverage (null, empty, boundary values, error paths). Updates `coverage-map.md`.
+
+**Verdict:** PASS / FAIL (with missing tests) / WARN (improvement suggestions).
+
+**Outputs:** Appends to `test-quality-report.md`, updates `coverage-map.md`.
+
+**Agent file:** `agents/build/test-guardian.md`
+
+#### INTEGRATOR
+
+**Cognitive role:** System-level verifier — confirms that individually-tested components work together.
+
+**Key science:** Integration Testing (Martin Fowler), Dependency Analysis.
+
+**When:** Runs after each build phase checkpoint (not after every task).
+
+**Process:** Full build (`npm run build`), type check (`tsc --noEmit`), full test suite (`vitest run`), integration checks (module registration, contract compliance, data flow, lifecycle), bundle size analysis, circular dependency detection.
+
+**Verdict:** PASS / FAIL (with specific component pairs and responsible tasks).
+
+**Outputs:** `integration-report.md` (one per phase checkpoint).
+
+**Agent file:** `agents/build/integrator.md`
+
+#### PROGRESS TRACKER
+
+**Cognitive role:** Effort monitor — tracks actual vs estimated effort, detects schedule drift, updates calibration data.
+
+**Key science:** Earned Value Management (EVM), Reference Class Forecasting (Kahneman).
+
+**When:** Runs after each task completion (lightweight).
+
+**Process:** Records task ID, estimated vs actual effort, and ratio. Updates running totals. Detects drift (3 consecutive tasks > 1.5x, or phase total > 1.3x). Updates `calibration-profile.yaml`. Predicts completion based on current burn rate.
+
+**Alerts:** DRIFT_WARNING, PHASE_OVERRUN, ACCELERATION_WARNING, SYSTEMATIC_BIAS.
+
+**Outputs:** Appends to `progress-report.md`, updates `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`.
+
+**Agent file:** `agents/build/progress-tracker.md`
+
+### 8.2 Build State Machine
+
+```
+BUILD PHASE (per task from tasks.md):
+  FOR EACH task in tasks.md (ordered by phase, respecting dependencies):
+    │
+    IMPLEMENTER dispatched with task + spec context
+      │
+      ├─ DONE → proceed to review
+      ├─ NEEDS_CONTEXT → MANAGER provides context, re-dispatch
+      └─ BLOCKED → MANAGER escalates or skips
+      │
+    SPEC GUARD validates code vs FR-* requirements
+      │
+      ├─ PASS → proceed to code review
+      └─ FAIL → IMPLEMENTER fixes gaps, re-validate
+      │
+    CODE REVIEWER checks quality + ADR + constitution
+      │
+      ├─ APPROVED → proceed to test review
+      └─ CHANGES_REQUESTED → IMPLEMENTER fixes, re-review
+      │
+    TEST GUARDIAN validates test quality + coverage
+      │
+      ├─ PASS → task complete
+      └─ FAIL → IMPLEMENTER adds tests, re-validate
+      │
+    PROGRESS TRACKER records effort, checks for drift
+    │
+  END FOR
+  │
+  INTEGRATOR runs after each phase checkpoint
+    │
+    ├─ PASS → next phase
+    └─ FAIL → IMPLEMENTER fixes integration issues
+```
+
+### 8.3 Build Convergence Rules
+
+| Rule | Threshold | Action |
+|------|-----------|--------|
+| Max fix cycles per quality gate | 2 | Flag as DEGRADED, proceed |
+| Max IMPLEMENTER dispatches per task | 7 (1 initial + 2 per gate) | Force complete with DEGRADED flag |
+| Max BLOCKED tasks before pause | 3 | MANAGER assesses, may re-order or escalate |
+| Max DEGRADED tasks | 30% of total | Print warning, continue |
+| Token budget for build phase | 2M tokens (configurable) | Force complete with report |
+| Wall-clock time limit | 60 minutes | Force complete with report |
+
+### 8.4 Build Artifacts
+
+Phase B produces these report files in `.specify/specs/{feature}/`:
+
+| Artifact | Producer | Content |
+|----------|----------|---------|
+| `spec-compliance-report.md` | SPEC GUARD | Per-task FR-* traceability matrix, acceptance criteria coverage |
+| `code-review-report.md` | CODE REVIEWER | Per-task constitution/ADR compliance, issues found |
+| `test-quality-report.md` | TEST GUARDIAN | Per-task test inventory, quality assessment, missing tests |
+| `integration-report.md` | INTEGRATOR | Per-phase build/type/test results, bundle analysis, dependency graph |
+| `progress-report.md` | PROGRESS TRACKER | Per-task effort tracking, drift alerts, completion predictions |
+
+### 8.5 Build Entry Point
+
+The build phase is invoked via `/speckit.squad.build`, which is separate from `/speckit.squad.run` (Phase A). The MANAGER decides at the end of Phase A whether to offer the user the option to proceed to building, but the user must explicitly invoke the build command.
+
+---
+
+## 9. Tool Integration
 
 | Tool | Version | Used By | Purpose |
 |------|---------|---------|---------|
@@ -616,7 +784,7 @@ When the squad must escalate to a human (same issue 3x, CALIBRATE < 0.5 after SC
 
 ---
 
-## 9. Context Pack Design
+## 10. Context Pack Design
 
 Each agent receives a **compiled context pack** — not the raw repository. MANAGER assembles packs per agent:
 
@@ -691,7 +859,7 @@ This is the shared memory that prevents lossy handoffs between subagents.
 
 ---
 
-## 10. Extension File Structure
+## 11. Extension File Structure
 
 ```
 .specify/extensions/squad/
@@ -706,7 +874,8 @@ This is the shared memory that prevents lossy handoffs between subagents.
 │   ├── squad.investigate.md         # manually trigger SCIENTIST
 │   ├── squad.ground.md              # manually trigger reality check
 │   ├── squad.feedback.md            # post-implementation feedback intake
-│   └── squad.resume.md              # provide answer to human escalation
+│   ├── squad.resume.md              # provide answer to human escalation
+│   └── squad.build.md               # execute building phase
 │
 ├── agents/
 │   ├── core/
@@ -726,6 +895,14 @@ This is the shared memory that prevents lossy handoffs between subagents.
 │   │   ├── ux-a11y.md              # WCAG/Nielsen prompt
 │   │   ├── performance.md          # capacity/load modeling prompt
 │   │   └── innovate.md             # TRIZ/Design Thinking prompt
+│   │
+│   ├── build/
+│   │   ├── implementer.md           # TDD developer prompt
+│   │   ├── spec-guard.md            # spec traceability verifier prompt
+│   │   ├── code-reviewer.md         # code quality reviewer prompt
+│   │   ├── test-guardian.md          # test quality validator prompt
+│   │   ├── integrator.md            # system integration verifier prompt
+│   │   └── progress-tracker.md      # effort tracking + drift detection prompt
 │   │
 │   └── learning/
 │       ├── reflect.md               # post-run analysis prompt
@@ -762,11 +939,12 @@ This is the shared memory that prevents lossy handoffs between subagents.
 
 ---
 
-## 11. Slash Commands
+## 12. Slash Commands
 
 | Command | Purpose | Trigger |
 |---------|---------|---------|
-| `/speckit.squad.run <description\|repo-path>` | Full autonomous squad run | User initiates |
+| `/speckit.squad.run <description\|repo-path>` | Full autonomous squad run (Phase A: Understanding) | User initiates |
+| `/speckit.squad.build [feature-path] [task-ids]` | Execute building phase (Phase B: Building) | User initiates after Phase A |
 | `/speckit.squad.status` | Check current squad state and progress | User checks progress |
 | `/speckit.squad.innovate` | Manually trigger INNOVATE specialist | User wants fresh perspective |
 | `/speckit.squad.investigate <question>` | Manually trigger SCIENTIST | User has specific unknown |
@@ -776,7 +954,7 @@ This is the shared memory that prevents lossy handoffs between subagents.
 
 ---
 
-## 12. Artifact Delivery
+## 13. Artifact Delivery
 
 On completion, the squad delivers to `.specify/specs/{feature}/`:
 
@@ -825,7 +1003,7 @@ On completion, the squad delivers to `.specify/specs/{feature}/`:
 
 ---
 
-## 13. Iterative Improvement Cycle
+## 14. Iterative Improvement Cycle
 
 ```
 RUN 1 → REFLECT → EVOLVE → knowledge base created
@@ -849,7 +1027,7 @@ RUN 5 → calibrated squad → better estimates, grounded decisions,
 
 ---
 
-## 14. Key Science References
+## 15. Key Science References
 
 | Domain | Reference | Used By |
 |--------|-----------|---------|
@@ -883,7 +1061,7 @@ RUN 5 → calibrated squad → better estimates, grounded decisions,
 
 ---
 
-## 15. Non-Functional Requirements (System Performance)
+## 16. Non-Functional Requirements (System Performance)
 
 ### Runtime Budget
 
@@ -920,7 +1098,7 @@ RUN 5 → calibrated squad → better estimates, grounded decisions,
 
 ---
 
-## 16. Knowledge Base Management
+## 17. Knowledge Base Management
 
 ### Format: YAML
 
