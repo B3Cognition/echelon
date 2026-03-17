@@ -1,2 +1,56 @@
 schema_version: 1
-entries: []
+entries:
+  - id: PAT-001
+    name: "SCIENTIST resolves empirically testable assumptions before spec"
+    domain: "requirements-engineering"
+    evidence_grade: "C"
+    source: "squad-run-001, reasoning-journal entries RJ-014, RJ-004"
+    validated_by_feedback: false
+    confidence: 0.85
+    description: "When DISCOVER identifies assumptions that are empirically testable (e.g., CORS headers, API responses), SCIENTIST should test them immediately rather than deferring to stakeholder questions. WHY caught A-006 (JSONP required) as testable with a single HTTP request. Empirical resolution is faster and higher-confidence than asking teams."
+    tags: ["assumptions", "empirical-testing", "scientist"]
+    status: active
+
+  - id: PAT-002
+    name: "MVP scoped as pattern-proving increment, not feature-complete"
+    domain: "requirements-engineering"
+    evidence_grade: "C"
+    source: "squad-run-001, reasoning-journal entry RJ-017"
+    validated_by_feedback: false
+    confidence: 0.85
+    description: "For large migration projects, defining MVP as 'core infrastructure + one complete vertical (sport/domain)' rather than 'all features' prevents unshippable scope. The V5 spec defined MVP as infrastructure + one sport, proving the pattern end-to-end. Remaining verticals are post-MVP incremental work."
+    tags: ["mvp-scoping", "migration", "incremental-delivery"]
+    status: active
+
+  - id: PAT-003
+    name: "Architecture decisions driven by embedding constraint"
+    domain: "widget-architecture"
+    evidence_grade: "B"
+    source: "squad-run-001, reasoning-journal entries RJ-027, RJ-028"
+    validated_by_feedback: false
+    confidence: 0.90
+    description: "For embeddable third-party widgets, the embedding constraint (widgets on customer pages) should be the primary architecture driver. Shadow DOM for style isolation, custom elements for API surface, and CSS custom properties for theming all follow directly from 'we do not own the host page.' This constraint eliminated React (assumes page ownership) in favor of Lit/Web Components."
+    tags: ["web-components", "shadow-dom", "architecture-drivers", "lit"]
+    status: active
+
+  - id: PAT-004
+    name: "GROUND reality-check catches optimism bias in first estimates"
+    domain: "effort-estimation"
+    evidence_grade: "C"
+    source: "squad-run-001, reasoning-journal entry RJ-024, reality-check.md"
+    validated_by_feedback: false
+    confidence: 0.80
+    description: "First-run estimates without calibration data are consistently optimistic. GROUND applied reference-class forecasting (industry migration overrun data: 83% exceed budget) and identified the plan was 1.4x optimistic. The 22-week timeline was corrected to 30-40 weeks. Always apply reference-class adjustment to uncalibrated first estimates."
+    tags: ["estimation", "reference-class", "optimism-bias", "ground"]
+    status: active
+
+  - id: PAT-005
+    name: "Feed pipeline as highest-priority architectural decision"
+    domain: "data-pipeline"
+    evidence_grade: "B"
+    source: "squad-run-001, reasoning-journal entries RJ-002, RJ-010, RJ-018"
+    validated_by_feedback: false
+    confidence: 0.85
+    description: "In data-heavy widget systems, the feed/data pipeline is the most volatile and maintenance-intensive subsystem (confirmed by git hotspot analysis). Architecture decisions about transport abstraction and decoder registries should be prioritized over rendering decisions because the data layer drives most ongoing maintenance work."
+    tags: ["data-pipeline", "architecture-priority", "hotspot-analysis"]
+    status: active

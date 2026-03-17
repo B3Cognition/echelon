@@ -1,2 +1,60 @@
 schema_version: 1
-domains: {}
+domains:
+  widget-architecture:
+    accuracy: 0.80
+    sample_size: 1
+    trend: "insufficient data"
+    correction_factor: 1.0
+    last_updated: "2026-03-17"
+    notes: >
+      Estimated -- no feedback data. First run. Lit + Shadow DOM decision (ADR-001, ADR-005)
+      passed WHY3 and was validated by GROUND against enterprise-scale production deployments
+      (Adobe Spectrum, SAP UI5, Microsoft Fluent UI). Confidence was high (0.85-0.90) and
+      GROUND confirmed the architecture as sound. Proxy accuracy from WHY pass rate: 5/5 architecture
+      checks passed. One WARNING: Observable Plot in Shadow DOM is unverified (POC needed).
+      Deduct for this unknown. No feedback yet to confirm real-world outcome.
+
+  data-pipeline:
+    accuracy: 0.75
+    sample_size: 1
+    trend: "insufficient data"
+    correction_factor: 1.0
+    last_updated: "2026-03-17"
+    notes: >
+      Estimated -- no feedback data. Transport abstraction (ADR-007) and decoder registry decisions
+      passed WHY and GROUND validation. JSONP constraint confirmed empirically (R-001, 0.95 confidence).
+      Custom transport forced by constraint (no off-the-shelf JSONP support) -- low decision risk.
+      Deducted for: binary decoder porting complexity flagged as knowledge-concentrated risk;
+      T018 NEEDS_CLARIFICATION (version inventory missing); dual OMO/SDAPI uncertainty (U-001 unresolved).
+      GROUND confirmed custom transport is the only viable option. Proxy: WHY pass + GROUND confirmation.
+
+  effort-estimation:
+    accuracy: 0.45
+    sample_size: 1
+    trend: "insufficient data"
+    correction_factor: 1.4
+    last_updated: "2026-03-17"
+    notes: >
+      Estimated -- no feedback data but GROUND provides strong proxy signal. GROUND found the plan
+      1.4x optimistic using reference-class forecasting (industry data: 83% of migrations exceed
+      budget, average 30% cost overrun, 41% time overrun). Specific findings: 22-week wall-clock
+      corrected to 30-40 weeks; T064 legacy bridge 3 days corrected to 10-15 days (3-5x underestimate);
+      widget migration 25pw corrected to 38-45pw (+50-80%); team onboarding not budgeted (3 weeks missing).
+      ASSESS2 revised total from 102pw to 107pw; GROUND suggests 150pw realistic.
+      Correction factor 1.4x applied to all future estimates from this squad until feedback calibrates.
+      Math: ASSESS said 102pw, ASSESS2 said 107pw, GROUND says 150pw. Ratio: 150/107 = 1.4x.
+
+  requirements-engineering:
+    accuracy: 0.60
+    sample_size: 1
+    trend: "insufficient data"
+    correction_factor: 1.0
+    last_updated: "2026-03-17"
+    notes: >
+      Estimated -- no feedback data. WHY1 FAILED (testability below threshold). WHY2 passed borderline
+      (0.72 vs 0.70 threshold). Two specific FRs caused problems: FR-MOD-001 (open-ended helper list)
+      and FR-REND-006 (meta-constraint about testability). Additionally, WHY caught that DISCOVER
+      entirely missed accessibility requirements (RJ-016, severity HIGH). WHY3 found 2 new FRs
+      (FR-FEED-013, FR-FEED-014) added during fix had no corresponding tasks or tests -- cross-artifact
+      consistency gap. Proxy accuracy: WHY1 fail + WHY2 borderline pass + WHY3 pass-with-warnings =
+      ~60% first-attempt quality. The squad needed 2 iterations to produce acceptable requirements.

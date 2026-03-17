@@ -1,2 +1,56 @@
 schema_version: 1
-entries: []
+entries:
+  - id: PIT-001
+    name: "Testability scored borderline when requirements use meta-constraints"
+    domain: "requirements-engineering"
+    trigger: "Functional requirements that describe how something should be tested rather than what behavior it should exhibit (e.g., 'independently testable with mock data')."
+    impact: "WHY1 initially FAILED on testability. WHY2 also borderline at 0.72 (threshold 0.70). Two FRs (FR-MOD-001 open-ended helpers, FR-REND-006 meta-constraint) nearly sank the spec."
+    avoidance: "Replace meta-constraints ('must be independently testable') with concrete behavioral assertions ('must accept domain model as input and produce DOM output without widget instantiation'). Replace open-ended lists ('helper methods e.g. isLive()') with exhaustive enumerations."
+    source: "squad-run-001, reasoning-journal entry RJ-015, quality-gates.md"
+    confidence: 0.85
+    tags: ["testability", "requirements", "why-challenge", "quality-gates"]
+    status: active
+
+  - id: PIT-002
+    name: "New FRs added during WHY fix lack corresponding tasks and tests"
+    domain: "requirements-engineering"
+    trigger: "WHY challenge causes new functional requirements to be added to the spec (e.g., FR-FEED-013, FR-FEED-014 added during WHY2 fix). The new FRs are not propagated to tasks.md or test-strategy.md."
+    impact: "WHY3 cross-artifact consistency check found FR-FEED-013 and FR-FEED-014 had no corresponding tasks or test scenarios. Artifacts drift out of sync."
+    avoidance: "After any WHY fix that adds/modifies FRs, immediately update tasks.md (add or modify tasks) and test-strategy.md (add test scenarios) in the same pass. Use a checklist: for each new FR, verify task exists AND test exists."
+    source: "squad-run-001, quality-gates.md section 1 and 3"
+    confidence: 0.90
+    tags: ["cross-artifact-consistency", "why-fix", "tasks", "test-strategy"]
+    status: active
+
+  - id: PIT-003
+    name: "Legacy bridge tasks drastically underestimated (3 days vs 2-3 weeks)"
+    domain: "effort-estimation"
+    trigger: "Task involves making a legacy framework (jQuery) work inside a fundamentally incompatible context (Shadow DOM). Estimate based on 'write an adapter' without enumerating what the adapter must intercept."
+    impact: "T064 (legacy jQuery bridge) estimated at 3 days. ASSESS2 flagged it as BLOCKED. GROUND estimated 10-15 days (2-3 weeks). jQuery's $() queries light DOM, event delegation fails due to retargeting, 20+ SFX plugins each use different DOM patterns."
+    avoidance: "For bridge/adapter tasks between incompatible frameworks, enumerate every API surface that must be intercepted BEFORE estimating. Count the SFX plugins, list the jQuery DOM methods used, identify event delegation patterns. Estimate from the enumeration, not from 'write an adapter.'"
+    source: "squad-run-001, reasoning-journal entry RJ-030, reality-check.md T064 section, implementability-report.md T064"
+    confidence: 0.85
+    tags: ["estimation", "legacy-bridge", "jquery", "shadow-dom", "underestimate"]
+    status: active
+
+  - id: PIT-004
+    name: "DISCOVER missed accessibility requirements entirely"
+    domain: "requirements-engineering"
+    trigger: "DISCOVER phase focused on existing codebase analysis without scanning for regulatory/compliance requirements outside the codebase."
+    impact: "WHY caught that no DISCOVER artifact mentions accessibility (WCAG, ARIA, a11y). EU Accessibility Act 2025 makes this potentially non-compliant. Added as a must-resolve unknown late in the process."
+    avoidance: "DISCOVER should include a compliance checklist scan (accessibility, security, privacy, localization) independent of what the existing codebase does. These are external requirements that may not be visible in code."
+    source: "squad-run-001, reasoning-journal entry RJ-016"
+    confidence: 0.80
+    tags: ["accessibility", "compliance", "discover", "missing-requirements"]
+    status: active
+
+  - id: PIT-005
+    name: "Low-confidence speculative insights propagate without caveat"
+    domain: "reasoning-quality"
+    trigger: "A reasoning journal entry with evidence grade E and low confidence (e.g., RJ-006 at 0.7/E about CSS Container Queries) is referenced in downstream artifacts without flagging its speculative nature."
+    impact: "WHY caught that RJ-006's implication ('CSS Container Queries are a natural fit') appeared in downstream reasoning without caveat, potentially influencing architecture decisions on weak evidence."
+    avoidance: "Any insight with evidence grade D or E must be explicitly flagged as speculative when referenced in any design recommendation or architecture decision. Use a standard marker like '[SPECULATIVE]' or '[LOW-EVIDENCE]'."
+    source: "squad-run-001, reasoning-journal entry RJ-015"
+    confidence: 0.75
+    tags: ["evidence-grading", "speculation", "reasoning-quality"]
+    status: active
