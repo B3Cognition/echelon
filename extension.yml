@@ -4,7 +4,7 @@ extension:
   id: "cognitive-squad"
   name: "Cognitive Squad"
   version: "0.1.0"
-  description: "26-function cognitive agent squad for complete development lifecycle"
+  description: "28-function cognitive agent squad for complete development lifecycle"
   author: "Testimonial"
   repository: "https://github.com/Testimonial/cognitive-squad"
   license: "MIT"
@@ -48,6 +48,9 @@ provides:
     - name: "speckit.squad.change"
       file: "commands/squad.change.md"
       description: "Handle specification change during build phase"
+    - name: "speckit.squad.verify"
+      file: "commands/squad.verify.md"
+      description: "Run full backpropagation verification — 100% spec coverage check"
 
   config:
     - name: "squad-config.yml"

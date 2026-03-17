@@ -70,7 +70,7 @@ This design specifies a **Cognitive Agent Squad** — a system of 26 specialized
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Totals:** 7 core + 7 specialists + 7 build + 4 learning + 1 feedback = **26 cognitive functions** in 1 Spec-Kit extension.
+**Totals:** 7 core + 7 specialists + 9 build + 4 learning + 1 feedback = **28 cognitive functions** in 1 Spec-Kit extension.
 
 ---
 
