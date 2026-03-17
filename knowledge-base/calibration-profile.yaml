@@ -29,32 +29,46 @@ domains:
       GROUND confirmed custom transport is the only viable option. Proxy: WHY pass + GROUND confirmation.
 
   effort-estimation:
-    accuracy: 0.45
-    sample_size: 1
-    trend: "insufficient data"
+    accuracy: 0.50
+    sample_size: 2
+    trend: "stable (1.4x correction holds)"
     correction_factor: 1.4
     last_updated: "2026-03-17"
     notes: >
-      Estimated -- no feedback data but GROUND provides strong proxy signal. GROUND found the plan
-      1.4x optimistic using reference-class forecasting (industry data: 83% of migrations exceed
-      budget, average 30% cost overrun, 41% time overrun). Specific findings: 22-week wall-clock
-      corrected to 30-40 weeks; T064 legacy bridge 3 days corrected to 10-15 days (3-5x underestimate);
-      widget migration 25pw corrected to 38-45pw (+50-80%); team onboarding not budgeted (3 weeks missing).
-      ASSESS2 revised total from 102pw to 107pw; GROUND suggests 150pw realistic.
-      Correction factor 1.4x applied to all future estimates from this squad until feedback calibrates.
-      Math: ASSESS said 102pw, ASSESS2 said 107pw, GROUND says 150pw. Ratio: 150/107 = 1.4x.
+      Updated after squad-run-002 (expanded scope). The 1.4x correction factor from run-001 was
+      applied to run-002 estimates and appears to hold. Run-002 raw estimate was 75.3 pw, calibrated
+      to 105 pw (x1.4). GROUND pass 2 found this ~10% optimistic (should be ~112-119 pw) but within
+      acceptable tolerance. The correction factor absorbs the delta.
+
+      However, the BASE was wrong in run-001: ASSESS estimated 107 pw for 51 widgets (MVP scope),
+      but the actual product scope is 202 widgets. Total effort including infrastructure: ~59 pw
+      (done) + 105 pw (remaining) = ~164 pw for full parity. Original ASSESS said 107 pw for MVP
+      only. If we extrapolate: 107 pw MVP / 51 widgets = 2.1 pw/widget; 202 widgets x 2.1 = 424 pw
+      -- which is wildly wrong because infrastructure doesn't scale linearly with widgets.
+
+      The run-002 estimate (164 pw total for 202 widgets = 0.81 pw/widget avg including infra) is
+      more credible because it correctly separates infrastructure (fixed cost) from per-widget work
+      (variable cost). Accuracy improved from 0.45 to 0.50 because the second estimate leveraged
+      known infrastructure velocity. The 1.4x correction factor remains appropriate.
+
+      Key insight: per-widget effort decreases as infrastructure matures. First 51 widgets cost
+      ~59 pw infra + 48 pw widgets = 107 pw (2.1 pw/widget). Remaining 151 widgets cost ~0 pw
+      infra + 105 pw widgets = 105 pw (0.7 pw/widget). This 3x efficiency gain is real and
+      expected for mature infrastructure.
 
   requirements-engineering:
-    accuracy: 0.60
-    sample_size: 1
-    trend: "insufficient data"
-    correction_factor: 1.0
+    accuracy: 0.45
+    sample_size: 2
+    trend: "declining"
+    correction_factor: 1.2
     last_updated: "2026-03-17"
     notes: >
-      Estimated -- no feedback data. WHY1 FAILED (testability below threshold). WHY2 passed borderline
-      (0.72 vs 0.70 threshold). Two specific FRs caused problems: FR-MOD-001 (open-ended helper list)
-      and FR-REND-006 (meta-constraint about testability). Additionally, WHY caught that DISCOVER
-      entirely missed accessibility requirements (RJ-016, severity HIGH). WHY3 found 2 new FRs
-      (FR-FEED-013, FR-FEED-014) added during fix had no corresponding tasks or tests -- cross-artifact
-      consistency gap. Proxy accuracy: WHY1 fail + WHY2 borderline pass + WHY3 pass-with-warnings =
-      ~60% first-attempt quality. The squad needed 2 iterations to produce acceptable requirements.
+      Updated after squad-run-002 (expanded scope). Original accuracy was 0.60 based on WHY1 fail,
+      WHY2 borderline pass, WHY3 pass-with-warnings. Now reduced to 0.45 because of PIT-006: ASSESS
+      misread user intent (scoped to MVP 51 widgets instead of full parity 202 widgets). This is a
+      fundamental requirements-engineering failure -- getting the scope wrong means the entire spec
+      was for the wrong product. The squad had to re-run entirely. Combined with WHY1 failure, the
+      requirements-engineering domain has failed significantly on 2 of 2 runs: run-001 failed on
+      testability (WHY1), run-002 failed on scope (PIT-006). Correction factor 1.2x applied:
+      when ASSESS produces a scope, expand it by 1.2x to account for likely under-scoping.
+      Key fix: ASSESS must confirm scope with user before proceeding (see PIT-006 avoidance).

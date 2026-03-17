@@ -54,3 +54,25 @@ entries:
     confidence: 0.75
     tags: ["evidence-grading", "speculation", "reasoning-quality"]
     status: active
+
+  - id: PIT-006
+    name: "ASSESS scoped to MVP when user wanted full parity"
+    domain: "requirements-engineering"
+    trigger: "User says 'modernize the widget system' or 'V5 of the product' without explicitly stating MVP vs full. ASSESS defaults to MVP scoping (per PAT-002) without confirming intent with the user."
+    impact: "First-run ASSESS produced a spec for 51 widgets (5 sports) when the product has 202 widgets (19 sports). The entire squad ran on the wrong scope. Re-run was required, adding a full cycle of squad effort. 3 CRITICALs were missed (video, testing, SVG visualizations) because those widget types were out of MVP scope."
+    avoidance: "ASSESS must explicitly confirm scope with the user BEFORE proceeding. Ask: 'Is the goal MVP (core sports only) or full V3 parity (all 19 sports, 202 widgets)?' When the product has a defined widget inventory, DISCOVER should enumerate the full inventory and ASSESS should present scope options, not assume MVP."
+    source: "squad-run-002, scope expansion re-evaluation"
+    confidence: 0.90
+    tags: ["scope-misread", "mvp-vs-parity", "assess", "user-intent", "requirements"]
+    status: active
+
+  - id: PIT-007
+    name: "Wave timeline overlap assumes perfect parallelism across dependent work"
+    domain: "effort-estimation"
+    trigger: "Plan shows overlapping waves (Wave 1 weeks 1-8, Wave 2 weeks 5-12, etc.) implying parallel execution. But later waves depend on outputs from earlier waves (e.g., FieldRenderer from Wave 1 needed by Wave 3 SVG widgets)."
+    impact: "22-week Wave timeline requires 49.5 pw capacity (3 devs x 22 weeks x 75%) but 105 pw of work exists. The gap (55 pw) is hidden by assuming waves overlap perfectly. In reality, cross-wave dependencies (T087 FieldRenderer -> T079/T081/T082/T083) create a sequential critical path spanning all waves. Realistic timeline is 40-45 weeks, nearly 2x the wave timeline."
+    avoidance: "When presenting overlapping phases/waves, explicitly identify cross-wave dependencies and mark them on the critical path. Calculate the critical path length through the dependency chain, not just the wave envelope. If critical path > wave envelope, the wave timeline is fiction."
+    source: "squad-run-002, GROUND pass 2, RC-EX-4"
+    confidence: 0.85
+    tags: ["estimation", "parallelism", "critical-path", "wave-planning", "dependencies"]
+    status: active
