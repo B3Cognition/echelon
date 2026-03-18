@@ -310,11 +310,11 @@ Control how much human oversight the squad requires:
 | **ASSESS (GATEKEEPER)** | Strategic PM — feasibility, estimation, kill gate | `feasibility.md`, `estimates.md`, `prioritization.md` |
 | **HOW (ARCHITECT)** | Architect — tech stack, data model, ADRs, constitution | `plan.md`, `research.md`, `data-model.md`, `contracts/` |
 | **PLAN (ORCHESTRATOR)** | Operational PM — tasks, critical path, dependencies, risk | `tasks.md`, `critical-path.md`, `risk-matrix.md` |
-| **INTENT TRACKER (SENTINEL)** | Tracks what the user actually wants vs what the spec says | `user-intent.md`, alignment alerts |
-| **INTERNALIZATION GATE (MENTOR)** | Ensures every agent proves comprehension before working | `internalization-report.md` |
-| **SCOREKEEPER (CHRONICLER)** | Tracks agent performance, awards badges, enables self-healing | `agent-scorecard.md`, `agent-scores.yaml` |
-| **MENTAL MODEL (NAVIGATOR)** | Maintains living code graph with invariant checking | `mental-model-code.md`, invariant alerts |
-| **METACOGNITION MONITOR (WATCHER)** | Watches execution: "are we still doing the right thing?" | `metacognition-log.md` |
+| **INTENT TRACKER (TRACKER)** | Tracks what the user actually wants vs what the spec says | `user-intent.md`, alignment alerts |
+| **INTERNALIZATION GATE (VALIDATOR)** | Ensures every agent proves comprehension before working | `internalization-report.md` |
+| **SCOREKEEPER** | Tracks agent performance, awards badges, enables self-healing | `agent-scorecard.md`, `agent-scores.yaml` |
+| **MENTAL MODEL (MODELER)** | Maintains living code graph with invariant checking | `mental-model-code.md`, invariant alerts |
+| **METACOGNITION MONITOR (MONITOR)** | Watches execution: "are we still doing the right thing?" | `metacognition-log.md` |
 
 ### Phase 1: Understanding — Specialists (7)
 
@@ -322,36 +322,36 @@ Control how much human oversight the squad requires:
 |------------|---------|------------|
 | **SCIENTIST (INVESTIGATOR)** | Unknowns, unproven tech, conflicting evidence | `investigation/`, `recommendations.md` |
 | **SECURITY (GUARDIAN)** | Auth, payments, PII, compliance | `threat-model.md`, `compliance-requirements.md` |
-| **TEST ARCHITECT (STRATEGIST)** | Mandatory after HOW | `test-strategy.md`, `coverage-map.md` |
-| **DOMAIN EXPERT (SCHOLAR)** | Domain-specific knowledge needed | Domain amendments to spec and plan |
+| **TEST ARCHITECT (SENTINEL)** | Mandatory after HOW | `test-strategy.md`, `coverage-map.md` |
+| **DOMAIN EXPERT (ORACLE)** | Domain-specific knowledge needed | Domain amendments to spec and plan |
 | **UX / A11Y (ADVOCATE)** | Frontend, user-facing features | `accessibility-requirements.md` |
-| **PERFORMANCE (OPTIMIZER)** | High-load, real-time, scalability | `performance-requirements.md`, `capacity-model.md` |
-| **INNOVATE (CATALYST)** | Stagnation, re-runs, circular reasoning | `alternatives.md`, `challenge-assumptions.md` |
+| **PERFORMANCE (BENCHMARK)** | High-load, real-time, scalability | `performance-requirements.md`, `capacity-model.md` |
+| **INNOVATE (MAVERICK)** | Stagnation, re-runs, circular reasoning | `alternatives.md`, `challenge-assumptions.md` |
 
 ### Phase 2-3: Building (10)
 
 | Agent | Role | When | Key Output |
 |-------|------|------|------------|
-| **IMPLEMENTER (BUILDER)** | Writes code following TDD per task | Per task | Source files + tests |
-| **SPEC GUARD (AUDITOR)** | Verifies code matches FR-* requirements | Per task | `spec-compliance-report.md`, `traceability-matrix.md` |
-| **CODE REVIEWER (CRITIC)** | Reviews quality, ADR compliance, constitution | Per task | `code-review-report.md` |
-| **TEST GUARDIAN (DEFENDER)** | Validates test quality and coverage | Per task | `test-quality-report.md` |
-| **ENGINEERING MANAGER (FOREMAN)** | Orchestrates build loop, phase gates | Per phase | `build-status.md`, rework tasks |
-| **INTEGRATOR (WEAVER)** | Verifies system integration | Per phase | `integration-report.md` |
-| **PROGRESS TRACKER (SCRIBE)** | Tracks effort, detects drift, updates calibration | Continuous | `progress-report.md`, `process-metrics.md` |
-| **CHANGE CONTROLLER (ARBITER)** | Handles mid-build spec changes | On change | `change-impact-report.md` |
-| **VERIFICATION (INSPECTOR)** | Backpropagation — checks ALL spec against ALL code | After all tasks | `gap-report.md` (coverage score) |
-| **VISUAL VALIDATOR (OBSERVER)** | Actually LOOKS at running product via screenshots | Per phase | Visual validation report + screenshots |
+| **IMPLEMENTER** | Writes code following TDD per task | Per task | Source files + tests |
+| **SPEC GUARD** | Verifies code matches FR-* requirements | Per task | `spec-compliance-report.md`, `traceability-matrix.md` |
+| **CODE REVIEWER** | Reviews quality, ADR compliance, constitution | Per task | `code-review-report.md` |
+| **TEST GUARDIAN** | Validates test quality and coverage | Per task | `test-quality-report.md` |
+| **ENGINEERING MANAGER** | Orchestrates build loop, phase gates | Per phase | `build-status.md`, rework tasks |
+| **INTEGRATOR** | Verifies system integration | Per phase | `integration-report.md` |
+| **PROGRESS TRACKER** | Tracks effort, detects drift, updates calibration | Continuous | `progress-report.md`, `process-metrics.md` |
+| **CHANGE CONTROLLER** | Handles mid-build spec changes | On change | `change-impact-report.md` |
+| **VERIFICATION** | Backpropagation — checks ALL spec against ALL code | After all tasks | `gap-report.md` (coverage score) |
+| **VISUAL VALIDATOR** | Actually LOOKS at running product via screenshots | Per phase | Visual validation report + screenshots |
 
 ### Phase 4: Learning (4 + feedback)
 
 | Function | When | Purpose |
 |----------|------|---------|
-| **REFLECT (PHILOSOPHER)** | End of every run | Extracts patterns, pitfalls, knowledge transfer assessment |
-| **EVOLVE (ADAPTOR)** | Start/end of re-runs | Diffs artifacts, detects regressions and stagnation |
-| **CALIBRATE (ORACLE)** | End of run + after feedback | Tracks AI accuracy per domain, adjusts confidence |
-| **GROUND (ANCHOR)** | During FINALIZE | Reality-checks artifacts against real-world data |
-| **FEEDBACK (LISTENER)** | Post-implementation (manual) | Closes prediction-to-outcome loop for calibration |
+| **REFLECT (MIRROR)** | End of every run | Extracts patterns, pitfalls, knowledge transfer assessment |
+| **EVOLVE (ADAPTIVE)** | Start/end of re-runs | Diffs artifacts, detects regressions and stagnation |
+| **CALIBRATE (AUDITOR)** | End of run + after feedback | Tracks AI accuracy per domain, adjusts confidence |
+| **GROUND (REALIST)** | During FINALIZE | Reality-checks artifacts against real-world data |
+| **FEEDBACK** | Post-implementation (manual) | Closes prediction-to-outcome loop for calibration |
 
 ## Quality Gates
 
