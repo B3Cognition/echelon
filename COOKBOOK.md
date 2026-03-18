@@ -271,6 +271,176 @@ If verify fails (coverage < 100%), block the merge.
 
 ---
 
+## Recipe 9: Spec-Kit First, Then Squad (Hybrid Flow)
+
+You already use spec-kit's built-in commands (`/speckit.specify`, `/speckit.plan`, `/speckit.tasks`). You want the squad to validate, improve, and build from YOUR specs — not generate its own from scratch.
+
+This is the **recommended flow for teams already using spec-kit**.
+
+```
+Step 1: Write your spec with spec-kit (you drive)
+────────────────────────────────────────────────
+$ specify init my-project --ai claude
+> /speckit.constitution
+> /speckit.specify "User authentication with OAuth2, MFA, and session management"
+> /speckit.clarify
+> /speckit.plan
+> /speckit.tasks
+
+You now have:
+  .specify/specs/001-user-auth/
+    ├── spec.md         ← YOUR requirements
+    ├── plan.md         ← YOUR architecture
+    ├── tasks.md        ← YOUR task breakdown
+    └── constitution.md ← YOUR project rules
+
+Step 2: Let the squad validate what you wrote
+────────────────────────────────────────────────
+> /speckit.squad.run 001-user-auth
+
+The squad does NOT rewrite your spec. It VALIDATES it:
+  WHY   → runs Understanding CLI against YOUR spec.md
+          "Structure: 0.65 — FAIL. 12 requirements lack measurable constraints."
+          "Testability: 0.55 — FAIL. 8 requirements have no acceptance criteria."
+  WHAT  → suggests specific fixes (doesn't replace your spec)
+  WHY₂  → re-validates after fixes
+
+  ASSESS → evaluates YOUR plan's feasibility
+           "Effort estimate: 45 pw. Correction factor 1.4x → budget 63 pw."
+  HOW   → reviews YOUR architecture, checks ADR completeness
+           "ADR-003 missing: why PostgreSQL over MongoDB? Add rationale."
+  PLAN  → reviews YOUR tasks for gaps
+           "Task T-012 depends on T-008 but T-008 isn't scheduled first."
+
+  SCIENTIST → investigates any unknowns YOUR spec raised
+  GROUND    → reality-checks YOUR estimates against industry data
+
+  Output: your original spec + issues.md + quality-gates.md + updated estimates
+
+Step 3: Fix what the squad found
+────────────────────────────────────────────────
+Read issues.md. Two options:
+
+  Option A: Fix manually
+  Open spec.md, address each issue, re-run:
+  > /speckit.squad.run 001-user-auth
+  (WHY re-validates, should pass now)
+
+  Option B: Let the squad fix it
+  > /speckit.squad.run 001-user-auth --fix
+  (WHAT rewrites failing requirements to pass quality gates,
+   preserving your intent)
+
+Step 4: Build with the squad's quality gates
+────────────────────────────────────────────────
+> /speckit.squad.build 001-user-auth
+
+Same build flow as Recipe 1:
+  IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
+  But now building against YOUR spec, not a squad-generated one.
+  SPEC GUARD traces every FR-* from YOUR spec to code.
+  VERIFICATION at the end checks YOUR requirements are 100% implemented.
+
+Step 5: Verify YOUR spec is fully implemented
+────────────────────────────────────────────────
+> /speckit.squad.verify
+
+VERIFICATION: "66 requirements in spec.md. 66 traced to code. 66 tested.
+Coverage: 100%. BUILD COMPLETE."
+```
+
+---
+
+## Recipe 10: Use Spec-Kit for Understanding, Squad for Building Only
+
+You trust your own specs and planning. You just want the build quality gates.
+
+```
+Step 1: Do all spec-kit phases yourself
+────────────────────────────────────────────────
+> /speckit.constitution
+> /speckit.specify "..."
+> /speckit.clarify
+> /speckit.plan
+> /speckit.tasks
+
+Step 2: Skip the squad's understanding phase — go straight to build
+────────────────────────────────────────────────
+> /speckit.squad.build 001-your-feature
+
+The squad reads YOUR existing artifacts:
+  spec.md, plan.md, tasks.md, constitution.md
+
+Then builds with full quality gates:
+  Per task:  IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
+  Per phase: ENGINEERING MANAGER → INTEGRATOR
+  Final:     VERIFICATION (backpropagation against YOUR spec)
+
+You wrote the WHAT and HOW. The squad handles the disciplined execution.
+
+Step 3: Verify
+────────────────────────────────────────────────
+> /speckit.squad.verify
+```
+
+---
+
+## Recipe 11: Squad Validates, You Decide
+
+Use the squad as a **review tool** — it checks your work but you keep full control.
+
+```
+Step 1: Write your spec with spec-kit
+────────────────────────────────────────────────
+> /speckit.specify "..."
+> /speckit.plan
+> /speckit.tasks
+
+Step 2: Ask WHY to review your spec (just the quality check)
+────────────────────────────────────────────────
+> /speckit.squad.investigate "Review my spec at .specify/specs/001-feature/spec.md against IEEE 830 and ISO 29148 quality standards"
+
+SCIENTIST runs Understanding CLI:
+  Overall: 0.72 ✓  Structure: 0.68 ✗  Testability: 0.74 ✓
+  Semantic: 0.61 ✓  Cognitive: 0.70 ✓  Readability: 0.78 ✓
+
+  "Structure is borderline. These 5 requirements need splitting..."
+
+Step 3: Ask GROUND to reality-check your estimates
+────────────────────────────────────────────────
+> /speckit.squad.ground
+
+GROUND:
+  "Your estimate of 8 weeks is in the 25th percentile for similar projects.
+   Reference class: 12-16 weeks. Recommend budgeting 14 weeks."
+
+Step 4: Ask SCIENTIST to research a technical question
+────────────────────────────────────────────────
+> /speckit.squad.investigate "Should we use WebSockets or SSE for real-time notifications? Expected load: 5K concurrent connections."
+
+Step 5: Decide and build (your way, or with the squad)
+────────────────────────────────────────────────
+You keep control. Use squad insights to improve your plan.
+Then either build yourself or: /speckit.squad.build 001-feature
+```
+
+---
+
+## When to Use Which Recipe
+
+| Scenario | Recipe | Why |
+|----------|--------|-----|
+| New project, no existing process | Recipe 1 (greenfield) | Let the squad handle everything |
+| Legacy system modernization | Recipe 2 (brownfield) | Squad discovers what exists |
+| Team already uses spec-kit | **Recipe 9 (hybrid)** | Write specs yourself, squad validates + builds |
+| Trust your specs, want build discipline | **Recipe 10 (build only)** | Skip understanding, use build gates |
+| Want advice, keep full control | **Recipe 11 (review tool)** | Cherry-pick squad capabilities |
+| Spec changed mid-build | Recipe 3 (change) | Change controller handles impact |
+| Stuck on architecture | Recipe 4 (innovate) | Get fresh alternatives |
+| Need evidence for a decision | Recipe 5 (investigate) | SCIENTIST researches with evidence grading |
+
+---
+
 ## Anti-Patterns — Don't Do This
 
 | Anti-Pattern | Why It Fails | Do This Instead |
