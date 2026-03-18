@@ -683,7 +683,12 @@ Additional artifacts (conditional):
 - `alternatives.md` (if INNOVATE ran)
 - `evolution-report.md` (if EVOLVE ran)
 
-### 12.7 Set Final State
+### 12.7 Run SCOREKEEPER
+
+Dispatch SCOREKEEPER to produce the final scorecard (see Section 13 for full protocol).
+Read the scorecard output and apply any automatic self-healing actions.
+
+### 12.8 Set Final State
 
 Update `state.json`:
 ```json
@@ -721,6 +726,12 @@ SPECIALISTS SUMMONED: {list}
 
 ARTIFACTS: {count} files in .specify/specs/{NNN}-{feature}/
 
+AGENT SCORECARD:
+  Top performer: {agent} (+{score}) — {highlight}
+  Badges earned: {count} ({badge names})
+  Peer appreciation: {count} exchanges
+  Self-healing: {count} recommendations
+
 WARNINGS:
   {any UNVALIDATED artifacts}
   {any low-confidence domains}
@@ -735,7 +746,91 @@ Run: /speckit.squad.feedback {NNN} after implementation
 
 ---
 
-## 13. State Tracking Protocol
+## 13. Scorekeeper Protocol
+
+SCOREKEEPER runs throughout the entire squad execution — not as a separate phase, but woven into every agent dispatch.
+
+### After Every Agent Dispatch
+
+After reading an agent's output, MANAGER scores the agent:
+
+```
+1. Read the agent's output quality:
+   - Did WHY pass or fail? → +5 for CRITICAL catch, -1 for false positive
+   - Did WHAT need rework? → -1 per WHY rejection
+   - Did IMPLEMENTER pass first review? → +3 first-pass, -1 rework
+   - Did SCIENTIST validate an assumption? → +2 validated, +4 invalidated (more valuable)
+
+2. Append to state.json.agent_scores:
+   {
+     "agent": "{AGENT_NAME}",
+     "action": "{what they did}",
+     "points": {N},
+     "reason": "{why these points}"
+   }
+```
+
+### Peer Appreciation Collection
+
+When an agent's output is consumed by the NEXT agent, check: did the next agent benefit from high-quality input?
+
+```
+IF WHAT produces spec.md AND WHY2 passes on first attempt:
+  → Peer appreciation: WHY awards WHAT +2 "clear_and_actionable"
+
+IF SCIENTIST produces investigation/ AND HOW makes a decision based on it:
+  → Peer appreciation: HOW awards SCIENTIST +3 "unblocked_my_work"
+
+IF WHY catches an issue that SPEC GUARD would have missed:
+  → Peer appreciation: SPEC GUARD awards WHY +2 "caught_my_mistake"
+```
+
+Record in reasoning-journal.json:
+```json
+{
+  "type": "peer_appreciation",
+  "from": "{agent giving appreciation}",
+  "to": "{agent receiving}",
+  "points": {N},
+  "reason": "{why}"
+}
+```
+
+### During FINALIZE — Full Scorecard
+
+After GROUND + REFLECT + EVOLVE + CALIBRATE, dispatch SCOREKEEPER:
+
+Use the Agent tool to dispatch a subagent with:
+- **prompt:** Read the file `agents/core/scorekeeper.md` for your complete instructions. You are the SCOREKEEPER. Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
+- **description:** "SCOREKEEPER: final scoring, badges, self-healing recommendations"
+
+Context pack:
+- state.json (with agent_scores array)
+- reasoning-journal.json (with peer_appreciation entries)
+- knowledge-base/agent-scores.yaml (lifetime data)
+- config-template.yml → scoring section (point values, thresholds)
+
+### Expected SCOREKEEPER Outputs
+
+- `.specify/specs/{feature}/agent-scorecard.md` — leaderboard, peer appreciation, self-healing recommendations
+- Updated `knowledge-base/agent-scores.yaml` — run history appended, lifetime scores updated, badges awarded
+
+### Self-Healing Actions (MANAGER executes immediately)
+
+Read SCOREKEEPER's self-healing recommendations and apply:
+
+| Recommendation | MANAGER Action |
+|---------------|---------------|
+| "ASSESS correction factor should increase to 1.5x" | Update calibration-profile.yaml |
+| "WHY false positive rate > 30%" | Log for human review (prompt refinement) |
+| "IMPLEMENTER score < -5 over 3 runs" | Log for human review (prompt refinement) |
+| "TEST GUARDIAN score low — add test pattern examples" | Log for human review |
+
+Self-healing that affects calibration-profile.yaml is automatic. Self-healing that affects agent prompts is flagged for human review.
+
+---
+
+## 14. State Tracking Protocol
 
 After **every** phase transition, update `.specify/squad/state.json`:
 
@@ -944,7 +1039,7 @@ The goal of re-runs is monotonic improvement: each run should produce artifacts 
 ## 20. Quick Reference: Phase Transitions
 
 ```
-INIT ──────────► DISCOVER ──────► WHY1 ──────────► WHAT
+INIT ──────► DISCOVER ──► SYNTHESIZER ──► WHY1 ──► WHAT
                   ▲                 │                 │
                   │ (re-investigate) │ (CRITICAL)      │
                   └─────────────────┘                 ▼
@@ -1002,4 +1097,7 @@ Before declaring DONE, verify:
 - [ ] TEST ARCHITECT ran (mandatory)
 - [ ] `implementability-report.md` exists with per-task scores
 - [ ] Knowledge base files updated (patterns.yaml, pitfalls.yaml, calibration-profile.yaml)
-- [ ] Final summary printed to terminal with spec ID for future feedback
+- [ ] SCOREKEEPER ran — agent-scorecard.md produced
+- [ ] agent-scores.yaml updated with run history
+- [ ] Self-healing recommendations applied (calibration) or logged (prompt refinement)
+- [ ] Final summary printed to terminal with spec ID and scorecard summary
