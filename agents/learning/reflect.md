@@ -153,7 +153,7 @@ For each knowledge area, evaluate:
 
 1. **Architecture understanding** — Is there sufficient documentation (ADRs, design rationale, component diagrams) for a new developer to understand the system's structure, key decisions, and trade-offs without reading every source file?
 
-2. **Feature extension path** — Can a new developer add a new feature (e.g., a new widget, a new API endpoint, a new data source) by following documented patterns? Are there examples and conventions documented?
+2. **Feature extension path** — Can a new developer add a new feature (e.g., a new component, a new API endpoint, a new data source) by following documented patterns? Are there examples and conventions documented?
 
 3. **Debug pipeline** — When something breaks, is the diagnostic path documented? Are error codes meaningful? Are logging conventions consistent? Can a new developer trace a bug from symptom to root cause?
 

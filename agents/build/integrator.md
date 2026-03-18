@@ -158,7 +158,7 @@ Write to `.specify/specs/{feature}/integration-report.md` (one per phase checkpo
 ### Failures (if FAIL)
 | # | Component A | Component B | Issue | Responsible Task | Fix |
 |---|-------------|-------------|-------|-----------------|-----|
-| 1 | WidgetShell | FeedService | Type mismatch on FeedResponse | T-005 | Update return type |
+| 1 | ComponentShell | FeedService | Type mismatch on FeedResponse | T-005 | Update return type |
 
 ### Comparison to Prior Phase (if applicable)
 - **New issues:** {count}

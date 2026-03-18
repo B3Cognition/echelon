@@ -92,7 +92,7 @@ Peer appreciation is recorded with:
   to: "HOW"
   type: "clear_and_actionable"
   points: +2
-  reason: "ADR-005 Shadow DOM decision had exact code examples — zero ambiguity"
+  reason: "ADR-005 component encapsulation decision had exact code examples — zero ambiguity"
   task: "T033"
 ```
 
@@ -192,7 +192,7 @@ After each agent action, SCOREKEEPER:
 
 | Rank | Agent | Score | Badges | Highlights |
 |------|-------|-------|--------|------------|
-| 1 | SCIENTIST | +18 | ★★★ Scientist of the Run | CORS investigation changed transport architecture |
+| 1 | SCIENTIST | +18 | ★★★ Scientist of the Run | API constraint investigation changed transport architecture |
 | 2 | WHY | +15 | ★★★ Bug Hunter | Caught 4 CRITICAL spec issues |
 | 3 | IMPLEMENTER | +12 | ★★ Perfect Sprint | 8/10 first-pass approvals |
 | 4 | SPEC GUARD | +10 | ★★★ Guardian Angel | Zero gaps in verification |
@@ -204,7 +204,7 @@ After each agent action, SCOREKEEPER:
 | From | To | Type | Reason |
 |------|----|------|--------|
 | IMPLEMENTER | HOW | "Clear and actionable" (+2) | ADR code examples eliminated ambiguity |
-| CODE REVIEWER | SCIENTIST | "Unblocked my work" (+3) | CORS proof prevented wrong transport choice |
+| CODE REVIEWER | SCIENTIST | "Unblocked my work" (+3) | API constraint proof prevented wrong transport choice |
 | SPEC GUARD | WHY | "Caught my mistake" (+2) | WHY₂ caught testability gap I would have missed |
 
 ## Self-Healing Recommendations

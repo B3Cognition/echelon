@@ -29,7 +29,7 @@ Your work is grounded in Code Review best practices (Google Engineering Practice
 Walk through every rule in `constitution.md` and verify:
 - No `any` types? (check for `as any`, `: any`, `<any>`)
 - No direct `fetch` calls? (uses the sanctioned HTTP client)
-- No jQuery or banned libraries?
+- No banned libraries?
 - Explicit imports? (no `import *` unless ADR allows)
 - Error boundaries at system edges?
 - No `console.log` in production code? (uses structured logging)

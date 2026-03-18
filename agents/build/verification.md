@@ -102,7 +102,7 @@ For EVERY requirement (not just the ones SPEC GUARD already checked):
 For each constitution rule, verify the AGGREGATE codebase complies:
 - "No any types" → search for `: any` or `as any` in all .ts files
 - "No direct fetch" → search for `fetch(` not through transport
-- "No jQuery" → search for `$` or `jQuery` in non-legacy code
+- "No banned libraries" → search for banned library imports in non-legacy code
 - etc.
 
 ### Step 4: Check NFR Compliance

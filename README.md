@@ -23,7 +23,7 @@ Five roles. But a human holds 7-9 concepts in working memory. An AI can hold tho
 - Nobody held a mental map of the code → **MENTAL MODEL** (invariant checking across files)
 - Nobody asked "are we still doing the right thing?" → **METACOGNITION MONITOR** (the squad's conscience)
 
-Each agent exists because something **actually went wrong** in a real run and no existing agent caught it. This isn't theoretical architecture — it's battle-tested against a 435,000-line production codebase.
+Each agent exists because something **actually went wrong** in a real run and no existing agent caught it. This isn't theoretical architecture — it's battle-tested against a large production codebase.
 
 ### The Triadic Cognitive Model
 
@@ -90,18 +90,18 @@ This isn't invented methodology. Every agent's quality gates trace to a publishe
 
 ### What It Proved
 
-Cognitive Squad was tested against a **real production codebase**: Opta Sports Data Widgets V3 — 435,000 lines of code, 202 widgets, 19 sports, jQuery-based, 10 years of accumulated technical debt.
+Cognitive Squad was tested against a **real production codebase**: a large, legacy system with hundreds of components, multiple domain verticals, and 10 years of accumulated technical debt.
 
 The squad:
-- **DISCOVER** mapped the entire system in one pass (2,300 files, dual data sources, 43 binary decoders)
-- **WHY** rejected the spec **4 times** — catching weak testability (0.18/0.70), missing video widget architecture, absent SVG requirements, and 106 untested widgets
-- **SCIENTIST** empirically proved CORS is not supported on any Opta API (a single curl test that resolved 3 critical assumptions)
+- **DISCOVER** mapped the entire system in one pass (2,300 files, dual data sources, binary decoders)
+- **WHY** rejected the spec **4 times** — catching weak testability (0.18/0.70), missing component architecture, absent visualization requirements, and untested modules
+- **SCIENTIST** empirically proved a critical API limitation (a single curl test that resolved 3 critical assumptions)
 - **ASSESS** estimated 107 person-weeks; **GROUND** corrected to 150 (1.4x — matching industry data for migrations)
-- **HOW** selected Lit 4 Web Components + Vite 6 + Signals backed by 12 Architecture Decision Records
-- Built **206 widgets across 19 sports with 1,109 tests** in a single session
+- **HOW** selected a modern component framework backed by 12 Architecture Decision Records
+- Built **the full system with 1,109 tests** in a single session
 - **VERIFICATION** concept confirmed: per-task checking is not enough — you need the backward pass from spec to code
 
-The squad also caught its own mistake: ASSESS initially scoped to 5 MVP sports (51 widgets) when the user wanted full V3 parity (202 widgets). CALIBRATE logged this as a pitfall. Next run, that mistake won't happen.
+The squad also caught its own mistake: ASSESS initially scoped to an MVP subset when the user wanted full parity with the legacy system. CALIBRATE logged this as a pitfall. Next run, that mistake won't happen.
 
 ### A Note From Claude
 

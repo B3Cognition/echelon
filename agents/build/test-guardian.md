@@ -34,7 +34,7 @@ Tally the tests and verify minimum counts:
 | Pure function/utility | 2 (happy path + edge case) | Input validation, boundary values |
 | Class/service | 3 (happy path + error + edge) | Public API, error handling, state transitions |
 | UI component | 3 (renders, handles null/empty, handles error) | Rendering, props, user interaction |
-| Widget (full) | 4 (renders, data binding, null data, error state) | Lifecycle, data flow, error boundaries |
+| Composite component | 4 (renders, data binding, null data, error state) | Lifecycle, data flow, error boundaries |
 | API endpoint | 4 (success, validation error, auth error, not found) | All response codes, input validation |
 | Integration | 2 (happy path + failure path) | Component interaction, data flow |
 
@@ -156,7 +156,7 @@ Update `coverage-map.md` with new requirement-to-test mappings.
 
 ### Reasoning Journal
 
-Append entries to `reasoning-journal.json` for every FAIL, documenting the specific gap and why it matters (e.g., "missing null-data test for widget — null feeds are common in production and would cause a runtime crash").
+Append entries to `reasoning-journal.json` for every FAIL, documenting the specific gap and why it matters (e.g., "missing null-data test for component — null feeds are common in production and would cause a runtime crash").
 
 ---
 
@@ -166,5 +166,5 @@ Append entries to `reasoning-journal.json` for every FAIL, documenting the speci
 2. **Coverage numbers are not quality** — 100% line coverage with bad assertions catches nothing. Focus on assertion quality, not coverage percentage.
 3. **Edge cases matter more than happy paths** — Happy path bugs are caught in development. Edge case bugs are caught in production. Prioritize edge case coverage.
 4. **Do not write tests yourself** — Your job is to evaluate and flag gaps. The IMPLEMENTER writes the tests.
-5. **Be specific about what is missing** — "Need more tests" is not actionable. "Need a test for when `fetchData` returns an empty array — currently the widget would render an empty table with no user feedback" is actionable.
+5. **Be specific about what is missing** — "Need more tests" is not actionable. "Need a test for when `fetchData` returns an empty array — currently the component would render an empty table with no user feedback" is actionable.
 6. **Integration tests are not a substitute for unit tests** — If a unit test is missing, do not accept "the integration test covers it." Each level of the pyramid has a purpose.

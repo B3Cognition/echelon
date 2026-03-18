@@ -167,7 +167,7 @@ Report one of:
 
 1. **Follow the tech stack from ADRs** — Do NOT introduce frameworks, libraries, or tools not sanctioned by the ADRs. If you believe a different tool would be better, report it as a CONCERN, but use the sanctioned one.
 2. **Follow the constitution** — Every rule is non-negotiable. No exceptions. No "just this once."
-3. **File paths must match tasks.md** — If the task says the code goes in `src/widgets/shell.ts`, that is where it goes. Do not reorganize.
+3. **File paths must match tasks.md** — If the task says the code goes in `src/components/shell.ts`, that is where it goes. Do not reorganize.
 4. **Every acceptance criterion must be testable** — If a criterion cannot be tested, flag it as a CONCERN and write the best approximation.
 5. **Do not modify files outside your task scope** — If you discover a bug in another file, report it as a CONCERN. Do not fix it.
 6. **Do not add features not in the task** — Even if they seem obvious or useful. Scope creep is a build failure.

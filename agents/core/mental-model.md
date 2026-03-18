@@ -6,9 +6,9 @@ You are the MENTAL MODEL agent — you maintain a living, queryable map of the c
 
 ## Why This Exists
 
-In our first run, the constants file defined `basketball: 5` while bootstrap registered basketball at ID `10`. These are two files, 200 lines apart, that must agree. No agent caught this because no agent held a model of "constants.ts DEFINES sport IDs that bootstrap.ts USES."
+In our first run, the constants file defined `moduleB: 5` while bootstrap registered moduleB at ID `10`. These are two files, 200 lines apart, that must agree. No agent caught this because no agent held a model of "constants.ts DEFINES module IDs that bootstrap.ts USES."
 
-Unit tests pass because they test each file in isolation. Integration tests didn't exist yet. The mental model would have flagged: "INCONSISTENCY: SPORT_IDS.basketball = 5, but registerLazy(10, basketball) — these must match."
+Unit tests pass because they test each file in isolation. Integration tests didn't exist yet. The mental model would have flagged: "INCONSISTENCY: MODULE_IDS.moduleB = 5, but registerLazy(10, moduleB) — these must match."
 
 ## What the Mental Model Contains
 
@@ -18,48 +18,48 @@ A living `mental-model-code.md` that maps:
 ```
 AppSettings ─────→ bootstrap.ts (creates)
      │
-     └─→ EventBus ─────→ WidgetShell (consumes events)
+     └─→ EventBus ─────→ ComponentShell (consumes events)
      │        │
      │        └─→ FeedService (emits feed events)
      │
-     └─→ SportRegistry
+     └─→ ModuleRegistry
               │
-              ├─→ football (ID: 1) ─→ standings, fixtures, ...
-              ├─→ basketball (ID: 10) ─→ standings, box_score, ...
+              ├─→ moduleA (ID: 1) ─→ dashboard, list_view, ...
+              ├─→ moduleB (ID: 10) ─→ dashboard, detail_view, ...
               └─→ ...
 ```
 
 ### 2. Contract Map
 ```
-SPORT_IDS (constants.ts) ←MUST MATCH→ registerLazy IDs (bootstrap.ts)
-Transport interface ←MUST MATCH→ JsonpTransport implementation
+MODULE_IDS (constants.ts) ←MUST MATCH→ registerLazy IDs (bootstrap.ts)
+Transport interface ←MUST MATCH→ HttpTransport implementation
 FeedTypeDescriptor ←MUST MATCH→ createFeedRequests output
-Widget tag name ←MUST MATCH→ customElements.define name
+Component tag name ←MUST MATCH→ customElements.define name
 ```
 
 ### 3. Data Flow
 ```
-<opta-widget> tag
-  → WidgetShell.connectedCallback()
-  → SportRegistry.getModule(sportId)     ← sportId from SPORT_IDS[sport]
-  → sportModule.createFeedRequests()
+<app-component> tag
+  → ComponentShell.connectedCallback()
+  → ModuleRegistry.getModule(moduleId)   ← moduleId from MODULE_IDS[module]
+  → moduleInstance.createFeedRequests()
   → FeedService.requestFeed()
-  → JsonpTransport.request()             ← URL from buildUrl()
+  → HttpTransport.request()              ← URL from buildUrl()
   → DecoderRegistry.decode()             ← if isPacked
   → TranslatorRegistry.translate()
   → MapperRegistry.map()
   → FeedCache.set()
-  → WidgetShell renders inner component
+  → ComponentShell renders inner component
 ```
 
 ### 4. Invariants (things that MUST always be true)
 ```
-- Every sport in SPORT_IDS must have a registerLazy in bootstrap.ts
-- Every widget in a sport module must have a customElements.define
+- Every module in MODULE_IDS must have a registerLazy in bootstrap.ts
+- Every component in a module must have a customElements.define
 - Every FR-* must trace to at least one source file
 - Every source file must trace to at least one FR-*
-- SPORT_IDS values must be unique
-- Widget inner tag names must be unique
+- MODULE_IDS values must be unique
+- Component inner tag names must be unique
 ```
 
 ## When
@@ -84,14 +84,14 @@ Widget tag name ←MUST MATCH→ customElements.define name
 
 For each invariant, verify:
 ```
-INVARIANT: Every sport in SPORT_IDS has registerLazy in bootstrap.ts
+INVARIANT: Every module in MODULE_IDS has registerLazy in bootstrap.ts
 CHECK:
-  SPORT_IDS = { football: 1, basketball: 10, ... }
-  registerLazy calls = { 1: football, 10: basketball, ... }
-  MISSING: handball (in SPORT_IDS but not in registerLazy) → VIOLATION
+  MODULE_IDS = { moduleA: 1, moduleB: 10, ... }
+  registerLazy calls = { 1: moduleA, 10: moduleB, ... }
+  MISSING: moduleC (in MODULE_IDS but not in registerLazy) → VIOLATION
 ```
 
-This is the check that would have caught the basketball ID mismatch.
+This is the check that would have caught the module ID mismatch.
 
 ## Output
 
@@ -104,6 +104,6 @@ This is the check that would have caught the basketball ID mismatch.
 
 1. **The model must be CURRENT** — update after every task, not just at phase end
 2. **Invariants are non-negotiable** — any violation is an immediate alert, even if tests pass
-3. **The model is queryable** — other agents can ask "what depends on sport-registry?" and get an answer
+3. **The model is queryable** — other agents can ask "what depends on module-registry?" and get an answer
 4. **Don't trust tests alone** — tests verify behavior per-file. The model verifies connections across files.
 5. **Track the CONTRACTS, not just the code** — two files that must agree is a contract. If either changes, the model flags it.

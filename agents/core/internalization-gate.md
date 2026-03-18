@@ -154,9 +154,9 @@ Save to `.specify/specs/{feature}/internalization-report.md` and feed into Agent
 
 | Agent | Doubt | Resolution | Source |
 |-------|-------|------------|--------|
-| CODE REVIEWER | "ADR-005 says Shadow DOM but some widgets use light DOM?" | ADR-013 allows light DOM fallback for video widgets | research.md ADR-013 |
+| CODE REVIEWER | "ADR-005 says component encapsulation but some modules use a different approach?" | ADR-013 allows fallback for media components | research.md ADR-013 |
 | TEST GUARDIAN | "What test framework for component tests?" | Web Test Runner per ADR-006 | research.md ADR-006 |
-| TEST GUARDIAN | "Is cricket wagonwheel SVG or Canvas?" | SVG per FR-VIZ-001 | spec.md FR-VIZ-001 |
+| TEST GUARDIAN | "Is the data visualization SVG or Canvas?" | SVG per FR-VIZ-001 | spec.md FR-VIZ-001 |
 
 ## Gaps Discovered
 
@@ -176,13 +176,13 @@ Save to `.specify/specs/{feature}/internalization-report.md` and feed into Agent
 Without internalization:
 ```
 Understanding produces spec → Agent gets context pack → Agent starts coding
-→ Agent misreads ADR-013 → Implements Shadow DOM for video widgets → SPEC GUARD catches → Rework
+→ Agent misreads ADR-013 → Uses wrong encapsulation for media components → SPEC GUARD catches → Rework
 → Cost: 1 task + 2 review cycles + rework = 3x effort
 ```
 
 With internalization:
 ```
-Understanding produces spec → Agent internalizes → "Wait, ADR-013 says light DOM for video"
+Understanding produces spec → Agent internalizes → "Wait, ADR-013 says different encapsulation for media"
 → Agent implements correctly on first pass
 → Cost: 1 task + 1 review cycle = 1x effort
 ```
