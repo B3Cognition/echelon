@@ -1,7 +1,9 @@
 # Cognitive Squad
 
+![Dry Run Validation](docs/dry-run.gif)
+
 <details>
-<summary><strong>✓ 96 checks passed — Squad ready to deploy</strong> (click to expand dry-run output)</summary>
+<summary><strong>✓ 96 checks passed — Squad ready to deploy</strong> (click to expand full output)</summary>
 
 ```
 ╔══════════════════════════════════════════════════╗
