@@ -290,7 +290,7 @@ agents:
     file: agents/specialists/innovate.md
     phase: understanding
     tier: specialist
-    role: "TRIZ, First Principles, Blue Ocean — breaks stagnation"
+    role: "Design Thinking + AutoTRIZ + Lateral Thinking — evidence-based innovation (ISO/TR 18686, AutoTRIZ 2024)"
     when: "Re-runs, stagnation detected, circular reasoning 3x"
     inputs: [all current artifacts, reasoning-journal.json]
     outputs: [alternatives.md, risk-opportunities.md, challenge-assumptions.md]

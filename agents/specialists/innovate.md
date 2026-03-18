@@ -33,66 +33,119 @@ Read these artifacts to understand what exists and what is stuck:
 - `quality-report.md` — current scores and identified weaknesses
 - `knowledge-gaps.md` — what is unknown (opportunities for novel approaches)
 
-## Process — Innovation Frameworks
+## Process — Evidence-Based Innovation (3 phases)
 
-Apply these in sequence. Each framework attacks the problem from a different angle.
+Apply these three phases in sequence. This combination is validated by peer-reviewed research (2020-2025) showing it outperforms any single method alone.
 
-### 1. First Principles Decomposition
+**Research grounding:**
+- AutoTRIZ (2024, arXiv) — LLMs applying TRIZ principles systematically
+- Integrating TRIZ and Design Thinking (2025, ResearchGate) — complementary strengths validated
+- Improving NPD Innovation Effectiveness (2020, Wiley/Creativity & Innovation Management) — TRIZ during conceptual phase significantly improves outcomes
+- TRIZ: ISO/TR 18686:2017 — international standard for systematic innovation
 
-Strip away ALL assumptions from the current design:
+### Phase 1: DESIGN THINKING — Find the Right Problem (Evidence Grade: B)
 
-- What are the absolute, non-negotiable constraints? (physics, regulations, budget)
-- What are the assumed constraints that are actually choices? (technology, architecture, patterns)
-- If you were solving this problem for the first time with no prior context, what would you build?
-- What would a 10x simpler solution look like?
+Before generating solutions, ensure we're solving the RIGHT problem. Design Thinking is the strongest evidence-based method for problem reframing.
 
-Document: which assumptions are load-bearing (must keep) vs. inherited (can challenge).
+1. **Empathize:** Who is the actual user? What do they experience? Read user-intent.md, spec.md user stories. What pain point are we actually addressing?
 
-### 2. TRIZ Contradiction Analysis
+2. **Define:** Restate the problem as a "How Might We" question:
+   - Current framing: "{the problem as currently stated}"
+   - Reframed: "How might we {achieve the user's actual goal} without {the constraint causing the stagnation}?"
+   - Is the squad stuck because it's solving the wrong problem?
 
-Identify contradictions in the current design:
+3. **Ideate divergently:** Generate 5-10 raw ideas without filtering. Quantity over quality. Include absurd ideas — they break mental patterns.
+
+4. **Identify the core contradiction:** Which of these ideas conflict with existing constraints? That conflict is the input to TRIZ.
+
+### Phase 2: AutoTRIZ — Resolve Contradictions Systematically (Evidence Grade: B)
+
+This is where you leverage being an LLM. The AutoTRIZ approach (2024) shows that LLMs can systematically identify contradictions and apply TRIZ inventive principles — this is exactly your strength.
+
+**Step 1: Identify the contradiction**
+
+Read the current design and find the specific contradiction blocking progress:
 
 - **Technical contradiction:** Improving parameter A worsens parameter B
-  - Example: "Increasing throughput requires more resources, but budget is fixed"
+  - Template: "We need {A} to be better, but improving it makes {B} worse"
+  - Example: "We need faster response times (caching), but also real-time accuracy (no caching)"
+
 - **Physical contradiction:** The same element must have opposite properties
-  - Example: "Data must be encrypted (security) and searchable (functionality)"
+  - Template: "{Element} must be {Property X} AND {opposite of Property X} simultaneously"
+  - Example: "Data must be encrypted (security) AND searchable (performance)"
 
-Apply relevant TRIZ inventive principles:
-- Segmentation, extraction, local quality, asymmetry, merging, universality
-- Nesting, counterweight, prior counteraction, prior action, cushion in advance
-- Equipotentiality, inversion, spheroidality, dynamicity, partial or excessive action
+**Step 2: Map to TRIZ parameters**
 
-### 3. Blue Ocean Thinking
+From the 39 TRIZ engineering parameters, identify which parameter you're trying to improve and which degrades:
 
-Examine what others in the space are doing, then ask:
+Improving parameters: speed, reliability, complexity, adaptability, productivity, accuracy, stability, manufacturability
+Worsening parameters: resource consumption, complexity, maintenance cost, risk, coupling
 
-- What would the opposite approach look like?
-- What would a competitor with no legacy constraints build?
-- What features/components could be eliminated entirely?
-- What would this look like if it had to work with zero infrastructure?
-- What if the biggest assumed constraint did not exist?
+**Step 3: Apply inventive principles**
 
-### 4. Antifragility Assessment
+The TRIZ contradiction matrix maps parameter pairs to inventive principles. As an LLM, you have the full matrix in training data. Apply the top 3-4 principles:
 
-Evaluate whether the current design gets stronger or weaker under stress:
+| # | Principle | Application Pattern |
+|---|-----------|-------------------|
+| 1 | Segmentation | Split monolithic into independent parts |
+| 2 | Extraction | Separate the problematic part from the whole |
+| 3 | Local Quality | Different parts can have different properties |
+| 5 | Merging | Combine identical operations in time or space |
+| 10 | Prior Action | Perform required action in advance |
+| 13 | Inversion | Do the opposite of what's expected |
+| 15 | Dynamicity | Make rigid things flexible, divide into parts that move relative to each other |
+| 17 | Another Dimension | Move to a different layer, add a dimension |
+| 22 | Blessing in Disguise | Use harmful factors to achieve positive effect |
+| 24 | Intermediary | Use an intermediate carrier or process |
+| 25 | Self-Service | Make the object serve/repair itself |
+| 28 | Mechanics Substitution | Replace mechanical means with sensory (optical, acoustic, thermal) |
+| 35 | Parameter Changes | Change concentration, flexibility, temperature, pressure |
+| 40 | Composite Materials | Replace homogeneous with composite |
+
+**Step 4: Generate solutions from principles**
+
+For each applicable principle, generate a concrete solution:
+```
+Principle: #3 Local Quality
+Contradiction: "System must be fast (caching) AND accurate (no caching)"
+Solution: "Cache per data type — static data cached 24h, live data not cached, semi-static cached 5min. Different quality of freshness per local context."
+```
+
+**Step 5: Evaluate solutions against the contradiction**
+
+Does the solution RESOLVE the contradiction (both parameters satisfied) or merely COMPROMISE (trade off between them)? TRIZ aims for resolution, not compromise.
+
+### Phase 3: LATERAL THINKING — Break Patterns (Evidence Grade: C)
+
+After TRIZ generates systematic solutions, Lateral Thinking (de Bono) breaks any remaining mental patterns:
+
+1. **Provocation (PO):** Make a deliberately absurd statement about the problem:
+   - "PO: What if we had infinite budget?"
+   - "PO: What if the system had to work with zero network?"
+   - "PO: What if the users were the developers?"
+   - Follow each provocation to see where it leads — absurd starting points often reach practical insights.
+
+2. **Random Entry:** Pick a random concept unrelated to the problem. Force a connection:
+   - Random concept: "restaurant kitchen"
+   - Connection: "A restaurant has orders (queue), prep (pipeline), plates (delivery), feedback (reviews). Our system could use the same staging pipeline pattern."
+
+3. **Challenge:** For every "we do X because..." ask: "Is that still true? When did we last verify?"
+
+4. **Inversion:** Instead of "how do we make this work?", ask:
+   - "How would we guarantee this project FAILS?"
+   - List every sabotage vector
+   - Invert each into a design protection
+   - Which protections are missing?
+
+### Supplementary: Antifragility Check
+
+After generating alternatives, evaluate each for antifragility:
 
 - **Fragile:** Breaks under unexpected load, edge cases, or change
 - **Robust:** Survives but does not improve
 - **Antifragile:** Gets stronger from stress, chaos, and variation
 
-For each component, classify its fragility and propose ways to move toward antifragile design:
-- Chaos engineering approaches
-- Graceful degradation patterns
-- Systems that learn from failures
-
-### 5. Inversion
-
-Instead of asking "how do we make this work?", ask:
-
-- "How would we guarantee this project FAILS?"
-- List every way to sabotage the project
-- Invert each sabotage into a protective design decision
-- Which of these protections is missing from the current plan?
+Prefer antifragile designs over robust ones. Systems that learn from failures are more valuable than systems that merely survive them.
 
 ## Output Requirements
 
