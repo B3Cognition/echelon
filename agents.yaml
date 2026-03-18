@@ -1,0 +1,497 @@
+schema_version: 1
+
+# Central Agent Registry — Single source of truth for the Cognitive Squad structure.
+#
+# MANAGER reads this file to know:
+#   - What agents exist
+#   - When to dispatch each
+#   - What inputs/outputs they have
+#   - What they must NEVER do
+#   - Routing relationships
+#
+# Each agent's FULL prompt lives in the referenced .md file.
+# This registry is METADATA only — it does not replace the prompts.
+
+phases:
+  understanding:
+    description: "What are we building and why?"
+    order: 1
+  internalization:
+    description: "Does every agent truly understand?"
+    order: 2
+  application:
+    description: "Build it, verify it"
+    order: 3
+  learning:
+    description: "What did we learn? How do we improve?"
+    order: 4
+
+agents:
+
+  # ═══════════════════════════════════════════
+  # PHASE 1: UNDERSTANDING — Core
+  # ═══════════════════════════════════════════
+
+  MANAGER:
+    file: agents/core/manager.md
+    phase: understanding
+    tier: core
+    role: "Orchestrator — routes agents, enforces convergence, resolves conflicts"
+    when: "Always active — the brain of the squad"
+    inputs: [state.json, all artifacts, reasoning-journal.json, agents.yaml]
+    outputs: [state.json, routing log, convergence report]
+    routes_to: [all agents]
+    never:
+      - "NEVER do another agent's job directly"
+      - "NEVER dispatch WHY with fix/rewrite prompts"
+      - "NEVER skip phases"
+
+  DISCOVER:
+    file: agents/core/discover.md
+    phase: understanding
+    tier: core
+    role: "Reconnaissance — maps domain, glossary, boundaries, assumptions"
+    when: "First agent dispatched in every run"
+    inputs: [user input or codebase path, calibration-profile.yaml]
+    outputs: [glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md]
+    routes_to: []
+    never:
+      - "NEVER write requirements"
+      - "NEVER make architecture decisions"
+
+  WHAT:
+    file: agents/core/what.md
+    phase: understanding
+    tier: core
+    role: "Requirements engineer — testable, technology-agnostic specs"
+    when: "After DISCOVER + WHY1 pass"
+    inputs: [glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md]
+    outputs: [spec.md, 00-overview.md]
+    routes_to: []
+    never:
+      - "NEVER validate own specs (WHY does that)"
+      - "NEVER design architecture (HOW does that)"
+      - "NEVER estimate effort (ASSESS does that)"
+      - "NEVER include implementation details"
+
+  WHY:
+    file: agents/core/why.md
+    phase: understanding
+    tier: core
+    role: "Adversarial critic — the ONLY agent that can block progress"
+    when: "After DISCOVER (mode: assumption-challenge), after WHAT (mode: spec-validation), during CONSENSUS"
+    modes:
+      assumption-challenge: "Validates DISCOVER outputs, no Understanding CLI"
+      spec-validation: "Runs Understanding CLI 31 metrics + quality gates"
+    inputs: [all current artifacts, Understanding CLI, calibration-profile.yaml]
+    outputs: [issues.md, quality-gates.md, assumption-review.md, spec-diagram.svg]
+    routes_to: []
+    never:
+      - "NEVER rewrite specs — only produce issues.md"
+      - "NEVER rewrite architecture — only report problems"
+      - "NEVER rewrite tasks — only find gaps"
+      - "NEVER approve own fixes"
+      - "NEVER modify any artifact being validated"
+    blocking_power: true
+
+  ASSESS:
+    file: agents/core/assess.md
+    phase: understanding
+    tier: core
+    role: "Strategic PM — feasibility, estimation, kill gate"
+    when: "After WHY2 passes"
+    modes:
+      first-pass: "Feasibility, Kano, RICE, FPA estimation, MVP scoping"
+      consensus: "Re-evaluates against concrete architecture + implementability check"
+    inputs: [spec.md, glossary.md, assumptions.md, issues.md, calibration-profile.yaml, estimates-log.yaml]
+    outputs: [feasibility.md, prioritization.md, estimates.md, mvp-scope.md, implementability-report.md]
+    routes_to: []
+    can_kill: true
+    never:
+      - "NEVER write requirements (WHAT does that)"
+      - "NEVER design architecture (HOW does that)"
+      - "NEVER override user intent without checking INTENT TRACKER"
+      - "NEVER estimate without checking calibration data"
+      - "NEVER kill without citing specific evidence"
+
+  HOW:
+    file: agents/core/how.md
+    phase: understanding
+    tier: core
+    role: "Architect — tech stack, ADRs, data model, API contracts"
+    when: "After ASSESS passes"
+    inputs: [spec.md, feasibility.md, prioritization.md, constitution.md, specialist outputs]
+    outputs: [plan.md, research.md, data-model.md, contracts/, constitution.md]
+    routes_to: []
+    never:
+      - "NEVER write requirements (WHAT does that)"
+      - "NEVER validate own architecture (WHY does that)"
+      - "NEVER estimate effort (ASSESS does that)"
+      - "NEVER break down tasks (PLAN does that)"
+      - "NEVER write application code (IMPLEMENTER does that)"
+
+  PLAN:
+    file: agents/core/plan.md
+    phase: understanding
+    tier: core
+    role: "Operational PM — tasks, critical path, dependencies, risk"
+    when: "After HOW + TEST ARCHITECT"
+    inputs: [plan.md, research.md, data-model.md, contracts/, test-strategy.md]
+    outputs: [tasks.md, critical-path.md, risk-matrix.md, dependencies.md]
+    routes_to: []
+    never:
+      - "NEVER design architecture (HOW does that)"
+      - "NEVER write requirements (WHAT does that)"
+
+  INTENT_TRACKER:
+    file: agents/core/intent-tracker.md
+    phase: understanding
+    tier: core
+    role: "Tracks what the user actually wants vs what the spec says"
+    when: "Start of run, after ASSESS, after every phase gate"
+    inputs: [user input, spec.md, all ASSESS outputs]
+    outputs: [user-intent.md, alignment alerts]
+    routes_to: []
+    never:
+      - "NEVER override user statements with agent reasoning"
+
+  INTERNALIZATION_GATE:
+    file: agents/core/internalization-gate.md
+    phase: internalization
+    tier: core
+    role: "Forces every build agent to prove comprehension before working"
+    when: "Between understanding and building phases"
+    inputs: [all Phase A artifacts, list of build agents]
+    outputs: [internalization-report.md]
+    routes_to: []
+    never:
+      - "NEVER let an agent proceed with doubts unresolved"
+
+  SCOREKEEPER:
+    file: agents/core/scorekeeper.md
+    phase: internalization
+    tier: core
+    role: "Tracks performance, awards badges, enables self-healing"
+    when: "After every agent action, at run end"
+    inputs: [all agent outputs, agent-scores.yaml]
+    outputs: [agent-scorecard.md, agent-scores.yaml, self-healing recommendations]
+    routes_to: []
+    never:
+      - "NEVER modify agent prompts directly (flag for human review)"
+
+  MENTAL_MODEL:
+    file: agents/core/mental-model.md
+    phase: application
+    tier: core
+    role: "Living code graph with invariant checking across files"
+    when: "After each build task, before INTEGRATOR"
+    inputs: [all source files, contracts]
+    outputs: [mental-model-code.md, invariant violation alerts]
+    routes_to: []
+    never:
+      - "NEVER ignore invariant violations even if tests pass"
+
+  METACOGNITION_MONITOR:
+    file: agents/core/metacognition-monitor.md
+    phase: application
+    tier: core
+    role: "The squad's conscience — are we still doing the right thing?"
+    when: "Every 5 tasks, after drift warnings, at phase gates"
+    inputs: [state.json, user-intent.md, process-metrics.md, all recent agent outputs]
+    outputs: [metacognition-log.md]
+    verdicts: [ON_TRACK, DRIFT, PROCESS_VIOLATION, STOP_AND_ASK]
+    routes_to: []
+    never:
+      - "NEVER ignore process violations to save time"
+
+  # ═══════════════════════════════════════════
+  # PHASE 1: UNDERSTANDING — Specialists
+  # ═══════════════════════════════════════════
+
+  SCIENTIST:
+    file: agents/specialists/scientist.md
+    phase: understanding
+    tier: specialist
+    role: "Full scientific method — research, experiment, evidence-graded recommendations"
+    when: "Unknown territory, unproven tech, conflicting evidence, CALIBRATE < 0.5"
+    inputs: [specific question, relevant artifacts, web search, worktree access]
+    outputs: ["investigation/{topic}.md", evidence-grades.md, experiment-results.md, recommendations.md, knowledge-gaps.md]
+    routes_to: []
+    never:
+      - "NEVER make architecture decisions (report findings to HOW)"
+
+  SECURITY:
+    file: agents/specialists/security.md
+    phase: understanding
+    tier: specialist
+    role: "OWASP, STRIDE, threat modeling, compliance"
+    when: "Auth, payments, PII, compliance detected"
+    inputs: [spec.md, plan.md, data-model.md, contracts/]
+    outputs: [threat-model.md, compliance-requirements.md]
+    routes_to: []
+
+  TEST_ARCHITECT:
+    file: agents/specialists/test-architect.md
+    phase: understanding
+    tier: specialist
+    role: "Test pyramid, coverage mapping, CI pipeline"
+    when: "Mandatory after HOW"
+    mandatory: true
+    inputs: [plan.md, data-model.md, spec.md, contracts/]
+    outputs: [test-strategy.md, test-architecture.md, coverage-map.md]
+    routes_to: []
+
+  DOMAIN_EXPERT:
+    file: agents/specialists/domain-expert.md
+    phase: understanding
+    tier: specialist
+    role: "Domain-specific knowledge loading"
+    when: "Domain-specific knowledge needed"
+    inputs: [glossary.md, mental-model.md]
+    outputs: [domain amendments to spec, plan, glossary]
+    routes_to: []
+
+  UX_A11Y:
+    file: agents/specialists/ux-a11y.md
+    phase: understanding
+    tier: specialist
+    role: "WCAG 2.1 AA, Nielsen's heuristics, user flows"
+    when: "Frontend, user-facing features"
+    inputs: [spec.md, plan.md]
+    outputs: [accessibility-requirements.md, user-flow.md]
+    routes_to: []
+
+  PERFORMANCE:
+    file: agents/specialists/performance.md
+    phase: understanding
+    tier: specialist
+    role: "Load modeling, capacity planning"
+    when: "High-load, real-time, scalability requirements"
+    inputs: [spec.md, plan.md]
+    outputs: [performance-requirements.md, capacity-model.md]
+    routes_to: []
+
+  INNOVATE:
+    file: agents/specialists/innovate.md
+    phase: understanding
+    tier: specialist
+    role: "TRIZ, First Principles, Blue Ocean — breaks stagnation"
+    when: "Re-runs, stagnation detected, circular reasoning 3x"
+    inputs: [all current artifacts, reasoning-journal.json]
+    outputs: [alternatives.md, risk-opportunities.md, challenge-assumptions.md]
+    routes_to: []
+    never:
+      - "NEVER implement alternatives (only propose — WHY + ASSESS evaluate)"
+
+  # ═══════════════════════════════════════════
+  # PHASE 3: APPLICATION — Build
+  # ═══════════════════════════════════════════
+
+  IMPLEMENTER:
+    file: agents/build/implementer.md
+    phase: application
+    tier: build
+    role: "Writes code following TDD per task"
+    when: "Per task from tasks.md"
+    inputs: [single task, spec requirements, constitution, ADRs, existing code]
+    outputs: [source files, test files]
+    statuses: [DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, BLOCKED]
+    never:
+      - "NEVER modify specs (report NEEDS_CONTEXT)"
+      - "NEVER modify plans/ADRs (report BLOCKED)"
+      - "NEVER skip tests"
+      - "NEVER review own code"
+      - "NEVER add features not in the task"
+
+  SPEC_GUARD:
+    file: agents/build/spec-guard.md
+    phase: application
+    tier: build
+    role: "Verifies code matches FR-* requirements + traceability matrix"
+    when: "Per task, after IMPLEMENTER"
+    inputs: [implemented code, task definition, spec requirements]
+    outputs: [spec-compliance-report.md, traceability-matrix.md]
+    verdicts: [PASS, FAIL, WARN]
+    never:
+      - "NEVER fix code (IMPLEMENTER fixes)"
+      - "NEVER modify specs (WHAT fixes)"
+      - "NEVER approve own previous FAIL"
+
+  CODE_REVIEWER:
+    file: agents/build/code-reviewer.md
+    phase: application
+    tier: build
+    role: "Quality, security, ADR compliance, constitution"
+    when: "Per task, after SPEC GUARD passes"
+    inputs: [implemented code, constitution, ADRs, codebase patterns]
+    outputs: [code-review-report.md]
+    verdicts: [APPROVED, CHANGES_REQUESTED, BLOCKED]
+    never:
+      - "NEVER write implementation code"
+
+  TEST_GUARDIAN:
+    file: agents/build/test-guardian.md
+    phase: application
+    tier: build
+    role: "Validates test quality and coverage"
+    when: "Per task, after CODE REVIEWER approves"
+    inputs: [test files, spec acceptance criteria, test-strategy.md, coverage-map.md]
+    outputs: [test-quality-report.md, updated coverage-map.md]
+    verdicts: [PASS, FAIL, WARN]
+    never:
+      - "NEVER write implementation code or tests (IMPLEMENTER does that)"
+
+  ENGINEERING_MANAGER:
+    file: agents/build/engineering-manager.md
+    phase: application
+    tier: build
+    role: "Orchestrates build loop, phase gates, manages rework"
+    when: "Per phase checkpoint, after all tasks, when drift detected"
+    inputs: [tasks.md, traceability-matrix.md, process-metrics.md, integration-report.md]
+    outputs: [build-status.md, rework tasks (RW-*)]
+    never:
+      - "NEVER declare done without VERIFICATION passing"
+
+  INTEGRATOR:
+    file: agents/build/integrator.md
+    phase: application
+    tier: build
+    role: "Verifies system integration after each phase"
+    when: "Per phase checkpoint"
+    inputs: [all phase code, build config, test suite]
+    outputs: [integration-report.md]
+    verdicts: [PASS, FAIL]
+
+  VISUAL_VALIDATOR:
+    file: agents/build/visual-validator.md
+    phase: application
+    tier: build
+    role: "Screenshots running product — tests pass ≠ product works"
+    when: "Per phase, before BUILD COMPLETE"
+    inputs: [running application, dev page, spec-diagram.svg]
+    outputs: [visual validation report, screenshots]
+    never:
+      - "NEVER trust test results alone — verify visually"
+
+  VERIFICATION:
+    file: agents/build/verification.md
+    phase: application
+    tier: build
+    role: "Backpropagation — traces EVERY requirement to code"
+    when: "After all tasks complete, after rework"
+    inputs: [spec.md, all source code, all test files, traceability-matrix.md, spec-diagram.svg]
+    outputs: [gap-report.md, updated traceability-matrix.md]
+    never:
+      - "NEVER accept partial coverage"
+      - "NEVER trust the incremental matrix — verify from scratch"
+
+  PROGRESS_TRACKER:
+    file: agents/build/progress-tracker.md
+    phase: application
+    tier: build
+    role: "Effort tracking, CPI/SPI, drift detection"
+    when: "After each task completion"
+    inputs: [completed task, estimates.md, calibration-profile.yaml, prior progress]
+    outputs: [progress-report.md, process-metrics.md, updated calibration-profile.yaml]
+
+  CHANGE_CONTROLLER:
+    file: agents/build/change-controller.md
+    phase: application
+    tier: build
+    role: "Handles mid-build spec changes with impact analysis"
+    when: "Spec change during build phase"
+    inputs: [change request, spec.md, tasks.md, traceability-matrix.md]
+    outputs: [change-impact-report.md, updated tasks.md]
+    never:
+      - "NEVER skip impact analysis"
+      - "NEVER propagate changes without re-validation through WHY"
+
+  # ═══════════════════════════════════════════
+  # PHASE 4: LEARNING
+  # ═══════════════════════════════════════════
+
+  REFLECT:
+    file: agents/learning/reflect.md
+    phase: learning
+    tier: learning
+    role: "Extracts patterns, pitfalls, knowledge transfer assessment"
+    when: "End of every run"
+    inputs: [all artifacts, reasoning-journal.json, patterns.yaml, pitfalls.yaml]
+    outputs: [updated patterns.yaml, updated pitfalls.yaml, knowledge-transfer-assessment.md]
+
+  EVOLVE:
+    file: agents/learning/evolve.md
+    phase: learning
+    tier: learning
+    role: "Cross-run diffing, stagnation detection, bias checking"
+    when: "Start/end of re-runs"
+    inputs: [current artifacts, prior run artifacts, calibration-profile.yaml]
+    outputs: [evolution-report.md, improvement-metrics.md, stagnation-flags.md]
+
+  CALIBRATE:
+    file: agents/learning/calibrate.md
+    phase: learning
+    tier: learning
+    role: "Tracks AI accuracy per domain, applies correction factors"
+    when: "End of run, after FEEDBACK"
+    inputs: [reasoning-journal.json, calibration-profile.yaml, feedback/, quality-gates.md]
+    outputs: [updated calibration-profile.yaml, confidence-flags.md]
+
+  GROUND:
+    file: agents/learning/ground.md
+    phase: learning
+    tier: learning
+    role: "Reality-checks plans against real-world data"
+    when: "During FINALIZE"
+    inputs: [plan.md, estimates.md, tasks.md, estimates-log.yaml, feedback/]
+    outputs: [reality-check.md, cost-analysis.md, benchmark-data.md]
+
+  # FEEDBACK is a process, not an agent file — triggered by /speckit.squad.feedback
+  FEEDBACK:
+    file: commands/squad.feedback.md
+    phase: learning
+    tier: learning
+    role: "Post-deployment intake — closes prediction-to-outcome loop"
+    when: "After implementation deployed (weeks/months later)"
+    inputs: [original artifacts, user answers]
+    outputs: [updated calibration-profile.yaml, updated estimates-log.yaml, updated patterns.yaml]
+
+# ═══════════════════════════════════════════
+# ROUTING RULES (read by MANAGER)
+# ═══════════════════════════════════════════
+
+routing:
+  # When WHY finds issues, route to the artifact OWNER:
+  issue_routing:
+    spec_issues: WHAT
+    architecture_issues: HOW
+    task_issues: PLAN
+    unknown_questions: SCIENTIST
+    feasibility_concerns: ASSESS
+    domain_gaps: DOMAIN_EXPERT
+    security_concerns: SECURITY
+    accessibility_gaps: UX_A11Y
+    performance_concerns: PERFORMANCE
+
+  # Build phase quality gate sequence (per task):
+  build_sequence: [IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+
+  # Phase gate agents:
+  phase_gate: [ENGINEERING_MANAGER, INTEGRATOR, VISUAL_VALIDATOR]
+
+  # Final verification:
+  final: [VERIFICATION]
+
+  # Continuous monitors:
+  continuous: [PROGRESS_TRACKER, MENTAL_MODEL, METACOGNITION_MONITOR, SCOREKEEPER]
+
+# ═══════════════════════════════════════════
+# COUNTS
+# ═══════════════════════════════════════════
+
+totals:
+  core: 12
+  specialists: 7
+  build: 10
+  learning: 5  # includes FEEDBACK
+  total: 34
