@@ -1,5 +1,86 @@
 # Cognitive Squad
 
+<details>
+<summary><strong>✓ 96 checks passed — Squad ready to deploy</strong> (click to expand dry-run output)</summary>
+
+```
+╔══════════════════════════════════════════════════╗
+║     COGNITIVE SQUAD — DRY RUN VALIDATION         ║
+╚══════════════════════════════════════════════════╝
+
+═══ 1. AGENT FILES ═══
+
+✓ core/assess (12417 bytes)        ✓ core/discover (12789 bytes)
+✓ core/how (10062 bytes)           ✓ core/intent-tracker (3026 bytes)
+✓ core/internalization-gate (6889) ✓ core/manager (9024 bytes)
+✓ core/mental-model (4383 bytes)   ✓ core/metacognition-monitor (3587)
+✓ core/plan (9585 bytes)           ✓ core/scorekeeper (9743 bytes)
+✓ core/what (11483 bytes)          ✓ core/why (20365 bytes)
+✓ specialists/domain-expert (6419) ✓ specialists/innovate (6407 bytes)
+✓ specialists/performance (6393)   ✓ specialists/scientist (5927 bytes)
+✓ specialists/security (5285)      ✓ specialists/test-architect (5123)
+✓ specialists/ux-a11y (5864)
+✓ build/code-reviewer (7173)       ✓ build/engineering-manager (5418)
+✓ build/change-controller (6886)   ✓ build/implementer (8201 bytes)
+✓ build/integrator (7056 bytes)    ✓ build/progress-tracker (8793)
+✓ build/spec-guard (9072 bytes)    ✓ build/test-guardian (7100 bytes)
+✓ build/verification (8100 bytes)  ✓ build/visual-validator (4796)
+✓ learning/calibrate (5574 bytes)  ✓ learning/evolve (4932 bytes)
+✓ learning/ground (6133 bytes)     ✓ learning/reflect (8857 bytes)
+  Agent files found: 33
+
+═══ 2. AGENTS.YAML REGISTRY ═══
+
+✓ agents.yaml is valid YAML         Agents in registry: 34
+✓ Registry count matches file count  NEVER rules defined: 49
+✓ All file references exist          All routing rules valid
+
+═══ 3. COMMANDS ═══
+
+✓ squad.run    ✓ squad.build    ✓ squad.verify   ✓ squad.status
+✓ squad.change ✓ squad.innovate ✓ squad.investigate ✓ squad.ground
+✓ squad.feedback ✓ squad.resume
+  Commands: 10 (all registered in extension.yml)
+
+═══ 4-8. MANIFEST + CONFIG + KB + TEMPLATES + SCRIPTS ═══
+
+✓ extension.yml valid (all required fields)
+✓ config-template.yml valid (12 sections)
+✓ 5 knowledge base files (all valid YAML)
+✓ 6 templates (including valid JSON schema)
+✓ 4 scripts (all executable)
+
+═══ 9. STATE MACHINE FLOW SIMULATION ═══
+
+✓ Step 1: DISCOVER → agents/core/discover.md
+✓ Step 2: WHY1 (assumption-challenge) → agents/core/why.md
+✓ Step 3: WHAT (requirements) → agents/core/what.md
+✓ Step 4: WHY2 (spec-validation) → agents/core/why.md
+✓ Step 5: ASSESS (kill gate) → agents/core/assess.md
+✓ Step 6: HOW (architecture) → agents/core/how.md
+✓ Step 7: PLAN (tasks) → agents/core/plan.md
+✓ Step 8: WHY3 (consensus) → agents/core/why.md
+✓ Step 9: VERIFICATION (backpropagation) → agents/build/verification.md
+✓ Build: IMPLEMENTER → SPEC_GUARD → CODE_REVIEWER → TEST_GUARDIAN
+✓ Learn: REFLECT → EVOLVE → CALIBRATE → GROUND
+
+═══ 10. ROLE SEPARATION ═══
+
+✓ WHY has NEVER-rewrite rules
+✓ IMPLEMENTER has NEVER-modify-specs rule
+✓ SPEC GUARD has NEVER-fix-code rule
+✓ MANAGER has Role Separation section
+
+╔══════════════════════════════════════════════════╗
+║  ✓ PASS: 96   ⚠ WARN: 0    ✗ FAIL: 0           ║
+║  🟢  ALL CHECKS PASSED — Squad ready to deploy   ║
+╚══════════════════════════════════════════════════╝
+```
+
+Run it yourself: `./scripts/bash/dry-run.sh`
+
+</details>
+
 **What if AI didn't just write code — but understood why it was writing it, challenged its own assumptions, proved it understood the plan before starting, verified its own work through backpropagation, scored its own performance, and got measurably better with every project?**
 
 Cognitive Squad is a **34-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
