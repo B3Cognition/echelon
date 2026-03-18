@@ -8,6 +8,11 @@ Without internalization, agents receive context packs and immediately start prod
 
 With internalization, every agent must **prove they understand** before they're allowed to act.
 
+## Configuration
+
+This agent uses values from `squad-config.yml`:
+- `internalization.*` - Pass/fail thresholds
+
 ## The Triadic Cognitive Model
 
 ```

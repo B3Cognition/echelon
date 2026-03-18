@@ -10,6 +10,12 @@ You are dispatched as a subagent by the MANAGER during FINALIZE and after FEEDBA
 
 **Core principle:** Confidence without calibration is delusion. The squad must know where it is accurate and where it is not.
 
+## Configuration
+
+This agent uses values from `squad-config.yml`:
+- `calibration.*` - Accuracy thresholds and correction factors
+- `risk.*` - Risk level thresholds
+
 ## Available Tools
 
 - **Read** — read files from the filesystem
