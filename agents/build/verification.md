@@ -55,6 +55,23 @@ AC-1.2: [text]
 
 Count them. This is the denominator for coverage.
 
+### Step 1b: Load Behavioral Diagram
+
+If WHY generated a spec behavioral diagram (via Understanding CLI `--diagram`), load it:
+
+```bash
+# Check if diagram exists
+ls <spec_directory>/spec-diagram.svg 2>/dev/null
+```
+
+If the diagram exists, use it as a **visual checklist** for behavioral coverage:
+- Every STATE in the diagram must have corresponding code (a class, a status enum value, a render branch)
+- Every TRANSITION must have corresponding code (an event handler, a state change, a conditional)
+- Every GUARD condition must have corresponding validation code
+- Dead-end states in the diagram = dead-end code paths = gaps
+
+This is the most powerful verification technique: the diagram shows the INTENDED behavior; you verify the code IMPLEMENTS each part.
+
 ### Step 2: For Each Requirement, Find the Implementation
 
 For EVERY requirement (not just the ones SPEC GUARD already checked):

@@ -183,6 +183,20 @@ understanding validate <spec_directory>/spec.md --json --enhanced 2>/dev/null
 
 Parse the JSON output for quality gate scores.
 
+#### 1b. Generate Behavioral Diagram
+
+If Understanding CLI is available, generate a visual state machine diagram from the spec:
+
+```bash
+understanding <spec_directory>/spec.md --diagram <spec_directory>/spec-diagram.svg 2>/dev/null
+understanding <spec_directory>/spec.md --diagram <spec_directory>/spec-diagram.png 2>/dev/null
+```
+
+This diagram visualizes the spec's behavioral model — states, transitions, guards, actions — derived from the behavioral metrics layer (Harel statecharts). Use it to:
+- **Verify completeness:** Does every state have entry and exit transitions? Are there dead-end states?
+- **Verify testability:** Can every transition be triggered by a test scenario?
+- **Share with other agents:** VERIFICATION uses this diagram to check if the code implements all states/transitions. VISUAL VALIDATOR includes it in reports. REFLECT includes it in knowledge transfer assessment.
+
 **If Understanding CLI is unavailable** (command not found, non-zero exit, timeout), fall back to Heuristic Review (see section below). Log in reasoning journal: `"Understanding CLI unavailable — using heuristic fallback. Results are UNVALIDATED."`.
 
 #### 2. Check Quality Gate Thresholds

@@ -94,6 +94,26 @@ For each widget on the page:
 {FAIL — N widgets have visual issues}
 ```
 
+## Step 6: Include Spec Behavioral Diagram
+
+If WHY generated a behavioral diagram via Understanding CLI (`spec-diagram.svg` or `.png`), include it in the visual report:
+
+```markdown
+## Spec Behavioral Diagram
+
+The Understanding CLI generated this state machine diagram from the specification.
+It shows every state, transition, and guard that the code should implement.
+
+![Spec Behavioral Diagram](spec-diagram.svg)
+
+Compare this diagram against the running application:
+- Every state shown → does the widget reach this state?
+- Every transition → does the interaction trigger this transition?
+- Every guard → does the condition correctly gate the transition?
+```
+
+This connects the **spec visualization** (what SHOULD happen) with the **runtime visualization** (what DOES happen). Any mismatch is a gap.
+
 ## Rules
 
 1. **Screenshots are evidence** — always capture visual proof
@@ -101,3 +121,4 @@ For each widget on the page:
 3. **Console errors matter** — even if the widget renders, console errors indicate problems
 4. **Check the REAL page, not mocks** — use the dev page with actual widget tags
 5. **Report what you SEE, not what you expect** — if the heatmap looks wrong, say so, even if all tests pass
+6. **Include the spec diagram** — if Understanding generated one, show it alongside screenshots for comparison
