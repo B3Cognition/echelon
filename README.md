@@ -268,18 +268,21 @@ specify extension add --dev https://github.com/Testimonial/cognitive-squad
 
 ### Autonomy Modes
 
-Control how much human oversight the squad requires:
+Control how much human oversight the squad requires. Set in `squad-config.yml`:
 
-| Mode | Flag | Behavior |
-|------|------|----------|
-| **Guided** | `--mode guided` | Checkpoint after every phase |
-| **Semi** | `--mode semi` (default) | Checkpoint after Phase 1 only |
-| **Banzai** | `--mode banzai` | Full autonomous, human reviews final output |
+```yaml
+autonomy:
+  mode: semi  # guided | semi | banzai
+```
+
+| Mode | Behavior |
+|------|----------|
+| **guided** | Checkpoint after every phase |
+| **semi** (default) | Checkpoint after Phase 1 only |
+| **banzai** | Full autonomous, human reviews final output |
 
 ```bash
-/speckit.squad.run "Build a photo album app"                    # semi (default)
-/speckit.squad.run "Build a photo album app" --mode guided      # stop after each phase
-/speckit.squad.run "Build a photo album app" --mode banzai      # go wild
+/speckit.squad.run "Build a photo album app"
 ```
 
 ## Commands

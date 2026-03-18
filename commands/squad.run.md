@@ -1,10 +1,5 @@
 ---
-description: "Full autonomous cognitive squad run with 4-phase model"
-arguments:
-  - name: mode
-    description: "Autonomy mode: guided (checkpoint after each phase), semi (checkpoint after Phase 1), banzai (full auto)"
-    default: "semi"
-    values: ["guided", "semi", "banzai"]
+description: "Full autonomous cognitive squad run with 4-phase model. Set autonomy mode in squad-config.yml (guided/semi/banzai)."
 scripts:
   sh: ../../scripts/bash/detect-project.sh
 ---
