@@ -59,6 +59,21 @@ agents:
       - "NEVER write requirements"
       - "NEVER make architecture decisions"
 
+  SYNTHESIZER:
+    file: agents/core/synthesizer.md
+    phase: understanding
+    tier: core
+    role: "Fuses all DISCOVER outputs into unified knowledge base — finds contradictions and gaps across sources"
+    when: "Immediately after DISCOVER, before WHY1"
+    inputs: [all DISCOVER outputs, reasoning-journal.json]
+    outputs: [glossary.md (unified), mental-model.md (unified), boundaries.md (unified), assumptions.md (unified), unknowns.md (unified), contradictions-and-gaps.md, risks.md, people-and-teams.md, timeline.md, qa-test-strategy-inputs.md]
+    routes_to: []
+    never:
+      - "NEVER discard conflicting information — report both sides"
+      - "NEVER invent information — synthesize only what DISCOVER found"
+      - "NEVER resolve contradictions — flag them for WHY1"
+      - "NEVER modify DISCOVER originals — produce new unified files"
+
   WHAT:
     file: agents/core/what.md
     phase: understanding
@@ -490,8 +505,8 @@ routing:
 # ═══════════════════════════════════════════
 
 totals:
-  core: 12
+  core: 13
   specialists: 7
   build: 10
   learning: 5  # includes FEEDBACK
-  total: 34
+  total: 35
