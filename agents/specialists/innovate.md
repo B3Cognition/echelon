@@ -76,31 +76,22 @@ Read the current design and find the specific contradiction blocking progress:
 
 **Step 2: Map to TRIZ parameters**
 
-From the 39 TRIZ engineering parameters, identify which parameter you're trying to improve and which degrades:
+Read `templates/triz-contradiction-matrix.md` for the full software-adapted parameter list (16 parameters). Identify:
+- Which parameter you're trying to IMPROVE
+- Which parameter DEGRADES when you improve the first
 
-Improving parameters: speed, reliability, complexity, adaptability, productivity, accuracy, stability, manufacturability
-Worsening parameters: resource consumption, complexity, maintenance cost, risk, coupling
+**Step 3: Look up principles in the contradiction matrix**
 
-**Step 3: Apply inventive principles**
+Read `templates/triz-contradiction-matrix.md` and find the intersection of your two parameters. The matrix gives you 2-4 principle numbers to apply.
 
-The TRIZ contradiction matrix maps parameter pairs to inventive principles. As an LLM, you have the full matrix in training data. Apply the top 3-4 principles:
+**Step 4: Read the full principle descriptions**
 
-| # | Principle | Application Pattern |
-|---|-----------|-------------------|
-| 1 | Segmentation | Split monolithic into independent parts |
-| 2 | Extraction | Separate the problematic part from the whole |
-| 3 | Local Quality | Different parts can have different properties |
-| 5 | Merging | Combine identical operations in time or space |
-| 10 | Prior Action | Perform required action in advance |
-| 13 | Inversion | Do the opposite of what's expected |
-| 15 | Dynamicity | Make rigid things flexible, divide into parts that move relative to each other |
-| 17 | Another Dimension | Move to a different layer, add a dimension |
-| 22 | Blessing in Disguise | Use harmful factors to achieve positive effect |
-| 24 | Intermediary | Use an intermediate carrier or process |
-| 25 | Self-Service | Make the object serve/repair itself |
-| 28 | Mechanics Substitution | Replace mechanical means with sensory (optical, acoustic, thermal) |
-| 35 | Parameter Changes | Change concentration, flexibility, temperature, pressure |
-| 40 | Composite Materials | Replace homogeneous with composite |
+Read `templates/triz-40-principles.md` for each principle number from Step 3. Each principle has:
+- Original engineering definition (Altshuller)
+- Software engineering adaptation
+- Concrete examples
+
+Do NOT rely on training data for principle definitions — read the template files. These are the authoritative source (Grade B: ISO/TR 18686:2017).
 
 **Step 4: Generate solutions from principles**
 
