@@ -1,34 +1,77 @@
 # Cognitive Squad
 
-**What if AI didn't just write code — but understood why it was writing it, challenged its own assumptions, verified its own work, and got better with every project?**
+**What if AI didn't just write code — but understood why it was writing it, challenged its own assumptions, proved it understood the plan before starting, verified its own work through backpropagation, scored its own performance, and got measurably better with every project?**
 
-Cognitive Squad is a **28-function cognitive agent system** that does what no single AI prompt can: it separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and runs a backpropagation loop that catches every requirement the implementation missed.
+Cognitive Squad is a **34-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
 
-It is not a code generator. It is a **development team** — with a DISCOVER agent that maps unknown territory, a WHY agent that rejects weak specifications, a SCIENTIST that runs real experiments before committing to architecture, an ASSESS agent that kills unfeasible ideas before they waste effort, and a VERIFICATION agent that traces every line of code back to the requirement that demanded it.
+It started with a simple request: *"I need agents for WHAT, HOW, WHY, Manager, PM."*
 
-### Why This Matters
+Five roles. But a human holds 7-9 concepts in working memory. An AI can hold thousands — and trace every connection between them. From those 5 roles, the system explored the combinatorial space of what can go wrong between interacting agents and generated 34 specialized functions:
 
-Most AI coding tools work like this:
+- WHAT was overloaded (understanding + defining) → split into **DISCOVER + WHAT**
+- PM was overloaded (strategy + operations) → split into **ASSESS + PLAN**
+- WHY needed two modes (assumptions vs specs) → **dual-mode adversarial critic**
+- Nobody checked if the AI was wrong → **CALIBRATE** (tracks accuracy per domain)
+- Nobody connected plans to reality → **GROUND** (reference class forecasting)
+- Nobody broke stagnation → **INNOVATE** (TRIZ, First Principles, Blue Ocean)
+- Building needed different roles than understanding → **9 build agents** with per-task quality gates
+- Per-task checking missed aggregate gaps → **VERIFICATION** (backpropagation: spec → code → 100%?)
+- Understanding without internalization led to misalignment → **INTERNALIZATION GATE** (prove you understand before you work)
+- Performance wasn't tracked → **SCOREKEEPER** (points, badges, peer appreciation, self-healing)
+- Nobody watched intent → **INTENT TRACKER** (user said "all" but ASSESS scoped to "MVP")
+- Nobody looked at the running product → **VISUAL VALIDATOR** (tests pass ≠ product works)
+- Nobody held a mental map of the code → **MENTAL MODEL** (invariant checking across files)
+- Nobody asked "are we still doing the right thing?" → **METACOGNITION MONITOR** (the squad's conscience)
 
+Each agent exists because something **actually went wrong** in a real run and no existing agent caught it. This isn't theoretical architecture — it's battle-tested against a 435,000-line production codebase.
+
+### The Triadic Cognitive Model
+
+Most AI coding tools: `Prompt → LLM → Code → Hope it works`
+
+Cognitive Squad follows a three-phase cognitive process — the same way expert human teams work, but at a scale no human team can match:
+
+**Phase 1: UNDERSTANDING** — *What are we building and why?*
 ```
-Prompt → LLM → Code → Hope it works
+DISCOVER (map territory) → WHY₁ (challenge assumptions)
+→ WHAT (testable requirements, 31 IEEE/ISO metrics)
+→ WHY₂ (reject if quality gates fail) → ASSESS (kill if unfeasible)
+→ HOW (architecture with evidence-graded ADRs) → PLAN (critical path + risk)
+→ CONSENSUS (parallel adversarial review) → GROUND (reality check)
 ```
 
-Cognitive Squad works like this:
-
+**Phase 2: INTERNALIZATION** — *Does every agent truly understand?*
 ```
-Idea → DISCOVER (map the territory)
-     → WHY (challenge every assumption)
-     → WHAT (write testable requirements, validated by 31 IEEE/ISO metrics)
-     → ASSESS (kill it if unfeasible — before anyone writes code)
-     → HOW (architecture with evidence-graded decisions)
-     → PLAN (tasks with critical path and risk analysis)
-     → BUILD (per-task: implement → spec guard → code review → test check)
-     → VERIFY (backpropagation: every requirement → find the code → 100%?)
-     → LEARN (what was wrong? calibrate for next time)
+Each build agent must PROVE comprehension before working:
+"My role is X. The constraints are Y. I have ZERO doubts."
+If any agent has doubts → resolve before building starts.
+SCOREKEEPER tracks internalization quality.
 ```
 
-The difference: every step has a **different cognitive role**, every output passes through **adversarial validation**, and the system **measures its own accuracy** so the next project starts smarter than the last.
+**Phase 3: APPLICATION** — *Build it, verify it, learn from it.*
+```
+Per task: IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
+Per phase: ENGINEERING MANAGER (gate) + INTEGRATOR + VISUAL VALIDATOR
+Final: VERIFICATION (backpropagation: every FR-* → find the code → 100%?)
+Continuous: PROGRESS TRACKER + MENTAL MODEL + METACOGNITION MONITOR
+After: REFLECT + CALIBRATE + SCOREKEEPER (self-healing for next run)
+```
+
+The difference: every step has a **different cognitive role**, every output passes through **adversarial validation**, agents **prove comprehension before acting**, the system **scores its own performance**, and it **gets measurably better** with every project.
+
+### Why This Can't Be Done With Prompts
+
+A single prompt, no matter how good, can't:
+
+- Challenge its own output (WHY rejects what WHAT produced — adversarial by design)
+- Track its own accuracy (CALIBRATE logs: "estimation accuracy: 0.45, correction: 1.4x")
+- Prove it understood the plan before coding (INTERNALIZATION: 6-point comprehension check)
+- Verify 100% spec coverage backward (VERIFICATION: spec → code, not just code → tests)
+- Score its performance and self-heal (SCOREKEEPER: +5 critical bug caught, -2 rework)
+- Watch for process violations (METACOGNITION: "you skipped quality gates for 10 tasks")
+- Track user intent across decisions (INTENT TRACKER: "user said ALL, ASSESS scoped MVP")
+
+These require **separation of concerns** — the same mind can't produce AND critique AND verify AND score AND learn simultaneously. That's why there are 34 functions, not 1.
 
 ### Built On Real Standards
 
@@ -80,36 +123,45 @@ The model stays the same. The system gets better. That's the honest answer to "h
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  PHASE A: UNDERSTANDING (19 functions)                        │
-│                                                               │
-│  Core:        MANAGER → DISCOVER → WHAT → WHY → ASSESS       │
-│               → HOW → PLAN                                    │
-│  Specialists: SCIENTIST · SECURITY · TEST ARCHITECT           │
-│               PERFORMANCE · DOMAIN EXPERT · UX/A11Y · INNOVATE│
-│  Learning:    REFLECT · EVOLVE · CALIBRATE · GROUND · FEEDBACK│
-└───────────────────────────┬──────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 1: UNDERSTANDING (19 functions)                            │
+│                                                                    │
+│  Core:        MANAGER → DISCOVER → WHAT → WHY → ASSESS → HOW     │
+│               → PLAN + INTENT TRACKER (watches user intent)       │
+│  Specialists: SCIENTIST · SECURITY · TEST ARCHITECT · PERFORMANCE │
+│               DOMAIN EXPERT · UX/A11Y · INNOVATE                  │
+│  Learning:    REFLECT · EVOLVE · CALIBRATE · GROUND · FEEDBACK    │
+└───────────────────────────┬──────────────────────────────────────┘
                             │ validated plan + tasks
                             ↓
-┌──────────────────────────────────────────────────────────────┐
-│  PHASE B: BUILDING (9 functions)                              │
-│                                                               │
-│  Per task:    IMPLEMENTER → SPEC GUARD → CODE REVIEWER        │
-│               → TEST GUARDIAN                                  │
-│  Per phase:   INTEGRATOR · ENGINEERING MANAGER                │
-│  Continuous:  PROGRESS TRACKER                                │
-│  On change:   CHANGE CONTROLLER                               │
-│  Final:       VERIFICATION (backpropagation — spec → code)    │
-└───────────────────────────┬──────────────────────────────────┘
-                            │ verified code + tests
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 2: INTERNALIZATION (2 functions)                           │
+│                                                                    │
+│  INTERNALIZATION GATE: each agent proves comprehension (6 checks) │
+│  SCOREKEEPER: scores quality, awards badges, enables self-healing │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ all agents aligned, zero doubts
                             ↓
-┌──────────────────────────────────────────────────────────────┐
-│  PHASE C: LEARNING                                            │
-│  FEEDBACK → CALIBRATE → EVOLVE → REFLECT                     │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 3: APPLICATION (10 functions)                              │
+│                                                                    │
+│  Per task:    IMPLEMENTER → SPEC GUARD → CODE REVIEWER            │
+│               → TEST GUARDIAN                                      │
+│  Per phase:   ENGINEERING MANAGER · INTEGRATOR · VISUAL VALIDATOR │
+│  Final:       VERIFICATION (backpropagation — spec → code → 100%)│
+│  Continuous:  PROGRESS TRACKER · MENTAL MODEL                     │
+│               METACOGNITION MONITOR · CHANGE CONTROLLER           │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ verified code + tests + screenshots
+                            ↓
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 4: LEARNING                                                │
+│  FEEDBACK → CALIBRATE → EVOLVE → REFLECT → SCOREKEEPER           │
+│  (self-healing: scores → prompt refinement → better next run)     │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-**28 cognitive functions:** 7 core + 7 specialists + 9 build + 4 learning + 1 feedback
+**34 cognitive functions:** 12 core + 7 specialists + 10 build + 4 learning + 1 feedback
 
 ## The Flow
 
@@ -197,7 +249,7 @@ specify extension add --dev /path/to/cognitive-squad
 
 ## Agent Roster
 
-### Phase A: Understanding — Core Squad (7)
+### Phase 1: Understanding — Core Squad (12)
 
 | Agent | Role | Key Output |
 |-------|------|------------|
@@ -208,8 +260,13 @@ specify extension add --dev /path/to/cognitive-squad
 | **ASSESS** | Strategic PM — feasibility, estimation, kill gate | `feasibility.md`, `estimates.md`, `prioritization.md` |
 | **HOW** | Architect — tech stack, data model, ADRs, constitution | `plan.md`, `research.md`, `data-model.md`, `contracts/` |
 | **PLAN** | Operational PM — tasks, critical path, dependencies, risk | `tasks.md`, `critical-path.md`, `risk-matrix.md` |
+| **INTENT TRACKER** | Tracks what the user actually wants vs what the spec says | `user-intent.md`, alignment alerts |
+| **INTERNALIZATION GATE** | Ensures every agent proves comprehension before working | `internalization-report.md` |
+| **SCOREKEEPER** | Tracks agent performance, awards badges, enables self-healing | `agent-scorecard.md`, `agent-scores.yaml` |
+| **MENTAL MODEL** | Maintains living code graph with invariant checking | `mental-model-code.md`, invariant alerts |
+| **METACOGNITION MONITOR** | Watches execution: "are we still doing the right thing?" | `metacognition-log.md` |
 
-### Phase A: Understanding — Specialists (7)
+### Phase 1: Understanding — Specialists (7)
 
 | Specialist | Trigger | Key Output |
 |------------|---------|------------|
@@ -221,7 +278,7 @@ specify extension add --dev /path/to/cognitive-squad
 | **PERFORMANCE** | High-load, real-time, scalability | `performance-requirements.md`, `capacity-model.md` |
 | **INNOVATE** | Stagnation, re-runs, circular reasoning | `alternatives.md`, `challenge-assumptions.md` |
 
-### Phase B: Building (9)
+### Phase 2-3: Building (10)
 
 | Agent | Role | When | Key Output |
 |-------|------|------|------------|
@@ -234,8 +291,9 @@ specify extension add --dev /path/to/cognitive-squad
 | **PROGRESS TRACKER** | Tracks effort, detects drift, updates calibration | Continuous | `progress-report.md`, `process-metrics.md` |
 | **CHANGE CONTROLLER** | Handles mid-build spec changes | On change | `change-impact-report.md` |
 | **VERIFICATION** | Backpropagation — checks ALL spec against ALL code | After all tasks | `gap-report.md` (coverage score) |
+| **VISUAL VALIDATOR** | Actually LOOKS at running product via screenshots | Per phase | Visual validation report + screenshots |
 
-### Phase C: Learning (4 + feedback)
+### Phase 4: Learning (4 + feedback)
 
 | Function | When | Purpose |
 |----------|------|---------|
