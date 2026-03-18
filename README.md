@@ -3,7 +3,7 @@
 ![Dry Run Validation](docs/dry-run.gif)
 
 <details>
-<summary><strong>✓ 96 checks passed — Squad ready to deploy</strong> (click to expand full output)</summary>
+<summary><strong>✓ 97 checks passed — Squad ready to deploy</strong> (click to expand full output)</summary>
 
 ```
 ╔══════════════════════════════════════════════════╗
@@ -74,7 +74,7 @@
 ✓ MANAGER has Role Separation section
 
 ╔══════════════════════════════════════════════════╗
-║  ✓ PASS: 96   ⚠ WARN: 0    ✗ FAIL: 0           ║
+║  ✓ PASS: 97   ⚠ WARN: 0    ✗ FAIL: 0           ║
 ║  🟢  ALL CHECKS PASSED — Squad ready to deploy   ║
 ╚══════════════════════════════════════════════════╝
 ```
@@ -85,7 +85,7 @@ Run it yourself: `./scripts/bash/dry-run.sh`
 
 **What if AI didn't just write code — but understood why it was writing it, challenged its own assumptions, proved it understood the plan before starting, verified its own work through backpropagation, scored its own performance, and got measurably better with every project?**
 
-Cognitive Squad is a **34-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
+Cognitive Squad is a **35-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
 
 It started with a simple request: *"I need agents for WHAT, HOW, WHY, Manager, PM."*
 
@@ -282,12 +282,13 @@ specify extension add --dev /path/to/cognitive-squad
 
 ## The 34 Members
 
-### Phase 1: Understanding — Core Squad (12)
+### Phase 1: Understanding — Core Squad (13)
 
 | Agent | Role | Key Output |
 |-------|------|------------|
 | **MANAGER** | Orchestrator — routes agents, enforces convergence | `state.json`, routing log |
 | **DISCOVER** | Reconnaissance — maps domain, glossary, boundaries | `glossary.md`, `mental-model.md`, `boundaries.md` |
+| **SYNTHESIZER** | Fuses all DISCOVER outputs into unified knowledge base — finds contradictions across sources | `contradictions-and-gaps.md`, `risks.md`, unified KB files |
 | **WHAT** | Requirements — testable specs from discovered territory | `spec.md`, domain decomposition |
 | **WHY** | Adversarial critic — finds holes, runs Understanding quality gates | `issues.md`, `quality-gates.md` |
 | **ASSESS** | Strategic PM — feasibility, estimation, kill gate | `feasibility.md`, `estimates.md`, `prioritization.md` |
@@ -344,8 +345,8 @@ specify extension add --dev /path/to/cognitive-squad
 ┌──────────────────────────────────────────────────────────────────┐
 │  PHASE 1: UNDERSTANDING (19 functions)                            │
 │                                                                    │
-│  Core:        MANAGER → DISCOVER → WHAT → WHY → ASSESS → HOW     │
-│               → PLAN + INTENT TRACKER (watches user intent)       │
+│  Core:        MANAGER → DISCOVER → SYNTHESIZER → WHY → WHAT       │
+│               → ASSESS → HOW → PLAN + INTENT TRACKER              │
 │  Specialists: SCIENTIST · SECURITY · TEST ARCHITECT · PERFORMANCE │
 │               DOMAIN EXPERT · UX/A11Y · INNOVATE                  │
 │  Learning:    REFLECT · EVOLVE · CALIBRATE · GROUND · FEEDBACK    │
@@ -379,14 +380,14 @@ specify extension add --dev /path/to/cognitive-squad
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**34 cognitive functions:** 12 core + 7 specialists + 10 build + 4 learning + 1 feedback
+**35 cognitive functions:** 13 core + 7 specialists + 10 build + 4 learning + 1 feedback
 
 ### The Flow
 
 #### Phase A: Understanding
 
 ```
-INIT → DISCOVER → WHY₁ (challenge assumptions)
+INIT → DISCOVER → SYNTHESIZER (fuse into unified KB) → WHY₁ (challenge)
   → WHAT (requirements) → WHY₂ (validate quality gates)
   → ASSESS (feasibility / kill gate)
   → [SPECIALISTS: SCIENTIST, SECURITY, DOMAIN, UX, PERFORMANCE]
