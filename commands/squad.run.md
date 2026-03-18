@@ -1,5 +1,10 @@
 ---
-description: "Full autonomous cognitive squad run — dispatches 19 cognitive functions for pre-code analysis"
+description: "Full autonomous cognitive squad run with 4-phase model"
+arguments:
+  - name: mode
+    description: "Autonomy mode: guided (checkpoint after each phase), semi (checkpoint after Phase 1), banzai (full auto)"
+    default: "semi"
+    values: ["guided", "semi", "banzai"]
 scripts:
   sh: ../../scripts/bash/detect-project.sh
 ---
@@ -121,7 +126,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/discover.md` for your complete instructions. You are the DISCOVER agent. Your mode is `{greenfield|brownfield}`. Here is your context pack: [include context pack files listed above]. Produce all outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
+- **prompt:** Read the file `agents/exploration/scout.md` for your complete instructions. You are the DISCOVER agent. Your mode is `{greenfield|brownfield}`. Here is your context pack: [include context pack files listed above]. Produce all outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
 - **description:** "DISCOVER: reconnaissance and domain mapping ({mode})"
 
 ### Expected Outputs
@@ -157,7 +162,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/why.md` for your complete instructions. You are the WHY agent operating in **assumption-challenge mode** (WHY1 — pre-WHAT). Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing SCIENTIST investigation. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the WHY agent operating in **assumption-challenge mode** (WHY1 — pre-WHAT). Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing SCIENTIST investigation. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHY1: assumption challenge and pre-mortem analysis"
 
 ### Expected Outputs
@@ -188,7 +193,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/what.md` for your complete instructions. You are the WHAT agent — requirements definer. Transform DISCOVER's domain map into precise, testable specifications. Write user stories with acceptance criteria (Given/When/Then). No implementation details — no languages, frameworks, or databases. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the WHAT agent — requirements definer. Transform DISCOVER's domain map into precise, testable specifications. Write user stories with acceptance criteria (Given/When/Then). No implementation details — no languages, frameworks, or databases. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHAT: requirements definition and specification"
 
 ### Expected Outputs
@@ -212,7 +217,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/why.md` for your complete instructions. You are the WHY agent operating in **spec-validation mode** (WHY2 — post-WHAT). Run Understanding `validate` against `spec.md` to get deterministic quality scores. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the WHY agent operating in **spec-validation mode** (WHY2 — post-WHAT). Run Understanding `validate` against `spec.md` to get deterministic quality scores. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHY2: spec validation with Understanding quality gates"
 
 ### Expected Outputs
@@ -246,7 +251,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/assess.md` for your complete instructions. You are the ASSESS agent — strategic PM and kill gate. Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `templates/kill-report.md`. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/feasibility/gatekeeper.md` for your complete instructions. You are the ASSESS agent — strategic PM and kill gate. Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `templates/kill-report.md`. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ASSESS: feasibility, estimation, prioritization, kill gate"
 
 ### Expected Outputs
@@ -306,7 +311,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/scientist.md` for your complete instructions. You are the SCIENTIST. Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/specialists/investigator.md` for your complete instructions. You are the SCIENTIST. Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "SCIENTIST: investigating unknowns — {topic summary}"
 
 #### SECURITY Dispatch (if summoned)
@@ -316,7 +321,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/security.md`. You are the SECURITY specialist. Perform STRIDE threat modeling, check OWASP Top 10 applicability, identify compliance requirements (PCI-DSS, HIPAA, GDPR, SOC 2 as relevant). Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/specialists/guardian.md`. You are the SECURITY specialist. Perform STRIDE threat modeling, check OWASP Top 10 applicability, identify compliance requirements (PCI-DSS, HIPAA, GDPR, SOC 2 as relevant). Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "SECURITY: threat modeling and compliance analysis"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
@@ -326,7 +331,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/domain-expert.md`. You are the DOMAIN EXPERT for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/specialists/oracle.md`. You are the DOMAIN EXPERT for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "DOMAIN EXPERT: {domain} domain analysis"
 
 #### PERFORMANCE Dispatch (if summoned)
@@ -336,7 +341,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/performance.md`. You are the PERFORMANCE specialist. Perform load modeling, capacity planning, identify bottleneck risks. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/specialists/benchmark.md`. You are the PERFORMANCE specialist. Perform load modeling, capacity planning, identify bottleneck risks. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "PERFORMANCE: load modeling and capacity analysis"
 
 #### UX / A11Y Dispatch (if summoned)
@@ -346,7 +351,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/ux-a11y.md`. You are the UX/A11Y specialist. Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/specialists/advocate.md`. You are the UX/A11Y specialist. Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "UX/A11Y: accessibility and usability analysis"
 
 #### INNOVATE Dispatch (if summoned)
@@ -357,7 +362,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/innovate.md`. You are the INNOVATE specialist. Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/specialists/maverick.md`. You are the INNOVATE specialist. Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "INNOVATE: alternative approaches and assumption challenges"
 
 ### Post-Specialist
@@ -381,7 +386,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/how.md` for your complete instructions. You are the HOW agent — architect. Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Create constitution. Document every decision in ADR format. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/solution/architect.md` for your complete instructions. You are the HOW agent — architect. Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Create constitution. Document every decision in ADR format. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "HOW: architecture design and technology decisions"
 
 ### Expected Outputs
@@ -408,7 +413,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/specialists/test-architect.md` for your complete instructions. You are the TEST ARCHITECT. Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to WHAT. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/solution/sentinel.md` for your complete instructions. You are the TEST ARCHITECT. Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to WHAT. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "TEST ARCHITECT: test strategy and coverage mapping"
 
 ### Expected Outputs
@@ -437,7 +442,7 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/core/plan.md` for your complete instructions. You are the PLAN agent — operational PM. Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/solution/orchestrator.md` for your complete instructions. You are the PLAN agent — operational PM. Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "PLAN: task breakdown, critical path, dependencies, risk"
 
 ### Expected Outputs
@@ -477,17 +482,17 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 Dispatch WHY3 and ASSESS2 in parallel (single message, two Agent tool calls):
 
 **WHY3:**
-- **prompt:** Read the file `agents/core/why.md`. You are WHY operating in **spec-validation mode** (WHY3 — consensus). Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/sage.md`. You are WHY operating in **spec-validation mode** (WHY3 — consensus). Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHY3: final quality validation and cross-artifact consistency"
 
 **ASSESS2:**
-- **prompt:** Read the file `agents/core/assess.md`. You are ASSESS2 — consensus-phase re-evaluation. Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/feasibility/gatekeeper.md`. You are ASSESS2 — consensus-phase re-evaluation. Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ASSESS2: implementability check and effort re-estimation"
 
 After WHY3 and ASSESS2 complete, dispatch PLAN2:
 
 **PLAN2:**
-- **prompt:** Read the file `agents/core/plan.md`. You are PLAN2 — consensus-phase plan revision. Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Here is your context pack: [include files — include ASSESS2's implementability-report.md]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/solution/orchestrator.md`. You are PLAN2 — consensus-phase plan revision. Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Here is your context pack: [include files — include ASSESS2's implementability-report.md]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "PLAN2: plan revision incorporating implementability feedback"
 
 ### Consensus Gate Check
@@ -516,7 +521,7 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/learning/ground.md`. You are the GROUND agent. Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/learning/realist.md`. You are the GROUND agent. Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "GROUND: reality check and reference class forecasting"
 
 Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
@@ -529,7 +534,7 @@ Context pack:
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/learning/reflect.md`. You are the REFLECT agent. Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Here is your context pack: [include files]. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/learning/mirror.md`. You are the REFLECT agent. Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Here is your context pack: [include files]. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.json`.
 - **description:** "REFLECT: post-run learning extraction"
 
 ### 12.3 EVOLVE Agent (if re-run)
@@ -543,7 +548,7 @@ Context pack:
 - `knowledge-base/` files
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/learning/evolve.md`. You are the EVOLVE agent. Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/learning/adaptive.md`. You are the EVOLVE agent. Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "EVOLVE: cross-run diffing and improvement measurement"
 
 Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-alerts.md`
@@ -558,7 +563,7 @@ Context pack:
 - Quality scores from all WHY passes (from state.json)
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/learning/calibrate.md`. You are the CALIBRATE agent. Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or SCIENTIST investigation. Here is your context pack: [include files]. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/learning/auditor.md`. You are the CALIBRATE agent. Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or SCIENTIST investigation. Here is your context pack: [include files]. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "CALIBRATE: accuracy tracking and confidence profiling"
 
 ### 12.5 CALIBRATE Confidence Check
