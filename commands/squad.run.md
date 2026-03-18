@@ -25,6 +25,30 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 ---
 
+## Role Separation — ABSOLUTE RULES
+
+Every agent has ONE job. No agent may do another agent's job. This is non-negotiable.
+
+| Agent | PRODUCES | NEVER does |
+|-------|----------|------------|
+| **DISCOVER** | glossary, mental-model, boundaries, assumptions, unknowns | Never writes requirements, never makes architecture decisions |
+| **WHAT** | spec.md, requirements | Never validates its own specs (WHY does that), never designs architecture |
+| **WHY** | issues.md, quality-gates.md | **NEVER rewrites specs/plans/tasks.** WHY ONLY finds problems. Responsible agent fixes. |
+| **ASSESS** | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
+| **HOW** | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
+| **PLAN** | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
+| **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
+
+**The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
+- Spec issues → dispatch **WHAT** to fix → then **WHY** re-validates
+- Architecture issues → dispatch **HOW** to fix → then **WHY** re-validates
+- Task issues → dispatch **PLAN** to fix → then **WHY** re-validates
+- Unknown questions → dispatch **SCIENTIST** to investigate → feed results to the relevant agent
+
+**NEVER dispatch WHY with a prompt that says "fix" or "rewrite."** WHY is read-only on all artifacts except issues.md and quality-gates.md.
+
+---
+
 ## 1. Initialization (INIT)
 
 ### 1.1 Generate Run ID
