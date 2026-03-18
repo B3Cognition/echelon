@@ -1,6 +1,11 @@
 # Cognitive Squad Configuration
 # Copy to squad-config.yml and customize
-
+#
+# GUIDANCE NOTATION:
+#   [range: X-Y]     = sensible values, beyond this is likely wasteful or broken
+#   [default: X]     = recommended starting point
+#   [disable: X]     = set to this value to effectively disable the check
+#
 # =============================================================================
 # ANALYSIS SETTINGS
 # =============================================================================
@@ -10,12 +15,24 @@ analysis:
   mode: auto  # auto | greenfield | brownfield
 
   # Maximum squad iterations before forced convergence
+  # [range: 3-10] Most runs converge in 2-3. Beyond 10 = likely stuck in a loop.
+  # Setting to 99 wastes tokens - if not converged by 10, there's a deeper problem.
   max_iterations: 5
 
   # Token budget (approximate, in thousands)
+  # [range: 100-2000] Purpose: prevent runaway costs and force convergence decisions.
+  #
+  # Q: "I have unlimited Claude tokens, should I set this very high?"
+  # A: No. Even with unlimited tokens, high budgets (>2000k) lead to diminishing
+  #    returns. The squad converges via quality gates and iteration limits anyway.
+  #    A high budget just means slower convergence and more verbose output.
+  #    Recommended: 500-1000k for most projects, 1500-2000k for very large codebases.
+  # [disable: 999999] - effectively no budget limit (not recommended)
   token_budget_k: 1000
 
   # Convergence threshold for Understanding score delta
+  # [range: 0.01-0.05] Smaller = stricter (more iterations), larger = looser.
+  # Below 0.01 may never converge due to noise. Above 0.05 may stop too early.
   convergence_delta: 0.02
 
 # Autonomy mode
@@ -31,18 +48,23 @@ autonomy:
 
 convergence:
   # Quality delta threshold - stop if improvement < this
+  # [range: 0.01-0.05] Same guidance as analysis.convergence_delta
   quality_delta_threshold: 0.02
 
   # Consecutive passes needed before declaring convergence
+  # [range: 2-5] Higher = more confidence but slower. Beyond 5 = paranoid.
   consecutive_passes: 2
 
   # Escalate if same issue appears this many times
+  # [range: 2-5] Lower = faster escalation, higher = more patient.
   issue_repeat_limit: 3
 
   # Maximum squad iterations (mirrors analysis.max_iterations)
+  # [range: 3-10] See analysis.max_iterations for guidance.
   max_squad_iterations: 5
 
   # DEFER loop limit before forcing decision
+  # [range: 1-3] How many times ASSESS can DEFER before forced PASS/KILL.
   defer_loop_limit: 2
 
 # =============================================================================
@@ -77,6 +99,8 @@ build_budget:
 
 limits:
   # Wall-clock timeout for entire squad run (minutes)
+  # [range: 20-90] Beyond 90 mins, something is likely stuck or looping.
+  # [disable: 9999] - no timeout (not recommended for unattended runs)
   wall_clock_timeout_minutes: 40
 
 # =============================================================================
@@ -189,6 +213,7 @@ assess:
 
 calibration:
   # Accuracy below this triggers warning
+  # [range: 0.3-0.7] Lower = more tolerant of bad estimates
   low_accuracy_threshold: 0.5
 
   # Trend variance threshold for "stable"
@@ -198,9 +223,12 @@ calibration:
   trend_improvement_threshold: 0.05
 
   # Minimum samples before calculating accuracy
+  # [range: 3-10] Too low = noisy, too high = slow to learn
   min_sample_size: 3
 
-  # Correction factor caps
+  # Correction factor caps - how much AUDITOR can adjust estimates
+  # [range: 0.3-0.8 for min, 2.0-5.0 for max]
+  # Beyond 5x correction means estimates are essentially random - investigate root cause.
   correction_factor_min: 0.5
   correction_factor_max: 3.0
 
@@ -247,12 +275,17 @@ internalization:
 
 code_quality:
   # Maximum function length (lines)
+  # [range: 20-50] Industry standard ~30. Setting to 500 defeats the purpose.
+  # [disable: 9999] - no limit (not recommended)
   max_function_lines: 30
 
   # Maximum nesting depth
+  # [range: 2-5] Deep nesting (>5) is almost always refactorable.
   max_nesting_depth: 3
 
   # Maximum cyclomatic complexity
+  # [range: 5-15] Research shows >10 correlates with defects.
+  # [disable: 9999] - no limit (not recommended)
   max_cyclomatic_complexity: 10
 
 # =============================================================================
@@ -261,6 +294,8 @@ code_quality:
 
 tests:
   # Minimum tests by component type
+  # [range: 1-10 each] These are minimums - actual tests may be more.
+  # Setting all to 1 = minimal coverage. Setting all to 10 = thorough but slow.
   min_pure_function: 2
   min_class_service: 3
   min_ui_component: 3
