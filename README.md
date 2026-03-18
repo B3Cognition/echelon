@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.2.0** — Layer-based architecture with dual naming (functional + codename)
+**Version 0.2.0** — Layer-based architecture with dual naming (codename + functional)
 
 ## Quick Start
 
@@ -88,10 +88,10 @@ autonomy:
 
 ### Naming Convention
 
-Each agent has a **functional name** (what it does) and a **codename** (file name):
+Each agent has a **codename** (file name, what you see in logs) and a **functional name** (what it does):
 
 ```
-DISCOVER (SCOUT) — the functional name is DISCOVER, codename is SCOUT
+SCOUT (DISCOVER) — codename is SCOUT, functional name is DISCOVER
 File: agents/exploration/scout.md
 ```
 
