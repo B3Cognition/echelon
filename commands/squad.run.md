@@ -347,7 +347,18 @@ After ASSESS passes, determine which specialists are needed:
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
-| **INNOVATE** | Re-run (iteration >= 2) AND EVOLVE detects stagnation, OR circular reasoning 3x | Low |
+| **INNOVATE** | See expanded triggers below | Medium |
+
+**INNOVATE Expanded Triggers** — INNOVATE should run more often than other specialists. It catches design ruts early:
+
+1. **Re-run stagnation:** EVOLVE detects no improvement between runs → INNOVATE
+2. **Circular reasoning:** Same issue raised 3x without resolution → INNOVATE before escalation
+3. **WHY rejects spec 2+ times:** The spec keeps failing quality gates → INNOVATE reframes the problem
+4. **ASSESS borderline DEFER:** Feasibility is marginal (not clear KILL, not clear PASS) → INNOVATE proposes simpler alternatives
+5. **HOW faces a hard tradeoff:** Architecture decision has no clear winner → INNOVATE applies TRIZ contradiction resolution
+6. **Quality scores plateau:** WHY scores improve < 2% over 2 iterations → INNOVATE breaks the local optimum
+7. **Any agent reports BLOCKED:** Before escalating to human, try INNOVATE first
+8. **First run with complex scope:** If ASSESS estimates > 100 person-weeks, proactively run INNOVATE to check if a simpler approach exists
 
 ### Max Active Specialists
 
@@ -418,8 +429,8 @@ Context pack:
 - `reasoning-journal.json`
 
 Use the Agent tool:
-- **prompt:** Read the file `agents/specialists/innovate.md`. You are the INNOVATE specialist. Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
-- **description:** "INNOVATE: alternative approaches and assumption challenges"
+- **prompt:** Read the file `agents/specialists/innovate.md`. You are the INNOVATE specialist. Use the 3-phase evidence-based method: (1) Design Thinking to reframe the problem, (2) AutoTRIZ to resolve contradictions — read `templates/triz-40-principles.md` for all 40 principles and `templates/triz-contradiction-matrix.md` for the parameter matrix, (3) Lateral Thinking to break remaining patterns. Propose 2-3 fundamentally different approaches. Here is your context pack: [include files]. Produce outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **description:** "INNOVATE: AutoTRIZ contradiction resolution + Design Thinking + Lateral Thinking"
 
 ### Post-Specialist
 

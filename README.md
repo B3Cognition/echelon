@@ -96,7 +96,7 @@ Five roles. But a human holds 7-9 concepts in working memory. An AI can hold tho
 - WHY needed two modes (assumptions vs specs) → **dual-mode adversarial critic**
 - Nobody checked if the AI was wrong → **CALIBRATE** (tracks accuracy per domain)
 - Nobody connected plans to reality → **GROUND** (reference class forecasting)
-- Nobody broke stagnation → **INNOVATE** (TRIZ, First Principles, Blue Ocean)
+- Nobody broke stagnation → **INNOVATE** (AutoTRIZ contradiction resolution + Design Thinking + Lateral Thinking, backed by ISO/TR 18686 and 40 inventive principles)
 - Building needed different roles than understanding → **9 build agents** with per-task quality gates
 - Per-task checking missed aggregate gaps → **VERIFICATION** (backpropagation: spec → code → 100%?)
 - Understanding without internalization led to misalignment → **INTERNALIZATION GATE** (prove you understand before you work)
@@ -310,7 +310,7 @@ specify extension add --dev /path/to/cognitive-squad
 | **DOMAIN EXPERT** | Domain-specific knowledge needed | Domain amendments to spec and plan |
 | **UX / A11Y** | Frontend, user-facing features | `accessibility-requirements.md` |
 | **PERFORMANCE** | High-load, real-time, scalability | `performance-requirements.md`, `capacity-model.md` |
-| **INNOVATE** | Stagnation, re-runs, circular reasoning | `alternatives.md`, `challenge-assumptions.md` |
+| **INNOVATE** | Stagnation, WHY rejects 2+, ASSESS borderline, HOW tradeoffs, quality plateau, any BLOCKED, complex scope | `alternatives.md`, `challenge-assumptions.md` (uses AutoTRIZ with 40 principles + contradiction matrix) |
 
 ### Phase 2-3: Building (10)
 
@@ -558,10 +558,10 @@ The architecture feels wrong. You're going in circles.
 > /speckit.squad.innovate "The current API design feels over-engineered. Are there simpler approaches?"
 
 What happens:
-  INNOVATE applies:
-    - First Principles: strip assumptions, rebuild from fundamentals
-    - TRIZ: what contradiction exists? what inventive principle applies?
-    - Blue Ocean: what would a competitor do differently?
+  INNOVATE applies evidence-based innovation (ISO/TR 18686, AutoTRIZ 2024):
+    - Design Thinking: are we solving the right problem?
+    - AutoTRIZ: identify the contradiction → map to parameters → apply 40 inventive principles
+    - Lateral Thinking: provocation, inversion, random entry to break mental patterns
 
   Output: alternatives.md
     - Option A: (description, pros, cons, risk level)
@@ -898,6 +898,7 @@ If verify fails (coverage < 100%), block the merge.
 | **ATAM/ATRAF** | ADRs with rationale + quality attribute analysis |
 | **IEEE 830 / ISO 29148** | Quality gates via Understanding CLI |
 | **Kahneman RCF** | GROUND applies outside view to estimates |
+| **ISO/TR 18686 (TRIZ)** | INNOVATE uses all 40 inventive principles + contradiction matrix via AutoTRIZ (2024) |
 
 ---
 

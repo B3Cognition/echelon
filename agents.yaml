@@ -291,7 +291,7 @@ agents:
     phase: understanding
     tier: specialist
     role: "Design Thinking + AutoTRIZ + Lateral Thinking — evidence-based innovation (ISO/TR 18686, AutoTRIZ 2024)"
-    when: "Re-runs, stagnation detected, circular reasoning 3x"
+    when: "Expanded triggers: stagnation, circular reasoning 3x, WHY rejects 2+, ASSESS borderline, HOW hard tradeoff, quality plateau, any BLOCKED, complex scope >100pw"
     inputs: [all current artifacts, reasoning-journal.json]
     outputs: [alternatives.md, risk-opportunities.md, challenge-assumptions.md]
     routes_to: []
