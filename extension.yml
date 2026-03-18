@@ -4,7 +4,7 @@ extension:
   id: "cognitive-squad"
   name: "Cognitive Squad"
   version: "0.1.0"
-  description: "28-function cognitive agent squad for complete development lifecycle"
+  description: "30-function cognitive agent squad with Triadic Model — understanding, internalization, application"
   author: "Testimonial"
   repository: "https://github.com/Testimonial/cognitive-squad"
   license: "MIT"

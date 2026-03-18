@@ -1,0 +1,41 @@
+schema_version: 1
+
+# Agent performance tracking — updated by SCOREKEEPER after each run
+# Lifetime scores accumulate across projects
+# Badges persist once earned
+
+agents:
+  # Phase A: Understanding
+  MANAGER: { lifetime_score: 0, badges: [], history: [] }
+  DISCOVER: { lifetime_score: 0, badges: [], history: [] }
+  WHAT: { lifetime_score: 0, badges: [], history: [] }
+  WHY: { lifetime_score: 0, badges: [], history: [] }
+  ASSESS: { lifetime_score: 0, badges: [], history: [] }
+  HOW: { lifetime_score: 0, badges: [], history: [] }
+  PLAN: { lifetime_score: 0, badges: [], history: [] }
+
+  # Phase A: Specialists
+  SCIENTIST: { lifetime_score: 0, badges: [], history: [] }
+  SECURITY: { lifetime_score: 0, badges: [], history: [] }
+  TEST_ARCHITECT: { lifetime_score: 0, badges: [], history: [] }
+  DOMAIN_EXPERT: { lifetime_score: 0, badges: [], history: [] }
+  UX_A11Y: { lifetime_score: 0, badges: [], history: [] }
+  PERFORMANCE: { lifetime_score: 0, badges: [], history: [] }
+  INNOVATE: { lifetime_score: 0, badges: [], history: [] }
+
+  # Phase B: Building
+  IMPLEMENTER: { lifetime_score: 0, badges: [], history: [] }
+  SPEC_GUARD: { lifetime_score: 0, badges: [], history: [] }
+  CODE_REVIEWER: { lifetime_score: 0, badges: [], history: [] }
+  TEST_GUARDIAN: { lifetime_score: 0, badges: [], history: [] }
+  ENGINEERING_MANAGER: { lifetime_score: 0, badges: [], history: [] }
+  INTEGRATOR: { lifetime_score: 0, badges: [], history: [] }
+  PROGRESS_TRACKER: { lifetime_score: 0, badges: [], history: [] }
+  CHANGE_CONTROLLER: { lifetime_score: 0, badges: [], history: [] }
+  VERIFICATION: { lifetime_score: 0, badges: [], history: [] }
+
+  # Phase C: Learning
+  REFLECT: { lifetime_score: 0, badges: [], history: [] }
+  EVOLVE: { lifetime_score: 0, badges: [], history: [] }
+  CALIBRATE: { lifetime_score: 0, badges: [], history: [] }
+  GROUND: { lifetime_score: 0, badges: [], history: [] }
