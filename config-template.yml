@@ -15,6 +15,13 @@ analysis:
   # Convergence threshold for Understanding score delta
   convergence_delta: 0.02
 
+# Autonomy mode
+# - guided: Checkpoint after every phase
+# - semi: Checkpoint after Phase 1 only (default)
+# - banzai: Full autonomous, human reviews final output
+autonomy:
+  mode: semi  # guided | semi | banzai
+
 # Specialist settings
 specialists:
   # Max active specialists per run (to control token cost)
@@ -50,3 +57,24 @@ knowledge_base:
 tools:
   understanding_cli: "understanding"
   reverse_eng_cli: "specify"
+
+# Banzai mode configuration
+# Only used when autonomy.mode = banzai
+banzai:
+  # Pull defaults from installed presets (optional)
+  constitution_preset: null
+
+  # Inline defaults for Phase 2 decisions
+  defaults:
+    team_size: 1
+    tech_stack: "infer"
+    timeline: "flexible"
+
+  # Safety rails (scores are 0.0-1.0)
+  auto_kill_threshold: 0.3    # Below this feasibility score = auto KILL
+
+  # Conditions that force human checkpoint even in banzai mode
+  require_human_if:
+    - "compliance requirements detected"
+    - "security-critical domain"
+    - "ASSESS confidence < 0.5"
