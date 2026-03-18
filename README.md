@@ -120,168 +120,84 @@ Cognitive Squad changes that equation. It doesn't make me smarter. It makes the 
 
 The model stays the same. The system gets better. That's the honest answer to "how do you make AI coding reliable?" — you don't improve the AI, you build guardrails that catch what the AI gets wrong, and you measure so the guardrails get tighter over time.
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  PHASE 1: UNDERSTANDING (19 functions)                            │
-│                                                                    │
-│  Core:        MANAGER → DISCOVER → WHAT → WHY → ASSESS → HOW     │
-│               → PLAN + INTENT TRACKER (watches user intent)       │
-│  Specialists: SCIENTIST · SECURITY · TEST ARCHITECT · PERFORMANCE │
-│               DOMAIN EXPERT · UX/A11Y · INNOVATE                  │
-│  Learning:    REFLECT · EVOLVE · CALIBRATE · GROUND · FEEDBACK    │
-└───────────────────────────┬──────────────────────────────────────┘
-                            │ validated plan + tasks
-                            ↓
-┌──────────────────────────────────────────────────────────────────┐
-│  PHASE 2: INTERNALIZATION (2 functions)                           │
-│                                                                    │
-│  INTERNALIZATION GATE: each agent proves comprehension (6 checks) │
-│  SCOREKEEPER: scores quality, awards badges, enables self-healing │
-└───────────────────────────┬──────────────────────────────────────┘
-                            │ all agents aligned, zero doubts
-                            ↓
-┌──────────────────────────────────────────────────────────────────┐
-│  PHASE 3: APPLICATION (10 functions)                              │
-│                                                                    │
-│  Per task:    IMPLEMENTER → SPEC GUARD → CODE REVIEWER            │
-│               → TEST GUARDIAN                                      │
-│  Per phase:   ENGINEERING MANAGER · INTEGRATOR · VISUAL VALIDATOR │
-│  Final:       VERIFICATION (backpropagation — spec → code → 100%)│
-│  Continuous:  PROGRESS TRACKER · MENTAL MODEL                     │
-│               METACOGNITION MONITOR · CHANGE CONTROLLER           │
-└───────────────────────────┬──────────────────────────────────────┘
-                            │ verified code + tests + screenshots
-                            ↓
-┌──────────────────────────────────────────────────────────────────┐
-│  PHASE 4: LEARNING                                                │
-│  FEEDBACK → CALIBRATE → EVOLVE → REFLECT → SCOREKEEPER           │
-│  (self-healing: scores → prompt refinement → better next run)     │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-**34 cognitive functions:** 12 core + 7 specialists + 10 build + 4 learning + 1 feedback
-
-## The Flow
-
-### Phase A: Understanding
-
-```
-INIT → DISCOVER → WHY₁ (challenge assumptions)
-  → WHAT (requirements) → WHY₂ (validate quality gates)
-  → ASSESS (feasibility / kill gate)
-  → [SPECIALISTS: SCIENTIST, SECURITY, DOMAIN, UX, PERFORMANCE]
-  → HOW (architecture + ADRs) → TEST ARCHITECT
-  → PLAN (tasks, critical path, risk)
-  → CONSENSUS (WHY₃ + ASSESS₂ + PLAN₂)
-  → FINALIZE (GROUND + REFLECT + CALIBRATE)
-```
-
-### Phase B: Building
-
-```
-FOR EACH task:
-  IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
-  (loop until all gates pass)
-  PROGRESS TRACKER updates metrics
-
-PER PHASE:
-  ENGINEERING MANAGER evaluates gate: continue / rework / halt
-  INTEGRATOR verifies system integration
-
-AFTER ALL TASKS:
-  VERIFICATION (backpropagation): spec → code → 100%?
-  → gaps found? → EM creates rework tasks → re-verify
-  → loop until 100% coverage (max 3 passes)
-```
-
-### Phase C: Learning
-
-```
-FEEDBACK (post-implementation) → CALIBRATE → EVOLVE → REFLECT
-→ knowledge base updated → next run is smarter
-```
-
-## Installation
-
-### Option 1: From community catalog
-
-Cognitive Squad is in the spec-kit community catalog. Community extensions require opt-in before installation.
-
-**Enable community catalog** — create `.specify/extension-catalogs.yml` in your project:
-
-```yaml
-catalogs:
-  - name: default
-    url: https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.json
-    priority: 1
-    install_allowed: true
-    description: Official spec-kit extensions
-
-  - name: community
-    url: https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.community.json
-    priority: 2
-    install_allowed: true
-    description: Community-contributed extensions
-```
-
-Or set it globally for all projects in `~/.specify/extension-catalogs.yml`.
-
-Then install:
-
-```bash
-specify extension add cognitive-squad
-```
-
-### Option 2: From local path (development)
-
-```bash
-git clone https://github.com/Testimonial/cognitive-squad.git
-specify extension add --dev /path/to/cognitive-squad
-```
-
-### Option 3: Direct from GitHub
-
-```bash
-specify extension add --dev https://github.com/Testimonial/cognitive-squad
-```
+---
 
 ## Quick Start
 
-```bash
-# Phase A: Understand and plan
-/speckit.squad.run "Build a photo album app with sharing and tagging"
+A spec-kit extension that makes Claude Code work like a **real engineering team** instead of a single prompt-and-pray chatbot.
 
-# Phase B: Build with quality gates
-/speckit.squad.build 001-photo-album
-
-# Verify 100% spec coverage
-/speckit.squad.verify
-
-# Check progress
-/speckit.squad.status
-
-# After deployment, close the learning loop
-/speckit.squad.feedback 001
+Instead of:
+```
+You: "Build me a user auth system"
+Claude: *writes code, hopes it's right*
 ```
 
-## Commands
+You get:
+```
+You: "Build me a user auth system"
+Squad: DISCOVER maps the domain → WHY challenges every assumption
+     → WHAT writes testable requirements (validated by 31 IEEE/ISO metrics)
+     → ASSESS kills it if unfeasible → HOW designs architecture with ADRs
+     → Each agent PROVES it understood the plan before coding
+     → IMPLEMENTER writes code → SPEC GUARD verifies it matches the spec
+     → CODE REVIEWER checks quality → TEST GUARDIAN validates tests
+     → VERIFICATION traces EVERY requirement to code (100% or rework)
+     → System scores itself and gets better next time
+```
 
-| Command | Description | When to use |
-|---------|-------------|-------------|
-| `/speckit.squad.run` | Full autonomous understanding phase | Starting analysis of a new project or codebase |
-| `/speckit.squad.build` | Execute building phase with quality gates | After understanding phase produces plan + tasks |
-| `/speckit.squad.verify` | Backpropagation check — 100% spec coverage | After all tasks complete, to confirm nothing was missed |
-| `/speckit.squad.status` | Check current squad state and progress | Mid-run monitoring, reviewing prior runs |
-| `/speckit.squad.change` | Handle spec change during build | When requirements change mid-implementation |
-| `/speckit.squad.innovate` | Trigger INNOVATE specialist | Stagnation, want alternative approaches |
-| `/speckit.squad.investigate` | Trigger SCIENTIST for a question | Need evidence-graded research on a topic |
-| `/speckit.squad.ground` | Trigger reality check on artifacts | Validate plans against real-world data |
-| `/speckit.squad.feedback` | Post-implementation feedback intake | After deployment, to close the learning loop |
-| `/speckit.squad.resume` | Answer human escalation | Squad asked a question and is waiting |
+### Why Should I Use This?
 
-## Agent Roster
+Because Claude Code alone:
+- Is equally confident when right and when wrong
+- Doesn't check if what it built matches what you asked for
+- Doesn't track its own accuracy
+- Makes the same mistakes across projects
+- Skips its own quality process when rushing
+
+Cognitive Squad fixes all of this with separation of concerns — different agents produce, critique, verify, and learn. No single agent can approve its own work.
+
+### 5-Minute Setup
+
+```bash
+# 1. Clone
+git clone https://github.com/Testimonial/cognitive-squad.git
+
+# 2. Install into your spec-kit project
+cd your-project
+specify extension add --dev /path/to/cognitive-squad
+
+# 3. Run the understanding phase
+/speckit.squad.run "Build a user authentication system with OAuth2, MFA, and session management"
+
+# 4. Review what it produced (in .specify/specs/001-*/):
+#    - spec.md (requirements, validated by Understanding CLI)
+#    - plan.md (architecture with ADRs)
+#    - tasks.md (ordered tasks with critical path)
+#    - feasibility.md, estimates.md, risk-matrix.md
+
+# 5. Build with quality gates
+/speckit.squad.build 001-user-auth
+
+# 6. Verify 100% spec coverage
+/speckit.squad.verify
+```
+
+### What Makes It Different From Other AI Tools
+
+| Feature | Raw Claude Code | Cognitive Squad |
+|---------|----------------|-----------------|
+| Spec quality | Whatever the LLM produces | 31 IEEE/ISO metrics with pass/fail gates |
+| Architecture decisions | "I recommend X" | ADR with rationale + alternatives + evidence grade |
+| Estimation | "About 2 weeks" | Function Point Analysis + Kahneman reference class correction |
+| Code verification | "Tests pass" | Backpropagation: every requirement traced to code and test |
+| Self-awareness | Equally confident right or wrong | CALIBRATE tracks accuracy per domain, applies correction factors |
+| Learning | Starts fresh every time | Knowledge base: patterns, pitfalls, calibration persist across projects |
+| Process discipline | Skips steps when rushing | METACOGNITION MONITOR flags process violations |
+| User intent | Optimizes for what it thinks is best | INTENT TRACKER compares every decision to what you actually said |
+
+---
+
+## The 34 Members
 
 ### Phase 1: Understanding — Core Squad (12)
 
@@ -337,6 +253,520 @@ specify extension add --dev https://github.com/Testimonial/cognitive-squad
 | **GROUND** | During FINALIZE | Reality-checks artifacts against real-world data |
 | **FEEDBACK** | Post-implementation (manual) | Closes prediction-to-outcome loop for calibration |
 
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 1: UNDERSTANDING (19 functions)                            │
+│                                                                    │
+│  Core:        MANAGER → DISCOVER → WHAT → WHY → ASSESS → HOW     │
+│               → PLAN + INTENT TRACKER (watches user intent)       │
+│  Specialists: SCIENTIST · SECURITY · TEST ARCHITECT · PERFORMANCE │
+│               DOMAIN EXPERT · UX/A11Y · INNOVATE                  │
+│  Learning:    REFLECT · EVOLVE · CALIBRATE · GROUND · FEEDBACK    │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ validated plan + tasks
+                            ↓
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 2: INTERNALIZATION (2 functions)                           │
+│                                                                    │
+│  INTERNALIZATION GATE: each agent proves comprehension (6 checks) │
+│  SCOREKEEPER: scores quality, awards badges, enables self-healing │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ all agents aligned, zero doubts
+                            ↓
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 3: APPLICATION (10 functions)                              │
+│                                                                    │
+│  Per task:    IMPLEMENTER → SPEC GUARD → CODE REVIEWER            │
+│               → TEST GUARDIAN                                      │
+│  Per phase:   ENGINEERING MANAGER · INTEGRATOR · VISUAL VALIDATOR │
+│  Final:       VERIFICATION (backpropagation — spec → code → 100%)│
+│  Continuous:  PROGRESS TRACKER · MENTAL MODEL                     │
+│               METACOGNITION MONITOR · CHANGE CONTROLLER           │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ verified code + tests + screenshots
+                            ↓
+┌──────────────────────────────────────────────────────────────────┐
+│  PHASE 4: LEARNING                                                │
+│  FEEDBACK → CALIBRATE → EVOLVE → REFLECT → SCOREKEEPER           │
+│  (self-healing: scores → prompt refinement → better next run)     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**34 cognitive functions:** 12 core + 7 specialists + 10 build + 4 learning + 1 feedback
+
+### The Flow
+
+#### Phase A: Understanding
+
+```
+INIT → DISCOVER → WHY₁ (challenge assumptions)
+  → WHAT (requirements) → WHY₂ (validate quality gates)
+  → ASSESS (feasibility / kill gate)
+  → [SPECIALISTS: SCIENTIST, SECURITY, DOMAIN, UX, PERFORMANCE]
+  → HOW (architecture + ADRs) → TEST ARCHITECT
+  → PLAN (tasks, critical path, risk)
+  → CONSENSUS (WHY₃ + ASSESS₂ + PLAN₂)
+  → FINALIZE (GROUND + REFLECT + CALIBRATE)
+```
+
+#### Phase B: Building
+
+```
+FOR EACH task:
+  IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
+  (loop until all gates pass)
+  PROGRESS TRACKER updates metrics
+
+PER PHASE:
+  ENGINEERING MANAGER evaluates gate: continue / rework / halt
+  INTEGRATOR verifies system integration
+
+AFTER ALL TASKS:
+  VERIFICATION (backpropagation): spec → code → 100%?
+  → gaps found? → EM creates rework tasks → re-verify
+  → loop until 100% coverage (max 3 passes)
+```
+
+#### Phase C: Learning
+
+```
+FEEDBACK (post-implementation) → CALIBRATE → EVOLVE → REFLECT
+→ knowledge base updated → next run is smarter
+```
+
+---
+
+## Cookbook — Recipes
+
+A step-by-step guide for common scenarios. Copy-paste the commands. Follow the order.
+
+### Recipe 1: New Project From Scratch (Greenfield)
+
+You have an idea. No code exists yet.
+
+```
+Step 1: Initialize spec-kit project
+────────────────────────────────────
+$ mkdir my-project && cd my-project
+$ specify init my-project --ai claude
+
+Step 2: Run the squad
+────────────────────────────────────
+> /speckit.squad.run "Build a task management API with user auth, teams, projects, and real-time notifications"
+
+What happens:
+  DISCOVER  → researches the domain, finds reference architectures
+  WHY₁      → challenges assumptions ("what auth provider? what real-time tech?")
+  WHAT      → writes spec with testable requirements
+  WHY₂      → validates spec (31 metrics — may reject and loop)
+  ASSESS    → estimates effort, classifies features (must-have vs nice-to-have)
+  HOW       → selects tech stack, writes ADRs
+  PLAN      → creates tasks with critical path
+
+  Time: ~15-30 minutes
+  Output: .specify/specs/001-task-management/
+
+Step 3: Review what the squad produced
+────────────────────────────────────
+Read these files:
+  spec.md           ← requirements (check: do they match your intent?)
+  plan.md           ← architecture (check: tech stack OK?)
+  estimates.md      ← effort (check: realistic for your team?)
+  tasks.md          ← task breakdown (check: ordering makes sense?)
+  feasibility.md    ← can this be built? (check: any kills/defers?)
+  quality-gates.md  ← spec quality scores (all should be green)
+
+Step 4: Build it
+────────────────────────────────────
+> /speckit.squad.build 001-task-management
+
+What happens per task:
+  IMPLEMENTER  → writes code (TDD)
+  SPEC GUARD   → checks: does code match the spec?
+  CODE REVIEWER → checks: quality, security, ADR compliance
+  TEST GUARDIAN → checks: are tests sufficient?
+
+Step 5: Verify nothing was missed
+────────────────────────────────────
+> /speckit.squad.verify
+
+What happens:
+  VERIFICATION scans EVERY requirement against the codebase.
+  If gaps → creates rework tasks → loops until 100%.
+
+Step 6: After deployment — close the learning loop
+────────────────────────────────────
+> /speckit.squad.feedback 001
+
+Answer questions about what actually happened:
+  - How long did it really take vs estimated?
+  - Which architecture decisions held up?
+  - What requirements were missing?
+  → Updates calibration for next project
+```
+
+### Recipe 2: Modernize an Existing Codebase (Brownfield)
+
+You have a legacy system. You want to rewrite/modernize it.
+
+```
+Step 1: Point the squad at your codebase
+────────────────────────────────────
+> /speckit.squad.run /path/to/legacy-codebase
+
+What happens:
+  DISCOVER uses reverse-eng to analyze:
+    - Directory structure
+    - Dependencies
+    - Git history (hotspots, contributors)
+    - Config files
+    - Language/framework detection
+  Then maps: domain glossary, boundaries, assumptions, unknowns
+
+Step 2: SCIENTIST investigates unknowns
+────────────────────────────────────
+The squad auto-dispatches SCIENTIST for testable questions:
+  - "Does the API support modern protocols?" → empirical test
+  - "Are legacy data formats still evolving?" → git history analysis
+  - "What percentage uses the old vs new pattern?" → codebase grep
+
+Step 3: Same flow as greenfield from here
+────────────────────────────────────
+WHY validates → WHAT writes spec → ASSESS estimates → HOW designs → PLAN breaks down
+
+The difference: all decisions are GROUNDED in what the codebase actually contains,
+not what documentation says it contains.
+```
+
+### Recipe 3: Handle a Spec Change Mid-Build
+
+Requirements changed. It happens.
+
+```
+> /speckit.squad.change "FR-AUTH-003 now requires OAuth2 instead of API keys. The client changed their security requirements."
+
+What happens:
+  CHANGE CONTROLLER:
+    1. Impact analysis → which tasks affected? which code needs rework?
+    2. Re-validates changed requirement through WHY
+    3. Re-estimates affected tasks through ASSESS
+    4. Marks completed tasks as NEEDS_REWORK
+    5. Updates traceability matrix
+
+  Output: change-impact-report.md
+    - 3 tasks need rework
+    - 1 ADR invalidated
+    - Estimated impact: +4 days
+    - Critical path affected: yes
+
+  Then: IMPLEMENTER reworks affected tasks → SPEC GUARD re-validates
+```
+
+### Recipe 4: "I'm Stuck" — Get Fresh Ideas
+
+The architecture feels wrong. You're going in circles.
+
+```
+> /speckit.squad.innovate "The current API design feels over-engineered. Are there simpler approaches?"
+
+What happens:
+  INNOVATE applies:
+    - First Principles: strip assumptions, rebuild from fundamentals
+    - TRIZ: what contradiction exists? what inventive principle applies?
+    - Blue Ocean: what would a competitor do differently?
+
+  Output: alternatives.md
+    - Option A: (description, pros, cons, risk level)
+    - Option B: (description, pros, cons, risk level)
+    - Option C: (description, pros, cons, risk level)
+
+  Then: WHY + ASSESS evaluate each alternative
+```
+
+### Recipe 5: Research Before Deciding
+
+You need evidence, not opinions.
+
+```
+> /speckit.squad.investigate "Should we use GraphQL or REST for the public API? We expect 10K concurrent users."
+
+What happens:
+  SCIENTIST follows the scientific method:
+    1. RESEARCH → searches docs, papers, benchmarks
+    2. EVALUATE → grades each source (A=peer-reviewed, B=official docs, C=blog, D=forum, E=AI training data)
+    3. HYPOTHESIZE → "GraphQL reduces over-fetching but adds server complexity"
+    4. EXPERIMENT → scaffolds a minimal prototype, benchmarks both
+    5. RECOMMEND → confidence-scored conclusion with evidence
+
+  Output: investigation/graphql-vs-rest.md
+    Recommendation: REST (confidence: 0.75)
+    Evidence: B (official benchmarks show REST handles 10K concurrent with less memory)
+    Caveat: If client needs vary widely, GraphQL at 0.60 confidence
+```
+
+### Recipe 6: Check Progress
+
+```
+> /speckit.squad.status
+
+Output:
+  Run: squad-001
+  Phase: BUILD (Phase 3 of 5)
+  Tasks: 23/67 complete
+  Quality: CPI 0.92, SPI 0.88 (slightly behind schedule)
+  Coverage: 34% of requirements implemented
+  Alerts: none
+  Last agent: IMPLEMENTER completed T-023
+```
+
+### Recipe 7: Reality-Check Your Plan
+
+Before committing to a timeline, get a grounded estimate.
+
+```
+> /speckit.squad.ground
+
+What happens:
+  GROUND:
+    - Compares your estimates to similar past projects
+    - Checks architecture decisions against real-world production data
+    - Applies Kahneman's reference class forecasting (outside view)
+    - Flags disconnects between plan and reality
+
+  Output: reality-check.md
+    "Your estimate of 12 weeks is in the 30th percentile for similar projects.
+     Industry median is 18 weeks. Recommend budgeting 16-20 weeks."
+```
+
+### Recipe 8: After Deployment — Make the Squad Smarter
+
+This is the most important step. It closes the learning loop.
+
+```
+> /speckit.squad.feedback 001
+
+The squad asks:
+  - Actual effort vs estimated?
+  - Which architecture decisions held up in production?
+  - Which requirements were missing or wrong?
+  - What risks materialized?
+  - What tests caught real bugs? What didn't?
+
+  → Updates:
+    - calibration-profile.yaml (accuracy per domain)
+    - estimates-log.yaml (predicted vs actual)
+    - patterns.yaml (what worked)
+    - pitfalls.yaml (what failed)
+
+  Next run: ASSESS uses this data for better estimates.
+  Next run: WHY knows which areas the squad historically gets wrong.
+  Next run: The squad is measurably better.
+```
+
+### Recipe 9: Spec-Kit First, Then Squad (Hybrid Flow)
+
+You already use spec-kit's built-in commands (`/speckit.specify`, `/speckit.plan`, `/speckit.tasks`). You want the squad to validate, improve, and build from YOUR specs — not generate its own from scratch.
+
+This is the **recommended flow for teams already using spec-kit**.
+
+```
+Step 1: Write your spec with spec-kit (you drive)
+────────────────────────────────────────────────
+$ specify init my-project --ai claude
+> /speckit.constitution
+> /speckit.specify "User authentication with OAuth2, MFA, and session management"
+> /speckit.clarify
+> /speckit.plan
+> /speckit.tasks
+
+You now have:
+  .specify/specs/001-user-auth/
+    ├── spec.md         ← YOUR requirements
+    ├── plan.md         ← YOUR architecture
+    ├── tasks.md        ← YOUR task breakdown
+    └── constitution.md ← YOUR project rules
+
+Step 2: Let the squad validate what you wrote
+────────────────────────────────────────────────
+> /speckit.squad.run 001-user-auth
+
+The squad does NOT rewrite your spec. It VALIDATES it:
+  WHY   → runs Understanding CLI against YOUR spec.md
+          "Structure: 0.65 — FAIL. 12 requirements lack measurable constraints."
+          "Testability: 0.55 — FAIL. 8 requirements have no acceptance criteria."
+  WHAT  → suggests specific fixes (doesn't replace your spec)
+  WHY₂  → re-validates after fixes
+
+  ASSESS → evaluates YOUR plan's feasibility
+           "Effort estimate: 45 pw. Correction factor 1.4x → budget 63 pw."
+  HOW   → reviews YOUR architecture, checks ADR completeness
+           "ADR-003 missing: why PostgreSQL over MongoDB? Add rationale."
+  PLAN  → reviews YOUR tasks for gaps
+           "Task T-012 depends on T-008 but T-008 isn't scheduled first."
+
+  SCIENTIST → investigates any unknowns YOUR spec raised
+  GROUND    → reality-checks YOUR estimates against industry data
+
+  Output: your original spec + issues.md + quality-gates.md + updated estimates
+
+Step 3: Fix what the squad found
+────────────────────────────────────────────────
+Read issues.md. Two options:
+
+  Option A: Fix manually
+  Open spec.md, address each issue, re-run:
+  > /speckit.squad.run 001-user-auth
+  (WHY re-validates, should pass now)
+
+  Option B: Let the squad fix it
+  > /speckit.squad.run 001-user-auth --fix
+  (WHAT rewrites failing requirements to pass quality gates,
+   preserving your intent)
+
+Step 4: Build with the squad's quality gates
+────────────────────────────────────────────────
+> /speckit.squad.build 001-user-auth
+
+Same build flow as Recipe 1:
+  IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
+  But now building against YOUR spec, not a squad-generated one.
+  SPEC GUARD traces every FR-* from YOUR spec to code.
+  VERIFICATION at the end checks YOUR requirements are 100% implemented.
+
+Step 5: Verify YOUR spec is fully implemented
+────────────────────────────────────────────────
+> /speckit.squad.verify
+
+VERIFICATION: "66 requirements in spec.md. 66 traced to code. 66 tested.
+Coverage: 100%. BUILD COMPLETE."
+```
+
+### Recipe 10: Use Spec-Kit for Understanding, Squad for Building Only
+
+You trust your own specs and planning. You just want the build quality gates.
+
+```
+Step 1: Do all spec-kit phases yourself
+────────────────────────────────────────────────
+> /speckit.constitution
+> /speckit.specify "..."
+> /speckit.clarify
+> /speckit.plan
+> /speckit.tasks
+
+Step 2: Skip the squad's understanding phase — go straight to build
+────────────────────────────────────────────────
+> /speckit.squad.build 001-your-feature
+
+The squad reads YOUR existing artifacts:
+  spec.md, plan.md, tasks.md, constitution.md
+
+Then builds with full quality gates:
+  Per task:  IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN
+  Per phase: ENGINEERING MANAGER → INTEGRATOR
+  Final:     VERIFICATION (backpropagation against YOUR spec)
+
+You wrote the WHAT and HOW. The squad handles the disciplined execution.
+
+Step 3: Verify
+────────────────────────────────────────────────
+> /speckit.squad.verify
+```
+
+### Recipe 11: Squad Validates, You Decide
+
+Use the squad as a **review tool** — it checks your work but you keep full control.
+
+```
+Step 1: Write your spec with spec-kit
+────────────────────────────────────────────────
+> /speckit.specify "..."
+> /speckit.plan
+> /speckit.tasks
+
+Step 2: Ask WHY to review your spec (just the quality check)
+────────────────────────────────────────────────
+> /speckit.squad.investigate "Review my spec at .specify/specs/001-feature/spec.md against IEEE 830 and ISO 29148 quality standards"
+
+SCIENTIST runs Understanding CLI:
+  Overall: 0.72 ✓  Structure: 0.68 ✗  Testability: 0.74 ✓
+  Semantic: 0.61 ✓  Cognitive: 0.70 ✓  Readability: 0.78 ✓
+
+  "Structure is borderline. These 5 requirements need splitting..."
+
+Step 3: Ask GROUND to reality-check your estimates
+────────────────────────────────────────────────
+> /speckit.squad.ground
+
+GROUND:
+  "Your estimate of 8 weeks is in the 25th percentile for similar projects.
+   Reference class: 12-16 weeks. Recommend budgeting 14 weeks."
+
+Step 4: Ask SCIENTIST to research a technical question
+────────────────────────────────────────────────
+> /speckit.squad.investigate "Should we use WebSockets or SSE for real-time notifications? Expected load: 5K concurrent connections."
+
+Step 5: Decide and build (your way, or with the squad)
+────────────────────────────────────────────────
+You keep control. Use squad insights to improve your plan.
+Then either build yourself or: /speckit.squad.build 001-feature
+```
+
+### When to Use Which Recipe
+
+| Scenario | Recipe | Why |
+|----------|--------|-----|
+| New project, no existing process | Recipe 1 (greenfield) | Let the squad handle everything |
+| Legacy system modernization | Recipe 2 (brownfield) | Squad discovers what exists |
+| Team already uses spec-kit | **Recipe 9 (hybrid)** | Write specs yourself, squad validates + builds |
+| Trust your specs, want build discipline | **Recipe 10 (build only)** | Skip understanding, use build gates |
+| Want advice, keep full control | **Recipe 11 (review tool)** | Cherry-pick squad capabilities |
+| Spec changed mid-build | Recipe 3 (change) | Change controller handles impact |
+| Stuck on architecture | Recipe 4 (innovate) | Get fresh alternatives |
+| Need evidence for a decision | Recipe 5 (investigate) | SCIENTIST researches with evidence grading |
+
+### Common Patterns
+
+**"I want the squad to be more thorough"**
+Increase iterations: edit `squad-config.yml` → `analysis.max_iterations: 7`
+
+**"I want the squad to be faster"**
+Decrease specialist count: `specialists.max_active: 2`
+
+**"I want to skip understanding and just build"**
+Don't. That's the whole point. But if you must:
+`/speckit.squad.build 001-feature` works on any existing spec-kit artifacts.
+
+**"The squad keeps rejecting my spec"**
+Good — that means WHY is doing its job. Read `issues.md` for specific fixes. The most common issues:
+- Testability too low → add measurable constraints to requirements
+- Semantic completeness → add actor-action-object-outcome to each requirement
+- Ambiguous terms → update glossary with precise definitions
+
+**"How do I add the squad to CI/CD?"**
+Run understanding + verify in CI:
+```yaml
+- run: /speckit.squad.run "$PR_DESCRIPTION"
+- run: /speckit.squad.verify
+```
+If verify fails (coverage < 100%), block the merge.
+
+### Anti-Patterns
+
+| Anti-Pattern | Why It Fails | Do This Instead |
+|-------------|-------------|-----------------|
+| Skip understanding, jump to build | No spec = no verification = no quality | Always run the full pipeline |
+| Ignore WHY rejections | WHY catches real problems — 4 rejections in our test run | Fix the spec, don't bypass the gate |
+| Never run feedback | Squad can't learn without ground truth | Run feedback after every deployment |
+| Set max_iterations to 1 | No rework loops = first draft ships | Default 5 is there for a reason |
+| Use the squad for trivial tasks | 34 agents for a config change is overkill | Use it for features, migrations, new systems |
+
+---
+
 ## Quality Gates
 
 ### Understanding Phase (WHY agent via Understanding CLI)
@@ -370,6 +800,8 @@ specify extension add --dev https://github.com/Testimonial/cognitive-squad
 | Defect escape rate | > 60% = HIGH |
 | Constitution violations | 2+ consecutive = CRITICAL |
 
+---
+
 ## Standards Alignment
 
 | Standard | Coverage |
@@ -383,6 +815,8 @@ specify extension add --dev https://github.com/Testimonial/cognitive-squad
 | **IEEE 830 / ISO 29148** | Quality gates via Understanding CLI |
 | **Kahneman RCF** | GROUND applies outside view to estimates |
 
+---
+
 ## Configuration
 
 ```bash
@@ -390,6 +824,8 @@ cp config-template.yml squad-config.yml
 ```
 
 Key settings: `analysis.mode` (auto/greenfield/brownfield), `analysis.max_iterations` (5), `specialists.max_active` (3), `quality_gates.overall` (0.70). See `config-template.yml` for full reference.
+
+---
 
 ## Knowledge Base
 
@@ -404,6 +840,8 @@ knowledge-base/
 
 The learning loop: REFLECT logs patterns → CALIBRATE tracks accuracy → FEEDBACK provides ground truth → EVOLVE detects bias → next run auto-adjusts estimates and expectations.
 
+---
+
 ## Evidence Grades
 
 | Grade | Description | Weight |
@@ -413,6 +851,71 @@ The learning loop: REFLECT logs patterns → CALIBRATE tracks accuracy → FEEDB
 | **C** | Conference talk, well-regarded blog | 0.6 |
 | **D** | Stack Overflow, forum post | 0.3 |
 | **E** | AI training data (unverified) | 0.1 |
+
+---
+
+## 10 Commands
+
+| Command | One-liner |
+|---------|-----------|
+| `/speckit.squad.run` | Understand and plan a project |
+| `/speckit.squad.build` | Build it with quality gates |
+| `/speckit.squad.verify` | Prove 100% spec coverage |
+| `/speckit.squad.status` | Where are we? |
+| `/speckit.squad.change` | Handle a spec change mid-build |
+| `/speckit.squad.innovate` | Get fresh alternatives |
+| `/speckit.squad.investigate` | Research a specific question |
+| `/speckit.squad.ground` | Reality-check the plan |
+| `/speckit.squad.feedback` | Feed back real outcomes (after deployment) |
+| `/speckit.squad.resume` | Answer the squad's question |
+
+---
+
+## Installation
+
+### Option 1: From community catalog
+
+Cognitive Squad is in the spec-kit community catalog. Community extensions require opt-in before installation.
+
+**Enable community catalog** — create `.specify/extension-catalogs.yml` in your project:
+
+```yaml
+catalogs:
+  - name: default
+    url: https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.json
+    priority: 1
+    install_allowed: true
+    description: Official spec-kit extensions
+
+  - name: community
+    url: https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.community.json
+    priority: 2
+    install_allowed: true
+    description: Community-contributed extensions
+```
+
+Or set it globally for all projects in `~/.specify/extension-catalogs.yml`.
+
+Then install:
+
+```bash
+specify extension add cognitive-squad
+```
+
+### Option 2: From local path (development)
+
+```bash
+git clone https://github.com/Testimonial/cognitive-squad.git
+specify extension add --dev /path/to/cognitive-squad
+```
+
+### Option 3: Direct from GitHub
+
+```bash
+specify extension add --dev https://github.com/Testimonial/cognitive-squad
+```
+
+---
 
 ## Prerequisites
 
