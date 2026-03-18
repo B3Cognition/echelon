@@ -205,12 +205,46 @@ FEEDBACK (post-implementation) → CALIBRATE → EVOLVE → REFLECT
 
 ## Installation
 
-```bash
-# From registry
-specify extension add cognitive-squad
+### Option 1: From community catalog
 
-# From local path (development)
+Cognitive Squad is in the spec-kit community catalog. Community extensions require opt-in before installation.
+
+**Enable community catalog** — create `.specify/extension-catalogs.yml` in your project:
+
+```yaml
+catalogs:
+  - name: default
+    url: https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.json
+    priority: 1
+    install_allowed: true
+    description: Official spec-kit extensions
+
+  - name: community
+    url: https://raw.githubusercontent.com/github/spec-kit/main/extensions/catalog.community.json
+    priority: 2
+    install_allowed: true
+    description: Community-contributed extensions
+```
+
+Or set it globally for all projects in `~/.specify/extension-catalogs.yml`.
+
+Then install:
+
+```bash
+specify extension add cognitive-squad
+```
+
+### Option 2: From local path (development)
+
+```bash
+git clone https://github.com/Testimonial/cognitive-squad.git
 specify extension add --dev /path/to/cognitive-squad
+```
+
+### Option 3: Direct from GitHub
+
+```bash
+specify extension add --dev https://github.com/Testimonial/cognitive-squad
 ```
 
 ## Quick Start
