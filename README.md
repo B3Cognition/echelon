@@ -408,7 +408,32 @@ autonomy:
 cp config-template.yml squad-config.yml
 ```
 
-Key settings: `analysis.mode` (auto/greenfield/brownfield), `analysis.max_iterations` (5), `specialists.max_active` (3), `quality_gates.overall` (0.70). See `config-template.yml` for full reference.
+All agent behavior is configurable via `squad-config.yml`. Key sections:
+
+| Section | Purpose | Key Settings |
+|---------|---------|--------------|
+| `analysis` | Run settings | `mode`, `max_iterations`, `token_budget_k` |
+| `autonomy` | Checkpoint behavior | `mode: guided\|semi\|banzai` |
+| `convergence` | When to stop iterating | `quality_delta_threshold`, `consecutive_passes` |
+| `budget` | Token allocation by phase | `tier1_discover_what_percent` (25%), etc. |
+| `limits` | Timeouts | `wall_clock_timeout_minutes` (40) |
+| `quality_gates` | Understanding thresholds | `overall` (0.70), `testability` (0.70), etc. |
+| `heuristics` | Requirement quality | `max_requirement_sentences` (3), `max_nesting_depth` (3) |
+| `discovery` | SCOUT settings | `git_history_lookback`, `git_log_count` (50) |
+| `scoring` | Evidence grades | `evidence_grades: [A, B, C, D, E]` |
+| `rice` | GATEKEEPER prioritization | `reach_scale_max`, `impact_scale_values` |
+| `calibration` | AUDITOR accuracy | `low_accuracy_threshold` (0.5), `correction_factor_max` (3.0) |
+| `risk` | Risk levels | `high_threshold` (0.5), `low_threshold` (0.75) |
+| `metacognition` | MONITOR checks | `check_interval_tasks` (5) |
+| `internalization` | VALIDATOR gates | `pass_threshold` (6/6) |
+| `code_quality` | CODE-REVIEWER limits | `max_function_lines` (30), `max_cyclomatic_complexity` (10) |
+| `tests` | TEST-GUARDIAN minimums | `min_api_endpoint` (4), `min_integration` (2) |
+| `drift` | Progress tracking | `single_task_overrun_ratio` (2.0), `phase_overrun_ratio` (1.3) |
+| `alerts` | Warning thresholds | `schedule_drift_spi` (0.85), `defect_spike_percent` (60) |
+| `build` | Build phase | `fix_cycle_limit` (2), `blocked_tasks_pause_threshold` (3) |
+| `banzai` | Full-auto defaults | `auto_kill_threshold` (0.3), `require_human_if` |
+
+See `config-template.yml` for complete reference with all 76 configurable values.
 
 ## Knowledge Base
 
