@@ -1,7 +1,43 @@
 # Cognitive Squad Configuration
 # Copy to squad-config.yml and customize
 
-# Analysis settings
+# ═══════════════════════════════════════════
+# EXECUTION — How agents run
+# ═══════════════════════════════════════════
+
+execution:
+  # Maximum concurrent subagents (Claude Code Agent tool calls in one message)
+  # Higher = faster but more tokens. Lower = sequential but cheaper.
+  max_parallel_agents: 3
+
+  # Per-agent timeout (seconds). Agent is killed and retried once if exceeded.
+  agent_timeout_seconds: 300  # 5 minutes
+
+  # Max retries per agent before skipping with warning
+  max_retries: 1
+
+  # Model selection per tier (use cheapest model that works for each role)
+  # Options: opus | sonnet | haiku
+  models:
+    core: sonnet          # MANAGER, DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN
+    specialists: sonnet   # SCIENTIST, SECURITY, TEST ARCHITECT, etc.
+    build: sonnet         # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, etc.
+    learning: haiku       # REFLECT, EVOLVE, CALIBRATE, GROUND (post-run, less critical)
+    verification: opus    # VERIFICATION — most important check, use best model
+
+  # Token budget allocation per phase (percentage of total token_budget_k)
+  token_allocation:
+    understanding: 30     # DISCOVER + WHY + WHAT + ASSESS + HOW + PLAN
+    specialists: 15       # SCIENTIST + SECURITY + TEST ARCHITECT + etc.
+    internalization: 5    # INTERNALIZATION GATE + SCOREKEEPER
+    building: 35          # IMPLEMENTER + SPEC GUARD + CODE REVIEWER + etc.
+    verification: 10      # VERIFICATION backpropagation
+    learning: 5           # REFLECT + EVOLVE + CALIBRATE + GROUND
+
+# ═══════════════════════════════════════════
+# UNDERSTANDING PHASE — Analysis settings
+# ═══════════════════════════════════════════
+
 analysis:
   # Auto-detect greenfield vs brownfield
   mode: auto  # auto | greenfield | brownfield
@@ -9,25 +45,78 @@ analysis:
   # Maximum squad iterations before forced convergence
   max_iterations: 5
 
-  # Token budget (approximate, in thousands)
+  # Total token budget (approximate, in thousands)
   token_budget_k: 1000
 
   # Convergence threshold for Understanding score delta
   convergence_delta: 0.02
 
-# Specialist settings
+  # CONSENSUS phase: run these agents in parallel
+  consensus_parallel: [WHY, ASSESS, PLAN]
+
+# ═══════════════════════════════════════════
+# SPECIALISTS — On-demand agents
+# ═══════════════════════════════════════════
+
 specialists:
   # Max active specialists per run (to control token cost)
   max_active: 3
 
-  # Always summon TEST ARCHITECT
+  # Always summon TEST ARCHITECT (mandatory per V-Model)
   always_test_architect: true
 
-  # Auto-summon SCIENTIST for unknowns
+  # Auto-summon SCIENTIST for unknowns in unknowns.md
   auto_scientist: true
 
-# Quality gates (Understanding thresholds)
+  # Auto-summon SECURITY when these keywords appear in spec
+  auto_security_keywords: [auth, login, password, token, PII, payment, encrypt, GDPR, HIPAA, compliance]
+
+  # Auto-summon PERFORMANCE when these keywords appear
+  auto_performance_keywords: [real-time, concurrent, throughput, latency, scalab, high-load]
+
+# ═══════════════════════════════════════════
+# BUILDING PHASE — Quality gates and execution
+# ═══════════════════════════════════════════
+
+building:
+  # Per-task quality gate sequence (agents run in this order)
+  gate_sequence: [SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+
+  # Max fix cycles per task before marking DEGRADED and moving on
+  max_fix_cycles: 3
+
+  # Phase gate agents (run at each phase checkpoint)
+  phase_gate: [ENGINEERING_MANAGER, INTEGRATOR, VISUAL_VALIDATOR]
+
+  # METACOGNITION MONITOR frequency (every N tasks)
+  metacognition_frequency: 5
+
+  # MENTAL MODEL invariant checking (every N tasks or per task)
+  invariant_check_frequency: 1  # 1 = every task, 5 = every 5th task
+
+  # VERIFICATION (backpropagation) settings
+  verification:
+    # Max verification passes before accepting current coverage
+    max_passes: 3
+    # Target coverage (0-100). BUILD COMPLETE requires this.
+    target_coverage: 100
+    # Minimum acceptable coverage if max_passes exhausted
+    minimum_coverage: 95
+
+  # VISUAL VALIDATOR settings
+  visual_validation:
+    enabled: true
+    # Take screenshots at these checkpoints
+    checkpoints: [per_phase, before_complete]
+    # Browser for Playwright
+    browser: chromium
+
+# ═══════════════════════════════════════════
+# QUALITY GATES — Understanding thresholds
+# ═══════════════════════════════════════════
+
 quality_gates:
+  # WHY spec-validation mode thresholds (from Understanding CLI)
   overall: 0.70
   structure: 0.70
   testability: 0.70
@@ -35,7 +124,68 @@ quality_gates:
   cognitive: 0.60
   readability: 0.50
 
-# Knowledge base settings
+  # Build phase thresholds
+  min_tests_per_component: 2
+  max_review_cycles: 3
+  constitution_violation_tolerance: 0  # zero tolerance
+
+# ═══════════════════════════════════════════
+# INTERNALIZATION — Comprehension checks
+# ═══════════════════════════════════════════
+
+internalization:
+  # Minimum score to proceed (out of 6 checks)
+  min_score: 5  # 5/6 = PARTIAL allowed, 4/6 = must resolve
+
+  # Maximum doubts allowed (0 = zero doubts required)
+  max_doubts: 0
+
+  # Re-internalize after spec changes
+  reinternalize_on_change: true
+
+# ═══════════════════════════════════════════
+# SCORING — Agent performance tracking
+# ═══════════════════════════════════════════
+
+scoring:
+  enabled: true
+
+  # Points for key events
+  points:
+    first_pass_approval: 3
+    critical_bug_caught: 5
+    high_bug_caught: 3
+    false_positive: -1
+    rework_required: -1
+    third_rework: -3
+    accurate_estimate: 3     # within 20%
+    inaccurate_estimate: -2  # off by >50%
+    assumption_validated: 2
+    assumption_invalidated: 4  # more valuable — prevented bad decision
+    internalization_perfect: 2   # 6/6
+    internalization_failed: -2   # <4/6
+
+  # Peer appreciation points
+  peer_appreciation:
+    clear_and_actionable: 2
+    unblocked_my_work: 3
+    caught_my_mistake: 2
+    exceptional_quality: 4
+    needed_rework: -1
+
+  # Self-healing triggers
+  self_healing:
+    # If agent score drops below this over 3 runs, flag for prompt refinement
+    prompt_refinement_threshold: -5
+    # If false positive rate exceeds this, add verification step
+    false_positive_threshold: 0.30
+    # Auto-adjust ASSESS correction factor based on accuracy
+    auto_calibrate_estimates: true
+
+# ═══════════════════════════════════════════
+# KNOWLEDGE BASE — Learning settings
+# ═══════════════════════════════════════════
+
 knowledge_base:
   # Pruning: entries older than this (months) flagged stale
   stale_threshold_months: 6
@@ -46,7 +196,64 @@ knowledge_base:
   # Max active entries per file
   max_entries: 200
 
-# Tool paths (override if not on PATH)
+  # Auto-archive stale + low_confidence entries after N consecutive runs
+  auto_archive_after_runs: 2
+
+# ═══════════════════════════════════════════
+# TOOLS — External tool paths
+# ═══════════════════════════════════════════
+
 tools:
   understanding_cli: "understanding"
   reverse_eng_cli: "specify"
+
+  # Understanding CLI options
+  understanding:
+    # Generate behavioral diagrams during WHY validation
+    generate_diagrams: true
+    diagram_format: svg  # svg | png | pdf
+    # Use energy metrics for ambiguity hotspot detection
+    use_energy: false    # requires SmolLM2 model (~270MB)
+
+# ═══════════════════════════════════════════
+# CHANGE CONTROL — Mid-build spec changes
+# ═══════════════════════════════════════════
+
+change_control:
+  # Auto-re-validate changed requirements through WHY
+  auto_revalidate: true
+
+  # Max percentage of completed tasks affected before human escalation
+  escalation_threshold: 30  # if >30% of done tasks need rework, ask human
+
+  # Always update traceability matrix after change
+  update_traceability: true
+
+# ═══════════════════════════════════════════
+# INTENT TRACKING — User intent monitoring
+# ═══════════════════════════════════════════
+
+intent:
+  # Check intent alignment at these points
+  check_points: [after_assess, after_each_phase_gate, on_scope_change]
+
+  # Alert if spec scope < user intent scope
+  alert_on_scope_reduction: true
+
+# ═══════════════════════════════════════════
+# METACOGNITION — Process monitoring
+# ═══════════════════════════════════════════
+
+metacognition:
+  # Check every N tasks during build
+  check_frequency: 5
+
+  # Auto-halt on process violation (vs warning only)
+  halt_on_violation: false
+
+  # Track these signals
+  signals:
+    - process_compliance     # are quality gates being used?
+    - direction_alignment    # building what user asked for?
+    - progress_sanity        # converging or going in circles?
+    - cognitive_load         # context getting too large?
