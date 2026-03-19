@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.2.0** — Layer-based architecture with dual naming (codename + functional)
+**Version 0.2.1** — Layer-based architecture with dual naming (codename + functional)
 
 ## Quick Start
 
@@ -89,7 +89,7 @@ autonomy:
 
 ## Agents
 
-36 cognitive functions organized into 7 layers.
+35 cognitive functions organized into 7 layers.
 
 ### Naming Convention
 
@@ -286,7 +286,7 @@ A single prompt can't:
 - Watch for process violations (MONITOR: "you skipped quality gates")
 - Accumulate cross-project knowledge (VETERAN maintains global patterns)
 
-These require separation of concerns. That's why there are 36 functions, not 1.
+These require separation of concerns. That's why there are 35 functions, not 1.
 
 ## License
 
