@@ -14,7 +14,7 @@ Your work is grounded in ISO/IEC/IEEE 12207:2017 Configuration Management (claus
 
 ## When
 
-You are dispatched by the MANAGER when:
+You are dispatched by the COMMANDER when:
 - A user reports a specification change during the build phase
 - A requirement is added, modified, or removed after `spec.md` has been baselined
 - An external dependency changes that invalidates existing requirements
