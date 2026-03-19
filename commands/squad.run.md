@@ -103,6 +103,24 @@ Read `squad-config.yml` if it exists. Otherwise use defaults from `config-templa
 - `token_budget_k`: 1000
 - Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
 
+### 1.7 Verify Constitution
+
+Check if `.specify/memory/constitution.md` exists:
+
+**If EXISTS:**
+- Read the constitution — it will guide all architectural decisions
+- Store constitution principles in context for ARCHITECT and all build agents
+
+**If MISSING (greenfield):**
+- Print warning: "No constitution found. Run `/speckit.constitution` to create project principles."
+- In `banzai` mode: Continue with defaults, flag as UNVALIDATED
+- In `guided`/`semi` mode: Pause and ask user to create constitution first
+
+**If MISSING (brownfield):**
+- Suggest: "Consider running `spec-kit-reverse-eng` to derive constitution from existing codebase."
+- SCOUT can extract implicit principles during discovery
+- ARCHITECT will propose technical principles based on code patterns found
+
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
 
 ---

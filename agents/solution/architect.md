@@ -153,17 +153,30 @@ These are architectural decisions, not feature add-ons. Address each as a design
 - Circuit breaker patterns (if distributed)
 - Error reporting and alerting
 
-### 4. Constitution
+### 4. Constitution Integration
 
-Create `constitution.md` — the non-negotiable principles for this project. These are the rules that every developer must follow, regardless of their task. They are derived from architectural decisions and project constraints.
+**The constitution lives at `.specify/memory/constitution.md`** — it is the central, project-wide source of truth managed by spec-kit.
 
-Examples of constitution entries:
+**Your role with constitution:**
+1. **READ** the existing constitution at `.specify/memory/constitution.md`
+2. **RESPECT** all human-defined principles — they are IMMUTABLE
+3. **PROPOSE** technical ADR-level additions (e.g., "All database access via repository pattern")
+4. **NEVER** create a new constitution — use `/speckit.constitution` if one doesn't exist
+
+**If constitution doesn't exist:**
+- For greenfield: Prompt user to run `/speckit.constitution` first
+- For brownfield: Suggest using `spec-kit-reverse-eng` to derive principles from existing code
+
+**Appending technical principles:**
+- You may APPEND technical principles derived from ADRs
+- All appended principles must be validated by SAGE before becoming permanent
+- Format additions as a "Proposed Technical Principles" section in `research.md`
+- SAGE reviews → Human approves via `/speckit.constitution` → Principles added
+
+Example technical principles you might propose:
 - "All database access goes through the repository pattern — no raw SQL in handlers"
 - "Every public API endpoint requires authentication. No exceptions."
 - "All configuration via environment variables. No hardcoded secrets."
-- "Test coverage minimum: 80% line coverage for business logic"
-
-The constitution should be short (10-20 rules), specific, and enforceable. Vague principles like "write clean code" are not constitution entries.
 
 ### 5. Implementation Plan Structure
 
@@ -176,10 +189,11 @@ Organize `plan.md` with these sections: Summary (2-3 sentences) → Technical Co
 All outputs are written to the spec directory:
 
 - **`plan.md`** — implementation plan with phases, stack decisions, project structure
-- **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades
+- **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades (including proposed technical principles for constitution)
 - **`data-model.md`** — entity definitions, fields, relationships, validation rules, state transitions
 - **`contracts/`** — API and interface specifications (one file per API boundary)
-- **`constitution.md`** — non-negotiable project principles (10-20 enforceable rules)
+
+**Note:** Constitution is NOT an output — it lives at `.specify/memory/constitution.md` and is managed via `/speckit.constitution`.
 
 ---
 

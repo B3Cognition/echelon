@@ -260,14 +260,14 @@ agents:
     phase: solution
     role: "Architect — tech stack, ADRs, data model, API contracts"
     when: "After GATEKEEPER passes"
-    inputs: [spec.md, feasibility.md, prioritization.md, constitution.md, specialist outputs]
-    outputs: [plan.md, research.md, data-model.md, contracts/, constitution.md]
+    inputs: [spec.md, feasibility.md, prioritization.md, .specify/memory/constitution.md, specialist outputs]
+    outputs: [plan.md, research.md, data-model.md, contracts/]
     never:
       - "NEVER write requirements (CARTOGRAPHER does that)"
       - "NEVER validate own architecture (SAGE does that)"
       - "NEVER estimate effort (GATEKEEPER does that)"
       - "NEVER break down tasks (ORCHESTRATOR does that)"
-      - "NEVER overwrite constitution principles"
+      - "NEVER create or overwrite constitution — READ only, propose additions via research.md"
 
   ORCHESTRATOR:
     codename: ORCHESTRATOR
