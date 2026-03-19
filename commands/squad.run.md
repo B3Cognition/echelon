@@ -15,6 +15,7 @@ $ARGUMENTS
 This command runs the **Cognitive Agent Squad** autonomously. You are the **MANAGER** — the orchestrator of 19 cognitive functions that perform complete pre-code analysis.
 
 The user provides either:
+
 - **A description** (greenfield) — "Build a real-time chat app with E2E encryption"
 - **A repo path** (brownfield) — "/Users/me/projects/legacy-api"
 - **Both** — a description of changes to make to an existing codebase
@@ -40,6 +41,7 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 | **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
 
 **The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
+
 - Spec issues → dispatch **WHAT** to fix → then **WHY** re-validates
 - Architecture issues → dispatch **HOW** to fix → then **WHY** re-validates
 - Task issues → dispatch **PLAN** to fix → then **WHY** re-validates
@@ -87,6 +89,7 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 Before EVERY major phase transition, MANAGER enters a structured reflection:
 
 **When to reflect:**
+
 - Before dispatching DISCOVER (initial strategy)
 - Before dispatching HOW (after ASSESS — is the approach right?)
 - Before CONSENSUS (are we ready or should we iterate more?)
@@ -94,6 +97,7 @@ Before EVERY major phase transition, MANAGER enters a structured reflection:
 - Before any human escalation (frame the question well)
 
 **Reflection template:**
+
 ```
 REFLECTION — Phase transition: {from} → {to}
 
@@ -185,6 +189,7 @@ This will be moved to the spec directory after `/speckit.specify` creates it.
 ### 1.5 Load Prior Run Data (if re-run)
 
 If user specifies a prior spec (e.g., "continue with 012-feature"):
+
 - Find `specs/{NNN}-{feature}/` directory
 - Read `reasoning-journal.json` for continuity
 - Read `evolution-report.md` if it exists
@@ -195,6 +200,7 @@ If user specifies a prior spec (e.g., "continue with 012-feature"):
 ### 1.6 Load Configuration
 
 Read `squad-config.yml` if it exists. Otherwise use defaults from `config-template.yml`:
+
 - `max_iterations`: 5
 - `convergence_delta`: 0.02
 - `max_active_specialists`: 3
@@ -206,6 +212,7 @@ Read `squad-config.yml` if it exists. Otherwise use defaults from `config-templa
 Check if `.specify/memory/constitution.md` exists and note the status:
 
 **If EXISTS:**
+
 - Read the constitution — it will guide all architectural decisions
 - Store constitution principles in context for ARCHITECT and all build agents
 - Set `state.json.constitution_status` to `"exists"`
@@ -215,6 +222,40 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 - Set `state.json.constitution_status` to `"pending"`
 - **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
 - Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
+
+### Preflight: spec-kit Dependency Detection
+
+Before transitioning to DISCOVER, COMMANDER executes `scripts/bash/preflight-speckit.sh` (in test mode, pass `--cmd tests/mocks/spec-kit`).
+
+Required handling:
+
+1. Run the probe and persist `state.json.dependency_checks.spec_kit` with:
+
+- `status` (`available|unavailable|timeout|incompatible`)
+- `checked_at` (ISO-8601 timestamp)
+- `error_code` (nullable)
+- `version` (nullable)
+
+1. If probe exit code is non-zero:
+
+- Set `state.json.fallback_mode=true`
+- Set `state.json.execution_mode=manual_specification`
+- Append `spec-kit` to `state.json.dependency_fallbacks` (deduplicated)
+- Append `quality_degradation` record with `dependency=spec-kit`, affected artifacts, and degradation type `unvalidated`
+- Append `reasoning-journal.json` entry:
+    `{type: dependency_failure, dependency: spec-kit, phase: phase1-understand, fallback_mode: true}`
+
+1. If probe exit code is zero:
+
+- Set dependency status to `available` with discovered version
+- If prior state had `fallback_mode=true`, clear fallback:
+  - Set `fallback_mode=false`
+  - Remove `spec-kit` from `dependency_fallbacks`
+  - Append `reasoning-journal.json` entry:
+     `{type: fallback_recovery, prior_run_id: <id>, recovery_run_id: <id>}`
+
+1. CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
+2. For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
 
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
 
@@ -227,6 +268,7 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - User input (the `$ARGUMENTS` from above)
 - `knowledge-base/calibration-profile.yaml`
 - Previous run's `evolution-report.md` (if re-run)
@@ -234,12 +276,14 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/exploration/scout.md` for your complete instructions. You are the SCOUT agent. Your mode is `{greenfield|brownfield}`. Here is your context pack: [include context pack files listed above]. Produce all outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
 - **description:** "SCOUT: reconnaissance and domain mapping ({mode})"
 
 ### Expected Outputs
 
 Verify these files were created in `.specify/squad/staging/`:
+
 - `glossary.md`
 - `mental-model.md`
 - `boundaries.md`
@@ -264,12 +308,14 @@ SYNTHESIZER fuses ALL DISCOVER outputs into a unified knowledge base. This is ma
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - ALL DISCOVER outputs (every .md file produced in step 2)
 - reasoning-journal.json (DISCOVER entries)
 
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/core/synthesizer.md` for your complete instructions. You are the SYNTHESIZER agent. Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Here is your context pack: [include all DISCOVER outputs]. Produce unified outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "SYNTHESIZER: fuse discovery outputs into unified knowledge base"
 
@@ -301,6 +347,7 @@ Read `contradictions-and-gaps.md`. If CRITICAL contradictions found, log them �
 ### Context Pack Assembly
 
 Read and include in the subagent prompt (all from `.specify/squad/staging/`):
+
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
 - `calibration-profile.yaml`
@@ -309,6 +356,7 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the SAGE agent operating in **assumption-challenge mode** (WHY1 — pre-WHAT). Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing INVESTIGATOR investigation. Here is your context pack: [include files]. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
 - **description:** "SAGE (WHY1): assumption challenge and pre-mortem analysis"
 
@@ -321,6 +369,7 @@ Use the Agent tool to dispatch a subagent with:
 ### Gate Check
 
 Read WHY1 outputs:
+
 - If **CRITICAL** issues found in `assumption-review.md` → route back to DISCOVER (re-investigate). Increment iteration counter. Check iteration limit.
 - If **PASS** (no critical issues, all major assumptions validated or flagged) → proceed to WHAT.
 
@@ -430,6 +479,7 @@ For brownfield projects where constitution doesn't exist:
    - Spec-kit generates initial `spec.md` using its template
 
 3. **Update state.json** with the created spec:
+
    ```json
    {
      "spec_id": "{NNN}",
@@ -439,6 +489,7 @@ For brownfield projects where constitution doesn't exist:
    ```
 
 4. **Move staging artifacts** to the spec directory:
+
    ```bash
    mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
    ```
@@ -446,6 +497,7 @@ For brownfield projects where constitution doesn't exist:
 ### 4.2 Context Pack Assembly
 
 Read and include in the subagent prompt (now from `specs/{NNN}-{feature}/`):
+
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
 - `reference-architectures.md` (if greenfield)
@@ -455,6 +507,7 @@ Read and include in the subagent prompt (now from `specs/{NNN}-{feature}/`):
 ### 4.3 Dispatch CARTOGRAPHER
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. `/speckit.specify` has already created the initial spec. Your job is to ENHANCE it with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include files]. Update `spec.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "CARTOGRAPHER: requirements definition and specification"
 
@@ -472,6 +525,7 @@ Use the Agent tool to dispatch a subagent with:
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - All current artifacts in `specs/{feature}/`
 - Understanding CLI access (via `scripts/bash/run-understanding.sh`)
 - `calibration-profile.yaml`
@@ -480,16 +534,19 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the SAGE agent operating in **spec-validation mode** (WHY2 — post-WHAT). Run Understanding `validate` against `spec.md` to get deterministic quality scores. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "SAGE (WHY2): spec validation with Understanding quality gates"
 
 ### Expected Outputs
+
 - `issues.md` (scored findings: CRITICAL / HIGH / MEDIUM / LOW)
 - `quality-gates.md` (Understanding metric results)
 
 ### Gate Check + Convergence
 
 Read WHY2 outputs:
+
 1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
 2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Increment iteration. Check limits.
 3. **Track quality scores** — append to `state.json.quality_scores[]`
@@ -506,6 +563,7 @@ Read WHY2 outputs:
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - `spec.md` + `glossary.md` + `assumptions.md`
 - `issues.md` (from WHY2)
 - `calibration-profile.yaml` + `estimates-log.yaml`
@@ -514,10 +572,12 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/feasibility/gatekeeper.md` for your complete instructions. You are the GATEKEEPER agent — strategic PM and kill gate. Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `templates/kill-report.md`. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "GATEKEEPER: feasibility, estimation, prioritization, kill gate"
 
 ### Expected Outputs
+
 - `feasibility.md`
 - `prioritization.md`
 - `estimates.md`
@@ -526,9 +586,23 @@ Use the Agent tool to dispatch a subagent with:
 ### Gate Check
 
 Read ASSESS outputs:
+
 - **KILL** verdict → write kill report to `specs/{feature}/kill-report.md`, set state.json status to "killed", print summary, STOP.
 - **DEFER** verdict → reduce scope, re-route to WHAT. Track DEFER count. **DEFER loop >= 2 with no scope stabilization → kill or escalate to human.**
 - **PASS** → proceed to specialist summoning.
+
+Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+
+1. Ensure `phase2-decide` timing is active (budget `1800` seconds) by calling `start_phase phase2-decide 1800` before the first phase2 dispatch (`WHAT`) if no `start_ts` exists.
+2. For intra-phase transition (`assess` -> `strategic_overview`), do not close the phase timing window yet.
+3. Persist `state.json` after timing update before dispatching the next agent.
+
+Phase budget map for consistency across all transitions:
+
+- `phase1-understand=2400`
+- `phase2-decide=1800`
+- `phase3-solution=2400`
+- `phase4-build=7200`
 
 **Transition:** Update state.json phase to "strategic_overview". Proceed to STRATEGIC OVERVIEW.
 
@@ -539,10 +613,17 @@ Read ASSESS outputs:
 After ASSESS passes, dispatch STRATEGIC OVERVIEW to build the initial risk-weighted map:
 
 Use the Agent tool:
+
 - **prompt:** Read `agents/core/strategic-overview.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
 - **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
 
 Read the strategic overview. Use it to prioritize specialist allocation: spend SCIENTIST time on high-blast-radius decisions, not low-risk areas.
+
+Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+
+1. Keep `phase2-decide` open (this is still an intra-phase transition: `strategic_overview` -> `specialists`).
+2. If `phase2-decide` was never started due to restart recovery, initialize with `start_phase phase2-decide 1800` before continuing.
+3. Persist `state.json` after timing reconciliation and before dispatching specialists.
 
 **Transition:** Update state.json phase to "specialists". Proceed to specialist summoning.
 
@@ -594,68 +675,87 @@ For each specialist to summon, dispatch sequentially (unless they are independen
 #### SCIENTIST Dispatch (if summoned)
 
 Context pack:
+
 - Specific question(s) from `unknowns.md`
 - Relevant artifacts (select based on the question — do not send everything)
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/specialists/investigator.md` for your complete instructions. You are the INVESTIGATOR agent. Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "INVESTIGATOR: investigating unknowns — {topic summary}"
 
 #### SECURITY Dispatch (if summoned)
 
 Context pack:
+
 - `spec.md` + `boundaries.md` + domain-relevant artifacts
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/specialists/guardian.md`. You are the GUARDIAN agent. Perform STRIDE threat modeling, check OWASP Top 10 applicability, identify compliance requirements (PCI-DSS, HIPAA, GDPR, SOC 2 as relevant). Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "GUARDIAN: threat modeling and compliance analysis"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
 
 Context pack:
+
 - Domain-relevant artifacts from `specs/{feature}/`
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/specialists/oracle.md`. You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ORACLE: {domain} domain analysis"
 
 #### PERFORMANCE Dispatch (if summoned)
 
 Context pack:
+
 - `spec.md` + `boundaries.md` + performance-relevant requirements
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/specialists/benchmark.md`. You are the BENCHMARK agent. Perform load modeling, capacity planning, identify bottleneck risks. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "BENCHMARK: load modeling and capacity analysis"
 
 #### UX / A11Y Dispatch (if summoned)
 
 Context pack:
+
 - `spec.md` + user-facing requirements
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/specialists/advocate.md`. You are the ADVOCATE agent. Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ADVOCATE: accessibility and usability analysis"
 
 #### INNOVATE Dispatch (if summoned)
 
 Context pack:
+
 - All current artifacts
 - Prior run's `evolution-report.md`
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/specialists/maverick.md`. You are the MAVERICK agent. Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "MAVERICK: alternative approaches and assumption challenges"
 
 ### Post-Specialist
 
 After all specialists complete, collect their outputs. Update `state.json.active_specialists` with the list of specialists that ran.
+
+Before this transition, COMMANDER performs phase-boundary timing writes in order:
+
+1. Close `phase2-decide` by calling `scripts/bash/phase-timing.sh end_phase phase2-decide`.
+2. Open `phase3-solution` by calling `scripts/bash/phase-timing.sh start_phase phase3-solution 2400`.
+3. `end_phase` writes `end_ts`, `elapsed_seconds`, `over_budget`, and `anomaly_reason`; if over budget (>120%), it also appends a `timing_anomaly` journal entry.
+4. Persist state updates before routing to HOW.
 
 **Transition:** Update state.json phase to "how". Proceed to HOW.
 
@@ -666,6 +766,7 @@ After all specialists complete, collect their outputs. Update `state.json.active
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - `spec.md` + `feasibility.md` + `prioritization.md`
 - `constitution.md` (if exists from prior run or user provided)
 - All specialist outputs (threat-model.md, performance-requirements.md, etc.)
@@ -674,10 +775,12 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/solution/architect.md` for your complete instructions. You are the ARCHITECT agent. Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Document every decision in ADR format. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ARCHITECT: architecture design and technology decisions"
 
 ### Expected Outputs
+
 - `plan.md`
 - `research.md`
 - `data-model.md`
@@ -693,6 +796,7 @@ Use the Agent tool to dispatch a subagent with:
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - `plan.md` + `data-model.md`
 - `spec.md` (acceptance criteria)
 - `contracts/`
@@ -701,10 +805,12 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/solution/sentinel.md` for your complete instructions. You are the SENTINEL agent. Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to CARTOGRAPHER. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "SENTINEL: test strategy and coverage mapping"
 
 ### Expected Outputs
+
 - `test-strategy.md`
 - `test-architecture.md`
 - `coverage-map.md`
@@ -712,6 +818,12 @@ Use the Agent tool to dispatch a subagent with:
 ### Gate Check
 
 If TEST ARCHITECT flags untestable acceptance criteria → route back to WHAT for amendment. Increment iteration. Check limits.
+
+Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+
+1. Keep `phase3-solution` open (intra-phase transition: `test-architect` -> `plan`).
+2. If missing from recovered state, initialize `phase3-solution` using `start_phase phase3-solution 2400` before dispatching PLAN.
+3. Persist `state.json` timing updates before dispatch.
 
 **Transition:** Update state.json phase to "plan". Proceed to PLAN.
 
@@ -722,6 +834,7 @@ If TEST ARCHITECT flags untestable acceptance criteria → route back to WHAT fo
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
+
 - `plan.md` + `research.md` + `data-model.md`
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
@@ -730,14 +843,22 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/solution/orchestrator.md` for your complete instructions. You are the ORCHESTRATOR agent — operational PM. Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ORCHESTRATOR: task breakdown, critical path, dependencies, risk"
 
 ### Expected Outputs
+
 - `tasks.md`
 - `critical-path.md`
 - `risk-matrix.md`
 - `dependencies.md`
+
+Before this transition, COMMANDER performs phase-boundary timing writes in order:
+
+1. Close `phase3-solution` with `scripts/bash/phase-timing.sh end_phase phase3-solution`.
+2. Open `phase4-build` with `scripts/bash/phase-timing.sh start_phase phase4-build 7200`.
+3. Confirm updated `phase_timings` are flushed to `state.json` before consensus dispatch.
 
 **Transition:** Update state.json phase to "consensus". Proceed to CONSENSUS.
 
@@ -748,18 +869,21 @@ Use the Agent tool to dispatch a subagent with:
 This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool calls in a single message. If specialists are still active, include them in the parallel dispatch.
 
 ### 11.1 WHY3 Context Pack
+
 - All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
 - Understanding CLI access
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 
 ### 11.2 ASSESS2 Context Pack
+
 - `plan.md` + `data-model.md` + `contracts/`
 - `tasks.md` + `estimates.md`
 - `constitution.md` (team constraints)
 - `reasoning-journal.json`
 
 ### 11.3 PLAN2 Context Pack
+
 - Updated `plan.md` + `test-strategy.md`
 - All specialist outputs
 - `implementability-report.md` (from ASSESS2 — dispatch ASSESS2 first, then PLAN2 reads its output)
@@ -770,16 +894,19 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 Dispatch WHY3 and ASSESS2 in parallel (single message, two Agent tool calls):
 
 **WHY3:**
+
 - **prompt:** Read the file `agents/exploration/sage.md`. You are WHY operating in **spec-validation mode** (WHY3 — consensus). Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHY3: final quality validation and cross-artifact consistency"
 
 **ASSESS2:**
+
 - **prompt:** Read the file `agents/feasibility/gatekeeper.md`. You are ASSESS2 — consensus-phase re-evaluation. Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ASSESS2: implementability check and effort re-estimation"
 
 After WHY3 and ASSESS2 complete, dispatch PLAN2:
 
 **PLAN2:**
+
 - **prompt:** Read the file `agents/solution/orchestrator.md`. You are PLAN2 — consensus-phase plan revision. Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Here is your context pack: [include files — include ASSESS2's implementability-report.md]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "PLAN2: plan revision incorporating implementability feedback"
 
@@ -795,6 +922,18 @@ Read outputs from all three consensus agents:
   - PLAN2 missing tasks for specialist outputs → back to PLAN
   - Increment iteration. Check limits.
 
+Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+
+1. Keep `phase4-build` open for `consensus` -> `finalize` (same phase).
+2. If `phase4-build.start_ts` is missing (resume edge case), run `start_phase phase4-build 7200` before dispatching FINALIZE.
+3. Persist `state.json` before dispatch.
+
+At run close (after FINALIZE and before setting status `done`), COMMANDER must:
+
+1. Call `scripts/bash/phase-timing.sh end_phase phase4-build`.
+2. Read `state.json.phase_timings` and append one `timing_summary` entry per phase to `reasoning-journal.json` with fields: `type`, `phase`, `run_id`, `elapsed_seconds`, `budget_seconds`, `over_budget`, `anomaly_reason`.
+3. Ensure anomaly reason enum for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
+
 **Transition:** Update state.json phase to "finalize". Proceed to FINALIZE.
 
 ---
@@ -804,11 +943,13 @@ Read outputs from all three consensus agents:
 ### 12.1 GROUND Agent
 
 Context pack:
+
 - All artifacts in `specs/{feature}/`
 - `calibration-profile.yaml` + `estimates-log.yaml`
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/learning/realist.md`. You are the REALIST agent. Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "REALIST: reality check and reference class forecasting"
 
@@ -817,11 +958,13 @@ Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
 ### 12.2 REFLECT Agent
 
 Context pack:
+
 - All artifacts in `specs/{feature}/`
 - `reasoning-journal.json`
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/learning/mirror.md`. You are the MIRROR agent. Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Here is your context pack: [include files]. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.json`.
 - **description:** "MIRROR: post-run learning extraction"
 
@@ -830,12 +973,14 @@ Use the Agent tool:
 Only dispatch if `state.json.iteration > 0` or prior run artifacts exist.
 
 Context pack:
+
 - All current artifacts
 - Prior run artifacts (for diffing)
 - `reasoning-journal.json`
 - `knowledge-base/` files
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/learning/adaptive.md`. You are the ADAPTIVE agent. Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "ADAPTIVE: cross-run diffing and improvement measurement"
 
@@ -844,6 +989,7 @@ Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-a
 ### 12.4 CALIBRATE Agent
 
 Context pack:
+
 - All artifacts in `specs/{feature}/`
 - `knowledge-base/calibration-profile.yaml`
 - `knowledge-base/estimates-log.yaml`
@@ -851,12 +997,14 @@ Context pack:
 - Quality scores from all WHY passes (from state.json)
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/learning/auditor.md`. You are the AUDITOR agent. Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or SCIENTIST investigation. Here is your context pack: [include files]. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "AUDITOR: accuracy tracking and confidence profiling"
 
 ### 12.5 CALIBRATE Confidence Check
 
 After CALIBRATE completes, read `confidence-flags.md`:
+
 - If any domain has **confidence < 0.5** → summon SCIENTIST for that domain (if not already investigated). This is a late-stage safety net.
 - If SCIENTIST was already summoned and confidence is still < 0.5 → flag for human in the final report (do not block delivery).
 
@@ -900,6 +1048,7 @@ confidence-flags.md               | CALIBRATE       | ...
 ```
 
 Additional artifacts (conditional):
+
 - `reference-architectures.md` (greenfield only)
 - `assumption-review.md` (if WHY1 produced it)
 - `investigation/*.md` (if SCIENTIST ran)
@@ -923,6 +1072,7 @@ Read the scorecard output and apply any automatic self-healing actions.
 ### 12.8 Set Final State
 
 Update `state.json`:
+
 ```json
 {
   "status": "done",
@@ -1037,6 +1187,7 @@ IF WHY catches an issue that SPEC GUARD would have missed:
 ```
 
 Record in reasoning-journal.json:
+
 ```json
 {
   "type": "peer_appreciation",
@@ -1052,10 +1203,12 @@ Record in reasoning-journal.json:
 After GROUND + REFLECT + EVOLVE + CALIBRATE, dispatch SCOREKEEPER:
 
 Use the Agent tool to dispatch a subagent with:
+
 - **prompt:** Read the file `agents/core/scorekeeper.md` for your complete instructions. You are the SCOREKEEPER. Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
 - **description:** "SCOREKEEPER: final scoring, badges, self-healing recommendations"
 
 Context pack:
+
 - state.json (with agent_scores array)
 - reasoning-journal.json (with peer_appreciation entries)
 - knowledge-base/agent-scores.yaml (lifetime data)
@@ -1098,6 +1251,7 @@ After every agent dispatch, check if the agent appended to `reasoning-journal.js
 Track cumulative token usage in `state.json.token_usage` (estimate based on prompt + response sizes).
 
 Track issues in `state.json.issues_log[]`:
+
 ```json
 {
   "id": "ISS-{NNN}",
@@ -1118,30 +1272,36 @@ When the same issue appears again, increment `occurrences` rather than creating 
 These rules prevent infinite loops and ensure the squad terminates:
 
 ### Rule 1: Understanding Delta Convergence
+
 - After each WHY pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
 - If the delta between the last two passes is < `convergence_delta` (default 0.02) for 2 consecutive passes → **stop WHY iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
 ### Rule 2: Circular Issue Detection
+
 - If the same issue (matched by description similarity) appears 3 times in `state.json.issues_log[].occurrences` → **defer or escalate**
 - First: attempt INNOVATE (propose alternative approach that avoids the issue)
 - If INNOVATE already tried: escalate to human (see Section 15)
 
 ### Rule 3: Max Iterations
+
 - Maximum `max_iterations` (default 5) total squad iterations → **force convergence**
 - When forced: run FINALIZE with whatever artifacts exist, flag all as "forced convergence"
 - DEFER re-routes count toward the iteration max
 
 ### Rule 4: Token Budget Exhaustion
+
 - If cumulative `token_usage` exceeds `token_budget_k * 1000` → **force finalize**
 - Skip remaining specialists if budget is tight
 - Always run GROUND + CALIBRATE (minimum finalize)
 
 ### Rule 5: CALIBRATE Confidence Gate
+
 - If CALIBRATE reports confidence < 0.5 for a critical domain → **summon SCIENTIST**
 - If SCIENTIST already ran for that domain and confidence is still < 0.5 → flag for human, do not block
 
 ### Rule 6: ASSESS DEFER Loop
+
 - If ASSESS returns DEFER >= 2 times with no scope stabilization → **kill or escalate**
 - Produce kill report OR escalation request (MANAGER decides based on severity)
 
@@ -1178,6 +1338,7 @@ Every artifact produced in degraded mode (fallback was used) must have this bann
 ### When Triggered
 
 Escalation to human is triggered when:
+
 1. Same issue appears 3x without resolution (after INNOVATE attempt)
 2. CALIBRATE confidence < 0.5 after SCIENTIST investigation
 3. Unresolvable conflict between agents (evidence hierarchy cannot resolve)
@@ -1194,6 +1355,7 @@ Escalation to human is triggered when:
 2. **Write to file:** Save as `specs/{feature}/escalation-request.md`
 
 3. **Update state:** Set `state.json`:
+
    ```json
    {
      "status": "blocked",
@@ -1203,6 +1365,7 @@ Escalation to human is triggered when:
    ```
 
 4. **Print to terminal:**
+
    ```
    ============================================
      SQUAD BLOCKED — HUMAN INPUT REQUIRED
@@ -1240,6 +1403,7 @@ When two agents disagree (e.g., HOW says microservices, ASSESS says monolith), r
 | 5 | Agent reasoning | Any agent's logical argument | "Microservices better because of team structure" |
 
 When resolving a conflict:
+
 1. Check if higher-ranked evidence exists for either position
 2. The position with the highest-ranked supporting evidence wins
 3. If same rank: the more recent evidence wins

@@ -12,11 +12,14 @@ Based on: CMMI v3.0 Verification & Validation, V-Model paired testing, IEEE 1028
 
 **The build is not done when all tasks are checked off. The build is done when the VERIFICATION agent confirms 100% spec coverage and the backpropagation loop finds zero gaps.**
 
+**Spec-kit workflow compliance is mandatory. ENGINEERING MANAGER must verify that build execution actually used the spec-kit task workflow rather than substituting report-only bookkeeping or artifact-presence assumptions for implementation.**
+
 ---
 
 ## When
 
 You run at three points:
+
 1. **After each build phase completes** — decide: continue to next phase, or fix gaps first?
 2. **After all tasks complete** — trigger full verification loop
 3. **When PROGRESS TRACKER flags drift** — decide: re-plan, descope, or push through?
@@ -32,10 +35,23 @@ You run at three points:
 5. **integration-report.md** — from INTEGRATOR (system health)
 6. **progress-report.md** — from PROGRESS TRACKER (effort tracking)
 7. **All build reports** — spec-compliance, code-review, test-quality
+8. **coverage-map.md** — planned requirement-to-test mapping
+9. **reasoning-journal.json / state.json** — evidence that required gates actually ran
 
 ---
 
 ## Process
+
+### Pre-Verification Sanity Check
+
+Before declaring a phase or the full build ready for verification, confirm the workflow itself was followed:
+
+1. Tasks were completed through the spec-kit task flow, not inferred solely from files on disk.
+2. Each completed task has gate evidence from SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN.
+3. `tasks.md`, `state.json`, and build reports agree on task status.
+4. `coverage-map.md` and `traceability-matrix.md` are present and current enough for backpropagation.
+
+If these records disagree, stop using completion counts as evidence. Reconcile the bookkeeping first, then continue.
 
 ### Phase Gate Decision (after each build phase)
 
@@ -57,6 +73,10 @@ IF process metrics show quality degradation:
 IF integration fails:
   → Block next phase until INTEGRATOR passes
 
+IF task status or gate evidence is inconsistent:
+  → REWORK bookkeeping immediately
+  → Do not advance phase based on optimistic summaries
+
 DECISION: CONTINUE / REWORK / HALT / ESCALATE
 ```
 
@@ -67,13 +87,17 @@ This is the critical backpropagation check:
 ```
 1. Dispatch VERIFICATION agent with:
    - ALL source code produced during build
+  - ALL command/workflow files changed during build when they are part of the feature surface
    - FULL spec.md (every FR-*, every AC-*, every NFR-*)
+  - coverage-map.md
    - Current traceability-matrix.md
+  - Current integration-report.md and test-quality-report.md
 
 2. VERIFICATION produces:
    - gap-report.md (requirements not implemented)
    - excess-report.md (code not traced to requirements)
    - coverage-score (0-100%)
+  - verification-summary.md with explicit PASS / FAIL build verdict
 
 3. IF coverage < 100%:
    - For each uncovered requirement:
@@ -83,10 +107,15 @@ This is the critical backpropagation check:
    - Re-run VERIFICATION after fixes
    - LOOP until coverage = 100% or max 3 iterations
 
-4. IF coverage = 100%:
+4. IF verification finds workflow-only completion (tasks marked done without implementation/test evidence):
+  - Treat as FAIL, not WARN
+  - Create rework tasks to implement or properly validate the missing scope
+
+5. IF coverage = 100%:
    - Run INTEGRATOR one final time (full system check)
    - Run TEST GUARDIAN on aggregate test quality
-   - IF all pass → BUILD COMPLETE
+  - Confirm zero open items in gap-report.md and excess-report.md
+  - IF all pass → BUILD COMPLETE
    - ELSE → fix and re-verify
 ```
 
@@ -116,7 +145,12 @@ The build is COMPLETE only when ALL of these are true:
 | Criterion | Checked By | Required |
 |-----------|-----------|----------|
 | All tasks in tasks.md status = DONE | EM | YES |
+| Task/bookkeeping evidence is internally consistent | EM | YES |
+| Spec-kit build workflow was actually followed | EM | YES |
 | Traceability coverage = 100% FR-* | VERIFICATION | YES |
+| Coverage for AC-*and NFR-* is explicitly classified | VERIFICATION | YES |
+| gap-report.md has zero open gaps | VERIFICATION | YES |
+| excess-report.md reviewed and accepted (or empty) | VERIFICATION | YES |
 | Zero FAIL verdicts from SPEC GUARD | SPEC GUARD reports | YES |
 | Zero CHANGES_REQUESTED from CODE REVIEWER | Code review reports | YES |
 | TEST GUARDIAN aggregate: all PASS | Test quality reports | YES |
@@ -132,6 +166,7 @@ The build is COMPLETE only when ALL of these are true:
 - `build-status.md` — running build status with phase gate decisions
 - Rework tasks (RW-* entries appended to tasks.md)
 - Final build sign-off when all criteria met
+- `verification-summary.md` reviewed and signed off by EM
 - Reasoning journal entries with type "em_decision" for every gate decision
 
 ---
@@ -139,7 +174,8 @@ The build is COMPLETE only when ALL of these are true:
 ## Rules
 
 1. **Never declare done without VERIFICATION** — "all tasks checked off" ≠ "spec fully implemented"
-2. **Rework is signal, not failure** — track it, learn from it, but don't hide it
-3. **Three strikes rule** — if the same requirement fails verification 3 times, escalate to human
-4. **Budget awareness** — if rework pushes total effort > 1.5x original estimate, escalate before continuing
-5. **Quality over speed** — never skip the backpropagation loop to meet a deadline
+2. **Never accept paper completion** — if the workflow evidence is missing, the task is not done yet
+3. **Rework is signal, not failure** — track it, learn from it, but don't hide it
+4. **Three strikes rule** — if the same requirement fails verification 3 times, escalate to human
+5. **Budget awareness** — if rework pushes total effort > 1.5x original estimate, escalate before continuing
+6. **Quality over speed** — never skip the backpropagation loop to meet a deadline

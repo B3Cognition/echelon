@@ -1,2 +1,12 @@
 schema_version: 1
-entries: []
+entries:
+  - id: PIT-001
+    name: Stale Phase Pointer in state.json During Phase Transition
+    domain: squad-orchestration
+    trigger: A phase-completion artifact is produced but state.json.phase is not updated immediately after agent completion.
+    impact: Crash/restart recovery becomes ambiguous, forcing manual artifact audit to determine the true resume point and risking duplicate or skipped phase execution.
+    avoidance: Enforce atomic post-agent checkpoint updates (phase + timestamp), and validate phase/artifact consistency before each dispatch.
+    source: squad-run-001, reasoning-journal entries (post-crash recovery between TEST ARCHITECT and PLAN)
+    confidence: 0.9
+    tags: ["state-machine", "checkpointing", "recovery", "phase-transition"]
+    status: active

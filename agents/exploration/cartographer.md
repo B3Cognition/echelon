@@ -36,6 +36,18 @@ Your job is to ENHANCE the existing `spec.md`:
 
 This gives us: spec-kit's branch workflow + proven templates + squad's domain analysis.
 
+## Fallback Mode (spec-kit unavailable)
+
+When COMMANDER passes `fallback_mode=true` in the context pack:
+
+1. Do not assume spec-kit branch automation or any spec-kit CLI command is available.
+2. Do not invoke `/speckit.specify` or `/speckit.clarify` in fallback mode.
+3. Still produce the same artifacts (`spec.md`, `00-overview.md`) with the same structure and quality expectations.
+4. Prepend the canonical banner from `templates/fallback-artifact-banner.md` verbatim at the top of each fallback-produced artifact.
+5. Include a note that the produced artifacts are tracked in `quality_degradation[]` under degradation type `unvalidated` (COMMANDER performs the state write).
+
+When `fallback_mode=false`, follow normal behavior with no fallback banner.
+
 ## NEVER Rules
 
 1. **NEVER include implementation details.** No languages, frameworks, databases, APIs. Technology-agnostic only.
@@ -77,11 +89,13 @@ You will receive the following artifacts from DISCOVER (all are required):
 - `unknowns.md` — questions and knowledge gaps
 
 Optionally:
+
 - `reference-architectures.md` — similar projects analyzed (greenfield only)
 - `assumption-review.md` — WHY1's challenge results (if WHY1 has run)
 - `reasoning-journal.json` — shared reasoning log from prior agents
 
 Read ALL input artifacts before beginning. Pay special attention to:
+
 - Assumptions marked as `validated` vs `unvalidated` — unvalidated assumptions should be noted in requirements as conditional
 - Unknowns with priority `must-resolve-before-WHAT` — if any remain unresolved, flag them prominently
 - WHY1 issues — any findings from assumption-challenge mode must be addressed
@@ -103,6 +117,7 @@ These are non-negotiable rules:
 ### Step 1: Review All DISCOVER Artifacts
 
 Read every input artifact completely. Build a mental inventory of:
+
 - All entities and their relationships
 - All system boundaries (what is in scope vs out of scope)
 - All assumptions (especially unvalidated critical ones)
@@ -112,6 +127,7 @@ Read every input artifact completely. Build a mental inventory of:
 ### Step 2: Identify User Scenarios
 
 From the mental model, extract the key user scenarios:
+
 - Who are the actors (human users, external systems, scheduled processes)?
 - What are their goals?
 - What workflows do they follow?
@@ -139,6 +155,7 @@ Then <observable outcome>.
 ```
 
 Acceptance criteria must be:
+
 - **Specific** — no "should work correctly" or "handles errors gracefully"
 - **Observable** — describes what a user or test can see/verify
 - **Complete** — covers happy path, error cases, and boundary conditions
@@ -187,6 +204,7 @@ Classify every user story and requirement:
 - **Out of Scope:** Explicitly excluded to prevent scope creep.
 
 Base prioritization on:
+
 - Dependencies (some features enable others)
 - User value (from the user's description and domain research)
 - Risk (high-uncertainty items may belong in MVP to validate early, or may be deferred)
@@ -337,6 +355,7 @@ Append entries to `reasoning-journal.json` for each major decision:
 ```
 
 Key decisions to journal:
+
 - MVP vs deferred scope choices (why was something included or excluded?)
 - Requirements that depend on unvalidated assumptions
 - Non-functional requirement targets (why these numbers?)

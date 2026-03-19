@@ -7,17 +7,108 @@ schema_version: 1
 agents:
   # Phase A: Understanding
   MANAGER: { lifetime_score: 0, badges: [], history: [] }
-  DISCOVER: { lifetime_score: 0, badges: [], history: [] }
-  WHAT: { lifetime_score: 0, badges: [], history: [] }
-  WHY: { lifetime_score: 0, badges: [], history: [] }
-  ASSESS: { lifetime_score: 0, badges: [], history: [] }
-  HOW: { lifetime_score: 0, badges: [], history: [] }
-  PLAN: { lifetime_score: 0, badges: [], history: [] }
+  DISCOVER:
+    lifetime_score: 12
+    current_run_score: 12
+    badges:
+      - First Blood
+    history:
+      - run_id: "squad-1710901200"
+        score: 12
+        badges_earned:
+          - First Blood
+        peer_appreciation: []
+        breakdown:
+          SCOUT: 4
+          SYNTHESIZER: 8
+  WHAT:
+    lifetime_score: 8
+    current_run_score: 8
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 8
+        badges_earned: []
+        peer_appreciation:
+          - from: "WHY2"
+            type: "caught_my_gap"
+            points: 2
+  WHY:
+    lifetime_score: 51
+    current_run_score: 51
+    badges:
+      - Bug Hunter
+    history:
+      - run_id: "squad-1710901200"
+        score: 51
+        badges_earned:
+          - Bug Hunter
+        peer_appreciation:
+          - from: "HOW"
+            type: "unblocked_my_work"
+            points: 3
+        breakdown:
+          WHY1: 6
+          WHY2_base: 8
+          WHY2_critical_catches: 20
+          WHY2_revalidation: 6
+          WHY3: 8
+          peer: 3
+  ASSESS:
+    lifetime_score: 12
+    current_run_score: 12
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 12
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          ASSESS: 6
+          ASSESS2: 6
+  HOW:
+    lifetime_score: 8
+    current_run_score: 8
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 8
+        badges_earned: []
+        peer_appreciation: []
+  PLAN:
+    lifetime_score: 21
+    current_run_score: 21
+    badges:
+      - Peer Favorite
+    history:
+      - run_id: "squad-1710901200"
+        score: 21
+        badges_earned:
+          - Peer Favorite
+        peer_appreciation:
+          - from: "ASSESS2"
+            type: "clear_and_actionable"
+            points: 2
+          - from: "WHY3"
+            type: "resolved_without_escalation"
+            points: 3
+        breakdown:
+          PLAN: 8
+          PLAN2: 8
+          peer: 5
 
   # Phase A: Specialists
   SCIENTIST: { lifetime_score: 0, badges: [], history: [] }
   SECURITY: { lifetime_score: 0, badges: [], history: [] }
-  TEST_ARCHITECT: { lifetime_score: 0, badges: [], history: [] }
+  TEST_ARCHITECT:
+    lifetime_score: 8
+    current_run_score: 8
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 8
+        badges_earned: []
+        peer_appreciation: []
   DOMAIN_EXPERT: { lifetime_score: 0, badges: [], history: [] }
   UX_A11Y: { lifetime_score: 0, badges: [], history: [] }
   PERFORMANCE: { lifetime_score: 0, badges: [], history: [] }
@@ -35,7 +126,31 @@ agents:
   VERIFICATION: { lifetime_score: 0, badges: [], history: [] }
 
   # Phase C: Learning
-  REFLECT: { lifetime_score: 0, badges: [], history: [] }
+  REFLECT:
+    lifetime_score: 6
+    current_run_score: 6
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []
   EVOLVE: { lifetime_score: 0, badges: [], history: [] }
-  CALIBRATE: { lifetime_score: 0, badges: [], history: [] }
-  GROUND: { lifetime_score: 0, badges: [], history: [] }
+  CALIBRATE:
+    lifetime_score: 6
+    current_run_score: 6
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []
+  GROUND:
+    lifetime_score: 6
+    current_run_score: 6
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []

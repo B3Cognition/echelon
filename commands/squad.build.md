@@ -15,6 +15,7 @@ $ARGUMENTS
 This command runs **Phase B: Building** of the Cognitive Agent Squad. You are the **COMMANDER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
 
 The user provides:
+
 - **A feature path** — The `specs/{NNN}-{feature}/` directory containing Phase A artifacts
 - **Optional: specific tasks** — Task IDs to build (e.g., `T-001 T-002`). If omitted, builds all tasks in order.
 - **Optional: phase filter** — A phase name (e.g., "foundation") to build only that phase's tasks.
@@ -48,6 +49,7 @@ This gives us: spec-kit's proven task execution + squad's multi-agent quality ga
 Read and verify these files exist in `specs/{NNN}-{feature}/`:
 
 **Required:**
+
 - `tasks.md` — The implementation plan (task list with IDs, descriptions, acceptance criteria, dependencies)
 - `spec.md` — The specification (for FR-* requirement references)
 - `constitution.md` — Non-negotiable coding rules
@@ -56,6 +58,7 @@ Read and verify these files exist in `specs/{NNN}-{feature}/`:
 - `coverage-map.md` — Requirement-to-test mappings
 
 **Optional (used if present):**
+
 - `data-model.md` — Entity shapes and relationships
 - `contracts/` — API and component interface definitions
 - `estimates.md` — Effort estimates per task
@@ -66,6 +69,7 @@ If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not f
 ### 1.2 Parse Tasks
 
 Read `tasks.md` and parse all tasks into a structured list:
+
 - Task ID (e.g., `T-001`)
 - Phase/group (e.g., "Foundation", "Core Features")
 - Description
@@ -78,6 +82,7 @@ Read `tasks.md` and parse all tasks into a structured list:
 ### 1.3 Determine Build Order
 
 Order tasks by:
+
 1. Phase/group order (Foundation before Core before Polish)
 2. Within a phase: dependency order (dependencies before dependents)
 3. Within same dependency level: critical path first (from `critical-path.md` if available)
@@ -107,6 +112,7 @@ Update `.specify/squad/state.json`:
 ### 1.5 Initialize Build Reports
 
 Create empty report files (or clear prior content):
+
 - `specs/{feature}/spec-compliance-report.md`
 - `specs/{feature}/code-review-report.md`
 - `specs/{feature}/test-quality-report.md`
@@ -138,6 +144,7 @@ Verify all dependency tasks have status DONE or DONE_WITH_CONCERNS. If a depende
 ### 2.3 Dispatch IMPLEMENTER
 
 Compile context pack:
+
 - The specific task (from parsed task list)
 - Referenced FR-* requirements (from `spec.md`)
 - `constitution.md`
@@ -148,6 +155,7 @@ Compile context pack:
 - Relevant `contracts/` files (if present)
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/build/implementer.md` for your complete instructions. You are the IMPLEMENTER. Build task {task_id}: {task_description}. Here is your context pack: [include files]. Write code and tests. Append entries to `reasoning-journal.json`.
 - **description:** "IMPLEMENTER: {task_id} — {task_title}"
 
@@ -164,12 +172,14 @@ Use the Agent tool:
 ### 3.1 Dispatch SPEC GUARD
 
 Compile context pack:
+
 - Files changed by IMPLEMENTER
 - The task definition (acceptance criteria, FR-* references)
 - Referenced FR-* requirements from `spec.md`
 - Full `spec.md` for cross-reference
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/build/spec-guard.md` for your complete instructions. You are the SPEC GUARD. Verify task {task_id} implementation against spec requirements. Here is your context pack: [include files]. Append to `spec-compliance-report.md`. Append entries to `reasoning-journal.json`.
 - **description:** "SPEC GUARD: {task_id} — spec compliance check"
 
@@ -196,12 +206,14 @@ If SPEC GUARD or CODE REVIEWER returns FAIL and the issue is non-obvious (logic 
 ### 4.1 Dispatch CODE REVIEWER
 
 Compile context pack:
+
 - Files changed by IMPLEMENTER
 - `constitution.md`
 - Relevant ADRs from `research.md`
 - Existing codebase patterns (files from prior tasks)
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/build/code-reviewer.md` for your complete instructions. You are the CODE REVIEWER. Review task {task_id} implementation. Here is your context pack: [include files]. Append to `code-review-report.md`. Append entries to `reasoning-journal.json`.
 - **description:** "CODE REVIEWER: {task_id} — quality review"
 
@@ -218,6 +230,7 @@ Use the Agent tool:
 ### 5.1 Dispatch TEST GUARDIAN
 
 Compile context pack:
+
 - Test files from IMPLEMENTER
 - Source files from IMPLEMENTER
 - Task acceptance criteria
@@ -225,6 +238,7 @@ Compile context pack:
 - `coverage-map.md`
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/build/test-guardian.md` for your complete instructions. You are the TEST GUARDIAN. Validate test quality for task {task_id}. Here is your context pack: [include files]. Append to `test-quality-report.md`. Update `coverage-map.md`. Append entries to `reasoning-journal.json`.
 - **description:** "TEST GUARDIAN: {task_id} — test quality validation"
 
@@ -241,6 +255,7 @@ Use the Agent tool:
 ### 6.1 Dispatch PROGRESS TRACKER
 
 Compile context pack:
+
 - Completed task ID and estimated effort
 - Count of review cycles (how many times IMPLEMENTER was re-dispatched)
 - `estimates.md`
@@ -249,12 +264,14 @@ Compile context pack:
 - Current progress report
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/build/progress-tracker.md` for your complete instructions. You are the PROGRESS TRACKER. Record completion of task {task_id}. Update running totals and check for drift. Here is your context pack: [include files]. Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`.
 - **description:** "PROGRESS TRACKER: {task_id} — effort tracking"
 
 ### 6.2 Handle Alerts
 
 If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
+
 - Log the alert in `state.json`
 - Print a warning to terminal
 - Continue building (do not stop unless MANAGER decides to re-scope)
@@ -287,6 +304,7 @@ After all tasks in a phase group (e.g., "Foundation") are complete, run the INTE
 ### 7.1 Dispatch INTEGRATOR
 
 Compile context pack:
+
 - All code produced in this phase group
 - Build configuration files
 - `contracts/`
@@ -294,6 +312,7 @@ Compile context pack:
 - Prior integration reports (if any)
 
 Use the Agent tool:
+
 - **prompt:** Read the file `agents/build/integrator.md` for your complete instructions. You are the INTEGRATOR. Verify system integration after phase "{phase_group}". Here is your context pack: [include files]. Write `integration-report.md`. Append entries to `reasoning-journal.json`.
 - **description:** "INTEGRATOR: phase '{phase_group}' — system integration check"
 
@@ -326,14 +345,65 @@ After all tasks are built and all phase checkpoints pass:
 
 Run INTEGRATOR one last time against the complete codebase (all phases combined).
 
+### 8.1b Engineering Manager Sign-Off
+
+Before completion, dispatch ENGINEERING MANAGER with:
+
+- `tasks.md`
+- `spec.md`
+- `traceability-matrix.md`
+- `coverage-map.md`
+- `process-metrics.md`
+- `integration-report.md`
+- `progress-report.md`
+- all build gate reports
+- `state.json`
+- `reasoning-journal.json`
+
+Use the Agent tool:
+- **prompt:** Read `agents/build/engineering-manager.md` for your complete instructions. You are the ENGINEERING MANAGER. Validate workflow compliance, report consistency, and readiness for final verification using the provided context pack.
+- **description:** "ENGINEERING MANAGER: final pre-verification sign-off"
+
+ENGINEERING MANAGER must confirm:
+
+1. Spec-kit task workflow was actually followed.
+2. Task status, state tracking, and reports are internally consistent.
+3. The build is ready for full VERIFICATION.
+
+If any of these fail, do not proceed to BUILD_DONE. Route to rework first.
+
+### 8.1c Final Verification
+
+Dispatch VERIFICATION after final integration and EM pre-check.
+
+Use the Agent tool:
+- **prompt:** Read `agents/build/verification.md` for your complete instructions. You are the VERIFICATION agent. Run full backpropagation verification against spec requirements using the provided context pack. Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
+- **description:** "VERIFICATION: final backpropagation check"
+
+VERIFICATION must:
+
+1. Check every FR-*, AC-*, and NFR-* in `spec.md`.
+2. Verify code, tests, integration evidence, and gate evidence.
+3. Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
+
+Handle result:
+
+- **PASS** — continue to BUILD_DONE
+- **FAIL** — create RW-* tasks, route through IMPLEMENTER and quality gates, then re-run VERIFICATION
+
+BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.md` contains open gaps.
+
 ### 8.2 Collect Reports
 
 Verify all report files are populated:
+
 - `spec-compliance-report.md` — One section per task
 - `code-review-report.md` — One section per task
 - `test-quality-report.md` — One section per task
 - `integration-report.md` — One section per phase checkpoint + final
 - `progress-report.md` — One section per task + summary
+- `gap-report.md` — Verification coverage and gaps
+- `verification-summary.md` — Final PASS / FAIL completion verdict
 
 ### 8.3 Update State
 
@@ -343,6 +413,8 @@ Verify all report files are populated:
   "phase": "build_done",
   "build": {
     "completed_tasks": "{total}",
+    "verification_verdict": "PASS",
+    "coverage_score": "100%",
     "current_task": null
   },
   "updated_at": "{ISO-8601}"
@@ -354,10 +426,12 @@ Verify all report files are populated:
 After all build tasks complete, dispatch SCOREKEEPER to produce the build phase scorecard:
 
 Use the Agent tool:
-- **prompt:** Read `agents/core/scorekeeper.md`. Score all build agents: IMPLEMENTER (first-pass approvals vs rework), SPEC GUARD (gaps caught vs missed by VERIFICATION), CODE REVIEWER (issues found), TEST GUARDIAN (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+
+- **prompt:** Read `agents/control/scorekeeper.md`. Score all build agents: IMPLEMENTER (first-pass approvals vs rework), SPEC GUARD (gaps caught vs missed by VERIFICATION), CODE REVIEWER (issues found), TEST GUARDIAN (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
 - **description:** "SCOREKEEPER: build phase scoring and badges"
 
 Build-specific scoring:
+
 ```
 Per task completed:
   IMPLEMENTER first-pass approval: +3
@@ -391,6 +465,7 @@ QUALITY GATES:
   Code Review:    {approved}/{total} APPROVED
   Test Guardian:  {passed}/{total} PASS
   Integration:    {checkpoints_passed}/{total_checkpoints} PASS
+  Verification:   PASS ({coverage_score} coverage, {gap_count} gaps)
 
 EFFORT:
   Estimated total: {sum}
@@ -404,6 +479,8 @@ REPORTS:
   test-quality-report.md
   integration-report.md
   progress-report.md
+  gap-report.md
+  verification-summary.md
 
 AGENT SCORECARD:
   Top performer: {agent} (+{score}) — {highlight}
@@ -499,5 +576,16 @@ INTEGRATOR → runs after each phase checkpoint
   ├─ PASS → next phase
   └─ FAIL → IMPLEMENTER fixes integration issues
   │
-BUILD_DONE → final integration + summary
+FINAL INTEGRATION → whole-system integration pass
+  │
+ENGINEERING MANAGER → workflow compliance + readiness sign-off
+  │
+VERIFICATION → full backpropagation check against spec
+  │
+  ├─ PASS → BUILD_DONE
+  └─ FAIL → RW-* tasks + rework loop
+
+Before BUILD_DONE can succeed:
+  ENGINEERING MANAGER → verifies workflow compliance and readiness
+  VERIFICATION → proves 100% implemented coverage with zero open gaps
 ```
