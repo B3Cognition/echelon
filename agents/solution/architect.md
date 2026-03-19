@@ -163,9 +163,10 @@ These are architectural decisions, not feature add-ons. Address each as a design
 3. **PROPOSE** technical ADR-level additions (e.g., "All database access via repository pattern")
 4. **NEVER** create a new constitution — use `/speckit.constitution` if one doesn't exist
 
-**If constitution doesn't exist:**
-- For greenfield: Prompt user to run `/speckit.constitution` first
-- For brownfield: Suggest using `spec-kit-reverse-eng` to derive principles from existing code
+**If constitution doesn't exist (should not happen in normal flow):**
+
+- Constitution is created in section 3.5 of squad.run.md (after UNDERSTAND phase)
+- If missing: ERROR — escalate to COMMANDER. Squad flow requires constitution before ARCHITECT runs.
 
 **Appending technical principles:**
 - You may APPEND technical principles derived from ADRs

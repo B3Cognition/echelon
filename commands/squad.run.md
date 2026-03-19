@@ -59,6 +59,7 @@ Create `.specify/squad/state.json`:
   "iteration": 0,
   "spec_id": null,
   "spec_dir": null,
+  "constitution_status": "pending",
   "created_at": "{ISO-8601}",
   "updated_at": "{ISO-8601}",
   "token_usage": 0,
@@ -70,7 +71,7 @@ Create `.specify/squad/state.json`:
 }
 ```
 
-Note: `spec_id` and `spec_dir` are set later when `/speckit.specify` creates the branch.
+Note: `spec_id` and `spec_dir` are set later when `/speckit.specify` creates the branch. `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
 ### 1.4 Initialize Staging Reasoning Journal
 
@@ -103,23 +104,20 @@ Read `squad-config.yml` if it exists. Otherwise use defaults from `config-templa
 - `token_budget_k`: 1000
 - Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
 
-### 1.7 Verify Constitution
+### 1.7 Check Constitution Status
 
-Check if `.specify/memory/constitution.md` exists:
+Check if `.specify/memory/constitution.md` exists and note the status:
 
 **If EXISTS:**
 - Read the constitution — it will guide all architectural decisions
 - Store constitution principles in context for ARCHITECT and all build agents
+- Set `state.json.constitution_status` to `"exists"`
 
-**If MISSING (greenfield):**
-- Print warning: "No constitution found. Run `/speckit.constitution` to create project principles."
-- In `banzai` mode: Continue with defaults, flag as UNVALIDATED
-- In `guided`/`semi` mode: Pause and ask user to create constitution first
+**If MISSING:**
 
-**If MISSING (brownfield):**
-- Suggest: "Consider running `spec-kit-reverse-eng` to derive constitution from existing codebase."
-- SCOUT can extract implicit principles during discovery
-- ARCHITECT will propose technical principles based on code patterns found
+- Set `state.json.constitution_status` to `"pending"`
+- **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
+- Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
 
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
 
@@ -192,13 +190,96 @@ Read WHY1 outputs:
 - If **CRITICAL** issues found in `assumption-review.md` → route back to DISCOVER (re-investigate). Increment iteration counter. Check iteration limit.
 - If **PASS** (no critical issues, all major assumptions validated or flagged) → proceed to WHAT.
 
+**Transition:** Update state.json phase to "constitution". Proceed to Constitution Creation.
+
+---
+
+## 3.5 Constitution Creation (Bridge UNDERSTAND → DECIDE)
+
+> **Why here?** Constitution needs UNDERSTAND phase outputs to be meaningful. We now have domain understanding (glossary, mental model, boundaries) and validated assumptions — enough context to establish project principles.
+
+### Check Constitution Status
+
+If `state.json.constitution_status` is `"exists"`:
+
+- Skip to WHAT phase (constitution already established)
+- Proceed to section 4
+
+If `state.json.constitution_status` is `"pending"`:
+
+- Continue with constitution creation below
+
+### Prepare Constitution Context
+
+Gather UNDERSTAND findings from `.specify/squad/staging/`:
+
+1. **Domain context:** Extract key concepts from `glossary.md` and `mental-model.md`
+2. **Boundaries:** Extract external dependencies and constraints from `boundaries.md`
+3. **Assumptions:** Extract validated assumptions that should become principles from `assumptions.md`
+4. **User constraints:** Any team size, timeline, tech stack preferences from user input
+
+### Create Constitution via Spec-Kit
+
+**Call `/speckit.constitution`** with the gathered context:
+
+```text
+/speckit.constitution
+
+Based on our understanding phase:
+- Domain: {summarize from glossary/mental-model}
+- Key constraints: {from boundaries}
+- Team/project context: {from user input if provided}
+- Validated assumptions to encode: {from assumptions.md}
+
+Please establish the project constitution.
+```
+
+Spec-kit will:
+
+- Create `.specify/memory/constitution.md` from template
+- Fill in principles based on provided context
+- Establish governance rules
+
+### Verify Constitution Created
+
+After `/speckit.constitution` completes:
+
+1. Verify `.specify/memory/constitution.md` exists
+2. Read and store constitution principles in context
+3. Update `state.json.constitution_status` to `"exists"`
+
+### Mode-Specific Behavior
+
+**In `guided` mode:**
+
+- Present constitution draft to user for review before proceeding
+- User can modify principles via `/speckit.constitution` amendments
+
+**In `semi` mode:**
+
+- Show constitution summary to user
+- Proceed unless user explicitly requests changes
+
+**In `banzai` mode:**
+
+- Create constitution automatically
+- Log for post-run review
+
+### Brownfield Special Case
+
+For brownfield projects where constitution doesn't exist:
+
+1. **Option A:** If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns
+2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
+3. Either way, `/speckit.constitution` is called with the derived context
+
 **Transition:** Update state.json phase to "what". Proceed to WHAT.
 
 ---
 
 ## 4. WHAT Phase (Requirements Definition)
 
-> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. We now know enough to create the spec, so we first call `/speckit.specify` to create the branch and directory structure.
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. We call `/speckit.specify` to create the branch and directory structure.
 
 ### 4.1 Create Spec via Spec-Kit
 

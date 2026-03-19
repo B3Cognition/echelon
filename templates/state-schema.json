@@ -8,7 +8,7 @@
     "status": { "enum": ["running", "blocked", "done", "error", "killed"] },
     "phase": { "enum": [
       "init",
-      "phase1-understand", "phase1-discover", "phase1-why1", "phase1-what", "phase1-why2", "phase1-assess",
+      "phase1-understand", "phase1-discover", "phase1-why1", "phase1-constitution", "phase1-what", "phase1-why2", "phase1-assess",
       "checkpoint-assess",
       "phase2-decide",
       "phase3-solution", "phase3-how", "phase3-specialists", "phase3-sentinel", "phase3-plan", "phase3-consensus",
@@ -17,6 +17,7 @@
       "done"
     ]},
     "mode": { "enum": ["greenfield", "brownfield"] },
+    "constitution_status": { "enum": ["pending", "exists"], "default": "pending" },
     "autonomy_mode": { "enum": ["guided", "semi", "banzai"], "default": "semi" },
     "iteration": { "type": "integer", "minimum": 0, "maximum": 5 },
     "spec_id": { "type": "string" },
