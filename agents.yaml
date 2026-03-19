@@ -12,6 +12,25 @@ schema_version: 1
 # Each agent's FULL prompt lives in the referenced .md file.
 # This registry is METADATA only — it does not replace the prompts.
 
+# ═══════════════════════════════════════════
+# CONSTITUTION AUTHORITY — IMMUTABLE
+# ═══════════════════════════════════════════
+# The constitution is the HIGHEST AUTHORITY. It outranks all agents.
+# NO agent may overwrite, weaken, remove, or contradict any principle.
+# HOW may APPEND technical principles (validated by WHY).
+# If output conflicts with constitution → output is wrong, not constitution.
+# If constitution has a gap → escalate to human. NEVER auto-fill.
+# If agent believes constitution is wrong → escalate to human. NEVER auto-modify.
+# ONLY the human can amend the constitution via /speckit.constitution.
+
+constitution:
+  authority: highest
+  mutable_by: human_only
+  amendment_method: "/speckit.constitution"
+  agent_can_append: HOW  # technical principles only, validated by WHY
+  on_conflict: agent_output_is_wrong
+  on_gap: escalate_to_human
+
 phases:
   understanding:
     description: "What are we building and why?"

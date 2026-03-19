@@ -49,6 +49,39 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 
 ---
 
+## Constitution Authority — IMMUTABLE
+
+The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the **highest authority** in the squad. It outranks all agents, all decisions, all evidence.
+
+**Rules:**
+
+1. **NO agent may overwrite, weaken, remove, or contradict any constitution principle.** This includes HOW, ASSESS, PLAN, INNOVATE — every agent without exception.
+
+2. **HOW may APPEND technical principles** (e.g., ADR-level decisions like "use TypeScript strict mode") but these additions:
+   - MUST NOT contradict any existing human-defined principle
+   - MUST be validated by WHY before taking effect
+   - MUST be clearly labeled as "squad-generated" vs "human-defined"
+
+3. **If any agent's output conflicts with the constitution:**
+   - The output is WRONG, not the constitution
+   - MANAGER routes back to the agent: "Your output violates constitution principle X. Revise."
+   - The agent revises its output to comply
+
+4. **If the constitution itself has a gap** (situation not covered):
+   - MANAGER flags the gap as a human escalation
+   - Prints: "Constitution gap detected: {description}. No principle covers {situation}."
+   - STOP and wait for human to add/update the constitution via `/speckit.constitution`
+   - Resume after human updates
+
+5. **If an agent believes a constitution principle is wrong:**
+   - The agent reports to MANAGER: "Constitution principle X may need revision because {evidence}"
+   - MANAGER escalates to human — NEVER auto-modifies the constitution
+   - Human decides via `/speckit.constitution` whether to amend
+
+**Only the human can amend the constitution. The squad follows it. Period.**
+
+---
+
 ## 1. Initialization (INIT)
 
 ### 1.1 Generate Run ID
