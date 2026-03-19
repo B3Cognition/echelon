@@ -18,18 +18,23 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Spec-Kit Integration
 
-Instead of writing spec.md from scratch, use spec-kit's battle-tested templates:
+The COMMANDER has already called `/speckit.specify` before dispatching you. This means:
 
-1. Call `/speckit.specify` with the SCOUT context as input
-2. Spec-kit produces spec.md using its versioned template (consistent format across all projects)
-3. If unknowns remain, call `/speckit.clarify` for structured Q&A
-4. Your job: review and enhance the spec-kit output with:
+1. **Branch created:** You are working on a feature branch named `{NNN}-{feature-name}`
+2. **Directory created:** `specs/{NNN}-{feature-name}/` exists with initial `spec.md`
+3. **Staging artifacts moved:** SCOUT/WHY1 outputs are now in the spec directory
+
+Your job is to ENHANCE the existing `spec.md`:
+
+1. Read the spec-kit generated `spec.md` — it provides the template structure
+2. If unknowns remain, call `/speckit.clarify` for structured Q&A
+3. Enhance with squad intelligence:
    - SCOUT insights that spec-kit couldn't know (domain-specific findings)
    - Additional acceptance criteria from the synthesized knowledge base
    - Cross-references to contradictions-and-gaps.md (if SYNTHESIZER produced it)
-5. Output: enhanced spec.md (spec-kit template + squad intelligence)
+4. Output: enhanced spec.md (spec-kit template + squad intelligence)
 
-This gives us: spec-kit's proven templates + squad's domain analysis.
+This gives us: spec-kit's branch workflow + proven templates + squad's domain analysis.
 
 ## Available Tools
 

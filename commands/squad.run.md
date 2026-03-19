@@ -27,27 +27,7 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 ## 1. Initialization (INIT)
 
-### 1.1 Generate Run ID
-
-```
-run_id = "squad-{NNN}-{unix_timestamp}"
-```
-
-Where `{NNN}` is the next sequential spec number. Check `specs/` for existing directories to determine the next number (start at 001).
-
-### 1.2 Determine Feature Name
-
-Extract a short kebab-case feature name from the user input (e.g., "real-time-chat", "legacy-api-modernization"). This becomes the `{feature}` in all paths.
-
-### 1.3 Create Output Directory
-
-```
-mkdir -p specs/{NNN}-{feature}/investigation
-mkdir -p specs/{NNN}-{feature}/contracts
-mkdir -p .specify/squad
-```
-
-### 1.4 Detect Greenfield vs Brownfield
+### 1.1 Detect Greenfield vs Brownfield
 
 The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its output is available as `$SH_OUTPUT`.
 
@@ -55,18 +35,30 @@ The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its o
 - If `$SH_OUTPUT` says "brownfield" OR user provided a repo path with >5 source files: mode = brownfield
 - Otherwise: mode = greenfield
 
-### 1.5 Initialize State
+### 1.2 Create Staging Area
+
+The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outputs go to a staging area:
+
+```
+mkdir -p .specify/squad/staging
+mkdir -p .specify/squad
+```
+
+**Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `/speckit.specify`, which creates the branch and directory structure.
+
+### 1.3 Initialize State
 
 Create `.specify/squad/state.json`:
 
 ```json
 {
-  "run_id": "{run_id}",
+  "run_id": "squad-{unix_timestamp}",
   "status": "running",
   "phase": "init",
   "mode": "{greenfield|brownfield}",
   "iteration": 0,
-  "spec_id": "{NNN}",
+  "spec_id": null,
+  "spec_dir": null,
   "created_at": "{ISO-8601}",
   "updated_at": "{ISO-8601}",
   "token_usage": 0,
@@ -78,9 +70,11 @@ Create `.specify/squad/state.json`:
 }
 ```
 
-### 1.6 Initialize Reasoning Journal
+Note: `spec_id` and `spec_dir` are set later when `/speckit.specify` creates the branch.
 
-Create `specs/{feature}/reasoning-journal.json`:
+### 1.4 Initialize Staging Reasoning Journal
+
+Create `.specify/squad/staging/reasoning-journal.json`:
 
 ```json
 {
@@ -88,15 +82,19 @@ Create `specs/{feature}/reasoning-journal.json`:
 }
 ```
 
-### 1.7 Load Prior Run Data (if re-run)
+This will be moved to the spec directory after `/speckit.specify` creates it.
 
-If `specs/{feature}/` already contains artifacts from a prior run:
+### 1.5 Load Prior Run Data (if re-run)
+
+If user specifies a prior spec (e.g., "continue with 012-feature"):
+- Find `specs/{NNN}-{feature}/` directory
 - Read `reasoning-journal.json` for continuity
 - Read `evolution-report.md` if it exists
 - Set `iteration` to prior iteration + 1
+- Set `spec_id` and `spec_dir` in state.json
 - Note: EVOLVE will diff against prior artifacts during FINALIZE
 
-### 1.8 Load Configuration
+### 1.6 Load Configuration
 
 Read `squad-config.yml` if it exists. Otherwise use defaults from `config-template.yml`:
 - `max_iterations`: 5
@@ -109,7 +107,9 @@ Read `squad-config.yml` if it exists. Otherwise use defaults from `config-templa
 
 ---
 
-## 2. DISCOVER Phase
+## 2. DISCOVER Phase (UNDERSTAND)
+
+> **Note:** This is the UNDERSTAND phase. We don't yet know WHAT to build, so outputs go to the staging area. The spec directory is created later when `/speckit.specify` runs.
 
 ### Context Pack Assembly
 
@@ -121,12 +121,12 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/exploration/scout.md` for your complete instructions. You are the DISCOVER agent. Your mode is `{greenfield|brownfield}`. Here is your context pack: [include context pack files listed above]. Produce all outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
+- **prompt:** Read the file `agents/exploration/scout.md` for your complete instructions. You are the DISCOVER agent. Your mode is `{greenfield|brownfield}`. Here is your context pack: [include context pack files listed above]. Produce all outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
 - **description:** "DISCOVER: reconnaissance and domain mapping ({mode})"
 
 ### Expected Outputs
 
-Verify these files were created in `specs/{feature}/`:
+Verify these files were created in `.specify/squad/staging/`:
 - `glossary.md`
 - `mental-model.md`
 - `boundaries.md`
@@ -144,11 +144,13 @@ Read DISCOVER's outputs to classify the domain. Store domain classification for 
 
 ---
 
-## 3. WHY1 Phase (Assumption Challenge)
+## 3. WHY1 Phase (Assumption Challenge — UNDERSTAND)
+
+> **Note:** Still in UNDERSTAND phase. Outputs go to staging area.
 
 ### Context Pack Assembly
 
-Read and include in the subagent prompt:
+Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
 - `calibration-profile.yaml`
@@ -157,10 +159,11 @@ Read and include in the subagent prompt:
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the WHY agent operating in **assumption-challenge mode** (WHY1 — pre-WHAT). Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing SCIENTIST investigation. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the WHY agent operating in **assumption-challenge mode** (WHY1 — pre-WHAT). Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing SCIENTIST investigation. Here is your context pack: [include files]. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHY1: assumption challenge and pre-mortem analysis"
 
 ### Expected Outputs
+
 - `assumption-review.md`
 - Updated `unknowns.md` (if new unknowns discovered)
 - `issues.md` (if critical issues found)
@@ -177,22 +180,54 @@ Read WHY1 outputs:
 
 ## 4. WHAT Phase (Requirements Definition)
 
-### Context Pack Assembly
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. We now know enough to create the spec, so we first call `/speckit.specify` to create the branch and directory structure.
 
-Read and include in the subagent prompt:
+### 4.1 Create Spec via Spec-Kit
+
+**Before dispatching CARTOGRAPHER**, call `/speckit.specify` to create the feature branch and directory:
+
+1. **Summarize UNDERSTAND findings** — Extract from staging:
+   - Feature name from `mental-model.md` or user input
+   - Key requirements from `assumptions.md` and `boundaries.md`
+   - Domain context from `glossary.md`
+
+2. **Call `/speckit.specify`** with the summarized context:
+   - Spec-kit creates the branch: `{NNN}-{feature-name}`
+   - Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
+   - Spec-kit generates initial `spec.md` using its template
+
+3. **Update state.json** with the created spec:
+   ```json
+   {
+     "spec_id": "{NNN}",
+     "spec_dir": "specs/{NNN}-{feature-name}",
+     "updated_at": "{ISO-8601}"
+   }
+   ```
+
+4. **Move staging artifacts** to the spec directory:
+   ```bash
+   mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
+   ```
+
+### 4.2 Context Pack Assembly
+
+Read and include in the subagent prompt (now from `specs/{NNN}-{feature}/`):
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
 - `reference-architectures.md` (if greenfield)
 - `reasoning-journal.json` (filtered to DISCOVER + WHY1 entries)
+- `spec.md` (created by `/speckit.specify`)
 
-### Dispatch
+### 4.3 Dispatch CARTOGRAPHER
 
 Use the Agent tool to dispatch a subagent with:
-- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the WHAT agent — requirements definer. Transform DISCOVER's domain map into precise, testable specifications. Write user stories with acceptance criteria (Given/When/Then). No implementation details — no languages, frameworks, or databases. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the WHAT agent — requirements definer. `/speckit.specify` has already created the initial spec. Your job is to ENHANCE it with DISCOVER's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include files]. Update `spec.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "WHAT: requirements definition and specification"
 
 ### Expected Outputs
-- `spec.md`
+
+- `spec.md` (enhanced by CARTOGRAPHER)
 - `00-overview.md`
 
 **Transition:** Update state.json phase to "why2". Proceed to WHY2.
@@ -667,10 +702,29 @@ WARNINGS:
 
 Spec ID for feedback: {NNN}
 Run: /speckit.squad.feedback {NNN} after implementation
+
+BRANCH: {NNN}-{feature}
+Ready for: /speckit.squad.build {NNN}-{feature}
 ============================================
 ```
 
-**DONE.** The squad run is complete.
+### 12.9 Cleanup Staging Area
+
+Remove the staging directory after successful completion:
+
+```bash
+rm -rf .specify/squad/staging
+```
+
+### 12.10 Branch Stacking (Next Spec)
+
+When the user starts a new squad run while implementation of the current spec is in progress:
+
+1. The new spec will be created on a new branch via `/speckit.specify`
+2. Spec-kit handles branch stacking (new branch based on current feature branch)
+3. This allows parallel specification work while implementation continues
+
+**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `/speckit.squad.build`.
 
 ---
 
