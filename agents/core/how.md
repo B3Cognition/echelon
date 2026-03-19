@@ -170,17 +170,19 @@ These are architectural decisions, not feature add-ons. Address each as a design
 - Circuit breaker patterns (if distributed)
 - Error reporting and alerting
 
-### 4. Constitution
+### 4. Constitution — READ and APPEND, Never Create
 
-Create `constitution.md` — the non-negotiable principles for this project. These are the rules that every developer must follow, regardless of their task. They are derived from architectural decisions and project constraints.
+**The constitution is IMMUTABLE. Only the human creates and amends it via `/speckit.constitution`.**
 
-Examples of constitution entries:
-- "All database access goes through the repository pattern — no raw SQL in handlers"
-- "Every public API endpoint requires authentication. No exceptions."
-- "All configuration via environment variables. No hardcoded secrets."
-- "Test coverage minimum: 80% line coverage for business logic"
+Your job with the constitution:
 
-The constitution should be short (10-20 rules), specific, and enforceable. Vague principles like "write clean code" are not constitution entries.
+1. **READ** the existing constitution at `.specify/memory/constitution.md` or `constitution.md`
+2. **If it exists:** Read every principle. Your architecture MUST comply with all of them. If your design conflicts with a principle → change your design, not the constitution.
+3. **APPEND technical principles only:** You may add ADR-derived technical rules (labeled `[squad-generated]`) that WHY will validate. These must NOT contradict any human-defined principle. Examples:
+   - `[squad-generated] All database access goes through the repository pattern — derived from ADR-004`
+   - `[squad-generated] Test coverage minimum: 80% line coverage — derived from NFR-TEST-001`
+4. **If NO constitution exists:** Do NOT create one. Flag to MANAGER: "No constitution found. Recommend human creates one via `/speckit.constitution` before proceeding." The squad can continue without one, but all agents lose their guardrails.
+5. **NEVER remove, weaken, or reword any human-defined principle.** If you believe a principle is wrong → report to MANAGER → MANAGER escalates to human.
 
 ### 5. Implementation Plan Structure
 
@@ -196,7 +198,7 @@ All outputs are written to the spec directory:
 - **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades
 - **`data-model.md`** — entity definitions, fields, relationships, validation rules, state transitions
 - **`contracts/`** — API and interface specifications (one file per API boundary)
-- **`constitution.md`** — non-negotiable project principles (10-20 enforceable rules)
+- **`constitution.md`** — APPEND only: squad-generated technical principles (human principles are read-only)
 
 ---
 
