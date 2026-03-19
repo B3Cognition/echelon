@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.2.1** — Layer-based architecture with dual naming (codename + functional)
+**Version 0.3.0** — Fallback mode, KB management, test infrastructure, enhanced verification
 
 ## Quick Start
 
@@ -212,6 +212,33 @@ MAVERICK uses evidence-based innovation with TRIZ (ISO/TR 18686:2017):
 
 Innovation process: Design Thinking (find right problem) → AutoTRIZ (resolve contradictions) → Lateral Thinking (break patterns)
 
+## Fallback Mode
+
+When external dependencies (like spec-kit) are unavailable, the system degrades gracefully:
+
+- Detection runs before WHAT dispatch with 2-second timeout
+- System sets `fallback_mode=true` and continues with manual specification
+- All fallback artifacts are marked with `FALLBACK STATUS: UNVALIDATED_DEPENDENCY`
+- Quality gates remain active — no phase skipping allowed
+- Recovery runs reconciliation checklist when dependency returns
+
+See [docs/fallback-mode.md](docs/fallback-mode.md) for details.
+
+## Knowledge Base Management
+
+Scripts for managing the knowledge base with concurrent write protection:
+
+| Script | Purpose |
+|--------|---------|
+| `kb-write.sh` | Atomic KB writes with locking |
+| `kb-lock.sh` | Manage KB file locks |
+| `kb-pending-write.sh` | Queue pending KB updates |
+| `kb-pending-merge.sh` | Merge pending updates safely |
+| `kb-recover.sh` | Recover from failed KB operations |
+| `kb-seed.sh` | Initialize KB with baseline data |
+| `phase-timing.sh` | Track phase execution timing |
+| `preflight-speckit.sh` | Check spec-kit availability |
+
 ## Quality Gates
 
 ### Phase 1: Understanding (via Understanding CLI)
@@ -260,7 +287,7 @@ specify extension add --dev /path/to/cognitive-squad
 
 ## Directory Structure
 
-```
+```text
 agents/
 ├── control/           # COMMANDER, TRACKER, SCOREKEEPER
 ├── exploration/       # SCOUT, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
@@ -269,12 +296,32 @@ agents/
 ├── specialists/       # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
 ├── learning/          # AUDITOR, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN
 └── build/             # Build phase agents
+docs/
+└── fallback-mode.md   # Fallback mode documentation
+knowledge-base/
+├── agent-scores.yaml  # Agent performance tracking
+├── calibration-profile.yaml
+├── estimates-log.yaml
+├── kb-schema.md       # Knowledge base schema
+├── patterns.yaml      # Learned patterns
+└── pitfalls.yaml      # Known pitfalls
+scripts/bash/
+├── dry-run.sh         # Validation script
+├── kb-*.sh            # Knowledge base management (6 scripts)
+├── phase-timing.sh    # Phase execution timing
+└── preflight-speckit.sh # Spec-kit availability check
 templates/
 ├── triz-40-principles.md
 ├── triz-contradiction-matrix.md
-└── state-schema.json
-scripts/
-└── bash/dry-run.sh    # Validation script
+├── state-schema.json
+├── fallback-artifact-banner.md
+└── recovery-checklist.md
+tests/
+├── unit/              # Unit tests
+├── integration/       # Integration tests
+├── e2e/               # End-to-end tests
+├── benchmarks/        # Performance benchmarks
+└── manual/            # Manual test procedures
 ```
 
 ## Why Multiple Agents?

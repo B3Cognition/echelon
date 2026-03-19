@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
+CONF_FILE="${UNDERSTANDING_CLI_CONF:-$ROOT_DIR/tests/mocks/understanding-cli.conf}"
+
+if [[ ! -f "$CONF_FILE" ]]; then
+  echo "understanding-cli mock misconfigured: missing config $CONF_FILE" >&2
+  exit 1
+fi
+
+mode="deterministic"
+timeout_seconds="3"
+seed_score="0.78"
+
+# shellcheck disable=SC1090
+source "$CONF_FILE"
+
+case "$mode" in
+  deterministic)
+    printf '{"score":%s,"status":"ok"}\n' "$seed_score"
+    ;;
+  timeout)
+    sleep "$timeout_seconds"
+    printf '{"score":%s,"status":"ok"}\n' "$seed_score"
+    ;;
+  intermittent)
+    # Deterministic intermittent behavior to keep tests stable.
+    counter_file="${UNDERSTANDING_CLI_COUNTER_FILE:-$ROOT_DIR/tests/mocks/.understanding-counter}"
+    count=0
+    if [[ -f "$counter_file" ]]; then
+      count="$(cat "$counter_file")"
+    fi
+    next=$((count + 1))
+    printf '%s' "$next" > "$counter_file"
+    if (( next % 2 == 0 )); then
+      echo 'INTERMITTENT_FAILURE' >&2
+      exit 42
+    fi
+    printf '{"score":%s,"status":"ok"}\n' "$seed_score"
+    ;;
+  *)
+    echo "unknown mode: $mode" >&2
+    exit 65
+    ;;
+esac

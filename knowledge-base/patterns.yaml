@@ -1,2 +1,56 @@
 schema_version: 1
-entries: []
+entries:
+  - id: PAT-001
+    name: Critical-Issue Recovery via Conditional AC Rewrites
+    domain: requirements-validation
+    evidence_grade: C
+    source: squad-run-001, reasoning-journal entries (WHY2 -> CARTOGRAPHER amendment -> WHY2 re-validation)
+    validated_by_feedback: false
+    confidence: 0.84
+    description: When CRITICAL findings are converted into explicit contingent acceptance criteria and blocked-story preconditions, a single amendment pass can remove blockers without architecture churn.
+    tags: ["why2", "cartographer", "acceptance-criteria", "reroute-reduction"]
+    status: active
+
+  - id: PAT-002
+    name: Early Synthesis Prevents Contradiction Drift
+    domain: squad-orchestration
+    evidence_grade: C
+    source: squad-run-001, reasoning-journal entries (DISCOVER/SYNTHESIZER/WHY1)
+    validated_by_feedback: false
+    confidence: 0.79
+    description: Running SYNTHESIZER before assumption challenge exposes cross-document contradictions early, reducing late-phase rework in WHAT and HOW.
+    tags: ["synthesizer", "discover", "why1", "consistency"]
+    status: active
+
+  - id: PAT-003
+    name: Constitution-Anchored ADRs Reduce Governance Rework
+    domain: architecture-governance
+    evidence_grade: C
+    source: squad-run-001, reasoning-journal entries (HOW, WHY3 cross_artifact_checks)
+    validated_by_feedback: false
+    confidence: 0.82
+    description: ADRs that explicitly map decisions to constitution principles pass final governance checks with fewer follow-up corrections.
+    tags: ["how", "adr", "constitution", "governance"]
+    status: active
+
+  - id: PAT-004
+    name: Full AC Coverage Mapping De-risks Consensus
+    domain: test-architecture
+    evidence_grade: C
+    source: squad-run-001, test-strategy/coverage-map + reasoning-journal consensus entries
+    validated_by_feedback: false
+    confidence: 0.8
+    description: SENTINEL-style mapping of all acceptance criteria to test IDs improves implementability clarity and enables PLAN2 to resolve most consensus issues without returning to WHAT.
+    tags: ["sentinel", "coverage-map", "implementability", "consensus"]
+    status: active
+
+  - id: PAT-005
+    name: Dual-Pass Estimation with Complexity Uplift
+    domain: estimation
+    evidence_grade: C
+    source: squad-run-001, feasibility.md + implementability-report.md + reality-check.md
+    validated_by_feedback: false
+    confidence: 0.86
+    description: Using ASSESS baseline estimates and ASSESS2 complexity uplift captures hidden integration cost and produces execution-ready planning numbers.
+    tags: ["assess", "assess2", "estimation", "reality-check"]
+    status: active

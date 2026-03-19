@@ -1,2 +1,20 @@
 schema_version: 1
-entries: []
+# Schema reference: knowledge-base/kb-schema.md
+# Append-only log of predicted vs actual effort records.
+append_only: true
+entries:
+  - id: est-001
+    run_id: squad-1710901200
+    spec_id: "001"
+    created_at: 2026-03-20T00:00:00Z
+    agent: AUDITOR
+    domain: ai-orchestration-framework
+    estimate_hours: 51
+    actual_hours: 81.65
+    delta_hours: 30.65
+    confidence: 0.52
+    source: squad-1710901200
+    assess_raw_hours: 51
+    assess2_adjusted_hours: 81.65
+    correction_factor: 1.214
+    quality_convergence_iterations: 2

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
+CONF_FILE="${SPEC_KIT_CONF:-$ROOT_DIR/tests/mocks/spec-kit.conf}"
+
+if [[ ! -f "$CONF_FILE" ]]; then
+  echo "spec-kit mock misconfigured: missing config $CONF_FILE" >&2
+  exit 1
+fi
+
+mode="available"
+timeout_seconds="3"
+available_version="spec-kit version 1.4.0"
+incompatible_version="spec-kit version 0.4.0"
+
+# shellcheck disable=SC1090
+source "$CONF_FILE"
+
+if [[ "${1:-}" != "--version" ]]; then
+  echo "spec-kit mock only supports --version" >&2
+  exit 64
+fi
+
+case "$mode" in
+  available)
+    printf '%s\n' "$available_version"
+    ;;
+  timeout)
+    sleep "$timeout_seconds"
+    printf '%s\n' "$available_version"
+    ;;
+  incompatible)
+    printf '%s\n' "$incompatible_version"
+    ;;
+  *)
+    echo "unknown mode: $mode" >&2
+    exit 65
+    ;;
+esac

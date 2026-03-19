@@ -3,3 +3,13 @@ __pycache__/
 *.py[cod]
 .DS_Store
 .superpowers/
+Thumbs.db
+*.tmp
+*.swp
+*.log
+.env*
+.vscode/
+.idea/
+specs/
+.github/
+.specify/

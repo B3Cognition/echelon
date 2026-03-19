@@ -1,2 +1,69 @@
 schema_version: 1
-domains: {}
+# Schema reference: knowledge-base/kb-schema.md
+# Purpose: domain calibration baselines for early runs.
+last_updated: 2026-03-19
+confidence_policy:
+  validation_run_count: 20
+  low_confidence_threshold: 0.7
+  correction_factor_min: 0.5
+  correction_factor_max: 3.0
+domains:
+  specification:
+    accuracy: 0.55
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.0
+    last_updated: 2026-03-19
+    source: seed-001
+    status: validation
+  architecture:
+    accuracy: 0.55
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.0
+    last_updated: 2026-03-19
+    source: seed-001
+    status: validation
+  fallback:
+    accuracy: 0.5
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.1
+    last_updated: 2026-03-19
+    source: seed-001
+    status: validation
+  kb-integrity:
+    accuracy: 0.5
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.1
+    last_updated: 2026-03-19
+    source: seed-001
+    status: validation
+  ai-orchestration-framework:
+    accuracy: 0.52
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.214
+    last_updated: 2026-03-20
+    source: squad-1710901200
+    status: validation
+    notes: "Estimated from quality gate trajectory (0.72 -> 0.79 -> 0.80) and ASSESS to ASSESS2 uplift; no feedback outcomes yet."
+  prompt-engineering:
+    accuracy: 0.48
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.214
+    last_updated: 2026-03-20
+    source: squad-1710901200
+    status: validation
+    notes: "First run only; scores improved after rewrite, but deterministic tooling was unavailable, so confidence remains low pending feedback data."
+  framework-modification:
+    accuracy: 0.5
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.214
+    last_updated: 2026-03-20
+    source: squad-1710901200
+    status: validation
+    notes: "Calibration datapoint from 51h raw to 81.65h adjusted (factor 1.214) for brownfield framework modification projects."

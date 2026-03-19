@@ -1,0 +1,16 @@
+schema_version: 1
+last_updated: 2026-03-19T00:00:00Z
+confidence_policy:
+  validation_run_count: 20
+  low_confidence_threshold: 0.6
+  correction_factor_min: 0.5
+  correction_factor_max: 3.0
+domains:
+  cognitive-squad:
+    accuracy: 0.75
+    sample_size: 20
+    trend: stable
+    correction_factor: 1.0
+    last_updated: 2026-03-19
+    source: seed
+    status: validation

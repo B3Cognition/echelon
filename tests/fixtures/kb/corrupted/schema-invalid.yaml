@@ -1,0 +1,4 @@
+schema_version: 1
+entries:
+  - id: invalid
+    note: missing required source/confidence/run_id fields

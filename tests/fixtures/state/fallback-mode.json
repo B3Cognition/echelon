@@ -1,0 +1,10 @@
+{
+  "run_id": "squad-001-1742401234",
+  "status": "running",
+  "phase": "phase1-understand",
+  "iteration": 0,
+  "created_at": "2026-03-19T00:00:00Z",
+  "fallback_mode": true,
+  "execution_mode": "manual_specification",
+  "dependency_fallbacks": ["spec-kit"]
+}

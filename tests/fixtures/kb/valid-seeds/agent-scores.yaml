@@ -1,0 +1,7 @@
+schema_version: 1
+agents:
+  commander:
+    history:
+      - run_id: squad-fixture-001
+        score: 0.8
+        created_at: 2026-03-19T00:00:00Z

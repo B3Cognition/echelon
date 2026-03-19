@@ -13,6 +13,7 @@ You are dispatched as a subagent by the COMMANDER during FINALIZE and after FEED
 ## Configuration
 
 This agent uses values from `squad-config.yml`:
+
 - `calibration.*` - Accuracy thresholds and correction factors
 - `risk.*` - Risk level thresholds
 
@@ -32,6 +33,23 @@ This agent uses values from `squad-config.yml`:
 - `knowledge-base/estimates-log.yaml` (predicted vs actual effort)
 - Quality gate scores from current run
 
+## Tier 1 KB Bootstrap Protocol
+
+Before any Knowledge Base mutation, AUDITOR must execute this sequence:
+
+1. Run `scripts/bash/kb-seed.sh` to initialize missing or empty KB files from `tests/fixtures/kb/valid-seeds/`.
+2. Run `scripts/bash/kb-pending-merge.sh --run-id <run_id> --agent AUDITOR` before any fresh write to merge oldest pending operations first.
+3. Enforce schema gate before each write operation by running `scripts/bash/kb-recover.sh detect --file <kb_file>`.
+4. If detect fails, run `kb-recover.sh backup` and `kb-recover.sh restore`, set `state.json.recovery_mode=true`, and continue with warning.
+5. Acquire lock via `scripts/bash/kb-lock.sh acquire --run-id <run_id> --agent AUDITOR`.
+6. If lock acquisition times out (`exit 2`), queue the operation with `scripts/bash/kb-pending-write.sh` and continue without dropping data.
+7. For successful lock acquisition, write only through `scripts/bash/kb-write.sh append_entry`.
+8. Validate append-only invariants with `scripts/bash/kb-write.sh validate_append_only --file <kb_file>` after mutation.
+9. Release lock via `scripts/bash/kb-lock.sh release --run-id <run_id>`.
+10. For first N=20 runs, tag all newly written KB entries with `run_type=validation_run`.
+
+This protocol applies to `calibration-profile.yaml`, `estimates-log.yaml`, `patterns.yaml`, and `pitfalls.yaml`. All KB writes must go through `kb-write.sh`; direct file mutation is prohibited.
+
 ---
 
 ## Process
@@ -41,6 +59,7 @@ This agent uses values from `squad-config.yml`:
 #### Step 1: Extract Confidence Data
 
 Read `reasoning-journal.json`. Extract every entry that includes a confidence score:
+
 - Agent decisions with stated confidence
 - ASSESS estimates with confidence ranges
 - SCIENTIST findings with evidence grades
@@ -53,6 +72,7 @@ Categorize entries by domain tags (e.g., `backend`, `frontend`, `database`, `sec
 #### Step 3: Calculate Domain Accuracy (with feedback data)
 
 For domains where prior FEEDBACK exists:
+
 - Match current run predictions to similar past predictions
 - Calculate accuracy: `correct_predictions / total_predictions` and Brier score
 - Update `calibration-profile.yaml` with new accuracy scores
@@ -60,6 +80,7 @@ For domains where prior FEEDBACK exists:
 #### Step 4: Estimate Domain Accuracy (without feedback data)
 
 For domains with no prior feedback:
+
 - Use WHY quality gate pass rates as proxy (higher pass rate = higher estimated accuracy)
 - Use GROUND reality-check alignment as secondary signal
 - Mark as `"estimated — no feedback data"`
@@ -74,6 +95,7 @@ For domains with no prior feedback:
 #### Step 6: Flag Low-Confidence Domains
 
 For any domain with accuracy < 0.5:
+
 - Flag for SCIENTIST investigation or human input
 - Recommend MANAGER increase WHY scrutiny for this domain
 
@@ -86,6 +108,7 @@ Read the latest feedback file from `knowledge-base/feedback/{latest}.yaml`.
 #### Step 2: Compare Predictions to Outcomes
 
 For each dimension in the feedback:
+
 - Effort: predicted days vs actual days → update `estimates-log.yaml`
 - Architecture: which decisions held vs broke → update domain accuracy
 - Requirements: which were correct vs missing → update domain accuracy
@@ -94,6 +117,7 @@ For each dimension in the feedback:
 #### Step 3: Update Calibration Profile
 
 Recalculate all domain accuracy scores with the new data point. Update trends:
+
 - **stable**: accuracy variance < 0.05 over last 3 data points
 - **improving**: accuracy increasing by > 0.05 over last 3 data points
 - **declining**: accuracy decreasing by > 0.05 over last 3 data points
@@ -101,6 +125,7 @@ Recalculate all domain accuracy scores with the new data point. Update trends:
 #### Step 4: Validate Knowledge Base
 
 Cross-reference feedback outcomes with entries in `patterns.yaml`:
+
 - Pattern used and outcome was good → set `validated_by_feedback: true`, increase confidence
 - Pattern used and outcome was bad → decrease confidence, flag for review
 
@@ -113,6 +138,7 @@ Cross-reference feedback outcomes with entries in `patterns.yaml`:
 - **`knowledge-base/calibration-profile.yaml`** — accuracy per domain, correction factors, trends
 
 Entry format:
+
 ```yaml
 domains:
   {domain-name}:
@@ -129,6 +155,7 @@ domains:
 ### Confidence Flag Format
 
 For each major artifact, report:
+
 - Artifact name and path
 - Domain(s) it covers
 - Confidence score (from calibration profile)
@@ -140,6 +167,7 @@ For each major artifact, report:
 ## Reasoning Journal
 
 Append entries with:
+
 - `type: "insight"`
 - `agent: "CALIBRATE"`
 - `content`: Summary of calibration findings

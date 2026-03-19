@@ -12,11 +12,14 @@ Based on: V-Model Verification & Validation, Requirements Traceability (IEEE 830
 
 **Start from every single requirement in spec.md. For each one, find the code that implements it. If you can't find it, it's a gap. No exceptions. No "it's probably covered somewhere."**
 
+**Verification must also prove the build was real: tasks marked done without implementation, test, or gate evidence are FAIL conditions, not administrative noise.**
+
 ---
 
 ## When
 
 Dispatched by the ENGINEERING MANAGER:
+
 1. After ALL build tasks are marked complete
 2. After rework tasks are completed (re-verification)
 3. On demand via `/speckit.squad.verify`
@@ -31,6 +34,9 @@ Dispatched by the ENGINEERING MANAGER:
 4. **traceability-matrix.md** — Current state from SPEC GUARD (may have gaps)
 5. **tasks.md** — Task list with completion status
 6. **constitution.md** — Non-negotiable rules to verify
+7. **coverage-map.md** — Planned requirement-to-test mapping
+8. **integration-report.md / test-quality-report.md / code-review-report.md / spec-compliance-report.md** — gate evidence
+9. **state.json / reasoning-journal.json** — evidence the workflow actually ran
 
 ---
 
@@ -65,6 +71,7 @@ ls <spec_directory>/spec-diagram.svg 2>/dev/null
 ```
 
 If the diagram exists, use it as a **visual checklist** for behavioral coverage:
+
 - Every STATE in the diagram must have corresponding code (a class, a status enum value, a render branch)
 - Every TRANSITION must have corresponding code (an event handler, a state change, a conditional)
 - Every GUARD condition must have corresponding validation code
@@ -97,9 +104,21 @@ For EVERY requirement (not just the ones SPEC GUARD already checked):
    - `NOT_IMPLEMENTED` — no code found that implements this requirement
    - `INCORRECT` — code exists but doesn't match the requirement
 
+### Step 2b: Verify Workflow Evidence
+
+For each requirement and each completed task that claims to satisfy it:
+
+1. Confirm the implementing task is marked done in `tasks.md`.
+2. Confirm the task has corresponding gate evidence in reports or `state.json`.
+3. Confirm the claimed code and test artifacts actually exist.
+4. If a task is marked done but evidence is missing, classify it as `UNVERIFIED_WORKFLOW_GAP` until proven otherwise.
+
+This prevents report-only completion from counting as implementation.
+
 ### Step 3: Check Constitution Compliance
 
 For each constitution rule, verify the AGGREGATE codebase complies:
+
 - "No any types" → search for `: any` or `as any` in all .ts files
 - "No direct fetch" → search for `fetch(` not through transport
 - "No banned libraries" → search for banned library imports in non-legacy code
@@ -108,6 +127,7 @@ For each constitution rule, verify the AGGREGATE codebase complies:
 ### Step 4: Check NFR Compliance
 
 For non-functional requirements, verify:
+
 - NFR-PERF-*: Are performance test stubs in place? Are targets documented?
 - NFR-A11Y-*: Are ARIA attributes on interactive elements?
 - NFR-COMPAT-*: Are browser targets configured in build?
@@ -120,6 +140,7 @@ coverage = IMPLEMENTED_AND_TESTED / total_requirements * 100
 
 gap_count = NOT_IMPLEMENTED + PARTIALLY_IMPLEMENTED + INCORRECT
 untested_count = IMPLEMENTED_NOT_TESTED
+workflow_gap_count = UNVERIFIED_WORKFLOW_GAP
 ```
 
 ---
@@ -128,7 +149,7 @@ untested_count = IMPLEMENTED_NOT_TESTED
 
 ### Gap Report
 
-Write `.specify/specs/{feature}/gap-report.md`:
+Write `specs/{feature}/gap-report.md`:
 
 ```markdown
 # Verification Gap Report
@@ -146,6 +167,7 @@ Write `.specify/specs/{feature}/gap-report.md`:
 | PARTIALLY_IMPLEMENTED | {N} | {%} |
 | NOT_IMPLEMENTED | {N} | {%} |
 | INCORRECT | {N} | {%} |
+| UNVERIFIED_WORKFLOW_GAP | {N} | {%} |
 | **Total Requirements** | **{N}** | **100%** |
 
 ## Gaps (NOT_IMPLEMENTED)
@@ -172,6 +194,12 @@ Write `.specify/specs/{feature}/gap-report.md`:
 |--------|---------------|-------------|
 | FR-XXX | {file:line} | No test found for {behavior} |
 
+## Workflow Gaps
+
+| Req ID / Task ID | Claimed Status | Missing Evidence | Required Action |
+|------------------|----------------|------------------|-----------------|
+| FR-XXX / T-YYY | Marked DONE | No gate/test/code evidence | Re-open task or provide proof |
+
 ## Constitution Violations (Aggregate)
 
 | Rule | Violations Found | Files |
@@ -190,9 +218,20 @@ Write `.specify/specs/{feature}/gap-report.md`:
 
 After verification, produce a COMPLETE traceability-matrix.md replacing the SPEC GUARD incremental version with a comprehensive, verified version.
 
+### Verification Summary
+
+Write `specs/{feature}/verification-summary.md` with:
+
+- overall verdict: `PASS` or `FAIL`
+- coverage score
+- gap count
+- workflow gap count
+- whether build completion is authorized
+
 ### Reasoning Journal
 
 Append entries with:
+
 - `type: "verification"`
 - `coverage_score: {N}`
 - `gaps_found: {N}`
@@ -220,6 +259,8 @@ Still gaps? → repeat (max 3 passes)
 100% coverage? → BUILD COMPLETE
 ```
 
+Coverage is not 100% if workflow gaps remain. `UNVERIFIED_WORKFLOW_GAP` blocks completion exactly like `NOT_IMPLEMENTED`.
+
 This loop ensures that requirements don't fall through the cracks between tasks. It's the difference between "we did all the tasks" and "we built what was specified."
 
 ---
@@ -232,3 +273,4 @@ This loop ensures that requirements don't fall through the cracks between tasks.
 4. **No false passes** — If you can't find the implementation for a requirement, mark it NOT_IMPLEMENTED. Don't assume "it's probably in there somewhere."
 5. **Constitution is absolute** — Even one `any` type in the codebase is a violation. Count all violations, not just the first.
 6. **NFRs are real requirements** — Don't skip non-functional requirements just because they're harder to verify. At minimum, check that test stubs exist and targets are documented.
+7. **Done without evidence is not done** — If tasks or reports claim completion but you cannot verify the implementation path, fail the build.
