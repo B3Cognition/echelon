@@ -3,7 +3,7 @@
 ![Dry Run Validation](docs/dry-run.gif)
 
 <details>
-<summary><strong>✓ 97 checks passed — Squad ready to deploy</strong> (click to expand full output)</summary>
+<summary><strong>✓ 99 checks passed — Squad ready to deploy</strong> (click to expand full output)</summary>
 
 ```
 ╔══════════════════════════════════════════════════╗
@@ -74,7 +74,7 @@
 ✓ MANAGER has Role Separation section
 
 ╔══════════════════════════════════════════════════╗
-║  ✓ PASS: 97   ⚠ WARN: 0    ✗ FAIL: 0           ║
+║  ✓ PASS: 99   ⚠ WARN: 0    ✗ FAIL: 0           ║
 ║  🟢  ALL CHECKS PASSED — Squad ready to deploy   ║
 ╚══════════════════════════════════════════════════╝
 ```
@@ -85,11 +85,11 @@ Run it yourself: `./scripts/bash/dry-run.sh`
 
 **What if AI didn't just write code — but understood why it was writing it, challenged its own assumptions, proved it understood the plan before starting, verified its own work through backpropagation, scored its own performance, and got measurably better with every project?**
 
-Cognitive Squad is a **35-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
+Cognitive Squad is a **37-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
 
 It started with a simple request: *"I need agents for WHAT, HOW, WHY, Manager, PM."*
 
-Five roles. But a human holds 7-9 concepts in working memory. An AI can hold thousands — and trace every connection between them. From those 5 roles, the system explored the combinatorial space of what can go wrong between interacting agents and generated 34 specialized functions:
+Five roles. But a human holds 7-9 concepts in working memory. An AI can hold thousands — and trace every connection between them. From those 5 roles, the system explored the combinatorial space of what can go wrong between interacting agents and generated 37 specialized functions:
 
 - WHAT was overloaded (understanding + defining) → split into **DISCOVER + WHAT**
 - PM was overloaded (strategy + operations) → split into **ASSESS + PLAN**
@@ -299,6 +299,7 @@ specify extension add --dev /path/to/cognitive-squad
 | **SCOREKEEPER** | Tracks agent performance, awards badges, enables self-healing | `agent-scorecard.md`, `agent-scores.yaml` |
 | **MENTAL MODEL** | Maintains living code graph with invariant checking | `mental-model-code.md`, invariant alerts |
 | **METACOGNITION MONITOR** | Watches execution: "are we still doing the right thing?" | `metacognition-log.md` |
+| **STRATEGIC OVERVIEW** | Risk-weighted project map — flags effort/risk misalignment | `strategic-overview.md`, effort recommendations |
 
 ### Phase 1: Understanding — Specialists (7)
 
@@ -326,6 +327,7 @@ specify extension add --dev /path/to/cognitive-squad
 | **CHANGE CONTROLLER** | Handles mid-build spec changes | On change | `change-impact-report.md` |
 | **VERIFICATION** | Backpropagation — checks ALL spec against ALL code | After all tasks | `gap-report.md` (coverage score) |
 | **VISUAL VALIDATOR** | Actually LOOKS at running product via screenshots | Per phase | Visual validation report + screenshots |
+| **DEBUGGER** | Systematic root cause analysis (reproduce → isolate → cause → fix → verify) | On non-obvious FAIL | `debug-report.md`, root cause fix |
 
 ### Phase 4: Learning (4 + feedback)
 
@@ -380,7 +382,7 @@ specify extension add --dev /path/to/cognitive-squad
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**35 cognitive functions:** 13 core + 7 specialists + 10 build + 4 learning + 1 feedback
+**37 cognitive functions:** 14 core + 7 specialists + 11 build + 4 learning + 1 feedback
 
 ### The Flow
 
