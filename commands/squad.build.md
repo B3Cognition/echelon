@@ -12,10 +12,10 @@ $ARGUMENTS
 
 ## Overview
 
-This command runs **Phase B: Building** of the Cognitive Agent Squad. You are the **MANAGER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
+This command runs **Phase B: Building** of the Cognitive Agent Squad. You are the **COMMANDER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
 
 The user provides:
-- **A feature path** — The `.specify/specs/{NNN}-{feature}/` directory containing Phase A artifacts
+- **A feature path** — The `specs/{NNN}-{feature}/` directory containing Phase A artifacts
 - **Optional: specific tasks** — Task IDs to build (e.g., `T-001 T-002`). If omitted, builds all tasks in order.
 - **Optional: phase filter** — A phase name (e.g., "foundation") to build only that phase's tasks.
 
@@ -23,13 +23,29 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
+## Spec-Kit Integration
+
+For task execution, leverage spec-kit's implementation workflow:
+
+1. Call `/speckit.implement` which handles:
+   - Checklist verification (blocks if incomplete unless user confirms)
+   - Project setup (ignore files, directory structure)
+   - Task ordering and progress tracking
+2. Squad adds quality gates after each task:
+   - SPEC GUARD verifies code matches spec
+   - CODE REVIEWER checks quality and ADR compliance
+   - TEST GUARDIAN validates test coverage
+3. On task completion, spec-kit marks it done in tasks.md
+
+This gives us: spec-kit's proven task execution + squad's multi-agent quality gates.
+
 ---
 
 ## 1. Initialization (BUILD_INIT)
 
 ### 1.1 Validate Phase A Artifacts
 
-Read and verify these files exist in `.specify/specs/{NNN}-{feature}/`:
+Read and verify these files exist in `specs/{NNN}-{feature}/`:
 
 **Required:**
 - `tasks.md` — The implementation plan (task list with IDs, descriptions, acceptance criteria, dependencies)
@@ -91,10 +107,10 @@ Update `.specify/squad/state.json`:
 ### 1.5 Initialize Build Reports
 
 Create empty report files (or clear prior content):
-- `.specify/specs/{feature}/spec-compliance-report.md`
-- `.specify/specs/{feature}/code-review-report.md`
-- `.specify/specs/{feature}/test-quality-report.md`
-- `.specify/specs/{feature}/progress-report.md`
+- `specs/{feature}/spec-compliance-report.md`
+- `specs/{feature}/code-review-report.md`
+- `specs/{feature}/test-quality-report.md`
+- `specs/{feature}/progress-report.md`
 
 **Transition:** Proceed to task iteration.
 
