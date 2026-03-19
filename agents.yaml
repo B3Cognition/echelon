@@ -251,6 +251,19 @@ agents:
       - "NEVER make tactical decisions — advise WHERE to focus, not HOW to implement"
       - "NEVER override MANAGER — recommend, don't decide"
 
+  GLOBAL_MEMORY:
+    file: agents/core/global-memory.md
+    phase: learning
+    tier: core
+    role: "Cross-project knowledge — promotes validated learnings to global memory for all future projects"
+    when: "At run start (read global), at run end (write to global), after FEEDBACK"
+    inputs: [local knowledge-base/, ~/.specify/squad-global/]
+    outputs: [updated global knowledge base, merged calibration data]
+    routes_to: []
+    never:
+      - "NEVER promote unvalidated learnings to global — minimum 2 projects or FEEDBACK confirmation"
+      - "NEVER let local contradict global without flagging"
+
   # ═══════════════════════════════════════════
   # PHASE 1: UNDERSTANDING — Specialists
   # ═══════════════════════════════════════════
@@ -552,8 +565,8 @@ routing:
 # ═══════════════════════════════════════════
 
 totals:
-  core: 14
+  core: 15
   specialists: 7
   build: 11
   learning: 5
-  total: 37
+  total: 38

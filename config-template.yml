@@ -217,6 +217,13 @@ knowledge_base:
   # Auto-archive stale + low_confidence entries after N consecutive runs
   auto_archive_after_runs: 2
 
+  # Global memory (cross-project knowledge)
+  global_memory:
+    enabled: true
+    path: "~/.specify/squad-global"
+    # Minimum confirmations before promoting to global
+    promotion_threshold: 2  # 2 projects or 1 feedback confirmation
+
 # ═══════════════════════════════════════════
 # TOOLS — External tool paths
 # ═══════════════════════════════════════════

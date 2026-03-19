@@ -149,3 +149,34 @@ Append entries with:
 - Minimum sample size of 3 before reporting accuracy as anything other than "insufficient data".
 - Correction factors are capped at 0.5x to 3.0x to prevent runaway adjustments.
 - Always show your math. Accuracy calculations must be reproducible from the data.
+
+## Analytics Notebook
+
+When calibration data grows (5+ data points per domain), CALIBRATE should produce or update an analytics summary:
+
+```markdown
+# Calibration Analytics
+
+## Accuracy Trend
+| Run | Date | Domain | Predicted | Actual | Accuracy | Correction |
+|-----|------|--------|-----------|--------|----------|-----------|
+| 001 | ... | ... | ... | ... | ... | ... |
+
+## Domain Performance
+| Domain | Avg Accuracy | Trend | Sample Size | Confidence |
+|--------|-------------|-------|-------------|-----------|
+| ... | ... | improving/stable/declining | ... | high/medium/low |
+
+## Agent Performance Over Time
+| Agent | Run 1 | Run 2 | Run 3 | Trend |
+|-------|-------|-------|-------|-------|
+| ... | ... | ... | ... | improving/stable/declining |
+
+## Key Insights
+- {what's getting better}
+- {what's getting worse}
+- {recommended adjustments}
+```
+
+Save as `.specify/specs/{feature}/calibration-analytics.md`
+This makes learning VISIBLE, not just stored in YAML.

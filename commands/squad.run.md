@@ -82,6 +82,46 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 
 ---
 
+## 0. MANAGER Reflection Protocol (Plan Mode)
+
+Before EVERY major phase transition, MANAGER enters a structured reflection:
+
+**When to reflect:**
+- Before dispatching DISCOVER (initial strategy)
+- Before dispatching HOW (after ASSESS — is the approach right?)
+- Before CONSENSUS (are we ready or should we iterate more?)
+- Before FINALIZE (is everything complete or are there gaps?)
+- Before any human escalation (frame the question well)
+
+**Reflection template:**
+```
+REFLECTION — Phase transition: {from} → {to}
+
+Current state:
+  - Quality scores: {latest}
+  - Issues: {open count by severity}
+  - User intent alignment: {aligned/drifting}
+  - Strategic overview: {risk status}
+  - Budget consumed: {%}
+
+What I know:
+  - {key insight 1 from last phase}
+  - {key insight 2}
+
+What I'm uncertain about:
+  - {uncertainty 1 — could affect routing}
+  - {uncertainty 2}
+
+Routing decision:
+  - Standard path: {next agent per state machine}
+  - Alternative: {should I summon a specialist first? should I loop back?}
+  - Decision: {chosen path with reasoning}
+  - Confidence: {high/medium/low}
+```
+
+This reflection is logged to reasoning-journal.json with type "manager_reflection".
+It takes 30 seconds and prevents reactive routing. Think before dispatching.
+
 ## 1. Initialization (INIT)
 
 ### 1.1 Generate Run ID

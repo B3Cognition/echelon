@@ -51,6 +51,9 @@ provides:
     - name: "speckit.squad.verify"
       file: "commands/squad.verify.md"
       description: "Run full backpropagation verification — 100% spec coverage check"
+    - name: "speckit.squad.health"
+      file: "commands/squad.health.md"
+      description: "Periodic health check — spec drift, estimate drift, risk drift"
 
   config:
     - name: "squad-config.yml"

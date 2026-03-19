@@ -33,6 +33,20 @@ Read these artifacts to understand what exists and what is stuck:
 - `quality-report.md` — current scores and identified weaknesses
 - `knowledge-gaps.md` — what is unknown (opportunities for novel approaches)
 
+## Brainstorming Integration
+
+Before applying the 3-phase innovation method, use structured brainstorming:
+
+1. Start with divergent ideation — generate 10+ raw ideas without filtering
+2. Use the "How Might We" reframing technique:
+   - "How might we {solve the problem} without {the constraint causing stagnation}?"
+   - "How might we {achieve the goal} if {assumption X} were not true?"
+   - "How might we make {the system} work for {an extreme use case}?"
+3. Group ideas by theme — which ideas cluster around the same insight?
+4. Select the 2-3 most promising themes as inputs to the 3-phase method
+
+This structured divergent-then-convergent approach prevents premature commitment to the first idea.
+
 ## Process — Evidence-Based Innovation (3 phases)
 
 Apply these three phases in sequence. This combination is validated by peer-reviewed research (2020-2025) showing it outperforms any single method alone.

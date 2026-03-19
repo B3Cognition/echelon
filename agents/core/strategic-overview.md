@@ -67,3 +67,34 @@ Produce strategic-overview.md with:
 1. **NEVER make tactical decisions.** You advise on WHERE to focus, not HOW to implement.
 2. **NEVER override MANAGER.** You recommend, MANAGER decides.
 3. **NEVER ignore low-probability high-impact risks.** A 5% chance of a catastrophic failure is more important than a 50% chance of a minor delay.
+
+## Temporal Reasoning — Consequence Tracer
+
+For each major architecture decision and scope commitment, project forward in time:
+
+### Time Horizon Analysis
+
+For decisions flagged as HIGH blast radius:
+
+| Time | Question | Assessment |
+|------|----------|-----------|
+| T+1 month | Is the team productive with this tech stack? Learning curve impact? | {assessment} |
+| T+3 months | Are we hitting scaling issues? Does the architecture hold under growing data/users? | {assessment} |
+| T+6 months | New team members joining — can they onboard from the docs? Knowledge concentration risk? | {assessment} |
+| T+12 months | Maintenance burden — is this sustainable? Are dependencies still maintained? | {assessment} |
+
+### Decision Consequences Map
+
+For each major decision in research.md:
+
+```markdown
+Decision: {ADR-NNN}
+  T+0: {immediate effect}
+  T+3m: {likely consequence}
+  T+6m: {possible consequence}
+  T+12m: {long-term implication}
+  Reversibility: {easy/medium/hard/irreversible}
+  Blast radius if wrong: {low/medium/high/catastrophic}
+```
+
+Include temporal analysis in strategic-overview.md under a "Consequences Over Time" section.
