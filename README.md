@@ -87,6 +87,32 @@ Run it yourself: `./scripts/bash/dry-run.sh`
 
 Cognitive Squad is a **38-function cognitive agent system** built on the **Triadic Cognitive Model**: Understanding → Internalization → Application. It separates thinking from doing, assigns specialized roles to each cognitive task, enforces quality gates backed by 40 years of IEEE/ISO standards, and creates a self-healing loop where agents score each other, track accuracy, and automatically adjust for next time.
 
+### How It Grew
+
+```
+5 → 7 (split overloaded roles)
+  → 19 (add specialists + learning)
+  → 26 (add building phase)
+  → 28 (add EM + VERIFICATION)
+  → 30 (add INTERNALIZATION + SCOREKEEPER)
+  → 34 (add INTENT TRACKER + VISUAL VALIDATOR + MENTAL MODEL + METACOGNITION)
+  → 35 (add SYNTHESIZER)
+  → 37 (add STRATEGIC OVERVIEW + DEBUGGER + spec-kit integration + Context7 + worktrees)
+  → 38 (add GLOBAL MEMORY + Plan Mode + temporal reasoning + stakeholder model)
+```
+
+| Category | Count |
+|----------|-------|
+| Core agents | 15 |
+| Specialists | 7 |
+| Build agents | 11 |
+| Learning agents | 5 |
+| **Total** | **38** |
+| Commands | 11 |
+| NEVER rules | 55+ |
+| Dry-run checks | 101/101 pass |
+| Standards aligned | ISO 12207, 25010, 29148, SWEBOK v4, CMMI v3, V-Model, ATAM, ISO/TR 18686 |
+
 It started with a simple request: *"I need agents for WHAT, HOW, WHY, Manager, PM."*
 
 Five roles. But a human holds 7-9 concepts in working memory. An AI can hold thousands — and trace every connection between them. From those 5 roles, the system explored the combinatorial space of what can go wrong between interacting agents and generated 38 specialized functions:
