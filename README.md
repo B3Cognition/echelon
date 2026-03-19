@@ -18,6 +18,9 @@ specify extension add cognitive-squad
 
 # Verify 100% spec coverage
 /speckit.squad.verify
+
+# Validate the extension setup
+./scripts/bash/dry-run.sh
 ```
 
 ## How It Works
@@ -86,6 +89,8 @@ autonomy:
 
 ## Agents
 
+36 cognitive functions organized into 7 layers.
+
 ### Naming Convention
 
 Each agent has a **codename** (file name, what you see in logs) and a **functional name** (what it does):
@@ -108,7 +113,7 @@ File: agents/exploration/scout.md
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
-| **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge |
+| **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge base |
 | **CARTOGRAPHER** | WHAT | Writes testable requirements |
 | **SAGE** | WHY | Adversarial critic, challenges assumptions |
 | **MODELER** | MENTAL-MODEL | Maintains code graph with invariants |
@@ -134,7 +139,7 @@ File: agents/exploration/scout.md
 | **BENCHMARK** | PERFORMANCE | High-load, scalability |
 | **ADVOCATE** | UX-A11Y | Frontend, accessibility |
 | **ORACLE** | DOMAIN-EXPERT | Domain-specific knowledge |
-| **MAVERICK** | INNOVATE | Stagnation, need alternatives |
+| **MAVERICK** | INNOVATE | Stagnation, need alternatives (uses AutoTRIZ) |
 
 #### Learning Layer (cross-cutting)
 | Codename | Functional | Purpose |
@@ -144,7 +149,7 @@ File: agents/exploration/scout.md
 | **REALIST** | GROUND | Reality-checks estimates |
 | **MIRROR** | REFLECT | Extracts patterns and pitfalls |
 | **MONITOR** | METACOGNITION-MONITOR | "Are we still doing the right thing?" |
-| **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge accumulation |
+| **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge (~/.specify/squad-global/) |
 
 #### Build Layer (Phase 4)
 | Agent | Purpose |
@@ -167,6 +172,7 @@ File: agents/exploration/scout.md
 | `/speckit.squad.run` | Start analysis (Phase 1-3) |
 | `/speckit.squad.build` | Execute build phase |
 | `/speckit.squad.verify` | Check 100% spec coverage |
+| `/speckit.squad.health` | Periodic health check (drift, KB freshness) |
 | `/speckit.squad.status` | Check progress |
 | `/speckit.squad.resume` | Answer squad's question |
 | `/speckit.squad.change` | Handle spec change during build |
@@ -174,7 +180,6 @@ File: agents/exploration/scout.md
 | `/speckit.squad.innovate` | Trigger MAVERICK |
 | `/speckit.squad.ground` | Trigger REALIST |
 | `/speckit.squad.feedback` | Post-implementation feedback |
-| `/speckit.squad.health` | Periodic health check (drift, KB freshness) |
 
 ## Configuration
 
@@ -196,6 +201,17 @@ cp config-template.yml squad-config.yml
 
 See `config-template.yml` for full reference with guidance comments.
 
+## Innovation Templates
+
+MAVERICK uses evidence-based innovation with TRIZ (ISO/TR 18686:2017):
+
+| Template | Purpose |
+|----------|---------|
+| `templates/triz-40-principles.md` | All 40 TRIZ principles adapted for software |
+| `templates/triz-contradiction-matrix.md` | 16 software parameters + resolution matrix |
+
+Innovation process: Design Thinking (find right problem) → AutoTRIZ (resolve contradictions) → Lateral Thinking (break patterns)
+
 ## Quality Gates
 
 ### Phase 1: Understanding (via Understanding CLI)
@@ -212,6 +228,16 @@ See `config-template.yml` for full reference with guidance comments.
 | Code quality | CODE REVIEWER | No violations, ADR-compliant |
 | Test quality | TEST GUARDIAN | Min tests per component |
 | Verification | VERIFICATION | 100% spec coverage |
+
+## Validation
+
+Validate the extension setup without running agents:
+
+```bash
+./scripts/bash/dry-run.sh
+```
+
+Checks: agent files, commands, config, templates, state machine flow, role separation rules.
 
 ## Installation
 
@@ -242,7 +268,13 @@ agents/
 ├── solution/          # ARCHITECT, ORCHESTRATOR, SENTINEL
 ├── specialists/       # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
 ├── learning/          # AUDITOR, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN
-└── build/             # Build phase agents (unchanged)
+└── build/             # Build phase agents
+templates/
+├── triz-40-principles.md
+├── triz-contradiction-matrix.md
+└── state-schema.json
+scripts/
+└── bash/dry-run.sh    # Validation script
 ```
 
 ## Why Multiple Agents?
@@ -252,6 +284,7 @@ A single prompt can't:
 - Track its own accuracy (AUDITOR logs: "estimation accuracy: 0.45")
 - Verify 100% coverage backward (VERIFICATION: spec → code)
 - Watch for process violations (MONITOR: "you skipped quality gates")
+- Accumulate cross-project knowledge (VETERAN maintains global patterns)
 
 These require separation of concerns. That's why there are 36 functions, not 1.
 
