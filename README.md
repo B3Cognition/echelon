@@ -28,8 +28,8 @@ specify extension add cognitive-squad
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ PHASE 1: UNDERSTAND                                                      │
 │                                                                          │
-│   SCOUT ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER               │
-│   (discover)  (why1)   (what)         (why2)    (assess)                │
+│   SCOUT ──► SYNTHESIZER ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER│
+│   (discover)  (fuse)       (why1)   (what)         (why2)    (assess)   │
 │                                                                          │
 │   + Specialists: INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE    │
 │   Output: spec.md, feasibility.md, estimates.md, priorities.md          │
@@ -108,6 +108,7 @@ File: agents/exploration/scout.md
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
+| **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge |
 | **CARTOGRAPHER** | WHAT | Writes testable requirements |
 | **SAGE** | WHY | Adversarial critic, challenges assumptions |
 | **MODELER** | MENTAL-MODEL | Maintains code graph with invariants |
@@ -143,6 +144,7 @@ File: agents/exploration/scout.md
 | **REALIST** | GROUND | Reality-checks estimates |
 | **MIRROR** | REFLECT | Extracts patterns and pitfalls |
 | **MONITOR** | METACOGNITION-MONITOR | "Are we still doing the right thing?" |
+| **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge accumulation |
 
 #### Build Layer (Phase 4)
 | Agent | Purpose |
@@ -172,6 +174,7 @@ File: agents/exploration/scout.md
 | `/speckit.squad.innovate` | Trigger MAVERICK |
 | `/speckit.squad.ground` | Trigger REALIST |
 | `/speckit.squad.feedback` | Post-implementation feedback |
+| `/speckit.squad.health` | Periodic health check (drift, KB freshness) |
 
 ## Configuration
 
@@ -234,11 +237,11 @@ specify extension add --dev /path/to/cognitive-squad
 ```
 agents/
 ├── control/           # COMMANDER, TRACKER, SCOREKEEPER
-├── exploration/       # SCOUT, CARTOGRAPHER, SAGE, MODELER
+├── exploration/       # SCOUT, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
 ├── feasibility/       # GATEKEEPER, VALIDATOR
 ├── solution/          # ARCHITECT, ORCHESTRATOR, SENTINEL
 ├── specialists/       # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
-├── learning/          # AUDITOR, ADAPTIVE, REALIST, MIRROR, MONITOR
+├── learning/          # AUDITOR, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN
 └── build/             # Build phase agents (unchanged)
 ```
 
@@ -250,7 +253,7 @@ A single prompt can't:
 - Verify 100% coverage backward (VERIFICATION: spec → code)
 - Watch for process violations (MONITOR: "you skipped quality gates")
 
-These require separation of concerns. That's why there are 34 functions, not 1.
+These require separation of concerns. That's why there are 36 functions, not 1.
 
 ## License
 
