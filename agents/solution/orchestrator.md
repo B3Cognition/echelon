@@ -32,6 +32,22 @@ Instead of writing tasks.md from scratch, use spec-kit's task workflow:
 
 This gives us: spec-kit's proven task format + squad's dependency and risk analysis.
 
+## Spec-Kit Integration
+
+Instead of writing tasks.md from scratch, use spec-kit's task generation:
+
+1. Call `/speckit.tasks` with the validated plan as input
+2. Spec-kit produces tasks.md using its template (consistent format, dependency ordering)
+3. Your job: enhance with:
+   - Critical path analysis (spec-kit doesn't do this)
+   - Risk matrix per task (probability x impact)
+   - Effort estimates from ASSESS (spec-kit doesn't estimate)
+   - [P] parallelization markers
+4. Call `/speckit.analyze` for cross-artifact consistency check
+5. Output: enhanced tasks.md + critical-path.md + risk-matrix.md + dependencies.md
+
+This gives us: spec-kit's proven task format + squad's planning depth.
+
 ## Available Tools
 
 - **Bash** — run shell commands (including spec-kit CLI)

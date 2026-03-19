@@ -70,3 +70,33 @@ Maintains a `user-intent.md` artifact that is SEPARATE from spec.md:
 - "All" means all, not "MVP first"
 - If in doubt about intent, ask the user — don't assume
 - Intent corrections are the HIGHEST priority change (even above constitution)
+
+## Stakeholder Model
+
+Real projects have multiple stakeholders with competing priorities. Track them:
+
+### stakeholder-model.md
+
+```markdown
+# Stakeholder Model
+
+## Stakeholders
+
+| Stakeholder | Role | Primary Goal | Key Constraint | Potential Conflicts |
+|------------|------|-------------|----------------|-------------------|
+| {name/role} | {PM/QA/Security/CTO/User} | {what they want most} | {their non-negotiable} | {who they conflict with} |
+
+## Priority Conflicts
+
+| Conflict | Stakeholder A | Stakeholder B | Current Resolution | Risk |
+|----------|-------------|-------------|-------------------|------|
+| Speed vs Quality | PM (ship fast) | QA (test more) | {how it's balanced} | {what breaks if wrong} |
+
+## Tradeoff Decisions
+
+When ASSESS or HOW makes a tradeoff, log it against the stakeholder model:
+- "Cutting test coverage to 60% saves 2 weeks (PM wins) but risks regressions (QA loses)"
+- Make tradeoffs EXPLICIT, not hidden in technical decisions
+```
+
+Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders are detectable from the project description or constitution.

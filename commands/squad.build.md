@@ -179,6 +179,16 @@ Use the Agent tool:
 - **FAIL** — Route back to IMPLEMENTER with the specific gaps. IMPLEMENTER fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
 - **WARN** — Proceed to CODE REVIEWER. Warnings are logged but do not block.
 
+### On Non-Obvious FAIL
+
+If SPEC GUARD or CODE REVIEWER returns FAIL and the issue is non-obvious (logic error, integration issue, not just missing test or style):
+
+1. Dispatch DEBUGGER instead of sending directly back to IMPLEMENTER
+2. DEBUGGER: reproduce → isolate → root cause → fix → verify
+3. If root cause is within task scope → DEBUGGER fixes
+4. If root cause requires architecture change → MANAGER routes to HOW
+5. If root cause requires spec change → MANAGER routes to WHAT
+
 ---
 
 ## 4. Code Review Gate (CODE_REVIEW)
@@ -339,7 +349,34 @@ Verify all report files are populated:
 }
 ```
 
-### 8.4 Print Summary
+### 8.4 Run SCOREKEEPER
+
+After all build tasks complete, dispatch SCOREKEEPER to produce the build phase scorecard:
+
+Use the Agent tool:
+- **prompt:** Read `agents/core/scorekeeper.md`. Score all build agents: IMPLEMENTER (first-pass approvals vs rework), SPEC GUARD (gaps caught vs missed by VERIFICATION), CODE REVIEWER (issues found), TEST GUARDIAN (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+- **description:** "SCOREKEEPER: build phase scoring and badges"
+
+Build-specific scoring:
+```
+Per task completed:
+  IMPLEMENTER first-pass approval: +3
+  IMPLEMENTER rework required: -1
+  IMPLEMENTER third rework: -3
+  SPEC GUARD caught gap: +3
+  CODE REVIEWER found issue: +2
+  TEST GUARDIAN improved coverage: +2
+
+Per phase gate:
+  INTEGRATOR pass: +2
+  VISUAL VALIDATOR caught visual issue: +4
+
+End of build:
+  VERIFICATION 100% coverage: SPEC GUARD gets +5 (Guardian Angel badge candidate)
+  VERIFICATION found gaps: SPEC GUARD gets -2 per gap (Blind Spot badge candidate)
+```
+
+### 8.5 Print Summary
 
 ```
 ============================================
@@ -367,6 +404,11 @@ REPORTS:
   test-quality-report.md
   integration-report.md
   progress-report.md
+
+AGENT SCORECARD:
+  Top performer: {agent} (+{score}) — {highlight}
+  Badges earned: {list}
+  Self-healing: {recommendations}
 
 WARNINGS:
   {any DEGRADED tasks}

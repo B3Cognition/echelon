@@ -149,6 +149,7 @@ limits:
 # =============================================================================
 
 quality_gates:
+  # WHY spec-validation mode thresholds (from Understanding CLI)
   overall: 0.70
   structure: 0.70
   testability: 0.70

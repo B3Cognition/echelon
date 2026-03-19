@@ -25,6 +25,103 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 ---
 
+## Role Separation — ABSOLUTE RULES
+
+Every agent has ONE job. No agent may do another agent's job. This is non-negotiable.
+
+| Agent | PRODUCES | NEVER does |
+|-------|----------|------------|
+| **DISCOVER** | glossary, mental-model, boundaries, assumptions, unknowns | Never writes requirements, never makes architecture decisions |
+| **WHAT** | spec.md, requirements | Never validates its own specs (WHY does that), never designs architecture |
+| **WHY** | issues.md, quality-gates.md | **NEVER rewrites specs/plans/tasks.** WHY ONLY finds problems. Responsible agent fixes. |
+| **ASSESS** | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
+| **HOW** | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
+| **PLAN** | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
+| **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
+
+**The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
+- Spec issues → dispatch **WHAT** to fix → then **WHY** re-validates
+- Architecture issues → dispatch **HOW** to fix → then **WHY** re-validates
+- Task issues → dispatch **PLAN** to fix → then **WHY** re-validates
+- Unknown questions → dispatch **SCIENTIST** to investigate → feed results to the relevant agent
+
+**NEVER dispatch WHY with a prompt that says "fix" or "rewrite."** WHY is read-only on all artifacts except issues.md and quality-gates.md.
+
+---
+
+## Constitution Authority — IMMUTABLE
+
+The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the **highest authority** in the squad. It outranks all agents, all decisions, all evidence.
+
+**Rules:**
+
+1. **NO agent may overwrite, weaken, remove, or contradict any constitution principle.** This includes HOW, ASSESS, PLAN, INNOVATE — every agent without exception.
+
+2. **HOW may APPEND technical principles** (e.g., ADR-level decisions like "use TypeScript strict mode") but these additions:
+   - MUST NOT contradict any existing human-defined principle
+   - MUST be validated by WHY before taking effect
+   - MUST be clearly labeled as "squad-generated" vs "human-defined"
+
+3. **If any agent's output conflicts with the constitution:**
+   - The output is WRONG, not the constitution
+   - MANAGER routes back to the agent: "Your output violates constitution principle X. Revise."
+   - The agent revises its output to comply
+
+4. **If the constitution itself has a gap** (situation not covered):
+   - MANAGER flags the gap as a human escalation
+   - Prints: "Constitution gap detected: {description}. No principle covers {situation}."
+   - STOP and wait for human to add/update the constitution via `/speckit.constitution`
+   - Resume after human updates
+
+5. **If an agent believes a constitution principle is wrong:**
+   - The agent reports to MANAGER: "Constitution principle X may need revision because {evidence}"
+   - MANAGER escalates to human — NEVER auto-modifies the constitution
+   - Human decides via `/speckit.constitution` whether to amend
+
+**Only the human can amend the constitution. The squad follows it. Period.**
+
+---
+
+## 0. MANAGER Reflection Protocol (Plan Mode)
+
+Before EVERY major phase transition, MANAGER enters a structured reflection:
+
+**When to reflect:**
+- Before dispatching DISCOVER (initial strategy)
+- Before dispatching HOW (after ASSESS — is the approach right?)
+- Before CONSENSUS (are we ready or should we iterate more?)
+- Before FINALIZE (is everything complete or are there gaps?)
+- Before any human escalation (frame the question well)
+
+**Reflection template:**
+```
+REFLECTION — Phase transition: {from} → {to}
+
+Current state:
+  - Quality scores: {latest}
+  - Issues: {open count by severity}
+  - User intent alignment: {aligned/drifting}
+  - Strategic overview: {risk status}
+  - Budget consumed: {%}
+
+What I know:
+  - {key insight 1 from last phase}
+  - {key insight 2}
+
+What I'm uncertain about:
+  - {uncertainty 1 — could affect routing}
+  - {uncertainty 2}
+
+Routing decision:
+  - Standard path: {next agent per state machine}
+  - Alternative: {should I summon a specialist first? should I loop back?}
+  - Decision: {chosen path with reasoning}
+  - Confidence: {high/medium/low}
+```
+
+This reflection is logged to reasoning-journal.json with type "manager_reflection".
+It takes 30 seconds and prevents reactive routing. Think before dispatching.
+
 ## 1. Initialization (INIT)
 
 ### 1.1 Detect Greenfield vs Brownfield
@@ -155,6 +252,43 @@ If any are missing, log a warning but continue — WHY1 will catch gaps.
 ### Post-Dispatch
 
 Read DISCOVER's outputs to classify the domain. Store domain classification for specialist summoning later. Append routing decision to reasoning journal.
+
+**Transition:** Update state.json phase to "synthesize". Proceed to SYNTHESIZER.
+
+---
+
+## 2b. SYNTHESIZER Phase
+
+SYNTHESIZER fuses ALL DISCOVER outputs into a unified knowledge base. This is mandatory — WHY1 must receive synthesized output, not raw fragments.
+
+### Context Pack Assembly
+
+Read and include in the subagent prompt:
+- ALL DISCOVER outputs (every .md file produced in step 2)
+- reasoning-journal.json (DISCOVER entries)
+
+### Dispatch
+
+Use the Agent tool to dispatch a subagent with:
+- **prompt:** Read the file `agents/core/synthesizer.md` for your complete instructions. You are the SYNTHESIZER agent. Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Here is your context pack: [include all DISCOVER outputs]. Produce unified outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **description:** "SYNTHESIZER: fuse discovery outputs into unified knowledge base"
+
+### Expected Outputs
+
+- `glossary.md` (unified, with conflicts flagged)
+- `mental-model.md` (unified, with gaps flagged)
+- `boundaries.md` (unified, with contradictions flagged)
+- `assumptions.md` (unified, deduplicated)
+- `unknowns.md` (unified, prioritized)
+- `contradictions-and-gaps.md` (cross-source analysis)
+- `risks.md` (synthesized risks)
+- `people-and-teams.md` (if discoverable)
+- `timeline.md` (if discoverable)
+- `qa-test-strategy-inputs.md` (if discoverable)
+
+### Post-Dispatch
+
+Read `contradictions-and-gaps.md`. If CRITICAL contradictions found, log them — WHY1 will challenge these specifically.
 
 **Transition:** Update state.json phase to "why1". Proceed to WHY1.
 
@@ -396,6 +530,20 @@ Read ASSESS outputs:
 - **DEFER** verdict → reduce scope, re-route to WHAT. Track DEFER count. **DEFER loop >= 2 with no scope stabilization → kill or escalate to human.**
 - **PASS** → proceed to specialist summoning.
 
+**Transition:** Update state.json phase to "strategic_overview". Proceed to STRATEGIC OVERVIEW.
+
+---
+
+### 6b. STRATEGIC OVERVIEW (Risk Map)
+
+After ASSESS passes, dispatch STRATEGIC OVERVIEW to build the initial risk-weighted map:
+
+Use the Agent tool:
+- **prompt:** Read `agents/core/strategic-overview.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
+- **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
+
+Read the strategic overview. Use it to prioritize specialist allocation: spend SCIENTIST time on high-blast-radius decisions, not low-risk areas.
+
 **Transition:** Update state.json phase to "specialists". Proceed to specialist summoning.
 
 ---
@@ -420,7 +568,18 @@ After ASSESS passes, determine which specialists are needed:
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
-| **INNOVATE** | Re-run (iteration >= 2) AND EVOLVE detects stagnation, OR circular reasoning 3x | Low |
+| **INNOVATE** | See expanded triggers below | Medium |
+
+**INNOVATE Expanded Triggers** — INNOVATE should run more often than other specialists. It catches design ruts early:
+
+1. **Re-run stagnation:** EVOLVE detects no improvement between runs → INNOVATE
+2. **Circular reasoning:** Same issue raised 3x without resolution → INNOVATE before escalation
+3. **WHY rejects spec 2+ times:** The spec keeps failing quality gates → INNOVATE reframes the problem
+4. **ASSESS borderline DEFER:** Feasibility is marginal (not clear KILL, not clear PASS) → INNOVATE proposes simpler alternatives
+5. **HOW faces a hard tradeoff:** Architecture decision has no clear winner → INNOVATE applies TRIZ contradiction resolution
+6. **Quality scores plateau:** WHY scores improve < 2% over 2 iterations → INNOVATE breaks the local optimum
+7. **Any agent reports BLOCKED:** Before escalating to human, try INNOVATE first
+8. **First run with complex scope:** If ASSESS estimates > 100 person-weeks, proactively run INNOVATE to check if a simpler approach exists
 
 ### Max Active Specialists
 
@@ -756,7 +915,12 @@ Additional artifacts (conditional):
 - `alternatives.md` (if INNOVATE ran)
 - `evolution-report.md` (if EVOLVE ran)
 
-### 12.7 Set Final State
+### 12.7 Run SCOREKEEPER
+
+Dispatch SCOREKEEPER to produce the final scorecard (see Section 13 for full protocol).
+Read the scorecard output and apply any automatic self-healing actions.
+
+### 12.8 Set Final State
 
 Update `state.json`:
 ```json
@@ -794,6 +958,12 @@ SPECIALISTS SUMMONED: {list}
 
 ARTIFACTS: {count} files in specs/{NNN}-{feature}/
 
+AGENT SCORECARD:
+  Top performer: {agent} (+{score}) — {highlight}
+  Badges earned: {count} ({badge names})
+  Peer appreciation: {count} exchanges
+  Self-healing: {count} recommendations
+
 WARNINGS:
   {any UNVALIDATED artifacts}
   {any low-confidence domains}
@@ -827,7 +997,91 @@ When the user starts a new squad run while implementation of the current spec is
 
 ---
 
-## 13. State Tracking Protocol
+## 13. Scorekeeper Protocol
+
+SCOREKEEPER runs throughout the entire squad execution — not as a separate phase, but woven into every agent dispatch.
+
+### After Every Agent Dispatch
+
+After reading an agent's output, MANAGER scores the agent:
+
+```
+1. Read the agent's output quality:
+   - Did WHY pass or fail? → +5 for CRITICAL catch, -1 for false positive
+   - Did WHAT need rework? → -1 per WHY rejection
+   - Did IMPLEMENTER pass first review? → +3 first-pass, -1 rework
+   - Did SCIENTIST validate an assumption? → +2 validated, +4 invalidated (more valuable)
+
+2. Append to state.json.agent_scores:
+   {
+     "agent": "{AGENT_NAME}",
+     "action": "{what they did}",
+     "points": {N},
+     "reason": "{why these points}"
+   }
+```
+
+### Peer Appreciation Collection
+
+When an agent's output is consumed by the NEXT agent, check: did the next agent benefit from high-quality input?
+
+```
+IF WHAT produces spec.md AND WHY2 passes on first attempt:
+  → Peer appreciation: WHY awards WHAT +2 "clear_and_actionable"
+
+IF SCIENTIST produces investigation/ AND HOW makes a decision based on it:
+  → Peer appreciation: HOW awards SCIENTIST +3 "unblocked_my_work"
+
+IF WHY catches an issue that SPEC GUARD would have missed:
+  → Peer appreciation: SPEC GUARD awards WHY +2 "caught_my_mistake"
+```
+
+Record in reasoning-journal.json:
+```json
+{
+  "type": "peer_appreciation",
+  "from": "{agent giving appreciation}",
+  "to": "{agent receiving}",
+  "points": {N},
+  "reason": "{why}"
+}
+```
+
+### During FINALIZE — Full Scorecard
+
+After GROUND + REFLECT + EVOLVE + CALIBRATE, dispatch SCOREKEEPER:
+
+Use the Agent tool to dispatch a subagent with:
+- **prompt:** Read the file `agents/core/scorekeeper.md` for your complete instructions. You are the SCOREKEEPER. Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
+- **description:** "SCOREKEEPER: final scoring, badges, self-healing recommendations"
+
+Context pack:
+- state.json (with agent_scores array)
+- reasoning-journal.json (with peer_appreciation entries)
+- knowledge-base/agent-scores.yaml (lifetime data)
+- config-template.yml → scoring section (point values, thresholds)
+
+### Expected SCOREKEEPER Outputs
+
+- `.specify/specs/{feature}/agent-scorecard.md` — leaderboard, peer appreciation, self-healing recommendations
+- Updated `knowledge-base/agent-scores.yaml` — run history appended, lifetime scores updated, badges awarded
+
+### Self-Healing Actions (MANAGER executes immediately)
+
+Read SCOREKEEPER's self-healing recommendations and apply:
+
+| Recommendation | MANAGER Action |
+|---------------|---------------|
+| "ASSESS correction factor should increase to 1.5x" | Update calibration-profile.yaml |
+| "WHY false positive rate > 30%" | Log for human review (prompt refinement) |
+| "IMPLEMENTER score < -5 over 3 runs" | Log for human review (prompt refinement) |
+| "TEST GUARDIAN score low — add test pattern examples" | Log for human review |
+
+Self-healing that affects calibration-profile.yaml is automatic. Self-healing that affects agent prompts is flagged for human review.
+
+---
+
+## 14. State Tracking Protocol
 
 After **every** phase transition, update `.specify/squad/state.json`:
 
@@ -1036,7 +1290,7 @@ The goal of re-runs is monotonic improvement: each run should produce artifacts 
 ## 20. Quick Reference: Phase Transitions
 
 ```
-INIT ──────────► DISCOVER ──────► WHY1 ──────────► WHAT
+INIT ──────► DISCOVER ──► SYNTHESIZER ──► WHY1 ──► WHAT
                   ▲                 │                 │
                   │ (re-investigate) │ (CRITICAL)      │
                   └─────────────────┘                 ▼
@@ -1094,4 +1348,7 @@ Before declaring DONE, verify:
 - [ ] TEST ARCHITECT ran (mandatory)
 - [ ] `implementability-report.md` exists with per-task scores
 - [ ] Knowledge base files updated (patterns.yaml, pitfalls.yaml, calibration-profile.yaml)
-- [ ] Final summary printed to terminal with spec ID for future feedback
+- [ ] SCOREKEEPER ran — agent-scorecard.md produced
+- [ ] agent-scores.yaml updated with run history
+- [ ] Self-healing recommendations applied (calibration) or logged (prompt refinement)
+- [ ] Final summary printed to terminal with spec ID and scorecard summary
