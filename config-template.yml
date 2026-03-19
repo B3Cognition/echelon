@@ -7,6 +7,47 @@
 #   [disable: X]     = set to this value to effectively disable the check
 #
 # =============================================================================
+# EXECUTION — How agents run
+# =============================================================================
+
+execution:
+  # Maximum concurrent subagents (Claude Code Agent tool calls in one message)
+  # [range: 1-5] Higher = faster but more tokens. Lower = sequential but cheaper.
+  max_parallel_agents: 3
+
+  # Per-agent timeout (seconds). Agent is killed and retried once if exceeded.
+  # [range: 60-600] Most agents complete in 60-180s. 600s = edge cases.
+  agent_timeout_seconds: 300
+
+  # Max retries per agent before skipping with warning
+  # [range: 0-3] Higher = more resilient, but may waste tokens on stuck agents.
+  max_retries: 1
+
+  # Model selection per tier (use cheapest model that works for each role)
+  # Options: opus | sonnet | haiku
+  models:
+    control: sonnet       # COMMANDER, SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST
+    exploration: sonnet   # SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER
+    feasibility: sonnet   # GATEKEEPER, VALIDATOR
+    solution: sonnet      # ARCHITECT, ORCHESTRATOR, SENTINEL
+    specialists: sonnet   # INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE, MAVERICK
+    build: sonnet         # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, etc.
+    learning: haiku       # MIRROR, ADAPTIVE, AUDITOR, REALIST (post-run, less critical)
+    verification: opus    # VALIDATOR — most important check, use best model
+
+  # Git worktree isolation for build tasks
+  worktree_isolation:
+    enabled: true
+    # Each build task runs in isolated worktree, merges only when all gates pass
+    cleanup_on_fail: true
+
+  # Parallel thought branches for MAVERICK
+  thought_branches:
+    enabled: true
+    max_branches: 3
+    exploration_budget_per_branch: 5  # % of total token budget per branch
+
+# =============================================================================
 # ANALYSIS SETTINGS
 # =============================================================================
 
@@ -372,6 +413,31 @@ build:
   # Tasks blocked before pausing build
   blocked_tasks_pause_threshold: 3
 
+  # Per-task quality gate sequence (agents run in this order)
+  gate_sequence: [SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+
+  # Phase gate agents (run at each phase checkpoint)
+  phase_gate: [INTEGRATOR, VALIDATOR]
+
+  # MONITOR (metacognition) frequency (every N tasks)
+  metacognition_frequency: 5
+
+  # MODELER invariant checking (every N tasks or per task)
+  # [range: 1-10] 1 = every task, 5 = every 5th task
+  invariant_check_frequency: 1
+
+  # VALIDATOR (backpropagation) settings
+  verification:
+    max_passes: 3
+    target_coverage: 100
+    minimum_coverage: 95
+
+  # Visual validation (if VISUAL VALIDATOR is added)
+  visual_validation:
+    enabled: false
+    checkpoints: [per_phase, before_complete]
+    browser: chromium
+
 # =============================================================================
 # SPECIALIST SETTINGS
 # =============================================================================
@@ -385,6 +451,28 @@ specialists:
 
   # Auto-summon SCIENTIST (INVESTIGATOR) for unknowns
   auto_scientist: true
+
+  # Auto-summon SECURITY (GUARDIAN) when these keywords appear in spec
+  auto_security_keywords:
+    - auth
+    - login
+    - password
+    - token
+    - PII
+    - payment
+    - encrypt
+    - GDPR
+    - HIPAA
+    - compliance
+
+  # Auto-summon PERFORMANCE (BENCHMARK) when these keywords appear
+  auto_performance_keywords:
+    - real-time
+    - concurrent
+    - throughput
+    - latency
+    - scalab
+    - high-load
 
 # =============================================================================
 # KNOWLEDGE BASE

@@ -1,0 +1,603 @@
+schema_version: 1
+
+# Central Agent Registry — Single source of truth for the Cognitive Squad structure.
+#
+# COMMANDER reads this file to know:
+#   - What agents exist (codename + functional name)
+#   - When to dispatch each
+#   - What inputs/outputs they have
+#   - What they must NEVER do
+#   - Routing relationships
+#
+# Each agent's FULL prompt lives in the referenced .md file.
+# This registry is METADATA only — it does not replace the prompts.
+#
+# Naming convention: CODENAME (FUNCTION) — e.g., SCOUT (DISCOVER)
+
+# ═══════════════════════════════════════════
+# CONSTITUTION AUTHORITY — IMMUTABLE
+# ═══════════════════════════════════════════
+# The constitution is the HIGHEST AUTHORITY. It outranks all agents.
+# NO agent may overwrite, weaken, remove, or contradict any principle.
+# ARCHITECT may APPEND technical principles (validated by SAGE).
+# If output conflicts with constitution → output is wrong, not constitution.
+# If constitution has a gap → escalate to human. NEVER auto-fill.
+# If agent believes constitution is wrong → escalate to human. NEVER auto-modify.
+# ONLY the human can amend the constitution via /speckit.constitution.
+
+constitution:
+  authority: highest
+  mutable_by: human_only
+  amendment_method: "/speckit.constitution"
+  agent_can_append: ARCHITECT  # technical principles only, validated by SAGE
+  on_conflict: agent_output_is_wrong
+  on_gap: escalate_to_human
+
+# ═══════════════════════════════════════════
+# 4-PHASE MODEL
+# ═══════════════════════════════════════════
+
+phases:
+  understand:
+    description: "What are we building and why? Domain discovery and assumption challenge."
+    order: 1
+    layers: [exploration]
+  decide:
+    description: "Is it feasible? Should we build it? Kill gate and prioritization."
+    order: 2
+    layers: [feasibility, control]
+  solution:
+    description: "How do we build it? Architecture, planning, test strategy."
+    order: 3
+    layers: [solution, specialists]
+  build:
+    description: "Build it, verify it, learn from it."
+    order: 4
+    layers: [build, learning]
+
+# ═══════════════════════════════════════════
+# LAYER: CONTROL — Orchestration & Oversight
+# ═══════════════════════════════════════════
+
+agents:
+
+  COMMANDER:
+    codename: COMMANDER
+    function: MANAGE
+    file: agents/control/commander.md
+    layer: control
+    phase: all
+    role: "Orchestrator — routes agents, enforces convergence, resolves conflicts"
+    when: "Always active — the brain of the squad"
+    inputs: [state.json, all artifacts, reasoning-journal.json, agents.yaml]
+    outputs: [state.json, routing log, convergence report]
+    routes_to: [all agents]
+    never:
+      - "NEVER do another agent's job directly"
+      - "NEVER dispatch SAGE with fix/rewrite prompts"
+      - "NEVER skip phases"
+
+  SCOREKEEPER:
+    codename: SCOREKEEPER
+    function: SCORE
+    file: agents/control/scorekeeper.md
+    layer: control
+    phase: all
+    role: "Tracks performance, awards badges, enables self-healing"
+    when: "After every agent action, at run end"
+    inputs: [all agent outputs, agent-scores.yaml]
+    outputs: [agent-scorecard.md, agent-scores.yaml, self-healing recommendations]
+    never:
+      - "NEVER modify agent prompts directly (flag for human review)"
+
+  TRACKER:
+    codename: TRACKER
+    function: INTENT
+    file: agents/control/tracker.md
+    layer: control
+    phase: understand
+    role: "Tracks what the user actually wants vs what the spec says"
+    when: "Start of run, after GATEKEEPER, after every phase gate"
+    inputs: [user input, spec.md, all GATEKEEPER outputs]
+    outputs: [user-intent.md, alignment alerts]
+    never:
+      - "NEVER override user statements with agent reasoning"
+
+  CHECKPOINT:
+    codename: CHECKPOINT
+    function: INTERNALIZE
+    file: agents/control/checkpoint.md
+    layer: control
+    phase: decide
+    role: "Forces every build agent to prove comprehension before working"
+    when: "Between understanding and building phases"
+    inputs: [all Phase A artifacts, list of build agents]
+    outputs: [internalization-report.md]
+    never:
+      - "NEVER let an agent proceed with doubts unresolved"
+
+  STRATEGIST:
+    codename: STRATEGIST
+    function: OVERVIEW
+    file: agents/control/strategist.md
+    layer: control
+    phase: decide
+    role: "Risk-weighted strategic map — are we spending intelligence on the highest-value work?"
+    when: "After GATEKEEPER, after ARCHITECT, at build phase gates, when drift detected"
+    inputs: [spec.md, plan.md, risk-matrix.md, progress-report.md, investigation/]
+    outputs: [strategic-overview.md, effort allocation recommendations]
+    never:
+      - "NEVER make tactical decisions — advise WHERE to focus, not HOW to implement"
+      - "NEVER override COMMANDER — recommend, don't decide"
+
+  # ═══════════════════════════════════════════
+  # LAYER: EXPLORATION — Domain Discovery
+  # ═══════════════════════════════════════════
+
+  SCOUT:
+    codename: SCOUT
+    function: DISCOVER
+    file: agents/exploration/scout.md
+    layer: exploration
+    phase: understand
+    role: "Reconnaissance — maps domain, glossary, boundaries, assumptions"
+    when: "First agent dispatched in every run"
+    inputs: [user input or codebase path, calibration-profile.yaml]
+    outputs: [glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md]
+    never:
+      - "NEVER write requirements"
+      - "NEVER make architecture decisions"
+
+  SYNTHESIZER:
+    codename: SYNTHESIZER
+    function: FUSE
+    file: agents/exploration/synthesizer.md
+    layer: exploration
+    phase: understand
+    role: "Fuses all SCOUT outputs into unified knowledge base — finds contradictions and gaps"
+    when: "Immediately after SCOUT, before SAGE (WHY1)"
+    inputs: [all SCOUT outputs, reasoning-journal.json]
+    outputs: [glossary.md (unified), mental-model.md (unified), contradictions-and-gaps.md, risks.md]
+    never:
+      - "NEVER discard conflicting information — report both sides"
+      - "NEVER invent information — synthesize only what SCOUT found"
+      - "NEVER resolve contradictions — flag them for SAGE"
+
+  SAGE:
+    codename: SAGE
+    function: WHY
+    file: agents/exploration/sage.md
+    layer: exploration
+    phase: understand
+    role: "Adversarial critic — the ONLY agent that can block progress"
+    when: "After SCOUT (WHY1), after CARTOGRAPHER (WHY2), during CONSENSUS (WHY3)"
+    modes:
+      assumption-challenge: "WHY1 — validates SCOUT outputs, no Understanding CLI"
+      spec-validation: "WHY2/WHY3 — runs Understanding CLI metrics + quality gates"
+    inputs: [all current artifacts, Understanding CLI, calibration-profile.yaml]
+    outputs: [issues.md, quality-gates.md, assumption-review.md]
+    blocking_power: true
+    never:
+      - "NEVER rewrite specs — only produce issues.md"
+      - "NEVER rewrite architecture — only report problems"
+      - "NEVER approve own fixes"
+
+  CARTOGRAPHER:
+    codename: CARTOGRAPHER
+    function: WHAT
+    file: agents/exploration/cartographer.md
+    layer: exploration
+    phase: understand
+    role: "Requirements engineer — testable, technology-agnostic specs"
+    when: "After SCOUT + SAGE (WHY1) pass"
+    inputs: [glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md]
+    outputs: [spec.md, 00-overview.md]
+    never:
+      - "NEVER validate own specs (SAGE does that)"
+      - "NEVER design architecture (ARCHITECT does that)"
+      - "NEVER estimate effort (GATEKEEPER does that)"
+      - "NEVER include implementation details"
+
+  MODELER:
+    codename: MODELER
+    function: MODEL
+    file: agents/exploration/modeler.md
+    layer: exploration
+    phase: build
+    role: "Living code graph with invariant checking across files"
+    when: "After each build task, before INTEGRATOR"
+    inputs: [all source files, contracts]
+    outputs: [mental-model-code.md, invariant violation alerts]
+    never:
+      - "NEVER ignore invariant violations even if tests pass"
+
+  # ═══════════════════════════════════════════
+  # LAYER: FEASIBILITY — Kill Gate & Estimation
+  # ═══════════════════════════════════════════
+
+  GATEKEEPER:
+    codename: GATEKEEPER
+    function: ASSESS
+    file: agents/feasibility/gatekeeper.md
+    layer: feasibility
+    phase: decide
+    role: "Strategic PM — feasibility, estimation, kill gate"
+    when: "After SAGE (WHY2) passes"
+    modes:
+      first-pass: "Feasibility, Kano, RICE, FPA estimation, MVP scoping"
+      consensus: "Re-evaluates against concrete architecture + implementability check"
+    inputs: [spec.md, glossary.md, assumptions.md, issues.md, calibration-profile.yaml]
+    outputs: [feasibility.md, prioritization.md, estimates.md, mvp-scope.md, implementability-report.md]
+    can_kill: true
+    never:
+      - "NEVER write requirements (CARTOGRAPHER does that)"
+      - "NEVER design architecture (ARCHITECT does that)"
+      - "NEVER kill without citing specific evidence"
+
+  VALIDATOR:
+    codename: VALIDATOR
+    function: VERIFY
+    file: agents/feasibility/validator.md
+    layer: feasibility
+    phase: build
+    role: "Backpropagation — traces EVERY requirement to code"
+    when: "After all tasks complete, after rework"
+    inputs: [spec.md, all source code, all test files, traceability-matrix.md]
+    outputs: [gap-report.md, updated traceability-matrix.md]
+    never:
+      - "NEVER accept partial coverage"
+      - "NEVER trust the incremental matrix — verify from scratch"
+
+  # ═══════════════════════════════════════════
+  # LAYER: SOLUTION — Architecture & Planning
+  # ═══════════════════════════════════════════
+
+  ARCHITECT:
+    codename: ARCHITECT
+    function: HOW
+    file: agents/solution/architect.md
+    layer: solution
+    phase: solution
+    role: "Architect — tech stack, ADRs, data model, API contracts"
+    when: "After GATEKEEPER passes"
+    inputs: [spec.md, feasibility.md, prioritization.md, constitution.md, specialist outputs]
+    outputs: [plan.md, research.md, data-model.md, contracts/, constitution.md]
+    never:
+      - "NEVER write requirements (CARTOGRAPHER does that)"
+      - "NEVER validate own architecture (SAGE does that)"
+      - "NEVER estimate effort (GATEKEEPER does that)"
+      - "NEVER break down tasks (ORCHESTRATOR does that)"
+      - "NEVER overwrite constitution principles"
+
+  ORCHESTRATOR:
+    codename: ORCHESTRATOR
+    function: PLAN
+    file: agents/solution/orchestrator.md
+    layer: solution
+    phase: solution
+    role: "Operational PM — tasks, critical path, dependencies, risk"
+    when: "After ARCHITECT + SENTINEL"
+    inputs: [plan.md, research.md, data-model.md, contracts/, test-strategy.md]
+    outputs: [tasks.md, critical-path.md, risk-matrix.md, dependencies.md]
+    never:
+      - "NEVER design architecture (ARCHITECT does that)"
+      - "NEVER write requirements (CARTOGRAPHER does that)"
+
+  SENTINEL:
+    codename: SENTINEL
+    function: TEST
+    file: agents/solution/sentinel.md
+    layer: solution
+    phase: solution
+    role: "Test pyramid, coverage mapping, CI pipeline"
+    when: "Mandatory after ARCHITECT"
+    mandatory: true
+    inputs: [plan.md, data-model.md, spec.md, contracts/]
+    outputs: [test-strategy.md, test-architecture.md, coverage-map.md]
+
+  # ═══════════════════════════════════════════
+  # LAYER: SPECIALISTS — Domain Expertise
+  # ═══════════════════════════════════════════
+
+  INVESTIGATOR:
+    codename: INVESTIGATOR
+    function: RESEARCH
+    file: agents/specialists/investigator.md
+    layer: specialists
+    phase: solution
+    role: "Full scientific method — research, experiment, evidence-graded recommendations"
+    when: "Unknown territory, unproven tech, conflicting evidence, confidence < 0.5"
+    inputs: [specific question, relevant artifacts, web search, worktree access]
+    outputs: ["investigation/{topic}.md", evidence-grades.md, experiment-results.md]
+    never:
+      - "NEVER make architecture decisions (report findings to ARCHITECT)"
+
+  GUARDIAN:
+    codename: GUARDIAN
+    function: SECURITY
+    file: agents/specialists/guardian.md
+    layer: specialists
+    phase: solution
+    role: "OWASP, STRIDE, threat modeling, compliance"
+    when: "Auth, payments, PII, compliance detected"
+    inputs: [spec.md, plan.md, data-model.md, contracts/]
+    outputs: [threat-model.md, compliance-requirements.md]
+
+  ORACLE:
+    codename: ORACLE
+    function: DOMAIN
+    file: agents/specialists/oracle.md
+    layer: specialists
+    phase: solution
+    role: "Domain-specific knowledge loading"
+    when: "Domain-specific knowledge needed"
+    inputs: [glossary.md, mental-model.md]
+    outputs: [domain amendments to spec, plan, glossary]
+
+  BENCHMARK:
+    codename: BENCHMARK
+    function: PERFORMANCE
+    file: agents/specialists/benchmark.md
+    layer: specialists
+    phase: solution
+    role: "Load modeling, capacity planning"
+    when: "High-load, real-time, scalability requirements"
+    inputs: [spec.md, plan.md]
+    outputs: [performance-requirements.md, capacity-model.md]
+
+  ADVOCATE:
+    codename: ADVOCATE
+    function: UX/A11Y
+    file: agents/specialists/advocate.md
+    layer: specialists
+    phase: solution
+    role: "WCAG 2.1 AA, Nielsen's heuristics, user flows"
+    when: "Frontend, user-facing features"
+    inputs: [spec.md, plan.md]
+    outputs: [accessibility-requirements.md, user-flow.md]
+
+  MAVERICK:
+    codename: MAVERICK
+    function: INNOVATE
+    file: agents/specialists/maverick.md
+    layer: specialists
+    phase: solution
+    role: "Design Thinking + AutoTRIZ + Lateral Thinking — evidence-based innovation"
+    when: "Stagnation, circular reasoning 3x, quality plateau, BLOCKED states"
+    inputs: [all current artifacts, reasoning-journal.json, triz-40-principles.md, triz-contradiction-matrix.md]
+    outputs: [alternatives.md, risk-opportunities.md, challenge-assumptions.md]
+    never:
+      - "NEVER implement alternatives (only propose — SAGE + GATEKEEPER evaluate)"
+
+  # ═══════════════════════════════════════════
+  # LAYER: BUILD — Implementation
+  # ═══════════════════════════════════════════
+
+  IMPLEMENTER:
+    codename: IMPLEMENTER
+    function: CODE
+    file: agents/build/implementer.md
+    layer: build
+    phase: build
+    role: "Writes code following TDD per task"
+    when: "Per task from tasks.md"
+    inputs: [single task, spec requirements, constitution, ADRs, existing code]
+    outputs: [source files, test files]
+    statuses: [DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, BLOCKED]
+    never:
+      - "NEVER modify specs (report NEEDS_CONTEXT)"
+      - "NEVER skip tests"
+      - "NEVER review own code"
+      - "NEVER add features not in the task"
+
+  SPEC_GUARD:
+    codename: SPEC_GUARD
+    function: COMPLIANCE
+    file: agents/build/spec-guard.md
+    layer: build
+    phase: build
+    role: "Verifies code matches FR-* requirements + traceability matrix"
+    when: "Per task, after IMPLEMENTER"
+    inputs: [implemented code, task definition, spec requirements]
+    outputs: [spec-compliance-report.md, traceability-matrix.md]
+    verdicts: [PASS, FAIL, WARN]
+    never:
+      - "NEVER fix code (IMPLEMENTER fixes)"
+      - "NEVER modify specs (CARTOGRAPHER fixes)"
+
+  CODE_REVIEWER:
+    codename: CODE_REVIEWER
+    function: REVIEW
+    file: agents/build/code-reviewer.md
+    layer: build
+    phase: build
+    role: "Quality, security, ADR compliance, constitution"
+    when: "Per task, after SPEC GUARD passes"
+    inputs: [implemented code, constitution, ADRs, codebase patterns]
+    outputs: [code-review-report.md]
+    verdicts: [APPROVED, CHANGES_REQUESTED, BLOCKED]
+    never:
+      - "NEVER write implementation code"
+
+  TEST_GUARDIAN:
+    codename: TEST_GUARDIAN
+    function: TEST_QUALITY
+    file: agents/build/test-guardian.md
+    layer: build
+    phase: build
+    role: "Validates test quality and coverage"
+    when: "Per task, after CODE REVIEWER approves"
+    inputs: [test files, spec acceptance criteria, test-strategy.md, coverage-map.md]
+    outputs: [test-quality-report.md, updated coverage-map.md]
+    verdicts: [PASS, FAIL, WARN]
+    never:
+      - "NEVER write implementation code or tests (IMPLEMENTER does that)"
+
+  DEBUGGER:
+    codename: DEBUGGER
+    function: DEBUG
+    file: agents/build/debugger.md
+    layer: build
+    phase: build
+    role: "Systematic root cause analysis — reproduce, isolate, root cause, fix, verify"
+    when: "SPEC GUARD non-obvious FAIL, CODE REVIEWER logic errors, IMPLEMENTER BLOCKED"
+    inputs: [failure description, affected code, test results, reasoning-journal.json]
+    outputs: [debug-report.md, root cause fix]
+    never:
+      - "NEVER guess at fixes — find root cause first"
+      - "NEVER fix symptoms — fix causes"
+
+  INTEGRATOR:
+    codename: INTEGRATOR
+    function: INTEGRATE
+    file: agents/build/integrator.md
+    layer: build
+    phase: build
+    role: "Verifies system integration after each phase"
+    when: "Per phase checkpoint"
+    inputs: [all phase code, build config, test suite]
+    outputs: [integration-report.md]
+    verdicts: [PASS, FAIL]
+
+  PROGRESS_TRACKER:
+    codename: PROGRESS_TRACKER
+    function: TRACK
+    file: agents/build/progress-tracker.md
+    layer: build
+    phase: build
+    role: "Effort tracking, CPI/SPI, drift detection"
+    when: "After each task completion"
+    inputs: [completed task, estimates.md, calibration-profile.yaml, prior progress]
+    outputs: [progress-report.md, process-metrics.md, updated calibration-profile.yaml]
+
+  CHANGE_CONTROLLER:
+    codename: CHANGE_CONTROLLER
+    function: CHANGE
+    file: agents/build/change-controller.md
+    layer: build
+    phase: build
+    role: "Handles mid-build spec changes with impact analysis"
+    when: "Spec change during build phase"
+    inputs: [change request, spec.md, tasks.md, traceability-matrix.md]
+    outputs: [change-impact-report.md, updated tasks.md]
+    never:
+      - "NEVER skip impact analysis"
+
+  # ═══════════════════════════════════════════
+  # LAYER: LEARNING — Continuous Improvement
+  # ═══════════════════════════════════════════
+
+  MIRROR:
+    codename: MIRROR
+    function: REFLECT
+    file: agents/learning/mirror.md
+    layer: learning
+    phase: build
+    role: "Extracts patterns, pitfalls, knowledge transfer assessment"
+    when: "End of every run"
+    inputs: [all artifacts, reasoning-journal.json, patterns.yaml, pitfalls.yaml]
+    outputs: [updated patterns.yaml, updated pitfalls.yaml, knowledge-transfer-assessment.md]
+
+  ADAPTIVE:
+    codename: ADAPTIVE
+    function: EVOLVE
+    file: agents/learning/adaptive.md
+    layer: learning
+    phase: build
+    role: "Cross-run diffing, stagnation detection, bias checking"
+    when: "Start/end of re-runs"
+    inputs: [current artifacts, prior run artifacts, calibration-profile.yaml]
+    outputs: [evolution-report.md, improvement-metrics.md, stagnation-flags.md]
+
+  AUDITOR:
+    codename: AUDITOR
+    function: CALIBRATE
+    file: agents/learning/auditor.md
+    layer: learning
+    phase: build
+    role: "Tracks AI accuracy per domain, applies correction factors"
+    when: "End of run, after FEEDBACK"
+    inputs: [reasoning-journal.json, calibration-profile.yaml, feedback/, quality-gates.md]
+    outputs: [updated calibration-profile.yaml, confidence-flags.md]
+
+  REALIST:
+    codename: REALIST
+    function: GROUND
+    file: agents/learning/realist.md
+    layer: learning
+    phase: build
+    role: "Reality-checks plans against real-world data"
+    when: "During FINALIZE"
+    inputs: [plan.md, estimates.md, tasks.md, estimates-log.yaml, feedback/]
+    outputs: [reality-check.md, cost-analysis.md, benchmark-data.md]
+
+  VETERAN:
+    codename: VETERAN
+    function: GLOBAL_MEMORY
+    file: agents/learning/global-memory.md
+    layer: learning
+    phase: build
+    role: "Cross-project knowledge — promotes validated learnings to global memory"
+    when: "At run start (read global), at run end (write to global), after FEEDBACK"
+    inputs: [local knowledge-base/, ~/.specify/squad-global/]
+    outputs: [updated global knowledge base, merged calibration data]
+    never:
+      - "NEVER promote unvalidated learnings to global"
+      - "NEVER let local contradict global without flagging"
+
+  MONITOR:
+    codename: MONITOR
+    function: METACOGNITION
+    file: agents/learning/monitor.md
+    layer: learning
+    phase: build
+    role: "The squad's conscience — are we still doing the right thing?"
+    when: "Every 5 tasks, after drift warnings, at phase gates"
+    inputs: [state.json, user-intent.md, process-metrics.md, all recent agent outputs]
+    outputs: [metacognition-log.md]
+    verdicts: [ON_TRACK, DRIFT, PROCESS_VIOLATION, STOP_AND_ASK]
+    never:
+      - "NEVER ignore process violations to save time"
+
+# ═══════════════════════════════════════════
+# ROUTING RULES (read by COMMANDER)
+# ═══════════════════════════════════════════
+
+routing:
+  # When SAGE finds issues, route to the artifact OWNER:
+  issue_routing:
+    spec_issues: CARTOGRAPHER
+    architecture_issues: ARCHITECT
+    task_issues: ORCHESTRATOR
+    unknown_questions: INVESTIGATOR
+    feasibility_concerns: GATEKEEPER
+    domain_gaps: ORACLE
+    security_concerns: GUARDIAN
+    accessibility_gaps: ADVOCATE
+    performance_concerns: BENCHMARK
+    logic_errors: DEBUGGER
+    system_failures: DEBUGGER
+    effort_misallocation: STRATEGIST
+
+  # Build phase quality gate sequence (per task):
+  build_sequence: [IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+
+  # Phase gate agents:
+  phase_gate: [INTEGRATOR, VALIDATOR]
+
+  # Continuous monitors:
+  continuous: [PROGRESS_TRACKER, MODELER, MONITOR, SCOREKEEPER]
+
+# ═══════════════════════════════════════════
+# COUNTS
+# ═══════════════════════════════════════════
+
+totals:
+  control: 5
+  exploration: 5
+  feasibility: 2
+  solution: 3
+  specialists: 6
+  build: 8
+  learning: 6
+  total: 35
