@@ -1,137 +1,152 @@
 # Cognitive Squad Configuration
 # Copy to squad-config.yml and customize
-
-# ═══════════════════════════════════════════
+#
+# GUIDANCE NOTATION:
+#   [range: X-Y]     = sensible values, beyond this is likely wasteful or broken
+#   [default: X]     = recommended starting point
+#   [disable: X]     = set to this value to effectively disable the check
+#
+# =============================================================================
 # EXECUTION — How agents run
-# ═══════════════════════════════════════════
+# =============================================================================
 
 execution:
   # Maximum concurrent subagents (Claude Code Agent tool calls in one message)
-  # Higher = faster but more tokens. Lower = sequential but cheaper.
+  # [range: 1-5] Higher = faster but more tokens. Lower = sequential but cheaper.
   max_parallel_agents: 3
 
   # Per-agent timeout (seconds). Agent is killed and retried once if exceeded.
-  agent_timeout_seconds: 300  # 5 minutes
+  # [range: 60-600] Most agents complete in 60-180s. 600s = edge cases.
+  agent_timeout_seconds: 300
 
   # Max retries per agent before skipping with warning
+  # [range: 0-3] Higher = more resilient, but may waste tokens on stuck agents.
   max_retries: 1
 
   # Model selection per tier (use cheapest model that works for each role)
   # Options: opus | sonnet | haiku
   models:
-    core: sonnet          # MANAGER, DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN
-    specialists: sonnet   # SCIENTIST, SECURITY, TEST ARCHITECT, etc.
+    control: sonnet       # COMMANDER, SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST
+    exploration: sonnet   # SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER
+    feasibility: sonnet   # GATEKEEPER, VALIDATOR
+    solution: sonnet      # ARCHITECT, ORCHESTRATOR, SENTINEL
+    specialists: sonnet   # INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE, MAVERICK
     build: sonnet         # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, etc.
-    learning: haiku       # REFLECT, EVOLVE, CALIBRATE, GROUND (post-run, less critical)
-    verification: opus    # VERIFICATION — most important check, use best model
-
-  # Context7 library documentation lookup
-  context7:
-    enabled: true
-    # HOW agent uses this to look up latest docs before tech decisions
-    # Upgrades ADR evidence from Grade E (training data) to Grade B (official docs)
+    learning: haiku       # MIRROR, ADAPTIVE, AUDITOR, REALIST (post-run, less critical)
+    verification: opus    # VALIDATOR — most important check, use best model
 
   # Git worktree isolation for build tasks
   worktree_isolation:
     enabled: true
     # Each build task runs in isolated worktree, merges only when all gates pass
-    cleanup_on_fail: true  # delete failed worktrees
+    cleanup_on_fail: true
 
-  # Parallel thought branches for INNOVATE
+  # Parallel thought branches for MAVERICK
   thought_branches:
     enabled: true
-    max_branches: 3  # max alternatives to explore in parallel
+    max_branches: 3
     exploration_budget_per_branch: 5  # % of total token budget per branch
 
-  # Token budget allocation per phase (percentage of total token_budget_k)
-  token_allocation:
-    understanding: 30     # DISCOVER + WHY + WHAT + ASSESS + HOW + PLAN
-    specialists: 15       # SCIENTIST + SECURITY + TEST ARCHITECT + etc.
-    internalization: 5    # INTERNALIZATION GATE + SCOREKEEPER
-    building: 35          # IMPLEMENTER + SPEC GUARD + CODE REVIEWER + etc.
-    verification: 10      # VERIFICATION backpropagation
-    learning: 5           # REFLECT + EVOLVE + CALIBRATE + GROUND
-
-# ═══════════════════════════════════════════
-# UNDERSTANDING PHASE — Analysis settings
-# ═══════════════════════════════════════════
+# =============================================================================
+# ANALYSIS SETTINGS
+# =============================================================================
 
 analysis:
   # Auto-detect greenfield vs brownfield
   mode: auto  # auto | greenfield | brownfield
 
   # Maximum squad iterations before forced convergence
+  # [range: 3-10] Most runs converge in 2-3. Beyond 10 = likely stuck in a loop.
+  # Setting to 99 wastes tokens - if not converged by 10, there's a deeper problem.
   max_iterations: 5
 
-  # Total token budget (approximate, in thousands)
+  # Token budget (approximate, in thousands)
+  # [range: 100-2000] Purpose: prevent runaway costs and force convergence decisions.
+  #
+  # Q: "I have unlimited Claude tokens, should I set this very high?"
+  # A: No. Even with unlimited tokens, high budgets (>2000k) lead to diminishing
+  #    returns. The squad converges via quality gates and iteration limits anyway.
+  #    A high budget just means slower convergence and more verbose output.
+  #    Recommended: 500-1000k for most projects, 1500-2000k for very large codebases.
+  # [disable: 999999] - effectively no budget limit (not recommended)
   token_budget_k: 1000
 
   # Convergence threshold for Understanding score delta
+  # [range: 0.01-0.05] Smaller = stricter (more iterations), larger = looser.
+  # Below 0.01 may never converge due to noise. Above 0.05 may stop too early.
   convergence_delta: 0.02
 
-  # CONSENSUS phase: run these agents in parallel
-  consensus_parallel: [WHY, ASSESS, PLAN]
+# Autonomy mode
+# - guided: Checkpoint after every phase
+# - semi: Checkpoint after Phase 1 only (default)
+# - banzai: Full autonomous, human reviews final output
+autonomy:
+  mode: semi  # guided | semi | banzai
 
-# ═══════════════════════════════════════════
-# SPECIALISTS — On-demand agents
-# ═══════════════════════════════════════════
+# =============================================================================
+# CONVERGENCE RULES (COMMANDER)
+# =============================================================================
 
-specialists:
-  # Max active specialists per run (to control token cost)
-  max_active: 3
+convergence:
+  # Quality delta threshold - stop if improvement < this
+  # [range: 0.01-0.05] Same guidance as analysis.convergence_delta
+  quality_delta_threshold: 0.02
 
-  # Always summon TEST ARCHITECT (mandatory per V-Model)
-  always_test_architect: true
+  # Consecutive passes needed before declaring convergence
+  # [range: 2-5] Higher = more confidence but slower. Beyond 5 = paranoid.
+  consecutive_passes: 2
 
-  # Auto-summon SCIENTIST for unknowns in unknowns.md
-  auto_scientist: true
+  # Escalate if same issue appears this many times
+  # [range: 2-5] Lower = faster escalation, higher = more patient.
+  issue_repeat_limit: 3
 
-  # Auto-summon SECURITY when these keywords appear in spec
-  auto_security_keywords: [auth, login, password, token, PII, payment, encrypt, GDPR, HIPAA, compliance]
+  # Maximum squad iterations (mirrors analysis.max_iterations)
+  # [range: 3-10] See analysis.max_iterations for guidance.
+  max_squad_iterations: 5
 
-  # Auto-summon PERFORMANCE when these keywords appear
-  auto_performance_keywords: [real-time, concurrent, throughput, latency, scalab, high-load]
+  # DEFER loop limit before forcing decision
+  # [range: 1-3] How many times ASSESS can DEFER before forced PASS/KILL.
+  defer_loop_limit: 2
 
-# ═══════════════════════════════════════════
-# BUILDING PHASE — Quality gates and execution
-# ═══════════════════════════════════════════
+# =============================================================================
+# TOKEN BUDGET ALLOCATION (COMMANDER)
+# =============================================================================
 
-building:
-  # Per-task quality gate sequence (agents run in this order)
-  gate_sequence: [SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+budget:
+  # Phase 1 tier allocations (must sum to ~95%, leaving reserve)
+  tier1_discover_what_percent: 25
+  tier2_why_percent: 20
+  tier3_how_specialists_percent: 25
+  tier4_plan_assess_percent: 15
+  tier5_consensus_finalize_percent: 10
+  reserve_percent: 5
 
-  # Max fix cycles per task before marking DEGRADED and moving on
-  max_fix_cycles: 3
+  # Max any single agent can consume
+  max_single_agent_percent: 40
 
-  # Phase gate agents (run at each phase checkpoint)
-  phase_gate: [ENGINEERING_MANAGER, INTEGRATOR, VISUAL_VALIDATOR]
+  # Budget exhaustion trigger
+  exhaustion_threshold_percent: 100
 
-  # METACOGNITION MONITOR frequency (every N tasks)
-  metacognition_frequency: 5
+# Build phase token budget allocation
+build_budget:
+  implementation_percent: 50
+  quality_gates_percent: 30
+  integration_percent: 15
+  reserve_percent: 5
 
-  # MENTAL MODEL invariant checking (every N tasks or per task)
-  invariant_check_frequency: 1  # 1 = every task, 5 = every 5th task
+# =============================================================================
+# TIME LIMITS
+# =============================================================================
 
-  # VERIFICATION (backpropagation) settings
-  verification:
-    # Max verification passes before accepting current coverage
-    max_passes: 3
-    # Target coverage (0-100). BUILD COMPLETE requires this.
-    target_coverage: 100
-    # Minimum acceptable coverage if max_passes exhausted
-    minimum_coverage: 95
+limits:
+  # Wall-clock timeout for entire squad run (minutes)
+  # [range: 20-90] Beyond 90 mins, something is likely stuck or looping.
+  # [disable: 9999] - no timeout (not recommended for unattended runs)
+  wall_clock_timeout_minutes: 40
 
-  # VISUAL VALIDATOR settings
-  visual_validation:
-    enabled: true
-    # Take screenshots at these checkpoints
-    checkpoints: [per_phase, before_complete]
-    # Browser for Playwright
-    browser: chromium
-
-# ═══════════════════════════════════════════
-# QUALITY GATES — Understanding thresholds
-# ═══════════════════════════════════════════
+# =============================================================================
+# QUALITY GATES (SAGE, Understanding thresholds)
+# =============================================================================
 
 quality_gates:
   # WHY spec-validation mode thresholds (from Understanding CLI)
@@ -142,67 +157,327 @@ quality_gates:
   cognitive: 0.60
   readability: 0.50
 
-  # Build phase thresholds
-  min_tests_per_component: 2
-  max_review_cycles: 3
-  constitution_violation_tolerance: 0  # zero tolerance
+  # Margin for "borderline" warnings
+  borderline_margin: 0.05
 
-# ═══════════════════════════════════════════
-# INTERNALIZATION — Comprehension checks
-# ═══════════════════════════════════════════
+  # HIGH severity issues compound threshold
+  high_compound_threshold: 3
 
-internalization:
-  # Minimum score to proceed (out of 6 checks)
-  min_score: 5  # 5/6 = PARTIAL allowed, 4/6 = must resolve
+# =============================================================================
+# HEURISTICS (SAGE quality checks)
+# =============================================================================
 
-  # Maximum doubts allowed (0 = zero doubts required)
-  max_doubts: 0
+heuristics:
+  # Max sentences per requirement
+  max_requirement_sentences: 3
 
-  # Re-internalize after spec changes
-  reinternalize_on_change: true
+  # Max nesting depth in requirements
+  max_nesting_depth: 3
 
-# ═══════════════════════════════════════════
-# SCORING — Agent performance tracking
-# ═══════════════════════════════════════════
+  # Max words per sentence
+  max_sentence_words: 25
+
+# =============================================================================
+# DISCOVERY SETTINGS (SCOUT)
+# =============================================================================
+
+discovery:
+  # Git history lookback period
+  git_history_lookback: "1 year ago"
+
+  # Number of recent commits to analyze
+  git_log_count: 50
+
+  # Number of hotspots to display
+  git_hotspots_count: 30
+
+  # Minimum reference architectures for greenfield
+  min_reference_architectures: 3
+
+# =============================================================================
+# SCORING (GATEKEEPER, SCOUT, AUDITOR)
+# =============================================================================
 
 scoring:
-  enabled: true
+  # Confidence score range
+  confidence_min: 0.0
+  confidence_max: 1.0
 
-  # Points for key events
-  points:
-    first_pass_approval: 3
-    critical_bug_caught: 5
-    high_bug_caught: 3
-    false_positive: -1
-    rework_required: -1
-    third_rework: -3
-    accurate_estimate: 3     # within 20%
-    inaccurate_estimate: -2  # off by >50%
-    assumption_validated: 2
-    assumption_invalidated: 4  # more valuable — prevented bad decision
-    internalization_perfect: 2   # 6/6
-    internalization_failed: -2   # <4/6
+  # Evidence grades (from most to least reliable)
+  evidence_grades:
+    - A  # Primary source, empirical
+    - B  # Authoritative secondary
+    - C  # General reference
+    - D  # Expert opinion
+    - E  # Speculation/inference
 
-  # Peer appreciation points
-  peer_appreciation:
-    clear_and_actionable: 2
-    unblocked_my_work: 3
-    caught_my_mistake: 2
-    exceptional_quality: 4
-    needed_rework: -1
+# =============================================================================
+# RICE SCORING (GATEKEEPER)
+# =============================================================================
 
-  # Self-healing triggers
-  self_healing:
-    # If agent score drops below this over 3 runs, flag for prompt refinement
-    prompt_refinement_threshold: -5
-    # If false positive rate exceeds this, add verification step
-    false_positive_threshold: 0.30
-    # Auto-adjust ASSESS correction factor based on accuracy
-    auto_calibrate_estimates: true
+rice:
+  # Reach scale maximum
+  reach_scale_max: 10
 
-# ═══════════════════════════════════════════
-# KNOWLEDGE BASE — Learning settings
-# ═══════════════════════════════════════════
+  # Impact scale values
+  impact_scale_values:
+    minimal: 0.25
+    low: 0.5
+    medium: 1
+    high: 2
+    massive: 3
+
+  # Confidence scale values
+  confidence_scale_values:
+    low: 0.5
+    medium: 0.8
+    high: 1.0
+
+# =============================================================================
+# IMPLEMENTABILITY (GATEKEEPER)
+# =============================================================================
+
+implementability:
+  # Number of failures before marking "blocked"
+  blocked_failure_threshold: 3
+
+# =============================================================================
+# ASSESS SETTINGS (GATEKEEPER)
+# =============================================================================
+
+assess:
+  # Maximum DEFER iterations before forcing decision
+  defer_max_iterations: 5
+
+# =============================================================================
+# CALIBRATION (AUDITOR)
+# =============================================================================
+
+calibration:
+  # Accuracy below this triggers warning
+  # [range: 0.3-0.7] Lower = more tolerant of bad estimates
+  low_accuracy_threshold: 0.5
+
+  # Trend variance threshold for "stable"
+  trend_variance_stable: 0.05
+
+  # Trend improvement threshold
+  trend_improvement_threshold: 0.05
+
+  # Minimum samples before calculating accuracy
+  # [range: 3-10] Too low = noisy, too high = slow to learn
+  min_sample_size: 3
+
+  # Correction factor caps - how much AUDITOR can adjust estimates
+  # [range: 0.3-0.8 for min, 2.0-5.0 for max]
+  # Beyond 5x correction means estimates are essentially random - investigate root cause.
+  correction_factor_min: 0.5
+  correction_factor_max: 3.0
+
+# =============================================================================
+# RISK LEVELS (AUDITOR)
+# =============================================================================
+
+risk:
+  # Accuracy thresholds for risk levels
+  high_threshold: 0.5      # < this = HIGH risk
+  medium_min: 0.5          # >= this AND < low_threshold = MEDIUM
+  low_threshold: 0.75      # >= this = LOW risk
+
+# =============================================================================
+# METACOGNITION (MONITOR)
+# =============================================================================
+
+metacognition:
+  # Check interval (every N tasks)
+  check_interval_tasks: 5
+
+  # Consecutive failures before signaling
+  consecutive_fail_threshold: 3
+
+  # Warning if no check for this many tasks
+  max_tasks_without_check: 20
+
+# =============================================================================
+# INTERNALIZATION (VALIDATOR)
+# =============================================================================
+
+internalization:
+  # Pass/partial/fail thresholds (out of 6 checks)
+  pass_threshold: 6
+  partial_min: 4
+  fail_below: 4
+
+  # Estimated time for internalization
+  estimated_time_minutes: 5
+
+# =============================================================================
+# CODE QUALITY (CODE-REVIEWER)
+# =============================================================================
+
+code_quality:
+  # Maximum function length (lines)
+  # [range: 20-50] Industry standard ~30. Setting to 500 defeats the purpose.
+  # [disable: 9999] - no limit (not recommended)
+  max_function_lines: 30
+
+  # Maximum nesting depth
+  # [range: 2-5] Deep nesting (>5) is almost always refactorable.
+  max_nesting_depth: 3
+
+  # Maximum cyclomatic complexity
+  # [range: 5-15] Research shows >10 correlates with defects.
+  # [disable: 9999] - no limit (not recommended)
+  max_cyclomatic_complexity: 10
+
+# =============================================================================
+# TEST REQUIREMENTS (TEST-GUARDIAN)
+# =============================================================================
+
+tests:
+  # Minimum tests by component type
+  # [range: 1-10 each] These are minimums - actual tests may be more.
+  # Setting all to 1 = minimal coverage. Setting all to 10 = thorough but slow.
+  min_pure_function: 2
+  min_class_service: 3
+  min_ui_component: 3
+  min_composite_component: 4
+  min_api_endpoint: 4
+  min_integration: 2
+
+# =============================================================================
+# DRIFT DETECTION (PROGRESS-TRACKER)
+# =============================================================================
+
+drift:
+  # Single task overrun ratio trigger
+  single_task_overrun_ratio: 2.0
+
+  # Consecutive overrun settings
+  consecutive_overrun_count: 3
+  consecutive_overrun_ratio: 1.5
+
+  # Phase overrun threshold
+  phase_overrun_ratio: 1.3
+
+  # Systematic bias detection
+  systematic_bias_percent: 50
+  systematic_bias_ratio: 1.2
+
+  # Minimum tasks before drift detection kicks in
+  min_sample_size: 3
+
+# =============================================================================
+# QUALITY METRICS (PROGRESS-TRACKER)
+# =============================================================================
+
+quality:
+  # Target review cycle time
+  target_review_cycles: 2.0
+
+# =============================================================================
+# ALERTS (PROGRESS-TRACKER)
+# =============================================================================
+
+alerts:
+  # Schedule Performance Index threshold
+  schedule_drift_spi: 0.85
+
+  # Cost Performance Index threshold
+  cost_overrun_cpi: 0.80
+
+  # First-pass rate warning threshold
+  quality_first_pass_min_percent: 50
+  quality_warning_task_window: 4
+
+  # Defect spike detection
+  defect_spike_percent: 60
+  defect_spike_task_window: 3
+
+  # Architecture erosion threshold
+  architecture_erosion_threshold: 2
+
+  # Improving trend detection
+  improving_trend_count: 3
+
+# =============================================================================
+# BUILD SETTINGS
+# =============================================================================
+
+build:
+  # NEEDS_CONTEXT re-dispatch limit
+  needs_context_max_retries: 2
+
+  # Fix cycle limit before escalation
+  fix_cycle_limit: 2
+
+  # Tasks blocked before pausing build
+  blocked_tasks_pause_threshold: 3
+
+  # Per-task quality gate sequence (agents run in this order)
+  gate_sequence: [SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
+
+  # Phase gate agents (run at each phase checkpoint)
+  phase_gate: [INTEGRATOR, VALIDATOR]
+
+  # MONITOR (metacognition) frequency (every N tasks)
+  metacognition_frequency: 5
+
+  # MODELER invariant checking (every N tasks or per task)
+  # [range: 1-10] 1 = every task, 5 = every 5th task
+  invariant_check_frequency: 1
+
+  # VALIDATOR (backpropagation) settings
+  verification:
+    max_passes: 3
+    target_coverage: 100
+    minimum_coverage: 95
+
+  # Visual validation (if VISUAL VALIDATOR is added)
+  visual_validation:
+    enabled: false
+    checkpoints: [per_phase, before_complete]
+    browser: chromium
+
+# =============================================================================
+# SPECIALIST SETTINGS
+# =============================================================================
+
+specialists:
+  # Max active specialists per run (to control token cost)
+  max_active: 3
+
+  # Always summon TEST ARCHITECT (SENTINEL)
+  always_test_architect: true
+
+  # Auto-summon SCIENTIST (INVESTIGATOR) for unknowns
+  auto_scientist: true
+
+  # Auto-summon SECURITY (GUARDIAN) when these keywords appear in spec
+  auto_security_keywords:
+    - auth
+    - login
+    - password
+    - token
+    - PII
+    - payment
+    - encrypt
+    - GDPR
+    - HIPAA
+    - compliance
+
+  # Auto-summon PERFORMANCE (BENCHMARK) when these keywords appear
+  auto_performance_keywords:
+    - real-time
+    - concurrent
+    - throughput
+    - latency
+    - scalab
+    - high-load
+
+# =============================================================================
+# KNOWLEDGE BASE
+# =============================================================================
 
 knowledge_base:
   # Pruning: entries older than this (months) flagged stale
@@ -214,81 +489,33 @@ knowledge_base:
   # Max active entries per file
   max_entries: 200
 
-  # Auto-archive stale + low_confidence entries after N consecutive runs
-  auto_archive_after_runs: 2
-
-  # Global memory (cross-project knowledge)
-  global_memory:
-    enabled: true
-    path: "~/.specify/squad-global"
-    # Minimum confirmations before promoting to global
-    promotion_threshold: 2  # 2 projects or 1 feedback confirmation
-
-# ═══════════════════════════════════════════
-# TOOLS — External tool paths
-# ═══════════════════════════════════════════
+# =============================================================================
+# TOOL PATHS
+# =============================================================================
 
 tools:
   understanding_cli: "understanding"
   reverse_eng_cli: "specify"
 
-  # Understanding CLI options
-  understanding:
-    # Generate behavioral diagrams during WHY validation
-    generate_diagrams: true
-    diagram_format: svg  # svg | png | pdf
-    # Use energy metrics for ambiguity hotspot detection
-    use_energy: false    # requires SmolLM2 model (~270MB)
+# =============================================================================
+# BANZAI MODE (Full Autonomous)
+# =============================================================================
 
-# ═══════════════════════════════════════════
-# CHANGE CONTROL — Mid-build spec changes
-# ═══════════════════════════════════════════
+banzai:
+  # Pull defaults from installed presets (optional)
+  constitution_preset: null
 
-change_control:
-  # Auto-re-validate changed requirements through WHY
-  auto_revalidate: true
+  # Inline defaults for Phase 2 decisions
+  defaults:
+    team_size: 1
+    tech_stack: "infer"
+    timeline: "flexible"
 
-  # Max percentage of completed tasks affected before human escalation
-  escalation_threshold: 30  # if >30% of done tasks need rework, ask human
+  # Safety rails (scores are 0.0-1.0)
+  auto_kill_threshold: 0.3
 
-  # Always update traceability matrix after change
-  update_traceability: true
-
-# ═══════════════════════════════════════════
-# INTENT TRACKING — User intent monitoring
-# ═══════════════════════════════════════════
-
-intent:
-  # Check intent alignment at these points
-  check_points: [after_assess, after_each_phase_gate, on_scope_change]
-
-  # Alert if spec scope < user intent scope
-  alert_on_scope_reduction: true
-
-# ═══════════════════════════════════════════
-# METACOGNITION — Process monitoring
-# ═══════════════════════════════════════════
-
-metacognition:
-  # Check every N tasks during build
-  check_frequency: 5
-
-  # Auto-halt on process violation (vs warning only)
-  halt_on_violation: false
-
-  # Track these signals
-  signals:
-    - process_compliance     # are quality gates being used?
-    - direction_alignment    # building what user asked for?
-    - progress_sanity        # converging or going in circles?
-    - cognitive_load         # context getting too large?
-
-# ═══════════════════════════════════════════
-# STRATEGIC OVERVIEW — Risk-weighted planning
-# ═══════════════════════════════════════════
-
-strategic:
-  # Run strategic overview at these points
-  checkpoints: [after_assess, after_how, at_build_phase_gates]
-  # Flag when effort allocation diverges from risk by this %
-  misalignment_threshold: 20  # if >20% divergence, flag
+  # Conditions that force human checkpoint even in banzai mode
+  require_human_if:
+    - "compliance requirements detected"
+    - "security-critical domain"
+    - "ASSESS confidence < 0.5"

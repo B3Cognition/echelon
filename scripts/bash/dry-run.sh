@@ -36,7 +36,7 @@ header "1. AGENT FILES"
 # ═══════════════════════════════════════════
 
 AGENT_COUNT=0
-for dir in core specialists build learning; do
+for dir in control exploration feasibility solution specialists learning build; do
   if [ -d "$ROOT/agents/$dir" ]; then
     for f in "$ROOT/agents/$dir"/*.md; do
       if [ -f "$f" ]; then
@@ -348,7 +348,7 @@ header "10. ROLE SEPARATION VALIDATION"
 # ═══════════════════════════════════════════
 
 # Check that WHY agent has NEVER rewrite rules
-if grep -q "NEVER rewrite" "$ROOT/agents/core/why.md" 2>/dev/null; then
+if grep -q "NEVER rewrite" "$ROOT/agents/exploration/sage.md" 2>/dev/null; then
   green "WHY has NEVER-rewrite rules"
 else
   red "WHY is missing NEVER-rewrite rules — ROLE VIOLATION RISK"

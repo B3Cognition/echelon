@@ -7,11 +7,18 @@
     "run_id": { "type": "string", "pattern": "^squad-[0-9]{3}-[0-9]+$" },
     "status": { "enum": ["running", "blocked", "done", "error", "killed"] },
     "phase": { "enum": [
-      "init", "discover", "why1", "what", "why2", "assess",
-      "specialists", "how", "test-architect", "plan",
-      "consensus", "finalize", "done"
+      "init",
+      "phase1-understand", "phase1-discover", "phase1-why1", "phase1-constitution", "phase1-what", "phase1-why2", "phase1-assess",
+      "checkpoint-assess",
+      "phase2-decide",
+      "phase3-solution", "phase3-how", "phase3-specialists", "phase3-sentinel", "phase3-plan", "phase3-consensus",
+      "checkpoint-plan",
+      "phase4-document",
+      "done"
     ]},
     "mode": { "enum": ["greenfield", "brownfield"] },
+    "constitution_status": { "enum": ["pending", "exists"], "default": "pending" },
+    "autonomy_mode": { "enum": ["guided", "semi", "banzai"], "default": "semi" },
     "iteration": { "type": "integer", "minimum": 0, "maximum": 5 },
     "spec_id": { "type": "string" },
     "created_at": { "type": "string", "format": "date-time" },
@@ -45,6 +52,18 @@
       }
     },
     "blocked_reason": { "type": "string" },
-    "escalation_question": { "type": "string" }
+    "escalation_question": { "type": "string" },
+    "checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "phase": { "type": "string" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "decision": { "enum": ["PASS", "KILL", "DEFER", "SKIP"] },
+          "auto_defaulted": { "type": "boolean" }
+        }
+      }
+    }
   }
 }

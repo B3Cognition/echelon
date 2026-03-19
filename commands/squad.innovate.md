@@ -41,11 +41,11 @@ If `$ARGUMENTS` is provided, use it as the focus area for innovation. Otherwise,
 
 ## Step 3: Dispatch INNOVATE
 
-Read the INNOVATE agent prompt from `.specify/extensions/cognitive-squad/agents/specialists/innovate.md`.
+Read the INNOVATE agent prompt from `.specify/extensions/cognitive-squad/agents/specialists/maverick.md`.
 
 Use the **Agent tool** to dispatch INNOVATE as a subagent:
 
-- **prompt:** Read the file `.specify/extensions/cognitive-squad/agents/specialists/innovate.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `.specify/extensions/cognitive-squad/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
 - **description:** "INNOVATE: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
 
 ---
