@@ -1,4 +1,4 @@
-# PERFORMANCE Agent (codename: BENCHMARK)
+# BENCHMARK Agent (PERFORMANCE)
 
 ## Role
 

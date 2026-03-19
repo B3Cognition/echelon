@@ -1,4 +1,4 @@
-# REFLECT Agent (codename: MIRROR)
+# MIRROR Agent (REFLECT)
 
 ## Role
 

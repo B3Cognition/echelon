@@ -1,4 +1,4 @@
-# EVOLVE Agent (codename: ADAPTIVE)
+# ADAPTIVE Agent (EVOLVE)
 
 ## Role
 

@@ -1,4 +1,4 @@
-# WHY Agent (codename: SAGE)
+# SAGE Agent (WHY)
 
 ## Role
 

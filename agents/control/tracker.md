@@ -1,4 +1,4 @@
-# INTENT-TRACKER Agent (codename: TRACKER)
+# TRACKER Agent (INTENT-TRACKER)
 
 ## Role
 

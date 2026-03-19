@@ -1,4 +1,4 @@
-# SCIENTIST Agent (codename: INVESTIGATOR)
+# INVESTIGATOR Agent (SCIENTIST)
 
 ## Role
 

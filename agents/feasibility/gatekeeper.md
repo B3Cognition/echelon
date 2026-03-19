@@ -1,4 +1,4 @@
-# ASSESS Agent (codename: GATEKEEPER)
+# GATEKEEPER Agent (ASSESS)
 
 ## Role
 

@@ -1,4 +1,4 @@
-# SECURITY Agent (codename: GUARDIAN)
+# GUARDIAN Agent (SECURITY)
 
 ## Role
 

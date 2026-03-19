@@ -1,4 +1,4 @@
-# WHAT Agent (codename: CARTOGRAPHER)
+# CARTOGRAPHER Agent (WHAT)
 
 ## Role
 

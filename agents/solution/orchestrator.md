@@ -1,4 +1,4 @@
-# PLAN Agent (codename: ORCHESTRATOR)
+# ORCHESTRATOR Agent (PLAN)
 
 ## Role
 

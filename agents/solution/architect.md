@@ -1,4 +1,4 @@
-# HOW Agent (codename: ARCHITECT)
+# ARCHITECT Agent (HOW)
 
 ## Role
 

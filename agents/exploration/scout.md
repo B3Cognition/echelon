@@ -1,4 +1,4 @@
-# DISCOVER Agent (codename: SCOUT)
+# SCOUT Agent (DISCOVER)
 
 ## Role
 

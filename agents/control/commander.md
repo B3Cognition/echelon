@@ -1,4 +1,4 @@
-# MANAGER Agent (codename: COMMANDER)
+# COMMANDER Agent (MANAGER)
 
 ## Role
 

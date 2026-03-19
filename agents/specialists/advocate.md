@@ -1,4 +1,4 @@
-# UX-A11Y Agent (codename: ADVOCATE)
+# ADVOCATE Agent (UX-A11Y)
 
 ## Role
 

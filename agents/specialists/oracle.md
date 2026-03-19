@@ -1,4 +1,4 @@
-# DOMAIN-EXPERT Agent (codename: ORACLE)
+# ORACLE Agent (DOMAIN-EXPERT)
 
 ## Role
 

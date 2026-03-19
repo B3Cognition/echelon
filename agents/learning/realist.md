@@ -1,4 +1,4 @@
-# GROUND Agent (codename: REALIST)
+# REALIST Agent (GROUND)
 
 ## Role
 

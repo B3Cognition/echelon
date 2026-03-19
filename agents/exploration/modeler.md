@@ -1,4 +1,4 @@
-# MENTAL-MODEL Agent (codename: MODELER)
+# MODELER Agent (MENTAL-MODEL)
 
 ## Role
 

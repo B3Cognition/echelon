@@ -1,4 +1,4 @@
-# TEST-ARCHITECT Agent (codename: SENTINEL)
+# SENTINEL Agent (TEST-ARCHITECT)
 
 ## Role
 

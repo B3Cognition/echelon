@@ -1,4 +1,4 @@
-# CALIBRATE Agent (codename: AUDITOR)
+# AUDITOR Agent (CALIBRATE)
 
 ## Role
 
