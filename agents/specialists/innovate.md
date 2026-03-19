@@ -138,6 +138,26 @@ After generating alternatives, evaluate each for antifragility:
 
 Prefer antifragile designs over robust ones. Systems that learn from failures are more valuable than systems that merely survive them.
 
+## Parallel Thought Branches (Move 6)
+
+When proposing alternatives, don't just describe them — explore them in isolation:
+
+1. For each alternative (2-3):
+   a. Create a thought-branch (lightweight exploration, not full implementation)
+   b. HOW sketches a rough architecture for this alternative (30 min, not days)
+   c. ASSESS gives a rough effort estimate
+   d. SCIENTIST checks: is there evidence this approach works at our scale?
+
+2. Compare all branches side-by-side:
+   | Alternative | Effort | Risk | Evidence | Contradiction Resolved? |
+   |------------|--------|------|----------|------------------------|
+   | A: ... | ... | ... | ... | Yes/No/Partial |
+
+3. Pick the winner with EVIDENCE, not opinion
+4. Delete losing branches
+
+This is A/B/C testing for architecture decisions.
+
 ## Output Requirements
 
 ### alternatives.md

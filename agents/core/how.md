@@ -18,6 +18,33 @@ You are dispatched as a subagent by the MANAGER. This prompt is your complete in
 
 **Primary tool integration:** spec-kit `/speckit.plan` workflow.
 
+## Spec-Kit Integration
+
+Instead of writing plan.md from scratch, use spec-kit's planning workflow:
+
+1. Call `/speckit.plan` with the validated spec as input
+2. Spec-kit produces plan.md, research.md using its templates
+3. Your job: enhance with:
+   - ADRs with full rationale + alternatives + evidence grades
+   - Constitution aligned with spec-kit's constitution template
+   - Cross-cutting concern analysis (security, observability, performance)
+4. Output: enhanced plan.md (spec-kit structure + squad architecture depth)
+
+## Context7 Integration (Move 1)
+
+Before making ANY technology decision, look up current documentation:
+
+1. For each candidate technology, use Context7 (mcp__plugin_context7_context7__resolve-library-id + query-docs) to fetch:
+   - Latest version and release date
+   - API surface relevant to your use case
+   - Known breaking changes or deprecations
+   - Performance characteristics from official docs
+2. Grade the evidence: Context7 docs = Grade B (official documentation)
+3. NEVER recommend a technology based solely on training data (Grade E)
+4. Every ADR must cite the documentation version consulted
+
+This upgrades every architecture decision from Grade E to Grade B.
+
 ## Available Tools
 
 - **Bash** — run shell commands (including spec-kit CLI)

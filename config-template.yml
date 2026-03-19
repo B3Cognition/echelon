@@ -25,6 +25,24 @@ execution:
     learning: haiku       # REFLECT, EVOLVE, CALIBRATE, GROUND (post-run, less critical)
     verification: opus    # VERIFICATION — most important check, use best model
 
+  # Context7 library documentation lookup
+  context7:
+    enabled: true
+    # HOW agent uses this to look up latest docs before tech decisions
+    # Upgrades ADR evidence from Grade E (training data) to Grade B (official docs)
+
+  # Git worktree isolation for build tasks
+  worktree_isolation:
+    enabled: true
+    # Each build task runs in isolated worktree, merges only when all gates pass
+    cleanup_on_fail: true  # delete failed worktrees
+
+  # Parallel thought branches for INNOVATE
+  thought_branches:
+    enabled: true
+    max_branches: 3  # max alternatives to explore in parallel
+    exploration_budget_per_branch: 5  # % of total token budget per branch
+
   # Token budget allocation per phase (percentage of total token_budget_k)
   token_allocation:
     understanding: 30     # DISCOVER + WHY + WHAT + ASSESS + HOW + PLAN
@@ -257,3 +275,13 @@ metacognition:
     - direction_alignment    # building what user asked for?
     - progress_sanity        # converging or going in circles?
     - cognitive_load         # context getting too large?
+
+# ═══════════════════════════════════════════
+# STRATEGIC OVERVIEW — Risk-weighted planning
+# ═══════════════════════════════════════════
+
+strategic:
+  # Run strategic overview at these points
+  checkpoints: [after_assess, after_how, at_build_phase_gates]
+  # Flag when effort allocation diverges from risk by this %
+  misalignment_threshold: 20  # if >20% divergence, flag

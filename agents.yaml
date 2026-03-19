@@ -219,6 +219,19 @@ agents:
     never:
       - "NEVER ignore process violations to save time"
 
+  STRATEGIC_OVERVIEW:
+    file: agents/core/strategic-overview.md
+    phase: understanding
+    tier: core
+    role: "Risk-weighted strategic map — are we spending intelligence on the highest-value work?"
+    when: "After ASSESS, after HOW, at build phase gates, when PROGRESS TRACKER flags drift"
+    inputs: [spec.md, plan.md, risk-matrix.md, progress-report.md, investigation/]
+    outputs: [strategic-overview.md, effort allocation recommendations]
+    routes_to: []
+    never:
+      - "NEVER make tactical decisions — advise WHERE to focus, not HOW to implement"
+      - "NEVER override MANAGER — recommend, don't decide"
+
   # ═══════════════════════════════════════════
   # PHASE 1: UNDERSTANDING — Specialists
   # ═══════════════════════════════════════════
@@ -421,6 +434,18 @@ agents:
       - "NEVER skip impact analysis"
       - "NEVER propagate changes without re-validation through WHY"
 
+  DEBUGGER:
+    file: agents/build/debugger.md
+    phase: application
+    tier: build
+    role: "Systematic root cause analysis — reproduce, isolate, root cause, fix, verify"
+    when: "SPEC GUARD non-obvious FAIL, CODE REVIEWER logic errors, IMPLEMENTER BLOCKED, INTEGRATOR system failure"
+    inputs: [failure description, affected code, test results, reasoning-journal.json]
+    outputs: [debug-report.md, root cause fix]
+    never:
+      - "NEVER guess at fixes — find root cause first"
+      - "NEVER fix symptoms — fix causes"
+
   # ═══════════════════════════════════════════
   # PHASE 4: LEARNING
   # ═══════════════════════════════════════════
@@ -487,6 +512,9 @@ routing:
     security_concerns: SECURITY
     accessibility_gaps: UX_A11Y
     performance_concerns: PERFORMANCE
+    logic_errors: DEBUGGER
+    system_failures: DEBUGGER
+    effort_misallocation: STRATEGIC_OVERVIEW
 
   # Build phase quality gate sequence (per task):
   build_sequence: [IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
@@ -505,8 +533,8 @@ routing:
 # ═══════════════════════════════════════════
 
 totals:
-  core: 13
+  core: 14
   specialists: 7
-  build: 10
-  learning: 5  # includes FEEDBACK
-  total: 35
+  build: 11
+  learning: 5
+  total: 37

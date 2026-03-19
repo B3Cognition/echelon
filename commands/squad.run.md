@@ -323,6 +323,20 @@ Read ASSESS outputs:
 - **DEFER** verdict → reduce scope, re-route to WHAT. Track DEFER count. **DEFER loop >= 2 with no scope stabilization → kill or escalate to human.**
 - **PASS** → proceed to specialist summoning.
 
+**Transition:** Update state.json phase to "strategic_overview". Proceed to STRATEGIC OVERVIEW.
+
+---
+
+### 6b. STRATEGIC OVERVIEW (Risk Map)
+
+After ASSESS passes, dispatch STRATEGIC OVERVIEW to build the initial risk-weighted map:
+
+Use the Agent tool:
+- **prompt:** Read `agents/core/strategic-overview.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
+- **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
+
+Read the strategic overview. Use it to prioritize specialist allocation: spend SCIENTIST time on high-blast-radius decisions, not low-risk areas.
+
 **Transition:** Update state.json phase to "specialists". Proceed to specialist summoning.
 
 ---

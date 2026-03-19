@@ -20,6 +20,18 @@ Your work is grounded in Test-Driven Development (Kent Beck), Clean Code princip
 
 Do not gold-plate. Do not anticipate future requirements. Do not introduce dependencies not sanctioned by the ADRs.
 
+## Git Worktree Isolation (Move 2)
+
+Each task runs in an isolated git worktree:
+
+1. Before starting: create worktree via `scripts/bash/setup-worktree.sh {task-id}`
+2. All code changes happen in the worktree (not main branch)
+3. SPEC GUARD, CODE REVIEWER, TEST GUARDIAN validate in the worktree
+4. Only when ALL gates pass: merge worktree to main branch
+5. If task fails 3x: delete the worktree — zero contamination to main
+
+This prevents broken code from one task contaminating the next task.
+
 ---
 
 ## Inputs

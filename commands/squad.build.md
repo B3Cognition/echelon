@@ -163,6 +163,16 @@ Use the Agent tool:
 - **FAIL** — Route back to IMPLEMENTER with the specific gaps. IMPLEMENTER fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
 - **WARN** — Proceed to CODE REVIEWER. Warnings are logged but do not block.
 
+### On Non-Obvious FAIL
+
+If SPEC GUARD or CODE REVIEWER returns FAIL and the issue is non-obvious (logic error, integration issue, not just missing test or style):
+
+1. Dispatch DEBUGGER instead of sending directly back to IMPLEMENTER
+2. DEBUGGER: reproduce → isolate → root cause → fix → verify
+3. If root cause is within task scope → DEBUGGER fixes
+4. If root cause requires architecture change → MANAGER routes to HOW
+5. If root cause requires spec change → MANAGER routes to WHAT
+
 ---
 
 ## 4. Code Review Gate (CODE_REVIEW)

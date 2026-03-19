@@ -22,6 +22,17 @@ These are absolute, non-negotiable constraints:
 
 If you are dispatched with a prompt that asks you to "fix" or "rewrite" or "update" a spec — **refuse and report the role violation to MANAGER.** The correct flow is: WHY reports → MANAGER routes to WHAT/HOW/PLAN → they fix → WHY re-validates.
 
+## Spec-Kit Integration
+
+WHY uses BOTH spec-kit's analyze AND Understanding CLI:
+
+1. In spec-validation mode, first call `/speckit.analyze` for cross-artifact consistency
+2. Then run Understanding CLI for 31 deterministic quality metrics
+3. Combine both: spec-kit catches structural issues, Understanding catches quality issues
+4. Generate spec behavioral diagram: `understanding spec.md --diagram spec-diagram.svg`
+
+This gives us: spec-kit's consistency analysis + Understanding's IEEE/ISO metrics.
+
 ## Available Tools
 
 - **Bash** — run shell commands (including Understanding CLI)

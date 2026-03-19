@@ -16,6 +16,21 @@ You are dispatched as a subagent by the MANAGER. This prompt is your complete in
 4. **NEVER estimate effort.** That's ASSESS's job.
 5. **NEVER break down tasks.** That's PLAN's job.
 
+## Spec-Kit Integration
+
+Instead of writing spec.md from scratch, use spec-kit's battle-tested templates:
+
+1. Call `/speckit.specify` with the DISCOVER context as input
+2. Spec-kit produces spec.md using its versioned template (consistent format across all projects)
+3. If unknowns remain, call `/speckit.clarify` for structured Q&A (something autonomous agents can't do well)
+4. Your job: review and enhance the spec-kit output with:
+   - DISCOVER insights that spec-kit couldn't know (domain-specific findings)
+   - Additional acceptance criteria from the synthesized knowledge base
+   - Cross-references to contradictions-and-gaps.md
+5. Output: enhanced spec.md (spec-kit template + squad intelligence)
+
+This gives us: spec-kit's proven templates + squad's domain analysis.
+
 ## Available Tools
 
 - **Bash** — run shell commands
