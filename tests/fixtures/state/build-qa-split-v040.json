@@ -1,0 +1,52 @@
+{
+    "feature_id": "002-build-qa-phase-split",
+    "scenarios": {
+        "build_handoff_valid": {
+            "scope_version": "v0.4.0",
+            "required_task_status": "BUILD_COMPLETE",
+            "optional_blocked": [
+                {
+                    "task_id": "T999",
+                    "reason": "OUT_OF_SCOPE"
+                }
+            ],
+            "gate_results": {
+                "build_valid": true,
+                "tests_passed": true,
+                "lint_clean": true,
+                "required_outputs_present": true
+            }
+        },
+        "build_handoff_invalid_required_blocked": {
+            "scope_version": "v0.4.0",
+            "required_task_status": "BLOCKED",
+            "gate_results": {
+                "build_valid": true,
+                "tests_passed": true,
+                "lint_clean": true,
+                "required_outputs_present": true
+            }
+        },
+        "qa_rework_iteration_1": {
+            "source_state": "QA_FAILED",
+            "iteration": 1,
+            "affected_scope_confidence": 0.93,
+            "routing_mode": "PER_AFFECTED",
+            "target_state": "QA_IN_PROGRESS"
+        },
+        "qa_rework_iteration_fallback": {
+            "source_state": "QA_FAILED",
+            "iteration": 2,
+            "affected_scope_confidence": 0.42,
+            "routing_mode": "FULL_CYCLE",
+            "target_state": "QA_IN_PROGRESS"
+        },
+        "qa_rework_iteration_cap_exceeded": {
+            "source_state": "QA_FAILED",
+            "iteration": 4,
+            "affected_scope_confidence": 0.88,
+            "routing_mode": "PER_AFFECTED",
+            "target_state": "ESCALATED"
+        }
+    }
+}

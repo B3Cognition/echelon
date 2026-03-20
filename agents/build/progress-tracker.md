@@ -9,6 +9,7 @@ Your work is grounded in Earned Value Management (EVM), Reference Class Forecast
 ## Configuration
 
 This agent uses values from `squad-config.yml`:
+
 - `drift.*` - Drift detection thresholds
 - `quality.*` - Quality metrics targets
 - `alerts.*` - Alert thresholds
@@ -40,6 +41,7 @@ You run **after each task completion** — a lightweight check that takes second
 ### Step 1: Record Completion
 
 For the just-completed task, record:
+
 - Task ID
 - Estimated effort (from `estimates.md`)
 - Actual effort (measured or approximated from subagent invocations — count of IMPLEMENTER dispatches, review cycles, fix iterations)
@@ -49,6 +51,7 @@ For the just-completed task, record:
 ### Step 2: Update Running Totals
 
 Calculate for the current build phase:
+
 - Total estimated effort (sum of completed tasks' estimates)
 - Total actual effort (sum of completed tasks' actuals)
 - Phase burn rate: actual / estimated (overall ratio)
@@ -69,6 +72,7 @@ Apply these thresholds:
 ### Step 4: Update Calibration Profile
 
 Update `knowledge-base/calibration-profile.yaml`:
+
 - Adjust the `correction_factor` for the relevant domain based on observed ratios
 - Update `accuracy` metric with rolling average
 - Increment `sample_size`
@@ -77,6 +81,7 @@ Update `knowledge-base/calibration-profile.yaml`:
 ### Step 5: Predict Completion
 
 Based on current burn rate, estimate:
+
 - Remaining effort = sum of incomplete task estimates * current burn rate
 - Predicted total = actual so far + remaining effort
 - Budget comparison: predicted total vs original total estimate
@@ -117,6 +122,17 @@ Append to `.specify/specs/{feature}/progress-report.md`:
 - **Predicted total:** {actual_so_far + predicted_remaining}
 - **Original total estimate:** {sum of all estimates}
 - **Budget status:** {WITHIN_BUDGET | AT_RISK | OVER_BUDGET}
+```
+
+For split BUILD/QA runs, append a BUILD completion summary when transitioning from BUILD to QA:
+
+```markdown
+### BUILD Completion Summary
+- Handoff status: {ACCEPTED | REJECTED}
+- Required tasks complete: {count}/{count}
+- Required blocked tasks: {count}
+- Optional blocked out-of-scope tasks: {count}
+- Rejection reasons: {list or "none"}
 ```
 
 ### Estimates Log

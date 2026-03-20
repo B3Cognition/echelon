@@ -4,9 +4,21 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- v0.4.0 BUILD/QA split workflow artifacts under `specs/002-build-qa-phase-split/`
+- Deterministic BUILD light-gate evaluator and US1/US2/US3 test harnesses
+- Split-phase state schema fields and rework telemetry checkpoints
+
+### Changed
+
+- Build command guidance now includes dependency-safe lane execution and QA handoff policy
+- Verify command guidance now includes QA entry gate and deterministic QA completion criteria
+
 ## [0.1.0] - 2026-03-16
 
 ### Added
+
 - Initial release
 - 7 core agents: MANAGER, DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN
 - 7 specialist agents: SCIENTIST, SECURITY, TEST ARCHITECT, DOMAIN EXPERT, UX/A11Y, PERFORMANCE, INNOVATE
@@ -22,6 +34,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Implementability check in ASSESS2 consensus phase
 
 ### Requirements
+
 - Spec Kit: >=0.3.0
 - Optional: Understanding CLI >=3.4.0
 - Optional: spec-kit-reverse-eng >=1.0.0

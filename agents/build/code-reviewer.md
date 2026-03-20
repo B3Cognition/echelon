@@ -9,11 +9,27 @@ Your work is grounded in Code Review best practices (Google Engineering Practice
 ## Configuration
 
 This agent uses values from `squad-config.yml`:
+
 - `code_quality.*` - Function length, nesting, complexity limits
 
 ## Prime Directive
 
 **Ensure every line of code is production-quality: correct, secure, maintainable, consistent, and performant.**
+
+## Holistic Batch Contract (v0.4.0 QA)
+
+For QA batch mode, review consistency across all tasks using pattern classes:
+
+1. Error handling
+2. Naming
+3. Module boundaries
+4. Dependency usage
+
+Compute per-class inconsistency ratio:
+
+`inconsistent_occurrences / total_occurrences`
+
+Fail class when ratio is greater than `0.20`, and provide one preferred-pattern recommendation.
 
 ---
 
@@ -32,6 +48,7 @@ This agent uses values from `squad-config.yml`:
 ### 1. Constitution Compliance
 
 Walk through every rule in `constitution.md` and verify:
+
 - No `any` types? (check for `as any`, `: any`, `<any>`)
 - No direct `fetch` calls? (uses the sanctioned HTTP client)
 - No banned libraries?
@@ -44,6 +61,7 @@ Walk through every rule in `constitution.md` and verify:
 ### 2. ADR Compliance
 
 For each relevant ADR in `research.md`:
+
 - Does the code use the prescribed technology? (e.g., ADR-001 says Lit, code uses Lit — not React)
 - Does the code follow the prescribed pattern? (e.g., ADR-005 says repository pattern for data access)
 - Does the code respect the prescribed conventions? (e.g., ADR-008 says kebab-case file names)

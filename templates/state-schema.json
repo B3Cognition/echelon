@@ -16,6 +16,9 @@
     },
     "status": {
       "enum": [
+        "build_init",
+        "building",
+        "build_done",
         "running",
         "blocked",
         "done",
@@ -25,6 +28,14 @@
     },
     "phase": {
       "enum": [
+        "build_init",
+        "build_loop",
+        "spec_guard",
+        "code_review",
+        "test_guard",
+        "progress",
+        "integration",
+        "build_done",
         "init",
         "phase1-understand",
         "phase1-discover",
@@ -44,6 +55,21 @@
         "checkpoint-plan",
         "phase4-document",
         "done"
+      ]
+    },
+    "workflow_state": {
+      "enum": [
+        "TODO",
+        "BUILD_IN_PROGRESS",
+        "BUILD_COMPLETE",
+        "QA_IN_PROGRESS",
+        "QA_COMPLETE",
+        "QA_FAILED",
+        "REWORK_PLANNED",
+        "CHANGE_PENDING",
+        "BLOCKED",
+        "OUT_OF_SCOPE",
+        "ESCALATED"
       ]
     },
     "mode": {
@@ -307,6 +333,34 @@
           "auto_defaulted": {
             "type": "boolean"
           }
+        }
+      }
+    },
+    "rework_iteration_count": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0
+    },
+    "fallback_to_full_cycle": {
+      "type": "boolean",
+      "default": false
+    },
+    "escalation_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "change_resolution": {
+      "type": "object",
+      "properties": {
+        "reentry_target": {
+          "type": "string",
+          "enum": [
+            "BUILD_RESTART",
+            "QA_RESTART"
+          ]
         }
       }
     }

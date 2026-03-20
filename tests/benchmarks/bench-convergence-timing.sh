@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# T035: Benchmark B-002 — Convergence Timing
+# T042: Benchmark B-002 — Convergence Timing
 # Runs 5 controlled squad phase simulations with instrumented timing.
 # Captures per-phase durations, issue counts, and convergence iteration count.
 # Asserts >= 95% of runs have complete timing fields (AC-003a-2).
+# Includes split-vs-monolithic labeling for BUILD/QA phase pilot reporting.
 # Isolation: each run uses its own KB root via KB_ROOT env var + tmp dir.
 # Output: JSON + markdown in tests/benchmarks/reports/
 set -uo pipefail
@@ -19,6 +20,7 @@ results_md="$REPORTS_DIR/convergence-timing.md"
 
 # Number of simulated runs (spec requires >= 5)
 RUN_COUNT=5
+MODE_LABEL="build-qa-split-v0.4.0"
 
 # Phase simulation durations (seconds): these are fast sims, not real squad runs.
 PHASE_BUDGETS=(
@@ -30,6 +32,7 @@ PHASE_BUDGETS=(
 printf '{"runs":[],"summary":{}}\n' > "$results_json"
 
 printf '# B-002: Convergence Timing Benchmark\n\n' > "$results_md"
+printf 'Mode: %s\n\n' "$MODE_LABEL" >> "$results_md"
 printf 'Generated: %s\n\n' "$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')" >> "$results_md"
 printf '| Run | phase1-understand (s) | phase2-decide (s) | phase3-solution (s) | Over-budget | Complete |\n' >> "$results_md"
 printf '|-----|-----------------------|-------------------|---------------------|-------------|----------|\n' >> "$results_md"
