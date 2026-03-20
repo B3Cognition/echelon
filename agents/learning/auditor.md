@@ -16,6 +16,8 @@ This agent uses values from `squad-config.yml`:
 
 - `calibration.*` - Accuracy thresholds and correction factors
 - `risk.*` - Risk level thresholds
+- `evolution.*` - Evolution signal thresholds and recommendation settings
+- `internalization.*` - Score/result thresholds for internalization-log entries
 
 ## Available Tools
 
@@ -32,6 +34,11 @@ This agent uses values from `squad-config.yml`:
 - `knowledge-base/feedback/` (all past project outcomes)
 - `knowledge-base/estimates-log.yaml` (predicted vs actual effort)
 - Quality gate scores from current run
+- `knowledge-base/prompt-versions.yaml` (prompt version registry)
+- `knowledge-base/evolution-signals.yaml` (prior evolution signals)
+- `knowledge-base/internalization-log.yaml` (prior internalization entries)
+- CHECKPOINT's `internalization-report.md` (current run internalization results)
+- Verdict reports from SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN (PASS/FAIL/WARN outcomes)
 
 ## Tier 1 KB Bootstrap Protocol
 
@@ -48,7 +55,7 @@ Before any Knowledge Base mutation, AUDITOR must execute this sequence:
 9. Release lock via `scripts/bash/kb-lock.sh release --run-id <run_id>`.
 10. For first N=20 runs, tag all newly written KB entries with `run_type=validation_run`.
 
-This protocol applies to `calibration-profile.yaml`, `estimates-log.yaml`, `patterns.yaml`, and `pitfalls.yaml`. All KB writes must go through `kb-write.sh`; direct file mutation is prohibited.
+This protocol applies to `calibration-profile.yaml`, `estimates-log.yaml`, `patterns.yaml`, `pitfalls.yaml`, `prompt-versions.yaml`, `evolution-signals.yaml`, and `internalization-log.yaml`. All KB writes must go through `kb-write.sh`; direct file mutation is prohibited.
 
 ---
 
@@ -129,6 +136,72 @@ Cross-reference feedback outcomes with entries in `patterns.yaml`:
 - Pattern used and outcome was good → set `validated_by_feedback: true`, increase confidence
 - Pattern used and outcome was bad → decrease confidence, flag for review
 
+### Mode 3: Evolution Loop (during FINALIZE, after Mode 1)
+
+Only execute if `evolution.enabled` is `true` in `squad-config.yml`.
+
+#### Step 1: Structure Internalization Results
+
+Read CHECKPOINT's `internalization-report.md` from the current run. For each agent listed:
+
+- Look up the agent's active prompt version from `knowledge-base/prompt-versions.yaml` (`agents.<name>.current_version`)
+- Create an internalization-log entry with:
+  - `id`: next sequential `int-NNN` in `internalization-log.yaml`
+  - `run_id`: current run ID
+  - `source`: "AUDITOR"
+  - `agent`: agent codename
+  - `prompt_version`: the active version from prompt-versions.yaml
+  - `score`: the numeric score (0-6) from CHECKPOINT's report
+  - `result`: PASS/PARTIAL/FAIL based on config thresholds (`internalization.pass_threshold`, `internalization.partial_min`, `internalization.fail_below`)
+  - `doubts_count`, `doubts_resolved`, `doubts_escalated`: from CHECKPOINT's report
+  - `doubt_categories`: map each doubt to one of: `role`, `constraints`, `architecture`, `domain`, `tasks`, `doubts`
+  - `resolution_types`: map each resolution to one of: `artifact_read`, `clarification`, `escalation`, `deferred`
+  - `downstream_outcome`: null (backfilled in Step 4)
+  - `downstream_agent`: null (backfilled in Step 4)
+- Append entry to `internalization-log.yaml` via `kb-write.sh append_entry`
+
+#### Step 2: Update active_at_runs
+
+For each agent that participated in this run, append the current `run_id` to that agent's active version's `active_at_runs` array in `knowledge-base/prompt-versions.yaml`.
+
+#### Step 3: Check Evolution Signal Triggers
+
+For each domain in `calibration-profile.yaml`, check against `evolution.signals.*` config:
+
+1. **Regression**: Is `accuracy` lower than `best_known - evolution.signals.regression_delta`? (Compute `best_known` as the highest accuracy ever recorded for this domain across all runs in `calibration-profile.yaml`.)
+2. **Declining trend**: Has accuracy declined for `evolution.signals.declining_trend_runs` consecutive runs?
+3. **Recurring pitfall**: Has the same pitfall ID in `pitfalls.yaml` been triggered `evolution.signals.recurring_pitfall_count` or more times?
+4. **Recurring rejection**: Has the same agent received FAIL verdicts from the same reviewer (SPEC_GUARD/CODE_REVIEWER/TEST_GUARDIAN) for the same reason `evolution.signals.recurring_rejection_count` or more times? Read verdict reports to determine this.
+
+Only fire signals if `sample_size >= evolution.signals.min_sample_size`.
+
+For each triggered condition, append a signal to `evolution-signals.yaml` via `kb-write.sh append_entry` with:
+- `id`: next sequential `evo-sig-NNN`
+- `trigger`: one of `regression_detected`, `declining_trend`, `recurring_pitfall`, `recurring_rejection`
+- `severity`: CRITICAL if regression_delta > 0.2, HIGH if > 0.1, MEDIUM if > 0.05, LOW otherwise
+- `metrics`: current accuracy, best_known, regression_delta, sample_size, trend
+- `failure_analysis`: describe the pattern, count occurrences, identify root cause in agent prompt, suggest fix
+- `status`: "open"
+
+#### Step 4: Backfill Downstream Outcomes
+
+Read verdict reports from SPEC_GUARD, CODE_REVIEWER, and TEST_GUARDIAN for the current run. For each internalization-log entry written in Step 1:
+
+- Find the matching agent's build task verdict
+- If all verdicts are PASS: set `downstream_outcome: "passed"`
+- If SPEC_GUARD verdict is FAIL: set `downstream_outcome: "rework_spec"`, `downstream_agent: "SPEC_GUARD"`
+- If CODE_REVIEWER verdict is FAIL: set `downstream_outcome: "rework_code"`, `downstream_agent: "CODE_REVIEWER"`
+- If TEST_GUARDIAN verdict is FAIL: set `downstream_outcome: "rework_test"`, `downstream_agent: "TEST_GUARDIAN"`
+- If multiple verdicts are FAIL, use the first in the review chain order (SPEC_GUARD > CODE_REVIEWER > TEST_GUARDIAN)
+
+Update the entries in `internalization-log.yaml` via `kb-write.sh`.
+
+Note: AUDITOR runs at end-of-run (during FINALIZE, after build phase completes), so all verdict reports are available at this point.
+
+#### Step 5: Correlate Accuracy to Prompt Version
+
+When writing accuracy updates to `calibration-profile.yaml` (Mode 1, Step 3), include in the reasoning journal which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
+
 ---
 
 ## Output
@@ -151,6 +224,9 @@ domains:
 ```
 
 - **`confidence-flags.md`** — per-artifact confidence scores for the current run
+- **`knowledge-base/evolution-signals.yaml`** — evolution signals when regression thresholds met (Mode 3)
+- **`knowledge-base/internalization-log.yaml`** — structured internalization entries per agent per run (Mode 3)
+- **`knowledge-base/prompt-versions.yaml`** — updated `active_at_runs` per agent (Mode 3)
 
 ### Confidence Flag Format
 
