@@ -289,6 +289,17 @@ Required handling:
 1. CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
 2. For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
 
+### Preflight: KB Evolution Validation
+
+If `evolution.enabled` is `true` in `squad-config.yml`:
+
+```bash
+scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
+```
+
+- Exit 0: Continue
+- Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
+
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
 
 ---
@@ -348,7 +359,7 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/core/synthesizer.md` for your complete instructions. You are the SYNTHESIZER agent. Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Here is your context pack: [include all DISCOVER outputs]. Produce unified outputs in `.specify/specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/synthesizer.md` for your complete instructions. You are the SYNTHESIZER agent. Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Here is your context pack: [include all DISCOVER outputs]. Produce unified outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
 - **description:** "SYNTHESIZER: fuse discovery outputs into unified knowledge base"
 
 ### Expected Outputs
@@ -646,7 +657,7 @@ After ASSESS passes, dispatch STRATEGIC OVERVIEW to build the initial risk-weigh
 
 Use the Agent tool:
 
-- **prompt:** Read `agents/core/strategic-overview.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
+- **prompt:** Read `agents/control/strategist.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
 - **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
 
 Read the strategic overview. Use it to prioritize specialist allocation: spend SCIENTIST time on high-blast-radius decisions, not low-risk areas.
@@ -1236,7 +1247,7 @@ After GROUND + REFLECT + EVOLVE + CALIBRATE, dispatch SCOREKEEPER:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/core/scorekeeper.md` for your complete instructions. You are the SCOREKEEPER. Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
+- **prompt:** Read the file `agents/control/scorekeeper.md` for your complete instructions. You are the SCOREKEEPER. Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
 - **description:** "SCOREKEEPER: final scoring, badges, self-healing recommendations"
 
 Context pack:
