@@ -1,0 +1,365 @@
+schema_version: 1
+agents:
+  # --- Control Layer ---
+  COMMANDER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  SCOREKEEPER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  TRACKER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  CHECKPOINT:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  STRATEGIST:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+
+  # --- Exploration Layer ---
+  SCOUT:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  SYNTHESIZER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  SAGE:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  CARTOGRAPHER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  MODELER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+
+  # --- Feasibility Layer ---
+  GATEKEEPER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  VALIDATOR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+
+  # --- Solution Layer ---
+  ARCHITECT:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  ORCHESTRATOR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  SENTINEL:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+
+  # --- Specialists Layer ---
+  INVESTIGATOR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  GUARDIAN:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  ORACLE:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  BENCHMARK:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  ADVOCATE:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  MAVERICK:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+
+  # --- Build Layer ---
+  IMPLEMENTER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  SPEC_GUARD:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  CODE_REVIEWER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  TEST_GUARDIAN:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  DEBUGGER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  INTEGRATOR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  PROGRESS_TRACKER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  CHANGE_CONTROLLER:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+
+  # --- Learning Layer ---
+  MIRROR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  ADAPTIVE:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  AUDITOR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  REALIST:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  VETERAN:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
+  MONITOR:
+    current_version: "1.0"
+    versions:
+      - version: "1.0"
+        date: "2026-03-20"
+        author: "human"
+        source: "v0.3.0-release"
+        created_at: "2026-03-20T00:00:00Z"
+        changes: "Initial version (v0.3.0 release)"
+        active_at_runs: []
