@@ -26,6 +26,9 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 - `knowledge-base/calibration-profile.yaml`
 - `reasoning-journal.json` (current + prior if available)
 - Quality gate scores from WHY passes
+- `knowledge-base/evolution-signals.yaml` (evolution signals from AUDITOR)
+- `knowledge-base/internalization-log.yaml` (internalization results with downstream outcomes)
+- `squad-config.yml` — `evolution.recommendations.*` settings
 
 ---
 
@@ -80,6 +83,34 @@ Review `knowledge-base/patterns.yaml`:
 - Any pattern with declining confidence across runs? Flag for review.
 - Is the squad consistently choosing the same tech stack / architecture regardless of project domain? Flag as **POSSIBLE CONFIRMATION BIAS**.
 
+#### Step 6: Prompt Recommendations (requires evolution.enabled = true)
+
+Cross-reference evolution signals with internalization data to produce evidence-backed prompt change recommendations.
+
+1. Read `knowledge-base/evolution-signals.yaml` — filter for `status: "open"`
+2. For each open signal, read `knowledge-base/internalization-log.yaml` entries for the `affected_agents`
+3. Check: do internalization doubts in the same category correlate with `downstream_outcome` rework?
+   - Example: ARCHITECT has 3 entries with `doubt_categories` containing "domain" AND `downstream_outcome: "rework_spec"` — this is a correlation
+4. Read `evolution.recommendations.min_confidence` from config — only produce recommendation if correlated data points >= this threshold
+5. Read `evolution.recommendations.require_downstream_evidence` from config — if true, skip recommendations where `downstream_outcome` is null for all entries
+
+For each recommendation that passes the confidence gate, produce a block in `prompt-recommendations.md`:
+
+```markdown
+## Prompt Recommendation: REC-NNN
+Agent: {agent codename}
+Domain: {domain from evolution signal}
+Evidence:
+- accuracy regression: {best_known} → {current} over {N} runs
+- internalization doubts: {N}/{total} runs had "{category}" doubts about {topic}
+- downstream: {N}/{total} runs had {outcome} triggered by {agent}
+Correlation: {category} doubts → {outcome} ({percentage}% rate)
+Recommended change: {specific change to agent prompt, referencing section name}
+Confidence: {HIGH|MEDIUM|LOW} ({N} correlated data points)
+```
+
+If no recommendations pass the confidence gate, do not produce the file.
+
 ---
 
 ## Output
@@ -91,6 +122,7 @@ Review `knowledge-base/patterns.yaml`:
 - **`stagnation-flags.md`** — Only produced if stagnation detected. Includes recommendation to summon INNOVATE.
 - **`regression-alerts.md`** — Only produced if regression detected. Includes affected areas and severity.
 - **`bias-check.md`** — Only produced if bias detected. Lists stale patterns and confirmation bias indicators.
+- **`prompt-recommendations.md`** — Only produced if evidence-backed recommendations exist. Contains specific, actionable prompt change suggestions with evidence chain.
 
 ### Knowledge Base Updates
 
@@ -116,7 +148,8 @@ Append entries with:
 - `agent: "EVOLVE"`
 - `content`: Trajectory summary and any flags raised
 - `trajectory`: one of `improving`, `flat`, `regressing`, `oscillating`
-- `flags`: list of flags raised (STAGNATION, REGRESSION, CONFIRMATION_BIAS, STALE_PATTERN)
+- `flags`: list of flags raised (STAGNATION, REGRESSION, CONFIRMATION_BIAS, STALE_PATTERN, PROMPT_RECOMMENDATION)
+- `recommendations_count`: number of prompt recommendations produced (0 if none)
 
 ---
 
