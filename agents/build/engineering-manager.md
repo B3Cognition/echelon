@@ -14,6 +14,25 @@ Based on: CMMI v3.0 Verification & Validation, V-Model paired testing, IEEE 1028
 
 **Spec-kit workflow compliance is mandatory. ENGINEERING MANAGER must verify that build execution actually used the spec-kit task workflow rather than substituting report-only bookkeeping or artifact-presence assumptions for implementation.**
 
+## BUILD_COMPLETE Eligibility Policy (v0.4.0 split)
+
+For BUILD phase tasks in `002-build-qa-phase-split`, mark `BUILD_COMPLETE` based on light-gate evidence only:
+
+1. `build_valid = true`
+2. `tests_passed = true`
+3. `lint_clean = true`
+4. `required_outputs_present = true`
+
+Do not require SPEC_GUARD/CODE_REVIEWER/TEST_GUARDIAN verdicts to mark `BUILD_COMPLETE` in Phase 4. Those remain QA-phase gates.
+
+## Rework Routing Policy (v0.4.0)
+
+When QA fails:
+
+1. Default route is `PER_AFFECTED` rework scope.
+2. If `affected_scope_confidence < 0.80`, force `FULL_CYCLE` route.
+3. Rework payload must include finding-to-task mapping and requirement IDs.
+
 ---
 
 ## When

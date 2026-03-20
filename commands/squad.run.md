@@ -24,6 +24,38 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 **You must not skip phases.** Each phase exists for a reason grounded in engineering science. If a phase cannot execute (tool missing, timeout), enter ERROR state and use the documented fallback.
 
+## State Transition Checkpoints
+
+For BUILD/QA split features, MANAGER must emit explicit workflow checkpoints in `state.json` during command execution.
+
+Required checkpoint states:
+
+- `BUILD_IN_PROGRESS`: set when implementation task execution begins.
+- `QA_IN_PROGRESS`: set when batch QA validation starts.
+- `QA_COMPLETE`: set only after all QA gates and verification pass.
+- `CHANGE_PENDING`: set immediately when approved scope changes are detected during QA.
+
+Checkpoint rules:
+
+1. Every state change must update `updated_at`.
+2. Every transition must append a structured entry to `reasoning-journal.json` with `from_state`, `to_state`, and trigger reason.
+3. `QA_IN_PROGRESS` may only be entered after BUILD handoff preconditions pass.
+4. `QA_COMPLETE` may only be emitted after deterministic verification pass.
+
+## Rework Loop Telemetry
+
+Emit these fields during rework processing:
+
+1. `rework_iteration_count`
+2. `fallback_to_full_cycle` (boolean)
+3. `escalation_reason` (nullable string)
+
+Telemetry rules:
+
+1. Increment `rework_iteration_count` when QA fails and rework starts.
+2. Set `fallback_to_full_cycle=true` when affected-scope confidence is below 0.80.
+3. Set `escalation_reason` when iteration cap is exceeded or manual escalation occurs.
+
 ---
 
 ## Role Separation — ABSOLUTE RULES

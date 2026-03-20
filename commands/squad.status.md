@@ -35,6 +35,23 @@ Created:     {created_at}
 Updated:     {updated_at}
 ```
 
+Also print workflow state if present:
+
+```
+Workflow:    {workflow_state or "n/a"}
+```
+
+Accepted split-phase workflow values:
+
+- `BUILD_IN_PROGRESS`
+- `BUILD_COMPLETE`
+- `QA_IN_PROGRESS`
+- `QA_COMPLETE`
+- `QA_FAILED`
+- `REWORK_PLANNED`
+- `CHANGE_PENDING`
+- `ESCALATED`
+
 ---
 
 ## Step 3: Quality Scores Trajectory

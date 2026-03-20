@@ -24,6 +24,14 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
+## v0.4.0 Operator Flow
+
+1. Run BUILD tasks with dependency-safe wave lanes.
+2. Enforce light-gate checks for BUILD completion eligibility.
+3. Generate BUILD handoff package.
+4. Run batch QA reviewers and deterministic verification.
+5. If QA fails, execute bounded rework loop (max 3 iterations) then re-verify.
+
 ## Spec-Kit Integration
 
 For task execution, leverage spec-kit's implementation workflow:
@@ -126,9 +134,25 @@ Create empty report files (or clear prior content):
 
 For each task in the build order:
 
+### 2.0 v0.4.0 BUILD Lane Policy
+
+For `002-build-qa-phase-split`, BUILD execution uses dependency-safe wave lanes:
+
+1. Group tasks by dependency level (same level = same wave).
+2. Execute tasks in each wave before moving to the next wave.
+3. Within a wave, process up to 3 IMPLEMENTER lanes.
+4. A failed task in a wave must not block unrelated tasks in that same wave.
+5. A failed task must block only dependents in later waves.
+
 ### 2.1 Check Dependencies
 
 Verify all dependency tasks have status DONE or DONE_WITH_CONCERNS. If a dependency is BLOCKED, skip this task and mark it as BLOCKED (dependency).
+
+Before allowing QA entry, enforce blocked semantics:
+
+1. Required tasks with `BLOCKED` status are forbidden.
+2. Optional tasks may remain blocked only when marked `OUT_OF_SCOPE` with rationale.
+3. If either rule is violated, keep phase in `BUILD_IN_PROGRESS` and emit handoff rejection reasons.
 
 ### 2.2 Update State
 
@@ -164,6 +188,19 @@ Use the Agent tool:
 - **DONE / DONE_WITH_CONCERNS** — Proceed to SPEC GUARD
 - **NEEDS_CONTEXT** — MANAGER reads the question, compiles additional context, re-dispatches IMPLEMENTER. Max 2 re-dispatches per task.
 - **BLOCKED** — Log the blocker. Skip to next task. If 3 tasks are BLOCKED, pause and assess (MANAGER may need to re-order tasks or escalate).
+
+### 2.5 Build Handoff Package
+
+After BUILD wave completion, generate a handoff package for QA containing:
+
+1. `tasks` snapshots with required/optional scope labels.
+2. `gate_results` from light-gate checks (`build_valid`, `tests_passed`, `lint_clean`, `required_outputs_present`).
+3. `artifact_index` paths produced in BUILD.
+4. `required_task_summary` counts by status.
+5. `blocked_optional_out_of_scope` entries with explicit rationale.
+6. `scope_version` and `generated_at` timestamp.
+
+If package invariants fail, emit `BUILD_QA_HANDOFF_REJECTED` and stop transition to QA.
 
 ---
 
@@ -361,6 +398,7 @@ Before completion, dispatch ENGINEERING MANAGER with:
 - `reasoning-journal.json`
 
 Use the Agent tool:
+
 - **prompt:** Read `agents/build/engineering-manager.md` for your complete instructions. You are the ENGINEERING MANAGER. Validate workflow compliance, report consistency, and readiness for final verification using the provided context pack.
 - **description:** "ENGINEERING MANAGER: final pre-verification sign-off"
 
@@ -377,6 +415,7 @@ If any of these fail, do not proceed to BUILD_DONE. Route to rework first.
 Dispatch VERIFICATION after final integration and EM pre-check.
 
 Use the Agent tool:
+
 - **prompt:** Read `agents/build/verification.md` for your complete instructions. You are the VERIFICATION agent. Run full backpropagation verification against spec requirements using the provided context pack. Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
 - **description:** "VERIFICATION: final backpropagation check"
 

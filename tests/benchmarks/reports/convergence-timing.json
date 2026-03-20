@@ -2,46 +2,46 @@
   "runs": [
     {
       "over_budget": false,
-      "phase1_understand_seconds": 1.633296,
-      "phase2_decide_seconds": 2.040501,
-      "phase3_solution_seconds": 1.404854,
-      "run_id": "bench-conv-20260319T204146Z-r1",
+      "phase1_understand_seconds": 1.64291,
+      "phase2_decide_seconds": 2.02384,
+      "phase3_solution_seconds": 1.367649,
+      "run_id": "bench-conv-20260320T081124Z-r1",
       "run_num": 1,
       "timing_complete": true
     },
     {
       "over_budget": false,
-      "phase1_understand_seconds": 1.147574,
-      "phase2_decide_seconds": 1.529467,
-      "phase3_solution_seconds": 1.916418,
-      "run_id": "bench-conv-20260319T204150Z-r2",
+      "phase1_understand_seconds": 2.10717,
+      "phase2_decide_seconds": 1.484383,
+      "phase3_solution_seconds": 1.816457,
+      "run_id": "bench-conv-20260320T081128Z-r2",
       "run_num": 2,
       "timing_complete": true
     },
     {
       "over_budget": false,
-      "phase1_understand_seconds": 1.563357,
-      "phase2_decide_seconds": 1.911815,
-      "phase3_solution_seconds": 1.252734,
-      "run_id": "bench-conv-20260319T204155Z-r3",
+      "phase1_understand_seconds": 1.377394,
+      "phase2_decide_seconds": 1.65727,
+      "phase3_solution_seconds": 1.950512,
+      "run_id": "bench-conv-20260320T081133Z-r3",
       "run_num": 3,
       "timing_complete": true
     },
     {
       "over_budget": false,
-      "phase1_understand_seconds": 2.093773,
-      "phase2_decide_seconds": 1.536523,
-      "phase3_solution_seconds": 1.962997,
-      "run_id": "bench-conv-20260319T204159Z-r4",
+      "phase1_understand_seconds": 1.510951,
+      "phase2_decide_seconds": 1.824209,
+      "phase3_solution_seconds": 1.160654,
+      "run_id": "bench-conv-20260320T081137Z-r4",
       "run_num": 4,
       "timing_complete": true
     },
     {
       "over_budget": false,
-      "phase1_understand_seconds": 1.646782,
-      "phase2_decide_seconds": 2.09947,
-      "phase3_solution_seconds": 1.812244,
-      "run_id": "bench-conv-20260319T204204Z-r5",
+      "phase1_understand_seconds": 1.755352,
+      "phase2_decide_seconds": 1.228125,
+      "phase3_solution_seconds": 1.678155,
+      "run_id": "bench-conv-20260320T081141Z-r5",
       "run_num": 5,
       "timing_complete": true
     }
@@ -52,22 +52,22 @@
     "complete_runs": 5,
     "completeness_pct": 100,
     "phase1_understand_seconds": {
-      "max": 2.093773,
-      "mean": 1.6169564,
-      "min": 1.147574,
-      "stdev": 0.33604439888547466
+      "max": 2.10717,
+      "mean": 1.6787554,
+      "min": 1.377394,
+      "stdev": 0.2782391109258366
     },
     "phase2_decide_seconds": {
-      "max": 2.09947,
-      "mean": 1.8235552,
-      "min": 1.529467,
-      "stdev": 0.27379718885919924
+      "max": 2.02384,
+      "mean": 1.6435654,
+      "min": 1.228125,
+      "stdev": 0.30633252361984026
     },
     "phase3_solution_seconds": {
-      "max": 1.962997,
-      "mean": 1.6698494,
-      "min": 1.252734,
-      "stdev": 0.3206304847247061
+      "max": 1.950512,
+      "mean": 1.5946854,
+      "min": 1.160654,
+      "stdev": 0.3250735182497953
     },
     "total_runs": 5
   }

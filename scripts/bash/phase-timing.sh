@@ -11,7 +11,64 @@ usage() {
 usage:
   phase-timing.sh start_phase <phase_key> <budget_seconds> [--state-file <path>]
   phase-timing.sh end_phase <phase_key> [--state-file <path>] [--journal-file <path>] [--run-id <id>]
+  phase-timing.sh record_split_metrics <rework_count> <fallback_count> <qa_coverage> [--state-file <path>]
+
+split-phase aliases accepted for <phase_key>:
+  BUILD_IN_PROGRESS | build -> phase4-build
+  QA_IN_PROGRESS    | qa    -> phase5-qa
 USAGE
+}
+
+record_split_metrics_cmd() {
+  local rework_count="$1"
+  local fallback_count="$2"
+  local qa_coverage="$3"
+  local state_file="$4"
+
+  python3 - "$state_file" "$rework_count" "$fallback_count" "$qa_coverage" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(sys.argv[1])
+rework = int(sys.argv[2])
+fallback = int(sys.argv[3])
+coverage = float(sys.argv[4])
+
+if state_path.exists():
+  try:
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+  except Exception:
+    data = {}
+else:
+  state_path.parent.mkdir(parents=True, exist_ok=True)
+  data = {}
+
+metrics = data.setdefault("split_metrics", {})
+metrics["rework_count"] = rework
+metrics["fallback_count"] = fallback
+metrics["qa_coverage"] = coverage
+
+tmp = state_path.with_name(state_path.name + f".tmp.{os.getpid()}")
+tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+os.replace(tmp, state_path)
+PY
+}
+
+normalize_phase_key() {
+  local raw="$1"
+  case "$raw" in
+    BUILD_IN_PROGRESS|build)
+      echo "phase4-build"
+      ;;
+    QA_IN_PROGRESS|qa)
+      echo "phase5-qa"
+      ;;
+    *)
+      echo "$raw"
+      ;;
+  esac
 }
 
 now_iso_utc() {
@@ -23,6 +80,7 @@ PY
 
 start_phase_cmd() {
   local phase_key="$1"
+  phase_key="$(normalize_phase_key "$phase_key")"
   local budget_seconds="$2"
   local state_file="$3"
 
@@ -110,6 +168,7 @@ PY
 
 end_phase_cmd() {
   local phase_key="$1"
+  phase_key="$(normalize_phase_key "$phase_key")"
   local state_file="$2"
   local journal_file="$3"
   local run_id="$4"
@@ -197,6 +256,7 @@ main() {
   shift
 
   local budget_seconds=""
+  local qa_coverage=""
   local state_file="$STATE_FILE_DEFAULT"
   local journal_file="$JOURNAL_FILE_DEFAULT"
   local run_id=""
@@ -204,6 +264,10 @@ main() {
   if [[ "$command" == "start_phase" ]]; then
     budget_seconds="${1:-}"
     shift
+  elif [[ "$command" == "record_split_metrics" ]]; then
+    budget_seconds="${1:-}"
+    qa_coverage="${2:-}"
+    shift 2
   fi
 
   while [[ $# -gt 0 ]]; do
@@ -264,6 +328,15 @@ PY
 )"
       fi
       end_phase_cmd "$phase_key" "$state_file" "$journal_file" "$run_id"
+      ;;
+    record_split_metrics)
+      if [[ -z "$phase_key" || -z "$budget_seconds" || -z "$qa_coverage" ]]; then
+        usage
+        exit 64
+      fi
+      local rework_count="$phase_key"
+      local fallback_count="$budget_seconds"
+      record_split_metrics_cmd "$rework_count" "$fallback_count" "$qa_coverage" "$state_file"
       ;;
     *)
       usage

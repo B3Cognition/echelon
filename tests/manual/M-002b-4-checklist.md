@@ -94,3 +94,13 @@
 | Decision | PASS / FAIL |
 | Notes | |
 | One-run-interval interpretation acknowledged | YES / NO |
+
+---
+
+## BUILD/QA Split Pilot Readiness (v0.4.0)
+
+- [x] BUILD handoff contract validation passed
+- [x] QA batch deterministic checks passed
+- [x] Rework routing and iteration cap checks passed
+- [x] Split metrics captured (rework count, fallback count, qa_coverage)
+- [x] Final verification summary persisted for feature 002

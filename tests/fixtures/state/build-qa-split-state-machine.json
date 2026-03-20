@@ -1,0 +1,77 @@
+{
+    "feature_id": "002-build-qa-phase-split",
+    "transitions": [
+        {
+            "from": "TODO",
+            "to": "BUILD_IN_PROGRESS",
+            "valid": true
+        },
+        {
+            "from": "BUILD_IN_PROGRESS",
+            "to": "BUILD_COMPLETE",
+            "valid": true
+        },
+        {
+            "from": "BUILD_COMPLETE",
+            "to": "QA_IN_PROGRESS",
+            "valid": true
+        },
+        {
+            "from": "QA_IN_PROGRESS",
+            "to": "QA_COMPLETE",
+            "valid": true
+        },
+        {
+            "from": "QA_IN_PROGRESS",
+            "to": "QA_FAILED",
+            "valid": true
+        },
+        {
+            "from": "QA_FAILED",
+            "to": "REWORK_PLANNED",
+            "valid": true
+        },
+        {
+            "from": "REWORK_PLANNED",
+            "to": "BUILD_IN_PROGRESS",
+            "valid": true
+        },
+        {
+            "from": "QA_IN_PROGRESS",
+            "to": "CHANGE_PENDING",
+            "valid": true
+        },
+        {
+            "from": "CHANGE_PENDING",
+            "to": "BUILD_IN_PROGRESS",
+            "valid": true
+        },
+        {
+            "from": "CHANGE_PENDING",
+            "to": "QA_IN_PROGRESS",
+            "valid": true
+        },
+        {
+            "from": "QA_FAILED",
+            "to": "ESCALATED",
+            "valid": true
+        }
+    ],
+    "invalid_transitions": [
+        {
+            "from": "TODO",
+            "to": "QA_IN_PROGRESS",
+            "valid": false
+        },
+        {
+            "from": "BUILD_IN_PROGRESS",
+            "to": "QA_COMPLETE",
+            "valid": false
+        },
+        {
+            "from": "QA_COMPLETE",
+            "to": "BUILD_IN_PROGRESS",
+            "valid": false
+        }
+    ]
+}

@@ -12,6 +12,24 @@ Based on: V-Model Verification & Validation, Requirements Traceability (IEEE 830
 
 **Start from every single requirement in spec.md. For each one, find the code that implements it. If you can't find it, it's a gap. No exceptions. No "it's probably covered somewhere."**
 
+## Deterministic Coverage Tuple (v0.4.0)
+
+Compute:
+
+- `R = requirements_with_passing_evidence / requirements_total`
+- `L = line_coverage_ratio`
+- `B = branch_coverage_ratio`
+
+Then derive:
+
+- `qa_coverage = 0.60*R + 0.25*L + 0.15*B`
+- `rounded_qa_coverage = round(qa_coverage, 2)`
+
+Hard-fail semantics:
+
+1. If any requirement is `PARTIAL` or `MISSING`, verification `pass=false` regardless of `L`/`B`.
+2. `pass=true` only when `rounded_qa_coverage == 1.00` and there are zero open gaps.
+
 **Verification must also prove the build was real: tasks marked done without implementation, test, or gate evidence are FAIL conditions, not administrative noise.**
 
 ---
