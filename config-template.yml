@@ -312,6 +312,45 @@ internalization:
   estimated_time_minutes: 5
 
 # =============================================================================
+# EVOLUTION (AUDITOR + ADAPTIVE)
+# =============================================================================
+
+evolution:
+  # Master switch for the evolution learning loop
+  # [disable: false] Disables evolution signals and recommendations
+  enabled: true
+
+  signals:
+    # Trigger evolution signal when accuracy drops this much from best-known value
+    # [range: 0.05-0.2] Lower = more sensitive, higher = fewer false alarms
+    regression_delta: 0.1
+
+    # Minimum runs before any evolution signal can fire
+    # [range: 3-10] Prevents premature signals from limited run history
+    min_sample_size: 5
+
+    # Consecutive declining runs before declining_trend signal fires
+    # [range: 2-5]
+    declining_trend_runs: 3
+
+    # Same pitfall triggered N times before recurring_pitfall signal fires
+    # [range: 2-5]
+    recurring_pitfall_count: 3
+
+    # Same agent rejected N times for same reason before recurring_rejection signal fires
+    # [range: 2-5]
+    recurring_rejection_count: 3
+
+  recommendations:
+    # Minimum correlated data points for ADAPTIVE to produce a recommendation
+    # [range: 2-5] 3 = HIGH confidence (recommended), 2 = MEDIUM, 1 = LOW (noisy)
+    min_confidence: 3
+
+    # Require downstream outcome evidence (doubt->rework chain) for recommendations
+    # [disable: false] Allows recommendations based on accuracy alone (less reliable)
+    require_downstream_evidence: true
+
+# =============================================================================
 # CODE QUALITY (CODE-REVIEWER)
 # =============================================================================
 
