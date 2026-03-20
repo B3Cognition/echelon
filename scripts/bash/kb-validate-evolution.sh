@@ -92,7 +92,8 @@ emit_warn() {
 check_referential_integrity() {
   echo "=== Check 1: Cross-file referential integrity ==="
 
-  python3 - "$AGENTS_YAML" "$PROMPT_VERSIONS" "$INTERNALIZATION_LOG" "$EVOLUTION_SIGNALS" <<'PY'
+  local _check1_out
+  _check1_out=$(python3 - "$AGENTS_YAML" "$PROMPT_VERSIONS" "$INTERNALIZATION_LOG" "$EVOLUTION_SIGNALS" <<'PY'
 import sys, yaml
 from pathlib import Path
 
@@ -149,10 +150,13 @@ for i, sig in enumerate(esig_signals):
 
 if errors == 0:
     print("  PASS — all references valid")
-sys.exit(errors)
+print(f"__ERRORS__:{errors}")
 PY
+)
 
-  local rc=$?
+  local rc
+  rc=$(echo "$_check1_out" | grep '__ERRORS__:' | cut -d: -f2)
+  echo "$_check1_out" | grep -v '__ERRORS__:'
   ERRORS=$((ERRORS + rc))
 }
 
@@ -162,7 +166,8 @@ PY
 check_score_consistency() {
   echo "=== Check 2: Score/result consistency ==="
 
-  python3 - "$CONFIG_FILE" "$INTERNALIZATION_LOG" <<'PY'
+  local _check2_out
+  _check2_out=$(python3 - "$CONFIG_FILE" "$INTERNALIZATION_LOG" <<'PY'
 import sys, yaml
 from pathlib import Path
 
@@ -206,10 +211,13 @@ for i, entry in enumerate(entries):
 
 if errors == 0:
     print("  PASS — all scores consistent with results")
-sys.exit(errors)
+print(f"__ERRORS__:{errors}")
 PY
+)
 
-  local rc=$?
+  local rc
+  rc=$(echo "$_check2_out" | grep '__ERRORS__:' | cut -d: -f2)
+  echo "$_check2_out" | grep -v '__ERRORS__:'
   ERRORS=$((ERRORS + rc))
 }
 
