@@ -4,7 +4,6 @@ Writes agent state changes to files that RADAR watches and streams to the UI.
 """
 
 import json
-import os
 import secrets
 import tempfile
 from datetime import datetime, timezone
