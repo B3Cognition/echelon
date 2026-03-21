@@ -116,6 +116,16 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 
 ---
 
+### Helper: Stop RADAR
+
+Use this command at any exit point (kill verdict, error, completion):
+
+```bash
+[ -f .specify/squad/radar.pid ] && kill $(cat .specify/squad/radar.pid) 2>/dev/null; rm -f .specify/squad/radar.pid
+```
+
+---
+
 ## 0. MANAGER Reflection Protocol (Plan Mode)
 
 Before EVERY major phase transition, MANAGER enters a structured reflection:
@@ -1147,6 +1157,16 @@ Update `state.json`:
   "phase": "done",
   "updated_at": "{ISO-8601}"
 }
+```
+
+### 12.8.1 Stop RADAR
+
+```bash
+# Stop RADAR if running
+if [ -f .specify/squad/radar.pid ]; then
+  kill $(cat .specify/squad/radar.pid) 2>/dev/null || true
+  rm -f .specify/squad/radar.pid
+fi
 ```
 
 ### 12.8 Print Final Summary
