@@ -83,6 +83,30 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 
 ---
 
+## Pre-Dispatch Enforcement Protocol — MANDATORY
+
+Before EVERY `Use the Agent tool` dispatch, COMMANDER MUST run the pre-dispatch gate:
+
+```bash
+scripts/bash/pre-dispatch-gate.sh --agent "{AGENT_CODENAME}" --task "{task_or_phase}" --state ".specify/squad/state.json"
+```
+
+- If exit code 0 (ALLOW): proceed with dispatch
+- If exit code non-zero (DENY): read the denial reason from stdout, log to reasoning-journal.json, and either skip the dispatch or resolve the violation before retrying
+
+After EVERY agent dispatch completes, COMMANDER SHOULD run the post-execution audit:
+
+```bash
+scripts/bash/post-execution-audit.sh --agent "{AGENT_CODENAME}" --output-dir "specs/{NNN}-{feature}/"
+```
+
+- If exit code 0 (PASS): proceed normally
+- If exit code non-zero (FAIL): log the violation, route to fix
+
+This protocol is fail-open: if the gate script itself errors, dispatch proceeds with a warning logged.
+
+---
+
 ## Constitution Authority — IMMUTABLE
 
 The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the **highest authority** in the squad. It outranks all agents, all decisions, all evidence.
@@ -215,6 +239,7 @@ The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its o
 The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outputs go to a staging area:
 
 ```
+rm -rf .specify/squad/staging
 mkdir -p .specify/squad/staging
 mkdir -p .specify/squad
 ```
@@ -243,7 +268,8 @@ Create `.specify/squad/state.json`:
   "issues_log": [],
   "blocked_reason": null,
   "escalation_question": null,
-  "dispatch_counters": {}
+  "dispatch_counters": {},
+  "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 }
 }
 ```
 
@@ -446,6 +472,33 @@ Use the Agent tool to dispatch a subagent with:
 ### Post-Dispatch
 
 Read `contradictions-and-gaps.md`. If CRITICAL contradictions found, log them — WHY1 will challenge these specifically.
+
+**Transition:** Update state.json phase to "tracker". Proceed to TRACKER.
+
+---
+
+## 2c. TRACKER — Intent Model Capture
+
+> **Note:** TRACKER captures the user's stated intent before requirements formalization. This produces `user-intent.md` which GATEKEEPER needs to honor NEVER rule #3 ("NEVER override user intent").
+
+### Context Pack Assembly
+
+Read and include in the subagent prompt:
+
+- User input (the original request)
+- ALL DISCOVER outputs (from `.specify/squad/staging/`)
+- `reasoning-journal.json`
+
+### Dispatch
+
+Use the Agent tool to dispatch a subagent with:
+
+- **prompt:** Read the file `agents/control/tracker.md` for your complete instructions. You are the TRACKER agent. Read the user's original request and SCOUT's discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **description:** "TRACKER: capture user intent model before requirements formalization"
+
+### Expected Outputs
+
+- `user-intent.md` (in staging, later moved to spec directory)
 
 **Transition:** Update state.json phase to "why1". Proceed to WHY1.
 
@@ -735,6 +788,24 @@ Before this transition, COMMANDER updates timing state via `scripts/bash/phase-t
 1. Keep `phase2-decide` open (this is still an intra-phase transition: `strategic_overview` -> `specialists`).
 2. If `phase2-decide` was never started due to restart recovery, initialize with `start_phase phase2-decide 1800` before continuing.
 3. Persist `state.json` after timing reconciliation and before dispatching specialists.
+
+**Transition:** Update state.json phase to "tracker_alignment". Proceed to TRACKER alignment check.
+
+---
+
+### 6c. TRACKER — Intent Alignment Check
+
+After GATEKEEPER passes, dispatch TRACKER to verify intent alignment:
+
+Use the Agent tool:
+
+- **prompt:** Read the file `agents/control/tracker.md`. You are the TRACKER in **alignment-check mode**. Read `user-intent.md` and GATEKEEPER's outputs (`feasibility.md`, `mvp-scope.md`). Check whether GATEKEEPER's scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **description:** "TRACKER: verify GATEKEEPER scope aligns with user intent"
+
+If TRACKER reports MISALIGNED:
+- MANAGER prints the divergence to terminal
+- In `guided` or `semi` mode: pause for human confirmation
+- In `banzai` mode: log the divergence, proceed with GATEKEEPER's scope
 
 **Transition:** Update state.json phase to "specialists". Proceed to specialist summoning.
 

@@ -1,0 +1,173 @@
+digraph EnforcementAndLearning {
+  rankdir=TB;
+  dpi=300;
+  fontname="Helvetica Neue";
+  fontsize=10;
+  node [fontname="Helvetica Neue", fontsize=9, style="filled,rounded", shape=box, margin="0.12,0.06"];
+  edge [fontname="Helvetica Neue", fontsize=8];
+  bgcolor="#FAFAFA";
+  pad=0.5;
+  nodesep=0.4;
+  ranksep=0.55;
+  label=<<B><FONT POINT-SIZE="16">Enforcement &amp; Learning Loop</FONT></B><BR/><FONT POINT-SIZE="10" COLOR="#666666">Rule enforcement tiers + cross-run calibration + evolution signals</FONT>>;
+  labelloc=t;
+
+  // ═══ RULE ENFORCEMENT TIERS ═══
+  subgraph cluster_enforcement {
+    label=<<B>RULE ENFORCEMENT</B><BR/><FONT POINT-SIZE="8">47 NEVER rules across 35 agents</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FFEBEE";
+    color="#B71C1C";
+    penwidth=2;
+
+    subgraph cluster_tier0 {
+      label=<<B>Tier 0: Prompt-Based (existing)</B>>;
+      style="filled,rounded";
+      fillcolor="#FFCDD2";
+      color="#E57373";
+
+      AGENTS_YAML [label=<<B>agents.yaml</B><BR/><FONT POINT-SIZE="7">47 NEVER rules<BR/>(canonical source)</FONT>>, fillcolor="#FFCDD2", color="#E57373", shape=cylinder];
+      AGENT_MD [label=<<B>agent .md files</B><BR/><FONT POINT-SIZE="7">## NEVER Rules section<BR/>(13 files updated v0.3.0)</FONT>>, fillcolor="#FFCDD2", color="#E57373", shape=note];
+      LLM_PROMPT [label=<<B>LLM reads prompt</B><BR/><FONT POINT-SIZE="7">instruction-following<BR/>NO enforcement guarantee</FONT>>, fillcolor="#FFCDD2", color="#E57373"];
+    }
+
+    subgraph cluster_tier1 {
+      label=<<B>Tier 1: Bash Gate (NEW v0.3.0)</B>>;
+      style="filled,rounded";
+      fillcolor="#FFCDD2";
+      color="#C62828";
+      penwidth=2;
+
+      PRE_GATE [label=<<B>pre-dispatch-gate.sh</B><BR/><FONT POINT-SIZE="7">18/47 rules enforceable</FONT>>, fillcolor="#EF9A9A", color="#C62828", shape=octagon];
+      POST_AUDIT [label=<<B>post-execution-audit.sh</B><BR/><FONT POINT-SIZE="7">Output constraint checks</FONT>>, fillcolor="#EF9A9A", color="#C62828", shape=octagon];
+
+      STRUCTURAL [label=<<B>Structural Rules (~8)</B><BR/><FONT POINT-SIZE="7">phase sequence check<BR/>retry count limits</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+      TEMPORAL [label=<<B>Temporal Rules (~2)</B><BR/><FONT POINT-SIZE="7">60s anti-loop window<BR/>wall-clock based</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+      OUTPUT [label=<<B>Output Rules (~8)</B><BR/><FONT POINT-SIZE="7">test file existence<BR/>evidence sections<BR/>root cause ordering</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+    }
+
+    subgraph cluster_tier2 {
+      label=<<B>Tier 2: XState Actor (post-MVP)</B>>;
+      style="filled,rounded,dashed";
+      fillcolor="#FFEBEE";
+      color="#E57373";
+
+      XSTATE [label=<<B>enforce-rule.js</B><BR/><FONT POINT-SIZE="7">XState v5 state machine<BR/>35/47 rules enforceable<BR/>validated in SP-002 spike</FONT>>, fillcolor="#FFEBEE", color="#E57373", shape=octagon, style="filled,rounded,dashed"];
+      BELIEF_HASH [label=<<B>Belief-Change Escape</B><BR/><FONT POINT-SIZE="7">DJB2 hash detection<BR/>prevents false positives</FONT>>, fillcolor="#FFEBEE", color="#E57373", style="filled,rounded,dashed"];
+      TEMP_STORE [label=<<B>temporal-store.json</B><BR/><FONT POINT-SIZE="7">Datahike-style fact log<BR/>query/asOf/since</FONT>>, fillcolor="#FFEBEE", color="#E57373", shape=cylinder, style="filled,rounded,dashed"];
+    }
+
+    BEHAVIORAL [label=<<B>Behavioral Rules (~12)</B><BR/><FONT POINT-SIZE="7">Prompt-only forever<BR/>Cannot be programmatically<BR/>enforced (e.g., "don't be verbose")</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=note];
+  }
+
+  // ═══ KNOWLEDGE BASE ═══
+  subgraph cluster_kb {
+    label=<<B>KNOWLEDGE BASE</B><BR/><FONT POINT-SIZE="8">Persistent cross-run state</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E8F5E9";
+    color="#2E7D32";
+    penwidth=2;
+
+    KB_PATTERNS [label=<<B>patterns.yaml</B><BR/><FONT POINT-SIZE="7">Reusable patterns<BR/>PAT-001..008</FONT>>, fillcolor="#C8E6C9", color="#2E7D32", shape=cylinder];
+    KB_PITFALLS [label=<<B>pitfalls.yaml</B><BR/><FONT POINT-SIZE="7">Common mistakes<BR/>PIT-001..003</FONT>>, fillcolor="#C8E6C9", color="#2E7D32", shape=cylinder];
+    KB_CALIBRATION [label=<<B>calibration-profile.yaml</B><BR/><FONT POINT-SIZE="7">8 domains, accuracy 0.25-0.52<BR/>correction factors 0.65-5.0<BR/>max cap: 6.0 (was 3.0)</FONT>>, fillcolor="#C8E6C9", color="#2E7D32", shape=cylinder];
+    KB_ESTIMATES [label=<<B>estimates-log.yaml</B><BR/><FONT POINT-SIZE="7">Historical estimates<BR/>actual vs predicted</FONT>>, fillcolor="#C8E6C9", color="#2E7D32", shape=cylinder];
+    KB_SCORES [label=<<B>agent-scores.yaml</B><BR/><FONT POINT-SIZE="7">38 agents scored<BR/>3 badges, 120 total pts<BR/>codename keys (v0.3.0)</FONT>>, fillcolor="#C8E6C9", color="#2E7D32", shape=cylinder];
+    KB_PROMPTS [label=<<B>prompt-versions.yaml</B><BR/><FONT POINT-SIZE="7">35 agents at v1.0<BR/>prompt change tracking</FONT>>, fillcolor="#C8E6C9", color="#2E7D32", shape=cylinder];
+  }
+
+  // ═══ KB WRITE PROTOCOL ═══
+  subgraph cluster_kb_protocol {
+    label=<<B>KB WRITE PROTOCOL</B><BR/><FONT POINT-SIZE="8">10-step atomic write with locking</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E3F2FD";
+    color="#1565C0";
+    penwidth=2;
+
+    KB_LOCK [label=<<B>kb-lock.sh</B><BR/><FONT POINT-SIZE="7">acquire / release<BR/>stale lock recovery</FONT>>, fillcolor="#BBDEFB", color="#1565C0", shape=octagon];
+    KB_WRITE [label=<<B>kb-write.sh</B><BR/><FONT POINT-SIZE="7">checksum + append-only<BR/>validate before write</FONT>>, fillcolor="#BBDEFB", color="#1565C0", shape=octagon];
+    KB_PENDING [label=<<B>kb-pending-write.sh</B><BR/><FONT POINT-SIZE="7">queue if locked<BR/>.pending/ directory</FONT>>, fillcolor="#BBDEFB", color="#1565C0", shape=octagon];
+    KB_MERGE [label=<<B>kb-pending-merge.sh</B><BR/><FONT POINT-SIZE="7">merge pending on unlock<BR/>checksum verification</FONT>>, fillcolor="#BBDEFB", color="#1565C0", shape=octagon];
+    KB_RECOVER [label=<<B>kb-recover.sh</B><BR/><FONT POINT-SIZE="7">backup restore<BR/>corruption detection</FONT>>, fillcolor="#BBDEFB", color="#1565C0", shape=octagon];
+  }
+
+  // ═══ LEARNING AGENTS ═══
+  subgraph cluster_learning {
+    label=<<B>LEARNING LOOP</B><BR/><FONT POINT-SIZE="8">Post-run analysis → KB update → next run improvement</FONT>>;
+    style="filled,rounded";
+    fillcolor="#ECEFF1";
+    color="#37474F";
+    penwidth=2;
+
+    MIRROR [label=<<B>MIRROR (REFLECT)</B><BR/><FONT POINT-SIZE="7">What worked? What didn't?<BR/>Extract patterns &amp; pitfalls</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    ADAPTIVE [label=<<B>ADAPTIVE (EVOLVE)</B><BR/><FONT POINT-SIZE="7">Cross-run diff<BR/>Stagnation detection<BR/>Prompt recommendations</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    AUDITOR [label=<<B>AUDITOR (CALIBRATE)</B><BR/><FONT POINT-SIZE="7">Accuracy tracking<BR/>Correction factor updates<BR/>Mode 3: Evolution Loop</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    REALIST [label=<<B>REALIST (GROUND)</B><BR/><FONT POINT-SIZE="7">Cost analysis<BR/>Benchmark comparison<BR/>Reference class forecasting</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    SCOREKEEPER [label=<<B>SCOREKEEPER</B><BR/><FONT POINT-SIZE="7">Agent scoring<BR/>Badge awards<BR/>Self-healing triggers</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+  }
+
+  // ═══ EVOLUTION SIGNALS (v0.4.0) ═══
+  subgraph cluster_evolution {
+    label=<<B>EVOLUTION SIGNALS (v0.4.0)</B><BR/><FONT POINT-SIZE="8">Internalization loop — signals → recommendations → prompt changes</FONT>>;
+    style="filled,rounded,dashed";
+    fillcolor="#FFF3E0";
+    color="#E65100";
+    penwidth=2;
+
+    EVO_SIGNALS [label=<<B>evolution-signals.yaml</B><BR/><FONT POINT-SIZE="7">Currently empty (0 signals)<BR/>Triggers: regression, declining<BR/>trend, recurring pitfall</FONT>>, fillcolor="#FFE0B2", color="#E65100", shape=cylinder, style="filled,rounded,dashed"];
+    INT_LOG [label=<<B>internalization-log.yaml</B><BR/><FONT POINT-SIZE="7">Currently empty<BR/>doubt → rework chains</FONT>>, fillcolor="#FFE0B2", color="#E65100", shape=cylinder, style="filled,rounded,dashed"];
+    PROMPT_REC [label=<<B>Prompt Recommendations</B><BR/><FONT POINT-SIZE="7">ADAPTIVE Step 6<BR/>evidence-backed changes<BR/>min confidence: 3 data points</FONT>>, fillcolor="#FFE0B2", color="#E65100", style="filled,rounded,dashed"];
+  }
+
+  // ═══ RUN CYCLE ═══
+  RUN_N [label=<<B>Run N</B>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+  RUN_N1 [label=<<B>Run N+1</B><BR/><FONT POINT-SIZE="7">monotonic improvement</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+
+  // ═══ EDGES ═══
+
+  // Tier 0 flow
+  AGENTS_YAML -> AGENT_MD [label="sync manually", color="#E57373"];
+  AGENT_MD -> LLM_PROMPT [label="prompt includes rules", color="#E57373"];
+
+  // Tier 1 flow
+  PRE_GATE -> STRUCTURAL [color="#C62828"];
+  PRE_GATE -> TEMPORAL [color="#C62828"];
+  POST_AUDIT -> OUTPUT [color="#C62828"];
+
+  // Tier 2 flow
+  XSTATE -> BELIEF_HASH [color="#E57373", style=dashed];
+  XSTATE -> TEMP_STORE [color="#E57373", style=dashed];
+
+  // Learning → KB
+  MIRROR -> KB_PATTERNS [label="new patterns", color="#37474F"];
+  MIRROR -> KB_PITFALLS [label="new pitfalls", color="#37474F"];
+  AUDITOR -> KB_CALIBRATION [label="accuracy update", color="#37474F"];
+  AUDITOR -> KB_ESTIMATES [label="estimate comparison", color="#37474F"];
+  SCOREKEEPER -> KB_SCORES [label="run scores", color="#1565C0"];
+  ADAPTIVE -> KB_PROMPTS [label="version tracking", color="#37474F"];
+
+  // KB write protocol
+  KB_LOCK -> KB_WRITE [color="#1565C0"];
+  KB_WRITE -> KB_PENDING [label="if locked", color="#1565C0", style=dashed];
+  KB_PENDING -> KB_MERGE [label="on unlock", color="#1565C0", style=dashed];
+  KB_WRITE -> KB_RECOVER [label="on corruption", color="#FF5252", style=dashed];
+
+  // Evolution signals
+  AUDITOR -> EVO_SIGNALS [label="Mode 3:\nevolution loop", color="#E65100", style=dashed];
+  AUDITOR -> INT_LOG [label="downstream\nbackfill", color="#E65100", style=dashed];
+  ADAPTIVE -> PROMPT_REC [label="Step 6:\nrecommendations", color="#E65100", style=dashed];
+  EVO_SIGNALS -> ADAPTIVE [label="signal triggers", color="#E65100", style=dashed];
+
+  // Cross-run cycle
+  RUN_N -> MIRROR [color="#37474F", penwidth=2];
+  MIRROR -> ADAPTIVE [color="#37474F", penwidth=1.5];
+  ADAPTIVE -> AUDITOR [color="#37474F", penwidth=1.5];
+  AUDITOR -> REALIST [color="#37474F", penwidth=1.5];
+  REALIST -> SCOREKEEPER [color="#37474F", penwidth=1.5];
+  KB_CALIBRATION -> RUN_N1 [label="improved\nestimates", color="#2E7D32", penwidth=2];
+  KB_PATTERNS -> RUN_N1 [label="reusable\ninsights", color="#2E7D32", penwidth=1.5];
+  KB_SCORES -> RUN_N1 [label="agent\nranking", color="#2E7D32", penwidth=1.5];
+
+  // Coverage labels
+  TIER_LABEL [label=<<B>Rule Coverage</B><BR/><FONT POINT-SIZE="8">Tier 0: 47/47 (prompt, no guarantee)<BR/>Tier 1: 18/47 (bash, deterministic) ✓<BR/>Tier 2: 35/47 (XState, planned)<BR/>Behavioral: 12/47 (prompt-only forever)</FONT>>, shape=note, fillcolor="#FFFFFF", color="#999999"];
+}

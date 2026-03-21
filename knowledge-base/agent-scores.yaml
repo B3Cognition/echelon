@@ -3,11 +3,18 @@ schema_version: 1
 # Agent performance tracking — updated by SCOREKEEPER after each run
 # Lifetime scores accumulate across projects
 # Badges persist once earned
+# Keys use agent CODENAMES (see agents.yaml)
 
 agents:
-  # Phase A: Understanding
-  MANAGER: { lifetime_score: 0, badges: [], history: [] }
-  DISCOVER:
+  # Layer: Control
+  COMMANDER: { lifetime_score: 0, badges: [], history: [] }
+  SCOREKEEPER: { lifetime_score: 0, badges: [], history: [] }
+  TRACKER: { lifetime_score: 0, badges: [], history: [] }
+  CHECKPOINT: { lifetime_score: 0, badges: [], history: [] }
+  STRATEGIST: { lifetime_score: 0, badges: [], history: [] }
+
+  # Layer: Exploration
+  SCOUT:
     lifetime_score: 12
     current_run_score: 12
     badges:
@@ -21,19 +28,8 @@ agents:
         breakdown:
           SCOUT: 4
           SYNTHESIZER: 8
-  WHAT:
-    lifetime_score: 8
-    current_run_score: 8
-    badges: []
-    history:
-      - run_id: "squad-1710901200"
-        score: 8
-        badges_earned: []
-        peer_appreciation:
-          - from: "WHY2"
-            type: "caught_my_gap"
-            points: 2
-  WHY:
+  SYNTHESIZER: { lifetime_score: 0, badges: [], history: [] }
+  SAGE:
     lifetime_score: 51
     current_run_score: 51
     badges:
@@ -54,7 +50,22 @@ agents:
           WHY2_revalidation: 6
           WHY3: 8
           peer: 3
-  ASSESS:
+  CARTOGRAPHER:
+    lifetime_score: 8
+    current_run_score: 8
+    badges: []
+    history:
+      - run_id: "squad-1710901200"
+        score: 8
+        badges_earned: []
+        peer_appreciation:
+          - from: "WHY2"
+            type: "caught_my_gap"
+            points: 2
+  MODELER: { lifetime_score: 0, badges: [], history: [] }
+
+  # Layer: Feasibility
+  GATEKEEPER:
     lifetime_score: 12
     current_run_score: 12
     badges: []
@@ -66,7 +77,10 @@ agents:
         breakdown:
           ASSESS: 6
           ASSESS2: 6
-  HOW:
+  VALIDATOR: { lifetime_score: 0, badges: [], history: [] }
+
+  # Layer: Solution
+  ARCHITECT:
     lifetime_score: 8
     current_run_score: 8
     badges: []
@@ -75,7 +89,7 @@ agents:
         score: 8
         badges_earned: []
         peer_appreciation: []
-  PLAN:
+  ORCHESTRATOR:
     lifetime_score: 21
     current_run_score: 21
     badges:
@@ -96,11 +110,7 @@ agents:
           PLAN: 8
           PLAN2: 8
           peer: 5
-
-  # Phase A: Specialists
-  SCIENTIST: { lifetime_score: 0, badges: [], history: [] }
-  SECURITY: { lifetime_score: 0, badges: [], history: [] }
-  TEST_ARCHITECT:
+  SENTINEL:
     lifetime_score: 8
     current_run_score: 8
     badges: []
@@ -109,24 +119,28 @@ agents:
         score: 8
         badges_earned: []
         peer_appreciation: []
-  DOMAIN_EXPERT: { lifetime_score: 0, badges: [], history: [] }
-  UX_A11Y: { lifetime_score: 0, badges: [], history: [] }
-  PERFORMANCE: { lifetime_score: 0, badges: [], history: [] }
-  INNOVATE: { lifetime_score: 0, badges: [], history: [] }
 
-  # Phase B: Building
+  # Layer: Specialists
+  INVESTIGATOR: { lifetime_score: 0, badges: [], history: [] }
+  GUARDIAN: { lifetime_score: 0, badges: [], history: [] }
+  ORACLE: { lifetime_score: 0, badges: [], history: [] }
+  ADVOCATE: { lifetime_score: 0, badges: [], history: [] }
+  BENCHMARK: { lifetime_score: 0, badges: [], history: [] }
+  MAVERICK: { lifetime_score: 0, badges: [], history: [] }
+
+  # Layer: Build
   IMPLEMENTER: { lifetime_score: 0, badges: [], history: [] }
   SPEC_GUARD: { lifetime_score: 0, badges: [], history: [] }
   CODE_REVIEWER: { lifetime_score: 0, badges: [], history: [] }
   TEST_GUARDIAN: { lifetime_score: 0, badges: [], history: [] }
-  ENGINEERING_MANAGER: { lifetime_score: 0, badges: [], history: [] }
+  DEBUGGER: { lifetime_score: 0, badges: [], history: [] }
   INTEGRATOR: { lifetime_score: 0, badges: [], history: [] }
   PROGRESS_TRACKER: { lifetime_score: 0, badges: [], history: [] }
   CHANGE_CONTROLLER: { lifetime_score: 0, badges: [], history: [] }
   VERIFICATION: { lifetime_score: 0, badges: [], history: [] }
 
-  # Phase C: Learning
-  REFLECT:
+  # Layer: Learning
+  MIRROR:
     lifetime_score: 6
     current_run_score: 6
     badges: []
@@ -135,8 +149,8 @@ agents:
         score: 6
         badges_earned: []
         peer_appreciation: []
-  EVOLVE: { lifetime_score: 0, badges: [], history: [] }
-  CALIBRATE:
+  ADAPTIVE: { lifetime_score: 0, badges: [], history: [] }
+  AUDITOR:
     lifetime_score: 6
     current_run_score: 6
     badges: []
@@ -145,7 +159,7 @@ agents:
         score: 6
         badges_earned: []
         peer_appreciation: []
-  GROUND:
+  REALIST:
     lifetime_score: 6
     current_run_score: 6
     badges: []
@@ -154,3 +168,9 @@ agents:
         score: 6
         badges_earned: []
         peer_appreciation: []
+  VETERAN: { lifetime_score: 0, badges: [], history: [] }
+  MONITOR: { lifetime_score: 0, badges: [], history: [] }
+
+  # Layer: Visual (if applicable)
+  VISUAL_VALIDATOR: { lifetime_score: 0, badges: [], history: [] }
+  ENGINEERING_MANAGER: { lifetime_score: 0, badges: [], history: [] }

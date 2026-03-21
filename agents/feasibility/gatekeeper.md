@@ -62,6 +62,7 @@ Evaluate whether the project should proceed to architecture and planning. This i
 - `calibration-profile.yaml` — historical accuracy data (from knowledge base)
 - `estimates-log.yaml` — prior project estimates for reference class forecasting
 - `reasoning-journal.json` — prior agent reasoning
+- `user-intent.md` — user intent alignment model (from TRACKER)
 
 ### Process
 
