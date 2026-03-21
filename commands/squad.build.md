@@ -24,6 +24,8 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
+**RADAR Monitoring:** See squad.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
+
 ## v0.4.0 Operator Flow
 
 1. Run BUILD tasks with dependency-safe wave lanes.
@@ -116,6 +118,31 @@ Update `.specify/squad/state.json`:
   "updated_at": "{ISO-8601}"
 }
 ```
+
+### 1.4.1 Start RADAR (if enabled)
+
+Read `radar.enabled` from squad-config.yml (default: true). If enabled:
+
+```bash
+# Extension path (where RADAR lives when installed)
+RADAR_EXT=".specify/extensions/cognitive-squad"
+
+# Install RADAR dependencies if needed
+pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
+
+# Read port from config (default 7891)
+RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
+
+# Start RADAR in background
+PYTHONPATH=${RADAR_EXT} python -m radar.server --port ${RADAR_PORT:-7891} \
+  >> .specify/squad/radar.log 2>&1 &
+echo $! > .specify/squad/radar.pid
+
+# Initialize emitter (creates/truncates agent-states files)
+PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import init_run; init_run('${run_id}')"
+```
+
+**Note:** If RADAR fails to start, log a warning but continue the build. The squad executes without live monitoring.
 
 ### 1.5 Initialize Build Reports
 
@@ -458,6 +485,15 @@ Verify all report files are populated:
   },
   "updated_at": "{ISO-8601}"
 }
+```
+
+### 8.3.1 Stop RADAR
+
+```bash
+if [ -f .specify/squad/radar.pid ]; then
+  kill $(cat .specify/squad/radar.pid) 2>/dev/null || true
+  rm -f .specify/squad/radar.pid
+fi
 ```
 
 ### 8.4 Run SCOREKEEPER
