@@ -6,7 +6,7 @@ confidence_policy:
   validation_run_count: 20
   low_confidence_threshold: 0.7
   correction_factor_min: 0.5
-  correction_factor_max: 3.0
+  correction_factor_max: 6.0  # Raised from 3.0: loc-estimation domain observed ~5x correction need; 6.0 accommodates observed range with headroom
 domains:
   specification:
     accuracy: 0.50
@@ -73,11 +73,11 @@ domains:
     accuracy: 0.25
     sample_size: 1
     trend: stable
-    correction_factor: 3.0
+    correction_factor: 5.0
     last_updated: 2026-03-21
-    source: squad-1710950401
+    source: squad-1742554800
     status: validation
-    notes: "Actual correction factor observed is ~5.0x (4-7x range), but schema caps at 3.0. LOC claims were consistently cherry-picked from single files; true project LOC averaged 5x the reported value."
+    notes: "Correction factor updated to 5.0 (actual observed range 4-7x). Schema cap raised to 6.0. LOC claims were consistently cherry-picked from single files; true project LOC averaged 5x the reported value."
   heuristic-quality-assessment:
     accuracy: 0.40
     sample_size: 1

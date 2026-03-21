@@ -363,6 +363,15 @@
           ]
         }
       }
+    },
+    "split_metrics": {
+      "type": "object",
+      "description": "BUILD/QA split workflow metrics. Initialized to zero on each new run.",
+      "properties": {
+        "fallback_count": { "type": "integer", "default": 0 },
+        "qa_coverage": { "type": "number", "default": 0.0 },
+        "rework_count": { "type": "integer", "default": 0 }
+      }
     }
   }
 }

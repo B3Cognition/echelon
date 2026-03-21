@@ -8,6 +8,11 @@ Without internalization, agents receive context packs and immediately start prod
 
 With internalization, every agent must **prove they understand** before they're allowed to act.
 
+## NEVER Rules
+
+1. **NEVER accept partial coverage.**
+2. **NEVER trust the incremental matrix — verify from scratch.**
+
 ## Configuration
 
 This agent uses values from `squad-config.yml`:

@@ -1,0 +1,186 @@
+digraph BuildQualityGates {
+  rankdir=TB;
+  dpi=300;
+  fontname="Helvetica Neue";
+  fontsize=10;
+  node [fontname="Helvetica Neue", fontsize=9, style="filled,rounded", shape=box, margin="0.12,0.06"];
+  edge [fontname="Helvetica Neue", fontsize=8];
+  bgcolor="#FAFAFA";
+  pad=0.5;
+  nodesep=0.4;
+  ranksep=0.5;
+  label=<<B><FONT POINT-SIZE="16">squad.build — Quality Gate Pipeline</FONT></B><BR/><FONT POINT-SIZE="10" COLOR="#666666">Per-task quality gates + phase checkpoints + final verification</FONT>>;
+  labelloc=t;
+
+  // ═══ PRE-DISPATCH ENFORCEMENT (NEW v0.3.0) ═══
+  subgraph cluster_enforcement {
+    label=<<B>ENFORCEMENT (NEW v0.3.0)</B>>;
+    style="filled,rounded";
+    fillcolor="#FFEBEE";
+    color="#B71C1C";
+    penwidth=2;
+
+    PRE_GATE [label=<<B>pre-dispatch-gate.sh</B><BR/><FONT POINT-SIZE="7">✓ phase sequence valid?<BR/>✓ retry count &lt; max?<BR/>✓ temporal window clear?</FONT>>, fillcolor="#FFCDD2", color="#B71C1C", shape=octagon];
+
+    GATE_DECISION [label="ALLOW / DENY", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+
+    DENY_LOG [label=<<B>DENY</B><BR/><FONT POINT-SIZE="7">log to journal<BR/>skip or resolve</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+  }
+
+  // ═══ TASK EXECUTION ═══
+  BUILD_INIT [label=<<B>BUILD INIT</B><BR/><FONT POINT-SIZE="7">parse tasks.md<BR/>order by dependencies<BR/>initialize build state</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+
+  CHECK_DEPS [label=<<B>CHECK DEPS</B><BR/><FONT POINT-SIZE="7">all dependencies<BR/>DONE?</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+
+  SKIP [label=<<B>SKIP TASK</B><BR/><FONT POINT-SIZE="7">mark BLOCKED<BR/>(dependency)</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+
+  // ═══ IMPLEMENTER ═══
+  subgraph cluster_implement {
+    label=<<B>IMPLEMENT</B>>;
+    style="filled,rounded";
+    fillcolor="#FCE4EC";
+    color="#C62828";
+    penwidth=2;
+
+    IMPL [label=<<B>IMPLEMENTER</B><BR/><FONT POINT-SIZE="7">write code + tests<BR/>follow ADRs &amp; constitution</FONT>>, fillcolor="#F8BBD0", color="#C62828", penwidth=2];
+
+    IMPL_RESULT [label="Result?", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+
+    NEEDS_CTX [label=<<B>NEEDS CONTEXT</B><BR/><FONT POINT-SIZE="7">COMMANDER provides<BR/>additional info (max 2)</FONT>>, fillcolor="#FFE0B2", color="#E65100"];
+
+    IMPL_BLOCKED [label=<<B>BLOCKED</B><BR/><FONT POINT-SIZE="7">log blocker<BR/>skip to next task</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+  }
+
+  // ═══ GATE 1: SPEC GUARD ═══
+  subgraph cluster_gate1 {
+    label=<<B>GATE 1: SPEC COMPLIANCE</B>>;
+    style="filled,rounded";
+    fillcolor="#E3F2FD";
+    color="#1565C0";
+    penwidth=2;
+
+    SG [label=<<B>SPEC GUARD</B><BR/><FONT POINT-SIZE="7">verify code vs FR-*<BR/>requirements traceability</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+    SG_RESULT [label="PASS / FAIL / WARN", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+  }
+
+  // ═══ GATE 2: CODE REVIEW ═══
+  subgraph cluster_gate2 {
+    label=<<B>GATE 2: CODE QUALITY</B>>;
+    style="filled,rounded";
+    fillcolor="#E8F5E9";
+    color="#2E7D32";
+    penwidth=2;
+
+    CR [label=<<B>CODE REVIEWER</B><BR/><FONT POINT-SIZE="7">quality + ADR compliance<BR/>constitution adherence<BR/>max 30 lines/fn, complexity &lt;10</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+    CR_RESULT [label="APPROVED / CHANGES", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+  }
+
+  // ═══ GATE 3: TEST QUALITY ═══
+  subgraph cluster_gate3 {
+    label=<<B>GATE 3: TEST QUALITY</B>>;
+    style="filled,rounded";
+    fillcolor="#F3E5F5";
+    color="#6A1B9A";
+    penwidth=2;
+
+    TG [label=<<B>TEST GUARDIAN</B><BR/><FONT POINT-SIZE="7">test coverage, edge cases<BR/>update coverage-map.md<BR/>min 2-4 tests per component</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A"];
+    TG_RESULT [label="PASS / FAIL / WARN", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+  }
+
+  // ═══ POST-EXECUTION AUDIT ═══
+  POST_AUDIT [label=<<B>post-execution-audit.sh</B><BR/><FONT POINT-SIZE="7">✓ test files exist?<BR/>✓ evidence sections present?<BR/>✓ root cause before fix?</FONT>>, fillcolor="#FFCDD2", color="#B71C1C", shape=octagon];
+
+  // ═══ PROGRESS ═══
+  PROGRESS [label=<<B>PROGRESS TRACKER</B><BR/><FONT POINT-SIZE="7">CPI / SPI metrics<BR/>drift detection<BR/>effort calibration</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+
+  TASK_DONE [label=<<B>TASK DONE</B><BR/><FONT POINT-SIZE="7">record in state.json<BR/>spec_guard: PASS<BR/>code_review: APPROVED<BR/>test_guardian: PASS</FONT>>, fillcolor="#B9F6CA", color="#00C853"];
+
+  // ═══ PHASE CHECKPOINT ═══
+  subgraph cluster_phase_check {
+    label=<<B>PHASE CHECKPOINT</B><BR/><FONT POINT-SIZE="8">After each task group completes</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E0F7FA";
+    color="#00838F";
+    penwidth=2;
+
+    INTEGRATOR [label=<<B>INTEGRATOR</B><BR/><FONT POINT-SIZE="7">system integration check<BR/>cross-task compatibility<BR/>build + test pass?</FONT>>, fillcolor="#B2EBF2", color="#00838F"];
+
+    MODELER_B [label=<<B>MODELER</B><BR/><FONT POINT-SIZE="7">invariant check<BR/>code vs mental model</FONT>>, fillcolor="#B2EBF2", color="#00838F"];
+
+    INT_RESULT [label="PASS / FAIL", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+  }
+
+  // ═══ FINAL VERIFICATION ═══
+  subgraph cluster_final {
+    label=<<B>FINAL VERIFICATION</B><BR/><FONT POINT-SIZE="8">Complete system validation</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FFF3E0";
+    color="#E65100";
+    penwidth=2;
+
+    FINAL_INT [label=<<B>INTEGRATOR (FINAL)</B><BR/><FONT POINT-SIZE="7">whole-system integration<BR/>all phases combined</FONT>>, fillcolor="#FFE0B2", color="#E65100"];
+
+    ENG_MGR [label=<<B>ENGINEERING MANAGER</B><BR/><FONT POINT-SIZE="7">workflow compliance<BR/>report consistency<BR/>readiness sign-off</FONT>>, fillcolor="#FFE0B2", color="#E65100"];
+
+    VERIFY [label=<<B>VERIFICATION</B><BR/><FONT POINT-SIZE="7">backpropagation check<BR/>every FR-*, AC-*, NFR-*<BR/>gap &amp; excess reports</FONT>>, fillcolor="#FFE0B2", color="#E65100", penwidth=2];
+
+    VERIFY_RESULT [label="PASS / FAIL", fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+
+    REWORK [label=<<B>REWORK</B><BR/><FONT POINT-SIZE="7">create RW-* tasks<BR/>route through gates</FONT>>, fillcolor="#FFCDD2", color="#C62828"];
+  }
+
+  BUILD_DONE [label=<<B>BUILD DONE</B><BR/><FONT POINT-SIZE="7">all reports generated<BR/>scorecard produced<BR/>ready for deployment</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+
+  NEXT_TASK [label="Next task", fillcolor="#FFFFFF", color="#999999", shape=ellipse];
+
+  // ═══ EDGES ═══
+  BUILD_INIT -> CHECK_DEPS [penwidth=2];
+  CHECK_DEPS -> SKIP [label="deps not met", color="#C62828"];
+  CHECK_DEPS -> PRE_GATE [label="deps OK", color="#2E7D32", penwidth=2];
+
+  PRE_GATE -> GATE_DECISION [color="#B71C1C", penwidth=1.5];
+  GATE_DECISION -> DENY_LOG [label="DENY", color="#C62828"];
+  GATE_DECISION -> IMPL [label="ALLOW", color="#2E7D32", penwidth=2];
+
+  IMPL -> IMPL_RESULT [penwidth=2];
+  IMPL_RESULT -> SG [label="DONE", color="#2E7D32", penwidth=2];
+  IMPL_RESULT -> NEEDS_CTX [label="NEEDS\nCONTEXT", color="#E65100"];
+  NEEDS_CTX -> IMPL [label="max 2", color="#E65100", style=dashed];
+  IMPL_RESULT -> IMPL_BLOCKED [label="BLOCKED", color="#C62828"];
+
+  SG -> SG_RESULT [penwidth=1.5];
+  SG_RESULT -> CR [label="PASS", color="#2E7D32", penwidth=2];
+  SG_RESULT -> IMPL [label="FAIL\n(max 2 cycles)", color="#FF5252", style=dashed, constraint=false];
+
+  CR -> CR_RESULT [penwidth=1.5];
+  CR_RESULT -> TG [label="APPROVED", color="#2E7D32", penwidth=2];
+  CR_RESULT -> IMPL [label="CHANGES\n(max 2 cycles)", color="#FF5252", style=dashed, constraint=false];
+
+  TG -> TG_RESULT [penwidth=1.5];
+  TG_RESULT -> POST_AUDIT [label="PASS", color="#2E7D32", penwidth=2];
+  TG_RESULT -> IMPL [label="FAIL\n(max 2 cycles)", color="#FF5252", style=dashed, constraint=false];
+
+  POST_AUDIT -> PROGRESS [color="#37474F", penwidth=1.5];
+  PROGRESS -> TASK_DONE [color="#00C853", penwidth=2];
+
+  TASK_DONE -> NEXT_TASK [color="#999999"];
+  NEXT_TASK -> CHECK_DEPS [label="more tasks", color="#999999", style=dashed];
+  NEXT_TASK -> INTEGRATOR [label="phase complete", color="#00838F", penwidth=2];
+
+  INTEGRATOR -> MODELER_B [color="#00838F"];
+  MODELER_B -> INT_RESULT [color="#00838F"];
+  INT_RESULT -> NEXT_TASK [label="PASS\n(next phase)", color="#2E7D32"];
+  INT_RESULT -> IMPL [label="FAIL\n(fix integration)", color="#FF5252", style=dashed, constraint=false];
+
+  NEXT_TASK -> FINAL_INT [label="all tasks done", color="#E65100", penwidth=2];
+  FINAL_INT -> ENG_MGR [color="#E65100", penwidth=2];
+  ENG_MGR -> VERIFY [color="#E65100", penwidth=2];
+  VERIFY -> VERIFY_RESULT [color="#E65100", penwidth=2];
+  VERIFY_RESULT -> BUILD_DONE [label="PASS\n100% coverage", color="#00C853", penwidth=2];
+  VERIFY_RESULT -> REWORK [label="FAIL\ngaps found", color="#C62828", penwidth=2];
+  REWORK -> IMPL [label="RW-* tasks", color="#C62828", style=dashed];
+
+  SKIP -> NEXT_TASK [color="#999999", style=dashed];
+  IMPL_BLOCKED -> NEXT_TASK [color="#999999", style=dashed];
+  DENY_LOG -> NEXT_TASK [color="#999999", style=dashed];
+}

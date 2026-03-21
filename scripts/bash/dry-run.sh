@@ -286,11 +286,11 @@ done
 header "9. STATE MACHINE FLOW SIMULATION"
 # ═══════════════════════════════════════════
 
-echo "  Simulating: INIT → DISCOVER → WHY1 → WHAT → WHY2 → ASSESS → HOW → PLAN → CONSENSUS → FINALIZE"
+echo "  Simulating: INIT → SCOUT → SAGE1 → CARTOGRAPHER → SAGE2 → GATEKEEPER → ARCHITECT → ORCHESTRATOR → SAGE3 → FINALIZE"
 echo ""
 
-FLOW=(DISCOVER WHY WHAT WHY ASSESS HOW PLAN WHY VERIFICATION)
-FLOW_LABELS=("DISCOVER (brownfield/greenfield)" "WHY1 (assumption-challenge)" "WHAT (requirements)" "WHY2 (spec-validation)" "ASSESS (kill gate)" "HOW (architecture)" "PLAN (tasks)" "WHY3 (consensus)" "VERIFICATION (backpropagation)")
+FLOW=(SCOUT SAGE CARTOGRAPHER SAGE GATEKEEPER ARCHITECT ORCHESTRATOR SAGE VALIDATOR)
+FLOW_LABELS=("SCOUT (brownfield/greenfield)" "SAGE-WHY1 (assumption-challenge)" "CARTOGRAPHER (requirements)" "SAGE-WHY2 (spec-validation)" "GATEKEEPER (kill gate)" "ARCHITECT (architecture)" "ORCHESTRATOR (tasks)" "SAGE-WHY3 (consensus)" "VALIDATOR (backpropagation)")
 
 for i in "${!FLOW[@]}"; do
   agent="${FLOW[$i]}"
@@ -328,7 +328,7 @@ done
 
 echo ""
 echo "  Learning sequence:"
-for agent in REFLECT EVOLVE CALIBRATE GROUND; do
+for agent in MIRROR ADAPTIVE AUDITOR REALIST; do
   file=$(python3 -c "
 import yaml
 data = yaml.safe_load(open('$ROOT/agents.yaml'))
@@ -373,6 +373,30 @@ if grep -q "Role Separation" "$ROOT/commands/squad.run.md" 2>/dev/null; then
   green "MANAGER command has Role Separation section"
 else
   red "MANAGER command missing Role Separation — agents may cross roles"
+fi
+
+# ═══════════════════════════════════════════
+header "11. ENFORCEMENT INFRASTRUCTURE"
+# ═══════════════════════════════════════════
+
+if [ -f "$ROOT/scripts/bash/pre-dispatch-gate.sh" ]; then
+  if [ -x "$ROOT/scripts/bash/pre-dispatch-gate.sh" ]; then
+    green "pre-dispatch-gate.sh exists and is executable"
+  else
+    yellow "pre-dispatch-gate.sh exists but not executable"
+  fi
+else
+  yellow "pre-dispatch-gate.sh not found — enforcement not available"
+fi
+
+if [ -f "$ROOT/scripts/bash/post-execution-audit.sh" ]; then
+  if [ -x "$ROOT/scripts/bash/post-execution-audit.sh" ]; then
+    green "post-execution-audit.sh exists and is executable"
+  else
+    yellow "post-execution-audit.sh exists but not executable"
+  fi
+else
+  yellow "post-execution-audit.sh not found — audit not available"
 fi
 
 # ═══════════════════════════════════════════
