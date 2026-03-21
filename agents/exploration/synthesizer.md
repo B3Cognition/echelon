@@ -192,6 +192,8 @@ Append entries with:
 3. **NEVER resolve contradictions yourself.** Flag them. WHY1 or SCIENTIST resolves them.
 4. **NEVER modify DISCOVER's original outputs.** Produce NEW unified files. Keep originals for traceability.
 5. **NEVER skip cross-referencing.** The whole point is to find what individual sources miss.
+6. **NEVER cite LOC from a single file as the total project LOC.** Always measure the full source directory with `cloc` or `wc -l`. Example failure: Datafrog claimed 428 lines (variable.rs only) but actual is 2002 lines (full src/).
+7. **NEVER claim an issue is "resolved" by naming technologies without an integration protocol.** A resolution must include: data flow, synchronization mechanism, failure handling, and a code example or sequence diagram. Example failure: "Three-mechanism approach for temporal NEVER rules" named 3 technologies but had no integration design.
 
 ## Why This Matters
 

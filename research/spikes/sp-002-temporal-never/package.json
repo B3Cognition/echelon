@@ -1,0 +1,18 @@
+{
+  "name": "sp-002-temporal-never",
+  "version": "0.1.0",
+  "description": "SP-002: Temporal NEVER rule enforcement spike",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "node src/benchmark.js"
+  },
+  "devDependencies": {
+    "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "xstate": "^5.18.0"
+  }
+}

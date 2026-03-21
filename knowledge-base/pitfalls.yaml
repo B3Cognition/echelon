@@ -10,3 +10,33 @@ entries:
     confidence: 0.9
     tags: ["state-machine", "checkpointing", "recovery", "phase-transition"]
     status: active
+
+  - id: PIT-002
+    name: LOC Cherry-Picking
+    domain: estimation
+    trigger: Agent cites a single representative file's LOC as the total project LOC.
+    impact: Estimates are off by 4-7x, leading to grossly incorrect complexity assessments and effort projections.
+    avoidance: Require cloc output for any LOC claim; reject single-file measurements as "total".
+    example: "Datafrog claimed 428 lines (variable.rs only) but full source is 2002 lines."
+    source: squad-1710950401
+    run_id: squad-1710950401
+    created_at: 2026-03-21T00:00:00Z
+    last_updated: 2026-03-21
+    confidence: 0.93
+    tags: ["loc", "estimation", "cherry-picking", "cloc", "why1"]
+    status: active
+
+  - id: PIT-003
+    name: Naming vs Designing
+    domain: architecture-governance
+    trigger: Agent names a technology or pattern (e.g. "resource manager actor") and calls the problem "resolved" without providing integration design.
+    impact: Downstream agents treat the problem as solved, producing specs with unresolvable gaps that surface only during implementation.
+    avoidance: WHY agent must check that every "resolution" has an integration protocol, not just technology names. A resolution requires protocol design, failure modes, integration points, and code examples.
+    example: "Three-mechanism approach for temporal NEVER rules named 3 technologies but had no integration design."
+    source: squad-1710950401
+    run_id: squad-1710950401
+    created_at: 2026-03-21T00:00:00Z
+    last_updated: 2026-03-21
+    confidence: 0.90
+    tags: ["architecture", "naming", "resolution", "integration", "why1"]
+    status: active

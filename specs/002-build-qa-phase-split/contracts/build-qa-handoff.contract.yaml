@@ -1,0 +1,18 @@
+# Build → QA Handoff Contract
+# Defines conditions under which build phase output is accepted by QA phase.
+
+handoff_preconditions:
+  all_required_tasks_build_complete: true
+  required_blocked_task_count: 0
+
+validation_rules:
+  required_tasks_must_be_complete:
+    description: Every task marked as required must have status DONE or DONE_WITH_CONCERNS
+    severity: blocking
+  required_blocked_forbidden:
+    description: No required task may have status BLOCKED at handoff time
+    severity: blocking
+
+on_failure:
+  failure_action: reject_handoff
+  message: "Build handoff rejected: preconditions not met"
