@@ -126,6 +126,38 @@ Use this command at any exit point (kill verdict, error, completion):
 
 ---
 
+### RADAR Emitter Pattern
+
+For every agent dispatch, wrap the Agent tool call with emitter calls.
+
+**Setup (at start of run):**
+
+```bash
+RADAR_EXT=".specify/extensions/cognitive-squad"
+```
+
+**Before dispatching:**
+
+```bash
+PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import on_dispatched; on_dispatched('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
+```
+
+**After successful completion:**
+
+```bash
+PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import on_complete; on_complete('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}', ${ARTIFACTS_LIST})"
+```
+
+**After error/failure:**
+
+```bash
+PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import on_error; on_error('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
+```
+
+**Dispatch ID format:** `CODENAME-N` (e.g., SCOUT-1, SAGE-2). Track counter per codename in state.json under `dispatch_counters`.
+
+---
+
 ## 0. MANAGER Reflection Protocol (Plan Mode)
 
 Before EVERY major phase transition, MANAGER enters a structured reflection:
@@ -210,7 +242,8 @@ Create `.specify/squad/state.json`:
   "active_specialists": [],
   "issues_log": [],
   "blocked_reason": null,
-  "escalation_question": null
+  "escalation_question": null,
+  "dispatch_counters": {}
 }
 ```
 
