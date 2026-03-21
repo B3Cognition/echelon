@@ -48,6 +48,24 @@ execution:
     exploration_budget_per_branch: 5  # % of total token budget per branch
 
 # =============================================================================
+# RADAR — Real-time monitoring server
+# =============================================================================
+
+radar:
+  # Enable/disable RADAR monitoring server
+  # [default: true] Set false to disable automatic RADAR startup
+  enabled: true
+
+  # Port for RADAR SSE server
+  # [range: 1024-65535] [default: 7891]
+  # If port is in use, RADAR auto-increments until it finds an available port
+  port: 7891
+
+  # Host binding
+  # [default: localhost] Set to 0.0.0.0 to expose on LAN
+  # host: localhost
+
+# =============================================================================
 # ANALYSIS SETTINGS
 # =============================================================================
 
