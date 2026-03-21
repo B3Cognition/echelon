@@ -206,6 +206,31 @@ Create `.specify/squad/state.json`:
 
 Note: `spec_id` and `spec_dir` are set later when `/speckit.specify` creates the branch. `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
+### 1.3.1 Start RADAR (if enabled)
+
+Read `radar.enabled` from squad-config.yml (default: true). If enabled:
+
+```bash
+# Extension path (where RADAR lives when installed)
+RADAR_EXT=".specify/extensions/cognitive-squad"
+
+# Install RADAR dependencies if needed
+pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
+
+# Read port from config (default 7891)
+RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
+
+# Start RADAR in background (PYTHONPATH allows python -m radar.server to work)
+PYTHONPATH=${RADAR_EXT} python -m radar.server --port ${RADAR_PORT:-7891} \
+  >> .specify/squad/radar.log 2>&1 &
+echo $! > .specify/squad/radar.pid
+
+# Initialize emitter (creates/truncates agent-states files)
+PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import init_run; init_run('${run_id}')"
+```
+
+**Note:** If RADAR fails to start, log a warning but continue the run. The squad executes without live monitoring.
+
 ### 1.4 Initialize Staging Reasoning Journal
 
 Create `.specify/squad/staging/reasoning-journal.json`:
