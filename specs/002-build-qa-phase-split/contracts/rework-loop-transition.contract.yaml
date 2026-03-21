@@ -1,0 +1,22 @@
+# Rework Loop Transition Contract
+# Defines how failed QA items are routed back through the build phase.
+
+routing:
+  default_routing_mode: PER_AFFECTED
+  fallback_routing_mode: FULL_CYCLE
+  max_iterations: 3
+
+re_entry_dispatch:
+  description: Failed items are dispatched back to the responsible IMPLEMENTER
+  routing_modes:
+    PER_AFFECTED:
+      description: Only the specific failed task is re-dispatched
+      scope: single_task
+    FULL_CYCLE:
+      description: Entire phase is re-run (used when failures are systemic)
+      scope: full_phase
+
+escalation:
+  on_max_iterations_exceeded:
+    action: escalate_to_human
+    message: "Rework loop exceeded max iterations"

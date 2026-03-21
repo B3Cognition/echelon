@@ -104,6 +104,14 @@ Read `reasoning-journal.json` entries from DISCOVER:
 - Are there implications listed that seem unjustified by the reasoning?
 - Did DISCOVER flag anything as needing investigation that was then silently dropped?
 
+#### 6. LOC Verification Check
+
+For every LOC claim in the artifacts, verify: (a) does it cite a single file or the full directory? (b) does it provide the `cloc` command used? Flag single-file claims as ISS with severity HIGH.
+
+#### 7. Resolution Evidence Check
+
+For every claim that a prior issue is "resolved", verify: (a) is there an integration protocol (not just technology names)? (b) is there a code example or sequence diagram? (c) are failure modes addressed? Flag name-only resolutions as ISS with severity CRITICAL.
+
 ### Pass/Fail Criteria (Assumption-Challenge)
 
 **PASS** if ALL of the following hold:
@@ -257,7 +265,15 @@ Verify alignment between all artifacts:
 - Assumptions listed in `spec.md` should match `assumptions.md` (including status)
 - Open questions in `spec.md` should reference `unknowns.md`
 
-#### 6. Pre-Mortem on the Spec
+#### 6. LOC Verification Check (Spec-Validation)
+
+For every LOC claim in the artifacts, verify: (a) does it cite a single file or the full directory? (b) does it provide the `cloc` command used? Flag single-file claims as ISS with severity HIGH.
+
+#### 7. Resolution Evidence Check (Spec-Validation)
+
+For every claim that a prior issue is "resolved", verify: (a) is there an integration protocol (not just technology names)? (b) is there a code example or sequence diagram? (c) are failure modes addressed? Flag name-only resolutions as ISS with severity CRITICAL.
+
+#### 8. Pre-Mortem on the Spec
 
 Assume the implementation will fail because of a spec deficiency. Ask:
 
@@ -297,6 +313,8 @@ If the Understanding CLI cannot run, perform a manual heuristic review. This is 
 - [ ] Acronyms are expanded on first use
 
 Score each category: PASS / PARTIAL / FAIL. A PARTIAL counts as 0.5 for threshold comparison.
+
+**WARNING**: Heuristic quality reviews overestimate structure scores by ~29% and testability by ~25% compared to Understanding v3.4.0 deterministic scoring. When presenting heuristic results, always state: "Heuristic estimate — actual deterministic scores may be 15-30% lower."
 
 ### Pass/Fail Criteria (Spec-Validation)
 

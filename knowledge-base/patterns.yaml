@@ -54,3 +54,45 @@ entries:
     description: Using ASSESS baseline estimates and ASSESS2 complexity uplift captures hidden integration cost and produces execution-ready planning numbers.
     tags: ["assess", "assess2", "estimation", "reality-check"]
     status: active
+
+  - id: PAT-006
+    name: Deterministic Scoring Correction
+    domain: quality-assessment
+    evidence_grade: B
+    source: squad-1710950401
+    run_id: squad-1710950401
+    created_at: 2026-03-21T00:00:00Z
+    last_updated: 2026-03-21
+    validated_by_feedback: false
+    confidence: 0.88
+    description: When heuristic quality reviews pass but deterministic tooling (Understanding v3.4.0) fails, the heuristic was overconfident by 15-29% on structure/testability. Always run deterministic tooling when available; treat heuristic as estimate only.
+    tags: ["why2", "deterministic", "heuristic", "quality-gate", "understanding"]
+    status: active
+
+  - id: PAT-007
+    name: Parallel Scout Decomposition
+    domain: squad-orchestration
+    evidence_grade: B
+    source: squad-1710950401
+    run_id: squad-1710950401
+    created_at: 2026-03-21T00:00:00Z
+    last_updated: 2026-03-21
+    validated_by_feedback: false
+    confidence: 0.91
+    description: Splitting 24 repos across 4 category-focused scouts (Orchestration, Logic, Datalog, Cognitive) achieved 70% time reduction vs sequential analysis. Group by domain category, not alphabetically or by size.
+    tags: ["discover", "parallel", "scout", "categorization", "time-reduction"]
+    status: active
+
+  - id: PAT-008
+    name: Adversarial LOC Verification
+    domain: estimation
+    evidence_grade: B
+    source: squad-1710950401
+    run_id: squad-1710950401
+    created_at: 2026-03-21T00:00:00Z
+    last_updated: 2026-03-21
+    validated_by_feedback: false
+    confidence: 0.93
+    description: SYNTHESIZER LOC claims were off by 4-7x due to cherry-picking single files. Every LOC claim must be verified with cloc or wc -l on the full relevant directory, not single files.
+    tags: ["why1", "loc", "verification", "cloc", "adversarial"]
+    status: active

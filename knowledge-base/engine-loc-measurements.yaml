@@ -1,0 +1,152 @@
+# Phase 0 Ground Truth LOC Measurements
+# Measured: 2026-03-21 using wc -l (cloc not available)
+# All counts are raw lines (includes comments, blanks, code)
+
+measurements:
+  jason:
+    transition_system_java: 1895
+    as_semantics_package:
+      total: 6323
+      files: 20
+      top_files:
+        - TransitionSystem.java: 1895
+        - Agent.java: 1275
+        - Circumstance.java: 1218
+        - Unifier.java: 503
+        - Intention.java: 349
+    as_syntax_package:
+      total: 9083
+      note: "Core AST types — Literal, Plan, Trigger, PlanBody, ListTerm, etc."
+    belief_base_package:
+      total: 1901
+      files: 9
+      note: "BeliefBase, DefaultBeliefBase, IndexedBB, JDBC persistence, ChainBB"
+    plan_library_package:
+      total: 537
+      files: 2
+      note: "PlanLibrary.java + PlanLibraryListener.java"
+    full_bdi_dependency_tree: 17844
+    claim_vs_actual: >
+      Claimed ~1200 lines for TransitionSystem / ~2000 LOC for TS rewrite target.
+      Actual TransitionSystem.java alone is 1895 raw lines.
+      Full BDI dependency tree (asSemantics + asSyntax + bb + pl) is 17,844 lines.
+      The ~1200 claim likely referred to non-blank non-comment code lines of
+      TransitionSystem.java only. The real porting surface is 9-15x larger when
+      including the AST types (asSyntax) that TransitionSystem depends on.
+
+  datafrog:
+    src_total: 2002
+    files: 9
+    top_files:
+      - treefrog.rs: 795
+      - variable.rs: 428
+      - test.rs: 232
+      - join.rs: 224
+      - relation.rs: 114
+      - merge.rs: 95
+      - iteration.rs: 65
+      - lib.rs: 36
+      - map.rs: 13
+    claim_vs_actual: >
+      Claimed 429 lines. Actual src/ total is 2,002 lines.
+      The 429 claim likely counted only the core lib.rs or excluded tests.
+      Excluding test.rs (232 lines), the total is 1,770 lines — still 4x the claim.
+      The treefrog.rs (795 lines) alone exceeds the claimed total.
+
+  naga:
+    src_total: 1816
+    files: 12
+    top_files:
+      - storage/datomic/core.clj: 404
+      - rules.cljc: 215
+      - storage/asami/core.cljc: 199
+      - lang/basic.cljc: 179
+      - engine.cljc: 176
+      - lang/pabu.cljc: 157
+      - storage/datomic/schema.clj: 110
+    claim_vs_actual: >
+      Claimed 177 lines. Actual src/ total is 1,816 lines — 10x the claim.
+      The 177 claim likely referred to engine.cljc (176 lines) alone,
+      which is the core forward-chaining engine. But naga includes parsers,
+      storage backends (Datomic, Asami), schema definitions — all needed
+      for a working system.
+
+  crepe:
+    src_total: 1706
+    files: 3
+    top_files:
+      - lib.rs: 1427
+      - parse.rs: 229
+      - strata.rs: 50
+    claim_vs_actual: >
+      Claimed 51 lines. Actual src/ total is 1,706 lines — 33x the claim.
+      The 51 claim matched strata.rs (50 lines) only.
+      lib.rs (1,427 lines) contains the proc-macro Datalog compiler.
+      Crepe is a compile-time Datalog via Rust macros — the real complexity
+      is in the macro expansion code (lib.rs + parse.rs = 1,656 lines).
+
+datahike_temporal_api:
+  status: "stable"
+  as_of:
+    namespace: "datahike.api (via datahike.api.impl)"
+    stability_marker: ":stable"
+    implementation: "datahike.api.impl/as-of -> datahike.db/AsOfDB record"
+  since:
+    namespace: "datahike.api (via datahike.api.impl)"
+    stability_marker: ":stable"
+    implementation: "datahike.api.impl/since -> datahike.db/SinceDB record"
+  history:
+    namespace: "datahike.api (via datahike.api.impl)"
+    stability_marker: ":stable"
+    implementation: "datahike.api.impl/history -> datahike.db/HistoricalDB record"
+  experimental_namespaces:
+    - datahike.experimental.versioning: "Git-like branching — separate concern from temporal queries"
+    - datahike.experimental.unstructured: "Schema inference for unstructured data — unrelated to temporal"
+  evidence: >
+    All three temporal functions (as-of, since, history) are defined in
+    datahike.api.specification with :stability :stable. They are core API
+    functions, NOT in the experimental namespace. The experimental namespace
+    contains only versioning (git-like branching) and unstructured (schema
+    inference) — both unrelated to temporal queries. The temporal predicates
+    (as-of-pred, since-pred) are in datahike.db which is the core DB module.
+    Conclusion: temporal API is fully stable, production-ready.
+
+kb_cycle_topology:
+  cycles_inherent: false
+  bdi_goal_plan_tree_structure: "naturally acyclic (tree/forest)"
+  reasoning: >
+    In Jason's BDI architecture, goal-plan relationships form a TREE structure,
+    not a graph with cycles:
+
+    1. PLAN STRUCTURE: Each Plan has a Trigger (event pattern) and a PlanBody
+       (sequence of actions/subgoals). Plans are stored in PlanLibrary indexed
+       by trigger type — there are no direct plan-to-plan references.
+
+    2. GOAL DECOMPOSITION: When a plan body contains !subgoal (achieve),
+       the TransitionSystem creates a NEW Event, searches for relevant plans,
+       and pushes a new IntendedMeans onto the Intention stack. This is stack-based
+       execution — the call stack naturally prevents structural cycles.
+
+    3. INTENTION STACK: Intentions are stacks of IntendedMeans. Each level
+       represents one plan instance. The stack grows when subgoals are posted
+       and shrinks when plans complete. A cycle would mean infinite stack growth
+       (detectable, not structural).
+
+    4. RUNTIME vs STRUCTURAL: While an agent COULD write plans where
+       !goalA triggers a plan that posts !goalB which triggers a plan that posts
+       !goalA (runtime cycle), this is a programming error (infinite recursion),
+       not an inherent architectural property. Jason has no built-in cycle
+       detection but the stack-based execution model makes cycles manifest as
+       stack overflows, not deadlocks.
+
+    5. FOR COGNITIVE ORCHESTRATION: Goal references in a well-designed agent
+       should form a DAG (directed acyclic graph). The orchestrator can enforce
+       this statically by checking that no goal's plan tree references an
+       ancestor goal. This is a design constraint, not an engine limitation.
+
+  implication_for_design: >
+    Cyclic goal references are AVOIDABLE by design. The cognitive agent
+    orchestrator should enforce a DAG constraint on goal-plan relationships
+    at configuration time. Jason's architecture naturally supports this
+    since plans are indexed by trigger patterns, and the intention stack
+    provides natural recursion depth limits.
