@@ -1,0 +1,211 @@
+digraph CognitiveSquadArchitecture {
+  // Global settings
+  rankdir=LR;
+  dpi=300;
+  fontname="Helvetica Neue";
+  fontsize=11;
+  node [fontname="Helvetica Neue", fontsize=10, style="filled,rounded", shape=box, margin="0.15,0.08"];
+  edge [fontname="Helvetica Neue", fontsize=8, color="#666666"];
+  bgcolor="#FAFAFA";
+  pad=0.5;
+  nodesep=0.4;
+  ranksep=0.6;
+  label=<<B><FONT POINT-SIZE="18">Cognitive Squad v0.3.0 — 7-Layer Architecture</FONT></B><BR/><FONT POINT-SIZE="11" COLOR="#666666">35 registered agents + 3 unregistered | 4-phase execution model</FONT>>;
+  labelloc=t;
+  labeljust=c;
+
+  // ═══════════════════════════════════════════
+  // CONTROL LAYER (always active)
+  // ═══════════════════════════════════════════
+  subgraph cluster_control {
+    label=<<B>CONTROL LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Always active — orchestration &amp; oversight</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E3F2FD";
+    color="#1565C0";
+    penwidth=2;
+    fontname="Helvetica Neue";
+    fontsize=11;
+
+    COMMANDER [label=<<B>COMMANDER</B><BR/><FONT POINT-SIZE="8">State machine orchestrator</FONT>>, fillcolor="#BBDEFB", color="#1565C0", penwidth=2];
+    SCOREKEEPER [label=<<B>SCOREKEEPER</B><BR/><FONT POINT-SIZE="8">Agent scoring &amp; badges</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+    TRACKER [label=<<B>TRACKER</B><BR/><FONT POINT-SIZE="8">User intent alignment</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+    CHECKPOINT [label=<<B>CHECKPOINT</B><BR/><FONT POINT-SIZE="8">Internalization gates</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+    STRATEGIST [label=<<B>STRATEGIST</B><BR/><FONT POINT-SIZE="8">Risk-weighted overview</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+  }
+
+  // ═══════════════════════════════════════════
+  // EXPLORATION LAYER (Phase 1)
+  // ═══════════════════════════════════════════
+  subgraph cluster_exploration {
+    label=<<B>EXPLORATION LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Phase 1: UNDERSTAND — domain discovery &amp; validation</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E8F5E9";
+    color="#2E7D32";
+    penwidth=2;
+
+    SCOUT [label=<<B>SCOUT</B><BR/><FONT POINT-SIZE="8">Brownfield/greenfield recon</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+    SYNTHESIZER [label=<<B>SYNTHESIZER</B><BR/><FONT POINT-SIZE="8">Cross-source fusion</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+    SAGE [label=<<B>SAGE</B><BR/><FONT POINT-SIZE="8">Adversarial critic (BLOCKS)</FONT>>, fillcolor="#A5D6A7", color="#1B5E20", penwidth=2];
+    CARTOGRAPHER [label=<<B>CARTOGRAPHER</B><BR/><FONT POINT-SIZE="8">Requirements definer</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+    MODELER [label=<<B>MODELER</B><BR/><FONT POINT-SIZE="8">Code invariants</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+  }
+
+  // ═══════════════════════════════════════════
+  // FEASIBILITY LAYER (Phase 2)
+  // ═══════════════════════════════════════════
+  subgraph cluster_feasibility {
+    label=<<B>FEASIBILITY LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Phase 2: DECIDE — kill gate &amp; verification</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FFF3E0";
+    color="#E65100";
+    penwidth=2;
+
+    GATEKEEPER [label=<<B>GATEKEEPER</B><BR/><FONT POINT-SIZE="8">Kill gate / estimation</FONT>>, fillcolor="#FFE0B2", color="#E65100", penwidth=2];
+    VALIDATOR [label=<<B>VALIDATOR</B><BR/><FONT POINT-SIZE="8">Backpropagation 100%</FONT>>, fillcolor="#FFE0B2", color="#E65100"];
+  }
+
+  // ═══════════════════════════════════════════
+  // SOLUTION LAYER (Phase 3)
+  // ═══════════════════════════════════════════
+  subgraph cluster_solution {
+    label=<<B>SOLUTION LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Phase 3: SOLUTION — architecture &amp; planning</FONT>>;
+    style="filled,rounded";
+    fillcolor="#F3E5F5";
+    color="#6A1B9A";
+    penwidth=2;
+
+    ARCHITECT [label=<<B>ARCHITECT</B><BR/><FONT POINT-SIZE="8">Tech stack / ADRs</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A"];
+    ORCHESTRATOR [label=<<B>ORCHESTRATOR</B><BR/><FONT POINT-SIZE="8">Task breakdown / critical path</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A"];
+    SENTINEL [label=<<B>SENTINEL</B><BR/><FONT POINT-SIZE="8">Test strategy (mandatory)</FONT>>, fillcolor="#CE93D8", color="#4A148C", penwidth=2];
+  }
+
+  // ═══════════════════════════════════════════
+  // SPECIALISTS LAYER (on-demand)
+  // ═══════════════════════════════════════════
+  subgraph cluster_specialists {
+    label=<<B>SPECIALISTS LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Summoned on demand — max 3 active</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FFFDE7";
+    color="#F57F17";
+    penwidth=2;
+
+    INVESTIGATOR [label=<<B>INVESTIGATOR</B><BR/><FONT POINT-SIZE="8">Scientific method</FONT>>, fillcolor="#FFF9C4", color="#F57F17"];
+    GUARDIAN [label=<<B>GUARDIAN</B><BR/><FONT POINT-SIZE="8">STRIDE / OWASP</FONT>>, fillcolor="#FFF9C4", color="#F57F17"];
+    BENCHMARK [label=<<B>BENCHMARK</B><BR/><FONT POINT-SIZE="8">Load modeling</FONT>>, fillcolor="#FFF9C4", color="#F57F17"];
+    ADVOCATE [label=<<B>ADVOCATE</B><BR/><FONT POINT-SIZE="8">WCAG / a11y</FONT>>, fillcolor="#FFF9C4", color="#F57F17"];
+    ORACLE [label=<<B>ORACLE</B><BR/><FONT POINT-SIZE="8">Domain expert</FONT>>, fillcolor="#FFF9C4", color="#F57F17"];
+    MAVERICK [label=<<B>MAVERICK</B><BR/><FONT POINT-SIZE="8">TRIZ / first principles</FONT>>, fillcolor="#FFF9C4", color="#F57F17"];
+  }
+
+  // ═══════════════════════════════════════════
+  // BUILD LAYER (Phase 4)
+  // ═══════════════════════════════════════════
+  subgraph cluster_build {
+    label=<<B>BUILD LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Phase 4: BUILD — implementation &amp; quality gates</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FCE4EC";
+    color="#C62828";
+    penwidth=2;
+
+    IMPLEMENTER [label=<<B>IMPLEMENTER</B><BR/><FONT POINT-SIZE="8">Code + tests</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    SPEC_GUARD [label=<<B>SPEC GUARD</B><BR/><FONT POINT-SIZE="8">Spec compliance</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    CODE_REVIEWER [label=<<B>CODE REVIEWER</B><BR/><FONT POINT-SIZE="8">Quality + ADR check</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    TEST_GUARDIAN [label=<<B>TEST GUARDIAN</B><BR/><FONT POINT-SIZE="8">Test quality</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    DEBUGGER [label=<<B>DEBUGGER</B><BR/><FONT POINT-SIZE="8">Root cause analysis</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    INTEGRATOR [label=<<B>INTEGRATOR</B><BR/><FONT POINT-SIZE="8">System integration</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    PROGRESS_TRACKER [label=<<B>PROGRESS TRACKER</B><BR/><FONT POINT-SIZE="8">CPI / SPI drift</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    CHANGE_CONTROLLER [label=<<B>CHANGE CONTROLLER</B><BR/><FONT POINT-SIZE="8">Mid-build changes</FONT>>, fillcolor="#F8BBD0", color="#C62828"];
+    ENG_MANAGER [label=<<B>ENG MANAGER</B><BR/><FONT POINT-SIZE="8">Workflow sign-off</FONT>>, fillcolor="#F8BBD0", color="#C62828", style="filled,rounded,dashed"];
+    VERIFICATION_B [label=<<B>VERIFICATION</B><BR/><FONT POINT-SIZE="8">Final backprop check</FONT>>, fillcolor="#F8BBD0", color="#C62828", style="filled,rounded,dashed"];
+    VISUAL_VALIDATOR [label=<<B>VISUAL VALIDATOR</B><BR/><FONT POINT-SIZE="8">Screenshot diff</FONT>>, fillcolor="#F8BBD0", color="#C62828", style="filled,rounded,dashed"];
+  }
+
+  // ═══════════════════════════════════════════
+  // LEARNING LAYER (cross-cutting)
+  // ═══════════════════════════════════════════
+  subgraph cluster_learning {
+    label=<<B>LEARNING LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">Cross-cutting — post-run analysis &amp; calibration</FONT>>;
+    style="filled,rounded";
+    fillcolor="#ECEFF1";
+    color="#37474F";
+    penwidth=2;
+
+    MIRROR [label=<<B>MIRROR</B><BR/><FONT POINT-SIZE="8">Post-run reflection</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    ADAPTIVE [label=<<B>ADAPTIVE</B><BR/><FONT POINT-SIZE="8">Cross-run evolution</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    AUDITOR [label=<<B>AUDITOR</B><BR/><FONT POINT-SIZE="8">Confidence calibration</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    REALIST [label=<<B>REALIST</B><BR/><FONT POINT-SIZE="8">Reality check / costs</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    VETERAN [label=<<B>VETERAN</B><BR/><FONT POINT-SIZE="8">Global memory</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+    MONITOR [label=<<B>MONITOR</B><BR/><FONT POINT-SIZE="8">Metacognition</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+  }
+
+  // ═══════════════════════════════════════════
+  // ENFORCEMENT LAYER (NEW in v0.3.0)
+  // ═══════════════════════════════════════════
+  subgraph cluster_enforcement {
+    label=<<B>ENFORCEMENT LAYER</B><BR/><FONT POINT-SIZE="9" COLOR="#555555">NEW in v0.3.0 — programmatic rule checking</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FFEBEE";
+    color="#B71C1C";
+    penwidth=3;
+
+    PRE_GATE [label=<<B>pre-dispatch-gate.sh</B><BR/><FONT POINT-SIZE="8">Phase sequence / retry / temporal</FONT>>, fillcolor="#FFCDD2", color="#B71C1C", shape=octagon];
+    POST_AUDIT [label=<<B>post-execution-audit.sh</B><BR/><FONT POINT-SIZE="8">Output constraint checks</FONT>>, fillcolor="#FFCDD2", color="#B71C1C", shape=octagon];
+    TEMPORAL_STORE [label=<<B>temporal-store.json</B><BR/><FONT POINT-SIZE="8">Append-only fact log</FONT>>, fillcolor="#FFCDD2", color="#B71C1C", shape=cylinder];
+  }
+
+  // ═══════════════════════════════════════════
+  // COMMANDER dispatches all agents
+  // ═══════════════════════════════════════════
+  COMMANDER -> PRE_GATE [label="before every dispatch", color="#B71C1C", penwidth=2, style=bold];
+  PRE_GATE -> TEMPORAL_STORE [label="check/write", color="#B71C1C", style=dashed];
+  COMMANDER -> SCOUT [label="Phase 1", color="#2E7D32"];
+  COMMANDER -> SYNTHESIZER [color="#2E7D32"];
+  COMMANDER -> TRACKER [label="intent capture", color="#1565C0", style=dashed];
+  COMMANDER -> SAGE [label="WHY1/2/3", color="#2E7D32", penwidth=2];
+  COMMANDER -> CARTOGRAPHER [color="#2E7D32"];
+  COMMANDER -> GATEKEEPER [label="Phase 2", color="#E65100"];
+  COMMANDER -> STRATEGIST [label="risk map", color="#1565C0", style=dashed];
+  COMMANDER -> ARCHITECT [label="Phase 3", color="#6A1B9A"];
+  COMMANDER -> SENTINEL [color="#6A1B9A"];
+  COMMANDER -> ORCHESTRATOR [color="#6A1B9A"];
+  COMMANDER -> IMPLEMENTER [label="Phase 4", color="#C62828"];
+
+  // Build quality gate pipeline
+  IMPLEMENTER -> SPEC_GUARD [label="gate 1", color="#C62828", penwidth=1.5];
+  SPEC_GUARD -> CODE_REVIEWER [label="gate 2", color="#C62828", penwidth=1.5];
+  CODE_REVIEWER -> TEST_GUARDIAN [label="gate 3", color="#C62828", penwidth=1.5];
+  TEST_GUARDIAN -> PROGRESS_TRACKER [label="done", color="#C62828"];
+  SPEC_GUARD -> IMPLEMENTER [label="FAIL", color="#FF5252", style=dashed, constraint=false];
+  CODE_REVIEWER -> IMPLEMENTER [label="CHANGES", color="#FF5252", style=dashed, constraint=false];
+  TEST_GUARDIAN -> IMPLEMENTER [label="FAIL", color="#FF5252", style=dashed, constraint=false];
+
+  // Post-execution audit
+  POST_AUDIT -> COMMANDER [label="PASS/FAIL", color="#B71C1C", style=dashed];
+
+  // Finalize
+  COMMANDER -> MIRROR [label="Finalize", color="#37474F"];
+  COMMANDER -> ADAPTIVE [color="#37474F"];
+  COMMANDER -> AUDITOR [color="#37474F"];
+  COMMANDER -> REALIST [color="#37474F"];
+  COMMANDER -> SCOREKEEPER [label="scoring", color="#1565C0"];
+
+  // Specialist summoning
+  COMMANDER -> INVESTIGATOR [label="unknowns", color="#F57F17", style=dashed];
+  COMMANDER -> GUARDIAN [label="auth/PII", color="#F57F17", style=dashed];
+  COMMANDER -> MAVERICK [label="stagnation", color="#F57F17", style=dashed];
+
+  // Legend
+  subgraph cluster_legend {
+    label=<<B>Legend</B>>;
+    style="rounded";
+    fillcolor="#FFFFFF";
+    color="#CCCCCC";
+    fontsize=10;
+
+    leg1 [label="Solid border = registered in agents.yaml", shape=plaintext, fillcolor="#FFFFFF"];
+    leg2 [label="Dashed border = unregistered (dispatched by file path)", shape=plaintext, fillcolor="#FFFFFF"];
+    leg3 [label="Octagon = enforcement script (NEW v0.3.0)", shape=plaintext, fillcolor="#FFFFFF"];
+    leg4 [label="Bold border = blocking agent (can halt pipeline)", shape=plaintext, fillcolor="#FFFFFF"];
+    leg1 -> leg2 -> leg3 -> leg4 [style=invis];
+  }
+}

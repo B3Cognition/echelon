@@ -1,0 +1,173 @@
+digraph StateMachineFlow {
+  // Global settings
+  rankdir=TB;
+  dpi=300;
+  fontname="Helvetica Neue";
+  fontsize=10;
+  node [fontname="Helvetica Neue", fontsize=9, style="filled,rounded", shape=box, margin="0.12,0.06"];
+  edge [fontname="Helvetica Neue", fontsize=8];
+  bgcolor="#FAFAFA";
+  pad=0.5;
+  nodesep=0.35;
+  ranksep=0.5;
+  label=<<B><FONT POINT-SIZE="16">Cognitive Squad — State Machine Flow</FONT></B><BR/><FONT POINT-SIZE="10" COLOR="#666666">squad.run.md execution sequence with convergence loops &amp; gates</FONT>>;
+  labelloc=t;
+
+  // ═══ PHASE 1: UNDERSTAND ═══
+  subgraph cluster_phase1 {
+    label=<<B>PHASE 1: UNDERSTAND</B><BR/><FONT POINT-SIZE="8">Budget: 25% | Max iterations: 5</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E8F5E9";
+    color="#2E7D32";
+    penwidth=2;
+
+    INIT [label=<<B>INIT</B><BR/><FONT POINT-SIZE="7">detect mode, create state,<BR/>clear staging, preflight</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+
+    SCOUT_N [label=<<B>SCOUT</B><BR/><FONT POINT-SIZE="7">brownfield/greenfield recon<BR/>→ glossary, mental-model,<BR/>boundaries, assumptions</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+
+    SYNTH [label=<<B>SYNTHESIZER</B><BR/><FONT POINT-SIZE="7">cross-source fusion<BR/>→ contradictions-and-gaps</FONT>>, fillcolor="#C8E6C9", color="#2E7D32"];
+
+    TRACKER_1 [label=<<B>TRACKER</B><BR/><FONT POINT-SIZE="7">capture user intent<BR/>→ user-intent.md</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+
+    WHY1 [label=<<B>SAGE (WHY1)</B><BR/><FONT POINT-SIZE="7">assumption challenge<BR/>pre-mortem analysis</FONT>>, fillcolor="#A5D6A7", color="#1B5E20", penwidth=2];
+
+    WHY1_GATE [label=<<B>WHY1 GATE</B><BR/><FONT POINT-SIZE="7">CRITICAL issues?</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+  }
+
+  // ═══ CONSTITUTION BRIDGE ═══
+  CONSTITUTION [label=<<B>CONSTITUTION</B><BR/><FONT POINT-SIZE="7">create/verify project principles<BR/>human-only amendment</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A", shape=hexagon];
+
+  // ═══ PHASE 2: DECIDE ═══
+  subgraph cluster_phase2 {
+    label=<<B>PHASE 2: DECIDE</B><BR/><FONT POINT-SIZE="8">Budget: 15% | Human gate (semi mode)</FONT>>;
+    style="filled,rounded";
+    fillcolor="#FFF3E0";
+    color="#E65100";
+    penwidth=2;
+
+    WHAT [label=<<B>CARTOGRAPHER (WHAT)</B><BR/><FONT POINT-SIZE="7">requirements definition<BR/>→ spec.md, user stories</FONT>>, fillcolor="#FFE0B2", color="#E65100"];
+
+    WHY2 [label=<<B>SAGE (WHY2)</B><BR/><FONT POINT-SIZE="7">spec validation<BR/>Understanding quality gates</FONT>>, fillcolor="#A5D6A7", color="#1B5E20", penwidth=2];
+
+    WHY2_GATE [label=<<B>WHY2 GATE</B><BR/><FONT POINT-SIZE="7">quality gates pass?<BR/>convergence delta &lt; 0.02?</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+
+    ASSESS [label=<<B>GATEKEEPER (ASSESS)</B><BR/><FONT POINT-SIZE="7">feasibility, RICE scoring<BR/>MVP scope, effort estimates</FONT>>, fillcolor="#FFE0B2", color="#E65100", penwidth=2];
+
+    KILL_GATE [label=<<B>KILL GATE</B><BR/><FONT POINT-SIZE="7">PASS / DEFER / KILL</FONT>>, fillcolor="#FFCDD2", color="#C62828", shape=diamond];
+
+    STRATEGY [label=<<B>STRATEGIST</B><BR/><FONT POINT-SIZE="7">risk-weighted map<BR/>→ strategic-overview.md</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+
+    TRACKER_2 [label=<<B>TRACKER</B><BR/><FONT POINT-SIZE="7">intent alignment check<BR/>scope vs user intent</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+
+    SPECIALISTS [label=<<B>SPECIALISTS</B><BR/><FONT POINT-SIZE="7">INVESTIGATOR, GUARDIAN,<BR/>SENTINEL (mandatory),<BR/>BENCHMARK, ADVOCATE,<BR/>ORACLE, MAVERICK</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=house];
+  }
+
+  // ═══ PHASE 3: SOLUTION ═══
+  subgraph cluster_phase3 {
+    label=<<B>PHASE 3: SOLUTION</B><BR/><FONT POINT-SIZE="8">Budget: 25%</FONT>>;
+    style="filled,rounded";
+    fillcolor="#F3E5F5";
+    color="#6A1B9A";
+    penwidth=2;
+
+    HOW [label=<<B>ARCHITECT (HOW)</B><BR/><FONT POINT-SIZE="7">tech stack, ADRs,<BR/>data model, contracts</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A"];
+
+    TEST_ARCH [label=<<B>SENTINEL (TEST ARCH)</B><BR/><FONT POINT-SIZE="7">test strategy, coverage map<BR/>(mandatory — always runs)</FONT>>, fillcolor="#CE93D8", color="#4A148C", penwidth=2];
+
+    PLAN [label=<<B>ORCHESTRATOR (PLAN)</B><BR/><FONT POINT-SIZE="7">task breakdown,<BR/>critical path, risk matrix</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A"];
+  }
+
+  // ═══ CONSENSUS ═══
+  subgraph cluster_consensus {
+    label=<<B>CONSENSUS</B><BR/><FONT POINT-SIZE="8">Parallel validation</FONT>>;
+    style="filled,rounded";
+    fillcolor="#E0F7FA";
+    color="#00838F";
+    penwidth=2;
+
+    WHY3 [label=<<B>SAGE (WHY3)</B><BR/><FONT POINT-SIZE="7">final quality check<BR/>cross-artifact consistency</FONT>>, fillcolor="#A5D6A7", color="#1B5E20", penwidth=2];
+
+    ASSESS2 [label=<<B>GATEKEEPER (ASSESS2)</B><BR/><FONT POINT-SIZE="7">implementability check<BR/>6-point per task</FONT>>, fillcolor="#FFE0B2", color="#E65100"];
+
+    PLAN2 [label=<<B>ORCHESTRATOR (PLAN2)</B><BR/><FONT POINT-SIZE="7">plan revision with<BR/>implementability feedback</FONT>>, fillcolor="#E1BEE7", color="#6A1B9A"];
+
+    CONSENSUS_GATE [label=<<B>CONSENSUS GATE</B><BR/><FONT POINT-SIZE="7">ALL PASS?</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=diamond];
+  }
+
+  // ═══ FINALIZE ═══
+  subgraph cluster_finalize {
+    label=<<B>FINALIZE</B><BR/><FONT POINT-SIZE="8">Budget: 10% | Learning extraction</FONT>>;
+    style="filled,rounded";
+    fillcolor="#ECEFF1";
+    color="#37474F";
+    penwidth=2;
+
+    GROUND [label=<<B>REALIST (GROUND)</B><BR/><FONT POINT-SIZE="7">reality check, costs,<BR/>benchmark data</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+
+    REFLECT [label=<<B>MIRROR (REFLECT)</B><BR/><FONT POINT-SIZE="7">patterns &amp; pitfalls<BR/>learning extraction</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+
+    EVOLVE [label=<<B>ADAPTIVE (EVOLVE)</B><BR/><FONT POINT-SIZE="7">cross-run diffing<BR/>improvement metrics</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+
+    CALIBRATE [label=<<B>AUDITOR (CALIBRATE)</B><BR/><FONT POINT-SIZE="7">confidence profiling<BR/>correction factors</FONT>>, fillcolor="#CFD8DC", color="#37474F"];
+
+    SCORE [label=<<B>SCOREKEEPER</B><BR/><FONT POINT-SIZE="7">agent scorecard<BR/>badges, self-healing</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
+  }
+
+  DONE [label=<<B>DONE</B><BR/><FONT POINT-SIZE="7">artifacts delivered<BR/>ready for /squad.build</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+
+  KILLED [label=<<B>KILLED</B><BR/><FONT POINT-SIZE="7">kill report generated</FONT>>, fillcolor="#FFCDD2", color="#C62828", shape=doubleoctagon];
+
+  BLOCKED [label=<<B>BLOCKED</B><BR/><FONT POINT-SIZE="7">human input required<BR/>/squad.resume to continue</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=doubleoctagon];
+
+  // ═══ EDGES ═══
+  // Phase 1 flow
+  INIT -> SCOUT_N [color="#2E7D32", penwidth=2];
+  SCOUT_N -> SYNTH [color="#2E7D32", penwidth=2];
+  SYNTH -> TRACKER_1 [color="#1565C0", penwidth=1.5, label="NEW v0.3"];
+  TRACKER_1 -> WHY1 [color="#2E7D32", penwidth=2];
+  WHY1 -> WHY1_GATE [color="#2E7D32", penwidth=2];
+  WHY1_GATE -> SCOUT_N [label="CRITICAL\n(re-investigate)", color="#FF5252", style=dashed, constraint=false];
+  WHY1_GATE -> CONSTITUTION [label="PASS", color="#2E7D32", penwidth=2];
+
+  // Constitution → Phase 2
+  CONSTITUTION -> WHAT [color="#6A1B9A", penwidth=2];
+
+  // Phase 2 flow
+  WHAT -> WHY2 [color="#E65100", penwidth=2];
+  WHY2 -> WHY2_GATE [color="#E65100", penwidth=2];
+  WHY2_GATE -> WHAT [label="gates FAIL\n(amend spec)", color="#FF5252", style=dashed, constraint=false];
+  WHY2_GATE -> ASSESS [label="gates PASS", color="#E65100", penwidth=2];
+  ASSESS -> KILL_GATE [color="#E65100", penwidth=2];
+  KILL_GATE -> KILLED [label="KILL", color="#C62828", penwidth=2];
+  KILL_GATE -> WHAT [label="DEFER\n(reduce scope)", color="#FF9800", style=dashed, constraint=false];
+  KILL_GATE -> STRATEGY [label="PASS", color="#E65100", penwidth=2];
+  STRATEGY -> TRACKER_2 [color="#1565C0", penwidth=1.5];
+  TRACKER_2 -> SPECIALISTS [color="#F57F17", penwidth=2];
+
+  // Phase 3 flow
+  SPECIALISTS -> HOW [color="#6A1B9A", penwidth=2];
+  HOW -> TEST_ARCH [color="#6A1B9A", penwidth=2];
+  TEST_ARCH -> PLAN [color="#6A1B9A", penwidth=2];
+
+  // Consensus
+  PLAN -> WHY3 [color="#00838F", penwidth=2];
+  PLAN -> ASSESS2 [color="#00838F", penwidth=2];
+  {WHY3 ASSESS2} -> PLAN2 [color="#00838F", penwidth=1.5];
+  PLAN2 -> CONSENSUS_GATE [color="#00838F", penwidth=2];
+  CONSENSUS_GATE -> WHAT [label="CRITICAL\nspec issues", color="#FF5252", style=dashed, constraint=false];
+  CONSENSUS_GATE -> HOW [label="CRITICAL\narch issues", color="#FF5252", style=dashed, constraint=false];
+  CONSENSUS_GATE -> GROUND [label="ALL PASS", color="#37474F", penwidth=2];
+
+  // Finalize
+  GROUND -> REFLECT [color="#37474F", penwidth=1.5];
+  REFLECT -> EVOLVE [color="#37474F", penwidth=1.5];
+  EVOLVE -> CALIBRATE [color="#37474F", penwidth=1.5];
+  CALIBRATE -> SCORE [color="#37474F", penwidth=1.5];
+  SCORE -> DONE [color="#00C853", penwidth=2];
+
+  // Escalation
+  WHY2_GATE -> BLOCKED [label="3x same issue", color="#F57F17", style=dotted];
+  KILL_GATE -> BLOCKED [label="DEFER x2", color="#F57F17", style=dotted];
+
+  // Parallel indicator (removed rank constraints to avoid cluster conflicts)
+}
