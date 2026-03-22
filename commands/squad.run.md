@@ -80,12 +80,14 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 | **PLAN** | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
 | **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
 
+> **Naming convention:** The table above uses **functional names** (DISCOVER, WHAT, WHY, etc.). Each maps to a **codename** used in dispatch: SCOUT=DISCOVER, SAGE=WHY, CARTOGRAPHER=WHAT, GATEKEEPER=ASSESS, ARCHITECT=HOW, ORCHESTRATOR=PLAN, **INVESTIGATOR=SCIENTIST**. Dispatch instructions always use codenames.
+
 **The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
 
-- Spec issues → dispatch **WHAT** to fix → then **WHY** re-validates
-- Architecture issues → dispatch **HOW** to fix → then **WHY** re-validates
-- Task issues → dispatch **PLAN** to fix → then **WHY** re-validates
-- Unknown questions → dispatch **SCIENTIST** to investigate → feed results to the relevant agent
+- Spec issues → dispatch **WHAT** (CARTOGRAPHER) to fix → then **WHY** re-validates
+- Architecture issues → dispatch **HOW** (ARCHITECT) to fix → then **WHY** re-validates
+- Task issues → dispatch **PLAN** (ORCHESTRATOR) to fix → then **WHY** re-validates
+- Unknown questions → dispatch **SCIENTIST** (INVESTIGATOR) to investigate → feed results to the relevant agent
 
 **NEVER dispatch WHY with a prompt that says "fix" or "rewrite."** WHY is read-only on all artifacts except issues.md and quality-gates.md.
 
@@ -873,7 +875,7 @@ Use the Agent tool:
 - **prompt:** Read `agents/control/strategist.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
 - **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
 
-Read the strategic overview. Use it to prioritize specialist allocation: spend SCIENTIST time on high-blast-radius decisions, not low-risk areas.
+Read the strategic overview. Use it to prioritize specialist allocation: spend INVESTIGATOR time on high-blast-radius decisions, not low-risk areas.
 
 Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
 
@@ -918,7 +920,7 @@ After ASSESS passes, determine which specialists are needed:
 | Specialist | Summon When | Max Priority |
 |-----------|-------------|--------------|
 | **TEST ARCHITECT** | ALWAYS (mandatory) | Required |
-| **SCIENTIST** | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
+| **SCIENTIST** (INVESTIGATOR) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
 | **SECURITY** | Domain involves auth, payments, PII, regulatory compliance | High |
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
@@ -944,9 +946,9 @@ Maximum `max_active_specialists` (default 3) can be active simultaneously. If mo
 
 ### Dispatch Specialists
 
-For each specialist to summon, dispatch sequentially (unless they are independent — SCIENTIST investigations can run in parallel with domain specialists).
+For each specialist to summon, dispatch sequentially (unless they are independent — INVESTIGATOR investigations can run in parallel with domain specialists).
 
-#### SCIENTIST Dispatch (if summoned)
+#### SCIENTIST Dispatch (INVESTIGATOR codename) — if summoned
 
 Context pack:
 
@@ -1272,15 +1274,15 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/learning/auditor.md`. You are the AUDITOR agent. Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or SCIENTIST investigation. Here is your context pack: [include files]. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/learning/auditor.md`. You are the AUDITOR agent. Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or INVESTIGATOR investigation. Here is your context pack: [include files]. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "AUDITOR: accuracy tracking and confidence profiling"
 
 ### 12.5 CALIBRATE Confidence Check
 
 After CALIBRATE completes, read `confidence-flags.md`:
 
-- If any domain has **confidence < 0.5** → summon SCIENTIST for that domain (if not already investigated). This is a late-stage safety net.
-- If SCIENTIST was already summoned and confidence is still < 0.5 → flag for human in the final report (do not block delivery).
+- If any domain has **confidence < 0.5** → summon INVESTIGATOR for that domain (if not already investigated). This is a late-stage safety net.
+- If INVESTIGATOR was already summoned and confidence is still < 0.5 → flag for human in the final report (do not block delivery).
 
 ### 12.6 Collect Final Artifacts
 
@@ -1300,7 +1302,7 @@ prioritization.md                 | ASSESS          | ...
 estimates.md                      | ASSESS          | ...
 mvp-scope.md                      | ASSESS          | ...
 plan.md                           | HOW             | ...
-research.md                       | HOW+SCIENTIST   | ...
+research.md                       | HOW+INVESTIGATOR   | ...
 data-model.md                     | HOW             | ...
 contracts/                        | HOW             | ...
 constitution.md                   | HOW             | ...
@@ -1325,10 +1327,10 @@ Additional artifacts (conditional):
 
 - `reference-architectures.md` (greenfield only)
 - `assumption-review.md` (if WHY1 produced it)
-- `investigation/*.md` (if SCIENTIST ran)
-- `evidence-grades.md` (if SCIENTIST ran)
-- `experiment-results.md` (if SCIENTIST ran)
-- `recommendations.md` (if SCIENTIST ran)
+- `investigation/*.md` (if INVESTIGATOR ran)
+- `evidence-grades.md` (if INVESTIGATOR ran)
+- `experiment-results.md` (if INVESTIGATOR ran)
+- `recommendations.md` (if INVESTIGATOR ran)
 - `threat-model.md` (if SECURITY ran)
 - `compliance-requirements.md` (if SECURITY ran)
 - `performance-requirements.md` (if PERFORMANCE ran)
@@ -1444,7 +1446,7 @@ After reading an agent's output, MANAGER scores the agent:
    - Did WHY pass or fail? → +5 for CRITICAL catch, -1 for false positive
    - Did WHAT need rework? → -1 per WHY rejection
    - Did IMPLEMENTER pass first review? → +3 first-pass, -1 rework
-   - Did SCIENTIST validate an assumption? → +2 validated, +4 invalidated (more valuable)
+   - Did INVESTIGATOR validate an assumption? → +2 validated, +4 invalidated (more valuable)
 
 2. Append to state.json.agent_scores:
    {
@@ -1463,8 +1465,8 @@ When an agent's output is consumed by the NEXT agent, check: did the next agent 
 IF WHAT produces spec.md AND WHY2 passes on first attempt:
   → Peer appreciation: WHY awards WHAT +2 "clear_and_actionable"
 
-IF SCIENTIST produces investigation/ AND HOW makes a decision based on it:
-  → Peer appreciation: HOW awards SCIENTIST +3 "unblocked_my_work"
+IF INVESTIGATOR produces investigation/ AND HOW makes a decision based on it:
+  → Peer appreciation: HOW awards INVESTIGATOR +3 "unblocked_my_work"
 
 IF WHY catches an issue that SPEC GUARD would have missed:
   → Peer appreciation: SPEC GUARD awards WHY +2 "caught_my_mistake"
@@ -1581,8 +1583,8 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 ### Rule 5: CALIBRATE Confidence Gate
 
-- If CALIBRATE reports confidence < 0.5 for a critical domain → **summon SCIENTIST**
-- If SCIENTIST already ran for that domain and confidence is still < 0.5 → flag for human, do not block
+- If CALIBRATE reports confidence < 0.5 for a critical domain → **summon INVESTIGATOR**
+- If INVESTIGATOR already ran for that domain and confidence is still < 0.5 → flag for human, do not block
 
 ### Rule 6: ASSESS DEFER Loop
 
@@ -1624,7 +1626,7 @@ Every artifact produced in degraded mode (fallback was used) must have this bann
 Escalation to human is triggered when:
 
 1. Same issue appears 3x without resolution (after INNOVATE attempt)
-2. CALIBRATE confidence < 0.5 after SCIENTIST investigation
+2. CALIBRATE confidence < 0.5 after INVESTIGATOR investigation
 3. Unresolvable conflict between agents (evidence hierarchy cannot resolve)
 4. ASSESS DEFER loop >= 2 with no scope stabilization
 

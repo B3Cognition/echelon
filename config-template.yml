@@ -317,17 +317,164 @@ metacognition:
   max_tasks_without_check: 20
 
 # =============================================================================
-# INTERNALIZATION (VALIDATOR)
+# INTERNALIZATION (VALIDATOR — legacy pass/partial/fail)
 # =============================================================================
 
-internalization:
-  # Pass/partial/fail thresholds (out of 6 checks)
+internalization_legacy:
+  # Pass/partial/fail thresholds (out of 6 checks) — VALIDATOR's old binary check
   pass_threshold: 6
   partial_min: 4
   fail_below: 4
 
   # Estimated time for internalization
   estimated_time_minutes: 5
+
+# =============================================================================
+# INTERNALIZATION — Deterministic Metrics (AUDITOR, 16 metrics, 4 categories)
+# =============================================================================
+#
+# Replaces the binary CHECKPOINT pass/partial/fail with 16 deterministic
+# metrics across 4 categories: Absorption (I-01..I-04), int-Accuracy (I-05..I-08),
+# int-Calibration (I-09..I-12), int-Transfer (I-13..I-16).
+#
+# AUDITOR computes these metrics; CHECKPOINT doubt scores are informational only.
+# See .specify/specs/003-internalization-metrics/data-model.md for full schema.
+#
+
+internalization:
+  # Master switch — set false to disable all internalization measurement
+  enabled: true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TIER CLASSIFICATION (FR-027)
+  # Maps each of the 37 squad agents to an internalization tier.
+  # Tiers determine which absorption and accuracy thresholds apply.
+  # Every agent in agents.yaml MUST appear in exactly one tier.
+  # ───────────────────────────────────────────────────────────────────────────
+  tiers:
+    deep:
+      # Agents that must absorb the FULL spec — core builders and architects.
+      # Highest thresholds: absorption >= 0.80, int-accuracy >= 0.75.
+      agents: [IMPLEMENTER, ARCHITECT, ORCHESTRATOR, SENTINEL, CARTOGRAPHER, SCOUT, SAGE, SYNTHESIZER, GATEKEEPER, VALIDATOR]
+      absorption_threshold: 0.80
+      int_accuracy_threshold: 0.75
+    moderate:
+      # Agents that must absorb RELEVANT sections — reviewers, specialists, learning.
+      # Medium thresholds: absorption >= 0.65, int-accuracy >= 0.60.
+      agents: [INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE, MAVERICK, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR, CHANGE_CONTROLLER, MIRROR, ADAPTIVE, AUDITOR, REALIST, MONITOR, MODELER, GOLDDIGGER]
+      absorption_threshold: 0.65
+      int_accuracy_threshold: 0.60
+    minimal:
+      # Task-oriented agents — trackers, scorekeepers, memory.
+      # Low thresholds: absorption >= 0.40, int-accuracy >= 0.40.
+      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, PROSPECTOR, VETERAN, GLOBAL_MEMORY]
+      absorption_threshold: 0.40
+      int_accuracy_threshold: 0.40
+    exempt:
+      # Not subject to internalization gate — orchestrator only.
+      agents: [COMMANDER]
+
+  # Fallback tier for any agent not listed above (FR-051)
+  default_tier: deep
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # CROSS-VALIDATION RULES (FR-041)
+  # Detect metric combinations that suggest superficial compliance rather
+  # than genuine internalization. Each rule fires a flag on the log entry.
+  # ───────────────────────────────────────────────────────────────────────────
+  cross_validation:
+    CV-1:
+      # High requirement coverage but low first-pass acceptance →
+      # agent cites requirements without actually satisfying them.
+      condition: "int_I01 >= 0.90 AND int_I13 < 0.50"
+      flag: "high-coverage-low-acceptance"
+      # Requires deferred metrics (I-13 is Transfer) — skipped during cold-start Phase 1
+      requires_deferred: true
+    CV-2:
+      # High terminology fidelity but low numeric accuracy →
+      # agent uses correct words but gets the numbers wrong.
+      condition: "int_I03 >= 0.90 AND int_I05 < 0.80"
+      flag: "high-terminology-low-accuracy"
+      requires_deferred: false
+    CV-3:
+      # High requirement coverage but low terminology fidelity →
+      # agent copies requirement IDs without understanding the domain language.
+      condition: "int_I01 >= 0.90 AND int_I03 < 0.40"
+      flag: "citation-stuffing-low-fidelity"
+      requires_deferred: false
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # COLD-START PROTOCOL (FR-048)
+  # Governs metric availability during early runs when historical data
+  # is insufficient for deferred metrics (calibration, transfer).
+  # ───────────────────────────────────────────────────────────────────────────
+  cold_start:
+    # Phase 1 (runs 1-4): Only immediate metrics (I-01..I-08) computed.
+    # Deferred metrics (I-09..I-16) are null. Gate uses absorption only.
+    phase_1_max_runs: 4
+
+    # Phase 2 (runs 5-9): Deferred metrics begin populating as data accrues.
+    # Gate uses absorption + available deferred metrics.
+    phase_2_max_runs: 9
+
+    # Brier Score (I-09) requires at least this many confidence-outcome pairs.
+    # Below this count, I-09 remains null.
+    brier_min_pairs: 5
+
+    # Escalation precision (I-12) requires at least this many escalation events.
+    # Below this count, I-12 remains null.
+    escalation_min_count: 3
+
+    # Promotion to "stable" status requires this many completed runs.
+    # Below this, entry is tagged run_type: validation_run.
+    promotion_min_runs: 20
+
+    # Minimum prompt-version correlation (Spearman) before ADAPTIVE
+    # can recommend prompt changes based on internalization trends.
+    # [range: 0.50-0.90] Higher = more conservative recommendations.
+    promotion_correlation_threshold: 0.70
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # DISAGREEMENT PROTOCOL (FR-032)
+  # Detects when CHECKPOINT doubt scores conflict with AUDITOR metrics.
+  # ───────────────────────────────────────────────────────────────────────────
+  disagreement:
+    # If AUDITOR metrics PASS but CHECKPOINT recorded >= this many critical
+    # doubts, flag the entry with disagreement_flag: "metrics-pass-doubts-high".
+    critical_doubt_threshold: 2
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # DIAGNOSTIC MATRIX (FR-039)
+  # Combines Understanding score (U) with internalization score (I) to
+  # classify outcomes into four quadrants:
+  #   U-high + I-high = aligned
+  #   U-high + I-low  = confounded (spec is good but agent doesn't absorb)
+  #   U-low  + I-high = compensating (agent absorbs despite poor spec)
+  #   U-low  + I-low  = systemic (both spec quality and absorption are low)
+  # ───────────────────────────────────────────────────────────────────────────
+  diagnostic_matrix:
+    # Threshold above which Understanding score is considered "high"
+    understanding_high_threshold: 0.70
+    # Threshold above which internalization score is considered "high"
+    understanding_low_threshold: 0.70
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # EVOLUTION SIGNALS — Internalization-specific (FR-052..FR-055)
+  # Extends the existing evolution.signals section with int-specific triggers.
+  # AUDITOR fires these when internalization metrics show sustained decline.
+  # ───────────────────────────────────────────────────────────────────────────
+  evolution_signals:
+    # Minimum consecutive runs with declining metrics before signal fires.
+    # [range: 2-5] Lower = more sensitive, higher = fewer false alarms.
+    min_consecutive_runs: 3
+
+    # Severity is mapped from the magnitude of decline (peak - current).
+    # Each threshold is the minimum decline delta for that severity level.
+    severity_thresholds:
+      low: 0.10       # 10-19% decline from peak
+      medium: 0.20    # 20-29% decline from peak
+      high: 0.30      # 30-39% decline from peak
+      critical: 0.40  # 40%+ decline from peak
 
 # =============================================================================
 # EVOLUTION (AUDITOR + ADAPTIVE)
