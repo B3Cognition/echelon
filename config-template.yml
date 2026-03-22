@@ -552,7 +552,9 @@ knowledge_base:
 
 tools:
   understanding_cli: "understanding"
-  reverse_eng_cli: "specify"
+  # reverse-eng is a Claude Code skill (not a CLI).
+  # Invoke via: Skill tool → speckit.reverse-eng.extract / speckit.reverse-eng.analyze
+  # No CLI path needed.
 
 # =============================================================================
 # BANZAI MODE (Full Autonomous)

@@ -60,7 +60,7 @@ Validate DISCOVER's outputs before the WHAT agent builds requirements on top of 
 - `reference-architectures.md` (greenfield only)
 - `reasoning-journal.json` — prior agent reasoning
 
-**This mode does NOT run Understanding metrics.** No spec exists yet.
+**This mode does NOT run Understanding metrics.** No spec exists yet. Understanding CLI is not required for WHY1.
 
 ### Process
 
@@ -195,17 +195,32 @@ All current artifacts:
 
 ### Process
 
-#### 1. Run Understanding CLI
+#### 1. Run Understanding CLI (MANDATORY — HARD STOP if unavailable)
+
+**Understanding CLI is non-negotiable in spec-validation mode (WHY2, WHY3). Heuristic quality reviews are 15-29% overconfident (PAT-006). Running without Understanding burns tokens and produces misleading scores that corrupt calibration data.**
 
 ```bash
 understanding validate <spec_directory>/spec.md --json --enhanced 2>/dev/null
 ```
 
-Parse the JSON output for quality gate scores.
+**If Understanding CLI is unavailable** (command not found, non-zero exit code, timeout):
+
+1. **STOP immediately.** Do not proceed to Steps 2-5. Do not produce quality gate scores.
+2. Output the following signal for COMMANDER:
+
+```
+SAGE BLOCKED — Understanding CLI unavailable
+Mode: spec-validation (WHY2/WHY3)
+Error: <exact error from command>
+Action required: Install Understanding CLI before running WHY2/WHY3.
+Heuristic fallback is NOT permitted — proven 15-29% overconfident (PAT-006).
+```
+
+3. COMMANDER will set state.json status to "blocked" and escalate to human.
+
+**If Understanding CLI succeeds**, parse the JSON output for quality gate scores, then continue:
 
 #### 1b. Generate Behavioral Diagram
-
-If Understanding CLI is available, generate a visual state machine diagram from the spec:
 
 ```bash
 understanding <spec_directory>/spec.md --diagram <spec_directory>/spec-diagram.svg 2>/dev/null
@@ -217,7 +232,7 @@ This diagram visualizes the spec's behavioral model — states, transitions, gua
 - **Verify testability:** Can every transition be triggered by a test scenario?
 - **Share with other agents:** VERIFICATION uses this diagram to check if the code implements all states/transitions. VISUAL VALIDATOR includes it in reports. REFLECT includes it in knowledge transfer assessment.
 
-**If Understanding CLI is unavailable** (command not found, non-zero exit, timeout), fall back to Heuristic Review (see section below). Log in reasoning journal: `"Understanding CLI unavailable — using heuristic fallback. Results are UNVALIDATED."`.
+**If diagram generation fails** (but validate succeeded): log the failure but continue — diagram is useful but not blocking.
 
 #### 2. Check Quality Gate Thresholds
 
@@ -344,7 +359,7 @@ Score each category: PASS / PARTIAL / FAIL. A PARTIAL counts as 0.5 for threshol
 # Quality Gates — WHY<2|3>
 
 ## Verdict: <PASS | FAIL>
-## Mode: <understanding-cli | heuristic-fallback>
+## Mode: understanding-cli
 
 ## Quality Scores
 
@@ -458,7 +473,7 @@ These rules govern your PASS/FAIL decisions. They are non-negotiable.
    - What your confidence level is
    - Whether the lack of findings might indicate insufficient analysis rather than quality
 5. **If Understanding scores are borderline** (within 0.05 of threshold): report PASS but flag the borderline metrics with specific improvement suggestions.
-6. **If you are in heuristic fallback mode:** All results must be flagged as `UNVALIDATED (heuristic)` and you must recommend re-running with Understanding CLI when available.
+6. **Heuristic fallback mode is no longer permitted.** Understanding CLI is mandatory for WHY2/WHY3. If you reach this point without Understanding CLI scores, you should have already stopped at Step 1.
 
 ---
 

@@ -394,6 +394,42 @@ scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
 - Exit 0: Continue
 - Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
 
+### Preflight: Reverse-Eng Skill Availability (Brownfield Only)
+
+If `state.json.mode` is `brownfield`, COMMANDER MUST verify reverse-eng skills are available before dispatching SCOUT:
+
+1. Attempt to invoke the Skill tool with `speckit.reverse-eng.extract` (dry check — if the skill loads, it is available).
+2. Persist `state.json.dependency_checks.reverse_eng_skills` with:
+   - `status` (`available|unavailable`)
+   - `checked_at` (ISO-8601 timestamp)
+
+3. **If unavailable (skill not found or Skill tool errors):**
+   - Set `state.json.status` to `"blocked"`
+   - Set `state.json.blocked_reason` to `"reverse-eng skills unavailable — required for brownfield mode"`
+   - Print to terminal:
+
+   ```
+   ============================================
+     SQUAD BLOCKED — REVERSE-ENG SKILLS REQUIRED
+   ============================================
+
+   Mode: brownfield
+   Required skills: speckit.reverse-eng.extract, speckit.reverse-eng.analyze
+
+   These are Claude Code skills (part of the spec-kit extension).
+   They must be available before brownfield DISCOVER can proceed.
+
+   Manual codebase analysis is NOT an acceptable substitute —
+   it produces inferior results and wastes tokens.
+
+   Action: Ensure spec-kit reverse-eng extension is installed.
+   ============================================
+   ```
+
+   - **STOP execution.** Do not dispatch SCOUT. Do not proceed.
+
+4. **If available:** Continue to DISCOVER.
+
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
 
 ---
@@ -616,7 +652,7 @@ After `/speckit.constitution` completes:
 
 For brownfield projects where constitution doesn't exist:
 
-1. **Option A:** If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns
+1. **Option A:** Run `/speckit.reverse-eng.extract` (Claude Code skill) first to derive principles from existing code patterns
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `/speckit.constitution` is called with the derived context
 
@@ -685,6 +721,40 @@ Use the Agent tool to dispatch a subagent with:
 ---
 
 ## 5. WHY2 Phase (Spec Validation)
+
+### Preflight: Understanding CLI Availability (HARD STOP)
+
+Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding CLI is available:
+
+```bash
+scripts/bash/run-understanding.sh --help 2>/dev/null || understanding --version 2>/dev/null
+```
+
+If exit code is non-zero (Understanding CLI not installed or not working):
+
+1. Set `state.json.status` to `"blocked"`
+2. Set `state.json.blocked_reason` to `"Understanding CLI unavailable — required for WHY2/WHY3 spec validation"`
+3. Print to terminal:
+
+```
+============================================
+  SQUAD BLOCKED — UNDERSTANDING CLI REQUIRED
+============================================
+
+Phase: WHY2 (spec-validation)
+Required: understanding CLI (installed at ~/.local/bin/understanding)
+
+Heuristic fallback is NOT permitted.
+Prior run (PAT-006) proved heuristic scoring is 15-29% overconfident,
+producing misleading quality gates that corrupt calibration data.
+
+Install: See Understanding CLI documentation.
+============================================
+```
+
+4. **STOP execution.** Do not dispatch SAGE. Do not proceed.
+
+Persist `state.json.dependency_checks.understanding_cli` with `status`, `checked_at`.
 
 ### Context Pack Assembly
 
@@ -1505,9 +1575,9 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 | Tool | Failure | Fallback |
 |------|---------|----------|
-| Understanding CLI | Not installed, crashes, or times out | WHY falls back to heuristic review: manually check ambiguity, completeness, testability. Flag all quality scores as UNVALIDATED. |
-| spec-kit-reverse-eng | Not installed or fails on codebase | DISCOVER falls back to greenfield mode: ask user to describe the codebase instead. Flag as degraded. |
-| spec-kit CLI | Not installed | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. |
+| Understanding CLI | Not installed, crashes, or times out | **HARD STOP for WHY2/WHY3.** SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding CLI and is unaffected. |
+| spec-kit-reverse-eng skills | Skill invocation fails or returns empty output | **HARD STOP in brownfield mode.** SCOUT does NOT fall back to manual analysis. COMMANDER sets state to "blocked" and escalates to human. Reverse-eng skills (`/speckit.reverse-eng.extract`, `/speckit.reverse-eng.analyze`) are Claude Code skills, not CLI tools — they must be available before brownfield DISCOVER can proceed. |
+| spec-kit skills | Skill invocation fails | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. Note: spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are Claude Code skills, not CLI tools. |
 
 ### Subagent Failures
 

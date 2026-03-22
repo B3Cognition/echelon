@@ -41,21 +41,40 @@ You will receive a mode indicator from the MANAGER: either `greenfield` or `brow
 
 You are analyzing an existing codebase. Your goal is to extract understanding that goes far beyond what a directory listing provides.
 
-### Step 1: Check for spec-kit-reverse-eng
+### Step 1: Run spec-kit reverse-eng extraction (MANDATORY — HARD STOP if unavailable)
 
-```bash
-which reverse-eng || npx reverse-eng --version 2>/dev/null
+**This step is non-negotiable in brownfield mode. If reverse-eng skills fail, you MUST stop and report the failure. Do NOT fall back to manual analysis. Do NOT proceed to Steps 2-5. Burning tokens on manual analysis when reverse-eng is available produces inferior results.**
+
+Invoke the `/speckit.reverse-eng.extract` skill using the Skill tool:
+
+```
+Skill: speckit.reverse-eng.extract
+Args: <target_path>
 ```
 
-**If available:** Run the full extraction pipeline:
+Then invoke `/speckit.reverse-eng.analyze` to produce structured analysis data:
 
-```bash
-reverse-eng extract <target_path> --output analysis.json
+```
+Skill: speckit.reverse-eng.analyze
+Args: <target_path>
 ```
 
-Parse `analysis.json` for: entities, relationships, APIs, data models, dependencies, and architectural patterns.
+These are Claude Code skills (NOT CLI tools). Use the Skill tool to invoke them. Parse the outputs for: entities, relationships, APIs, data models, dependencies, and architectural patterns.
 
-**If unavailable:** Fall back to manual analysis (Steps 2-4 cover this). Log in your reasoning journal that Reverse-Eng was unavailable and analysis is manual.
+**If a skill invocation fails** (tool error, timeout, or empty output):
+
+1. **STOP immediately.** Do not proceed to Steps 2-5.
+2. Write a failure report to the spec directory with the exact error message.
+3. Output the following signal for COMMANDER:
+
+```
+DISCOVER BLOCKED — reverse-eng skill invocation failed
+Error: <exact error message>
+Mode: brownfield
+Action required: Fix reverse-eng skill availability before retrying DISCOVER.
+```
+
+4. COMMANDER will set state.json status to "blocked" and escalate to human.
 
 ### Step 2: Structural Analysis
 
