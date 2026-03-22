@@ -45,17 +45,24 @@ You OWN the spec creation workflow. Call `/speckit.specify` yourself — do NOT 
 
 This gives us: spec-kit's proven templates + branch workflow + squad's domain analysis.
 
-### Fallback Mode (spec-kit unavailable)
+### Preflight: /speckit.specify Availability (HARD STOP)
 
-When COMMANDER passes `fallback_mode=true` in the context pack:
+**`/speckit.specify` is non-negotiable. Manual spec creation produces inconsistent templates, skips branch creation, and bypasses spec-kit's versioning. Fallback mode is NOT permitted.**
 
-1. Do not invoke `/speckit.specify` or `/speckit.clarify` — they are unavailable.
-2. Create the spec directory manually: `mkdir -p specs/{NNN}-{feature-name}/`
-3. Still produce the same artifacts (`spec.md`, `00-overview.md`) with the same quality.
-4. Prepend the canonical banner from `templates/fallback-artifact-banner.md` verbatim at the top of each artifact.
-5. Include a note that artifacts are tracked in `quality_degradation[]` under degradation type `unvalidated`.
+Before Step 1, verify `/speckit.specify` is available by invoking it. If it fails (skill not found, error, timeout):
 
-When `fallback_mode=false`, follow normal Spec-Kit Integration workflow above.
+1. **STOP immediately.** Do not proceed to Steps 1-2. Do not create spec.md manually.
+2. Output the following signal for COMMANDER:
+
+```
+CARTOGRAPHER BLOCKED — /speckit.specify unavailable
+Phase: WHAT (requirements definition)
+Error: <exact error from skill invocation>
+Action required: Install spec-kit or ensure /speckit.specify skill is registered.
+Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
+```
+
+3. COMMANDER will set state.json status to "blocked" and escalate to human.
 
 ## Available Tools
 
