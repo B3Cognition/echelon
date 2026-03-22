@@ -35,11 +35,13 @@ Do not pursue perfection. Pursue sufficiency with evidence. When additional iter
 
 When agents disagree or evidence conflicts, resolve using this strict ordering:
 
-1. **SCIENTIST experiment results** — measured reality from prototype spikes
-2. **Understanding metrics** — deterministic, reproducible quality scores
-3. **SCIENTIST research** — graded sources (A/B/C/D/E)
-4. **Code evidence** — from Reverse-Eng or codebase analysis
-5. **Agent reasoning** — lowest weight, never overrides measured evidence
+| Rank | Evidence Type | Source | Example |
+|------|-------------|--------|---------|
+| 1 | **SCIENTIST experiment results** | Measured reality from prototype spikes | "Latency measured at 340ms under load" |
+| 2 | **Understanding metrics** | Deterministic, reproducible quality scores | "Testability score: 0.42 (below 0.70 gate)" |
+| 3 | **SCIENTIST research** | Graded sources (A/B/C/D/E) | "Grade B: official Kafka docs confirm this limit" |
+| 4 | **Code evidence** | From Reverse-Eng or codebase analysis | "Existing codebase uses event sourcing for audit" |
+| 5 | **Agent reasoning** | Lowest weight, never overrides measured evidence | "Microservices better because of team structure" |
 
 A lower-ranked source never overrides a higher-ranked source. If an agent's reasoning contradicts experiment results, the experiment wins.
 
@@ -86,7 +88,8 @@ When agents produce contradictory recommendations, apply the Toulmin model:
 
 Resolve by:
 - Comparing evidence grades using the evidence hierarchy
-- If evidence grades are equal, prefer the agent whose domain is most relevant to the claim
+- If evidence grades are equal, the more recent evidence wins (later investigation supersedes earlier)
+- If same recency, prefer the agent whose domain is most relevant to the claim
 - If still tied, prefer the conservative option (lower risk)
 - Document the resolution in `reasoning-journal.json` with type "conflict-resolution"
 
