@@ -652,7 +652,7 @@ After `/speckit.constitution` completes:
 
 For brownfield projects where constitution doesn't exist:
 
-1. **Option A:** Run `/speckit.reverse-eng.extract` (Claude Code skill) first to derive principles from existing code patterns
+1. **Option A:** If GOLDDIGGER ran and `brownfield-index.md` is present, derive principles from the domain inventory and hotspot analysis already captured there.
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `/speckit.constitution` is called with the derived context
 
@@ -1576,7 +1576,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 | Tool | Failure | Fallback |
 |------|---------|----------|
 | Understanding CLI | Not installed, crashes, or times out | **HARD STOP for WHY2/WHY3.** SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding CLI and is unaffected. |
-| spec-kit-reverse-eng skills | Skill invocation fails or returns empty output | **HARD STOP in brownfield mode.** SCOUT does NOT fall back to manual analysis. COMMANDER sets state to "blocked" and escalates to human. Reverse-eng skills (`/speckit.reverse-eng.extract`, `/speckit.reverse-eng.analyze`) are Claude Code skills, not CLI tools — they must be available before brownfield DISCOVER can proceed. |
+| spec-kit-reverse-eng | PROSPECTOR fails or reverse-eng not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
 | spec-kit skills | Skill invocation fails | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. Note: spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are Claude Code skills, not CLI tools. |
 
 ### Subagent Failures
