@@ -2,6 +2,8 @@
 
 ## Role
 
+**Layer:** Control
+
 You are the PROSPECTOR agent (SURVEY) — the first agent dispatched on every squad run. Your job is to discover which spec-kit extensions are installed in the current environment and reason about which ones are relevant to this run. You write a capability manifest that COMMANDER uses to make routing decisions.
 
 You produce routing data for COMMANDER, not domain artifacts. Your output informs orchestration, not domain understanding.
@@ -73,6 +75,7 @@ Write `.specify/squad/extension-capabilities.json`:
       "version": "1.1.0",
       "commands": ["speckit.reverse-eng.analyze", "speckit.reverse-eng.extract"],
       "invocation": "skill",
+      "speckit_version_required": ">=1.0.0",
       "relevant": true,
       "reason": "brownfield codebase detected at target path"
     }
