@@ -10,6 +10,14 @@ $ARGUMENTS
 
 ---
 
+## COMMANDER Loading — MANDATORY FIRST STEP
+
+**Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the COMMANDER (MANAGER). The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and convergence thresholds. These govern ALL routing and iteration decisions throughout the run.
+
+Then execute the state machine below.
+
+---
+
 ## Overview
 
 This command runs the **Cognitive Agent Squad** autonomously. You are the **MANAGER** — the orchestrator of 19 cognitive functions that perform complete pre-code analysis.
@@ -1668,42 +1676,17 @@ Escalation to human is triggered when:
 
 ## 17. Evidence Hierarchy (Conflict Resolution)
 
-When two agents disagree (e.g., HOW says microservices, ASSESS says monolith), resolve using this hierarchy — higher rank wins:
-
-| Rank | Evidence Type | Source | Example |
-|------|-------------|--------|---------|
-| 1 | Experiment results | SCIENTIST spike measurements | "Latency measured at 340ms under load" |
-| 2 | Understanding metrics | WHY deterministic scores | "Testability score: 0.42 (below 0.70 gate)" |
-| 3 | Research (graded A-E) | SCIENTIST evidence evaluation | "Grade B: official Kafka docs confirm this limit" |
-| 4 | Code evidence | DISCOVER / Reverse-Eng | "Existing codebase uses event sourcing for audit" |
-| 5 | Agent reasoning | Any agent's logical argument | "Microservices better because of team structure" |
-
-When resolving a conflict:
-
-1. Check if higher-ranked evidence exists for either position
-2. The position with the highest-ranked supporting evidence wins
-3. If same rank: the more recent evidence wins
-4. If still tied: MANAGER logs the conflict and chooses the lower-risk option
-5. All conflict resolutions are recorded in `reasoning-journal.json` with type "decision"
+**See `agents/control/commander.md` → "Evidence Hierarchy" and "Conflict Resolution Protocol" sections.** The COMMANDER prompt is the authoritative source for the 5-rank evidence hierarchy, Toulmin-model conflict resolution, and the "never resolve by averaging" principle. All conflict resolutions are recorded in `reasoning-journal.json` with type "decision".
 
 ---
 
 ## 18. Token Budget Management
 
-### Allocation (MANAGER enforces)
+**See `agents/control/commander.md` → "Token Budget Management" section.** The COMMANDER prompt is the authoritative source for budget allocation tiers, borrow rules between tiers, and the 40% single-agent cap.
 
-| Priority | Budget % | Phases |
-|----------|---------|--------|
-| 1 | 25% | DISCOVER + WHAT |
-| 2 | 20% | WHY (all passes) |
-| 3 | 25% | HOW + SPECIALISTS |
-| 4 | 15% | PLAN + ASSESS |
-| 5 | 10% | CONSENSUS + FINALIZE |
-| 6 | 5% | Reserve (re-routes, error recovery) |
+### Budget Enforcement (phase-specific skip rules)
 
-### Budget Enforcement
-
-- Before each agent dispatch, check remaining budget
+- Before each agent dispatch, check remaining budget per the COMMANDER's allocation tiers
 - If remaining budget < estimated cost for the agent → check if phase can be skipped
   - DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN: **cannot be skipped** — force finalize instead
   - Specialists (except TEST ARCHITECT): can be deferred

@@ -10,6 +10,14 @@ $ARGUMENTS
 
 ---
 
+## COMMANDER Loading — MANDATORY FIRST STEP
+
+**Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the COMMANDER. The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and build phase orchestration rules. These govern ALL routing, iteration, and escalation decisions throughout the build.
+
+Then execute the build state machine below.
+
+---
+
 ## Overview
 
 This command runs **Phase B: Building** of the Cognitive Agent Squad. You are the **COMMANDER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
