@@ -155,6 +155,59 @@ Maintain `state.json` with:
 - Convergence metrics (deltas between iterations)
 - Specialist summoning log
 
+### New state.json fields (PROSPECTOR + GOLDDIGGER)
+
+- `prospector_status`: `"complete"` | `"failed"` — set by COMMANDER after PROSPECTOR runs
+- `golddigger_status`: `"complete"` | `"partial"` | `"failed"` — set by GOLDDIGGER
+- `golddigger_mode`: `"survey"` | `"deep-dive"` — which mode last ran
+- `golddigger_notes`: array of strings — any warnings or known issues from GOLDDIGGER
+- `golddigger_requests`: array of `{ domain, requester, reason }` — Mode 2 request queue
+- `golddigger_completed_domains`: array of domain name strings — cache hit deduplication
+
+---
+
+## Run Initialization
+
+Before any mode detection or agent dispatch, COMMANDER must:
+
+### 1. Dispatch PROSPECTOR (always)
+
+Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path, run_id). Block until PROSPECTOR completes.
+
+After completion:
+- Read `.specify/squad/extension-capabilities.json`
+- If the file is absent, malformed, or empty: log `prospector_status: failed` in `state.json`; treat identically to empty-extensions (no GOLDDIGGER dispatch)
+- If valid: extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: reverse-eng 1.1.0 [relevant]" or "No extensions available")
+
+**PROSPECTOR failure never blocks the run.** Continue to mode detection regardless.
+
+### 2. Brownfield Extension Check
+
+After brownfield mode is confirmed, before dispatching SCOUT:
+
+1. Read `extension-capabilities.json` (already loaded at init)
+2. If `reverse-eng` is listed with `relevant: true`:
+   - Dispatch GOLDDIGGER in Mode 1 (Survey)
+   - Block SCOUT dispatch until GOLDDIGGER completes
+   - Read `golddigger_status` from `state.json`:
+     - `complete`: proceed normally, SCOUT will find `brownfield-index.md`
+     - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual)
+3. If `reverse-eng` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
+
+### 3. GOLDDIGGER Mode 2 Queue (Phase 1 agents)
+
+After each Phase 1 agent (SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER) completes, before dispatching the next agent:
+
+1. Read `state.json.golddigger_requests` — if empty or absent, continue
+2. For each pending request entry:
+   a. Check `state.json.golddigger_completed_domains` — if the domain is already listed, skip (cache hit; domain data is in `.specify/squad/golddigger-cache/<domain>.md`). **COMMANDER checks this before dispatch; GOLDDIGGER also checks defensively inside — both are intentional.**
+   b. Otherwise: dispatch GOLDDIGGER in Mode 2 with the domain name
+   c. After GOLDDIGGER completes (GOLDDIGGER writes only its status fields):
+      - **COMMANDER** removes the domain entry from `golddigger_requests` in `state.json`
+      - **COMMANDER** adds the domain to `golddigger_completed_domains` in `state.json`
+      - **COMMANDER** includes the cached domain file path (`.specify/squad/golddigger-cache/<domain>.md`) in the requesting agent's next context pack
+3. Continue to next Phase 1 agent dispatch
+
 ---
 
 ## Build Phase Orchestration
