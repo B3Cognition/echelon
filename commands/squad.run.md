@@ -686,58 +686,42 @@ For brownfield projects where constitution doesn't exist:
 
 ## 4. WHAT Phase (Requirements Definition)
 
-> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. We call `/speckit.specify` to create the branch and directory structure.
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. CARTOGRAPHER owns spec creation — it calls `/speckit.specify` itself.
 
-### 4.1 Create Spec via Spec-Kit
+### 4.1 Context Pack Assembly
 
-**Before dispatching CARTOGRAPHER**, call `/speckit.specify` to create the feature branch and directory:
-
-1. **Summarize UNDERSTAND findings** — Extract from staging:
-   - Feature name from `mental-model.md` or user input
-   - Key requirements from `assumptions.md` and `boundaries.md`
-   - Domain context from `glossary.md`
-
-2. **Call `/speckit.specify`** with the summarized context:
-   - Spec-kit creates the branch: `{NNN}-{feature-name}`
-   - Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
-   - Spec-kit generates initial `spec.md` using its template
-
-3. **Update state.json** with the created spec:
-
-   ```json
-   {
-     "spec_id": "{NNN}",
-     "spec_dir": "specs/{NNN}-{feature-name}",
-     "updated_at": "{ISO-8601}"
-   }
-   ```
-
-4. **Move staging artifacts** to the spec directory:
-
-   ```bash
-   mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
-   ```
-
-### 4.2 Context Pack Assembly
-
-Read and include in the subagent prompt (now from `specs/{NNN}-{feature}/`):
+Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
 - `reference-architectures.md` (if greenfield)
 - `reasoning-journal.json` (filtered to DISCOVER + WHY1 entries)
-- `spec.md` (created by `/speckit.specify`)
+- User input (original request)
 
-### 4.3 Dispatch CARTOGRAPHER
+### 4.2 Dispatch CARTOGRAPHER
+
+CARTOGRAPHER calls `/speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls reverse-eng and SAGE calls Understanding CLI. COMMANDER does NOT call `/speckit.specify`.
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. `/speckit.specify` has already created the initial spec. Your job is to ENHANCE it with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include files]. Update `spec.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
-- **description:** "CARTOGRAPHER: requirements definition and specification"
+- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. You will call `/speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include staging files]. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **description:** "CARTOGRAPHER: spec creation and requirements definition"
+
+### 4.3 Post-CARTOGRAPHER
+
+After CARTOGRAPHER completes, read its output to get the created `spec_id` and `spec_dir`. Update state.json:
+
+```json
+{
+  "spec_id": "{NNN}",
+  "spec_dir": "specs/{NNN}-{feature-name}",
+  "updated_at": "{ISO-8601}"
+}
+```
 
 ### Expected Outputs
 
-- `spec.md` (enhanced by CARTOGRAPHER)
+- `spec.md` (created by `/speckit.specify`, enhanced by CARTOGRAPHER)
 - `00-overview.md`
 
 **Transition:** Update state.json phase to "why2". Proceed to WHY2.
