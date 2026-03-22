@@ -269,7 +269,13 @@ Create `.specify/squad/state.json`:
   "blocked_reason": null,
   "escalation_question": null,
   "dispatch_counters": {},
-  "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 }
+  "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 },
+  "prospector_status": null,
+  "golddigger_status": null,
+  "golddigger_mode": null,
+  "golddigger_notes": null,
+  "golddigger_requests": [],
+  "golddigger_completed_domains": []
 }
 ```
 
@@ -394,41 +400,49 @@ scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
 - Exit 0: Continue
 - Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
 
-### Preflight: Reverse-Eng Skill Availability (Brownfield Only)
+### 1.8 Dispatch PROSPECTOR
 
-If `state.json.mode` is `brownfield`, COMMANDER MUST verify reverse-eng skills are available before dispatching SCOUT:
+Before dispatching DISCOVER, dispatch PROSPECTOR to discover installed spec-kit extensions.
 
-1. Attempt to invoke the Skill tool with `speckit.reverse-eng.extract` (dry check — if the skill loads, it is available).
-2. Persist `state.json.dependency_checks.reverse_eng_skills` with:
-   - `status` (`available|unavailable`)
-   - `checked_at` (ISO-8601 timestamp)
+**Dispatch:**
 
-3. **If unavailable (skill not found or Skill tool errors):**
-   - Set `state.json.status` to `"blocked"`
-   - Set `state.json.blocked_reason` to `"reverse-eng skills unavailable — required for brownfield mode"`
-   - Print to terminal:
+Use the Agent tool:
 
-   ```
-   ============================================
-     SQUAD BLOCKED — REVERSE-ENG SKILLS REQUIRED
-   ============================================
+- **prompt:** Read the file `agents/control/prospector.md` for your complete instructions. You are the PROSPECTOR (SURVEY) agent. Scan for installed spec-kit extensions and write `.specify/squad/extension-capabilities.json`. Your context: target path is `{target_path}`, mode is `{detected_mode}`, run_id is `{run_id}`.
 
-   Mode: brownfield
-   Required skills: speckit.reverse-eng.extract, speckit.reverse-eng.analyze
+Block until PROSPECTOR completes.
 
-   These are Claude Code skills (part of the spec-kit extension).
-   They must be available before brownfield DISCOVER can proceed.
+**After PROSPECTOR completes:**
 
-   Manual codebase analysis is NOT an acceptable substitute —
-   it produces inferior results and wastes tokens.
+- Read `.specify/squad/extension-capabilities.json`
+- If file is absent, malformed, or empty: update `state.json.prospector_status` to `"failed"`, log a warning, treat as empty-extensions (no GOLDDIGGER dispatch). **PROSPECTOR failure never blocks the run.**
+- If valid: set `state.json.prospector_status` to `"complete"`. Extract the list of relevant extensions and store a brief summary in context — include this summary in every subsequent agent's context pack (e.g., `"Extensions available: reverse-eng 1.1.0 [relevant]"` or `"No extensions available"`).
 
-   Action: Ensure spec-kit reverse-eng extension is installed.
-   ============================================
-   ```
+**GOLDDIGGER Mode 1 dispatch (brownfield path only):**
 
-   - **STOP execution.** Do not dispatch SCOUT. Do not proceed.
+If `detected_mode` is `brownfield` AND `extension-capabilities.json` lists an extension with `id: "reverse-eng"` and `relevant: true`:
 
-4. **If available:** Continue to DISCOVER.
+1. Dispatch GOLDDIGGER in Mode 1 (Survey) before DISCOVER:
+   - Use the Agent tool
+   - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
+2. Block until GOLDDIGGER completes.
+3. Read `state.json.golddigger_status`:
+   - `complete`: proceed — SCOUT will find `.specify/squad/brownfield-index.md`
+   - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual structural analysis)
+
+If `reverse-eng` is not listed or `extensions` is empty: skip GOLDDIGGER, proceed directly to DISCOVER.
+
+**GOLDDIGGER Mode 2 Queue (Phase 1 agents):**
+
+After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, MODELER) completes, before dispatching the next agent:
+
+1. Read `state.json.golddigger_requests` — if empty or absent, continue
+2. For each pending request entry:
+   a. Check `state.json.golddigger_completed_domains` — if the domain is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/<domain>.md`). Notify the requesting agent in its next context pack.
+   b. Otherwise: dispatch GOLDDIGGER in Mode 2 (Deep Dive) for that domain
+      - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 2 (Deep Dive)** for domain `{domain}` at target path `{target_path}`.
+   c. After GOLDDIGGER completes: remove the domain from `state.json.golddigger_requests`, add it to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{domain}.md` in the requesting agent's next context pack.
+3. Continue to next Phase 1 agent dispatch.
 
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
 
