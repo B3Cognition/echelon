@@ -272,7 +272,7 @@ These rules apply to EVERY metric in Steps 1-7. Violations are bugs.
 **I-03 terminology_fidelity** [FR-009]
 1. Extract defined terms from glossary.md (all bold or heading terms)
 2. Tokenize agent output (split on whitespace, lowercase, remove punctuation)
-3. Compute Jaccard similarity: `|glossary_terms ∩ output_terms| / |glossary_terms ∪ output_terms|`
+3. Compute glossary recall: `|glossary_terms ∩ output_terms| / |glossary_terms|` (measures what fraction of glossary terms the agent used — NOT Jaccard, which penalizes long outputs)
 4. If glossary has 0 terms: null with "empty-denominator"
 
 **I-04 dependency_awareness** [FR-010]
