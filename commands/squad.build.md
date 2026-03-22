@@ -134,12 +134,12 @@ pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
 RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
 
 # Start RADAR in background
-PYTHONPATH=${RADAR_EXT} python -m radar.server --port ${RADAR_PORT:-7891} \
+PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
   >> .specify/squad/radar.log 2>&1 &
 echo $! > .specify/squad/radar.pid
 
 # Initialize emitter (creates/truncates agent-states files)
-PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import init_run; init_run('${run_id}')"
+PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import init_run; init_run('${run_id}')"
 ```
 
 **Note:** If RADAR fails to start, log a warning but continue the build. The squad executes without live monitoring.

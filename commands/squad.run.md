@@ -163,19 +163,19 @@ RADAR_EXT=".specify/extensions/cognitive-squad"
 **Before dispatching:**
 
 ```bash
-PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import on_dispatched; on_dispatched('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
+PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_dispatched; on_dispatched('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
 ```
 
 **After successful completion:**
 
 ```bash
-PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import on_complete; on_complete('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}', ${ARTIFACTS_LIST})"
+PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_complete; on_complete('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}', ${ARTIFACTS_LIST})"
 ```
 
 **After error/failure:**
 
 ```bash
-PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import on_error; on_error('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
+PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_error; on_error('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
 ```
 
 **Dispatch ID format:** `CODENAME-N` (e.g., SCOUT-1, SAGE-2). Track counter per codename in state.json under `dispatch_counters`.
@@ -290,12 +290,12 @@ pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
 RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
 
 # Start RADAR in background (PYTHONPATH allows python -m radar.server to work)
-PYTHONPATH=${RADAR_EXT} python -m radar.server --port ${RADAR_PORT:-7891} \
+PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
   >> .specify/squad/radar.log 2>&1 &
 echo $! > .specify/squad/radar.pid
 
 # Initialize emitter (creates/truncates agent-states files)
-PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import init_run; init_run('${run_id}')"
+PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import init_run; init_run('${run_id}')"
 ```
 
 **Note:** If RADAR fails to start, log a warning but continue the run. The squad executes without live monitoring.
