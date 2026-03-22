@@ -35,16 +35,21 @@ cognitive-squad claims brownfield support via `spec-kit-reverse-eng`, but the wi
 ### 3.1 PROSPECTOR (SURVEY)
 
 **Layer:** Control (init phase, before all others)
+
+PROSPECTOR belongs in the Control layer — not Exploration — because it produces routing data for COMMANDER (which extensions to activate, which agents to dispatch) rather than domain knowledge artifacts. It is the only Control-layer agent that writes a file artifact, but its output informs orchestration decisions, not domain understanding.
+
+**Expected `agents.yaml` layer totals after implementation:** Control: 6, Exploration: 6 (SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER + GOLDDIGGER).
+
 **Dispatched by:** COMMANDER, always, as the first agent of every run
 **Responsibility:** Discover installed spec-kit extensions, reason about relevance to the current run, write capability manifest.
 
 **What it does:**
-1. Scans known spec-kit extension locations for `extension.yml` files
+1. Scans known spec-kit extension locations for `extension.yml` files. Starting hypothesis for scan paths: `~/.specify/extensions/` (user-global) and `.specify/extensions/` (project-local). OI-001 tracks confirmation of these paths.
 2. For each found extension: reads ID, version, available commands, required spec-kit version
 3. Reasons about which extensions are relevant (brownfield/greenfield signal, target path, task type)
 4. Writes `.specify/squad/extension-capabilities.json`
 
-**Output format:**
+**Output format — extensions found:**
 ```json
 {
   "generated_at": "<iso-timestamp>",
@@ -61,9 +66,21 @@ cognitive-squad claims brownfield support via `spec-kit-reverse-eng`, but the wi
 }
 ```
 
+**Output format — no extensions found (valid state):**
+```json
+{
+  "generated_at": "<iso-timestamp>",
+  "extensions": []
+}
+```
+
+An empty `extensions` array is a valid, expected output when no spec-kit extensions are installed. COMMANDER treats an absent or empty `extensions` array identically: skip GOLDDIGGER dispatch, proceed to SCOUT directly.
+
 **Available tools:** Read, Glob, Bash, WebFetch (for version checks)
 
 COMMANDER reads `extension-capabilities.json` immediately after PROSPECTOR completes and includes a summary in every subsequent agent's context pack.
+
+**PROSPECTOR failure mode:** If PROSPECTOR crashes, times out, or writes malformed JSON, COMMANDER treats the result identically to an empty-extensions response: skip GOLDDIGGER dispatch, proceed to SCOUT directly. COMMANDER logs `prospector_status: failed` as a warning in `state.json`. The run continues in degraded mode — brownfield analysis falls back to SCOUT's manual structural analysis. This mirrors the GOLDDIGGER degraded-run pattern and is the safest default: a PROSPECTOR failure should never block a run.
 
 ---
 
@@ -126,7 +143,19 @@ COMMANDER detects queue entries and re-dispatches GOLDDIGGER with the specific d
 
 **Output:** `.specify/squad/golddigger-cache/{domain}.md`
 
-Results are cached. If a second agent requests the same domain, COMMANDER reads from cache without re-dispatching GOLDDIGGER.
+**Queue lifecycle (critical):** After GOLDDIGGER Mode 2 completes for a domain, COMMANDER must:
+1. Remove that domain's entry from `golddigger_requests` in `state.json`
+2. Add the domain to `golddigger_completed_domains` list in `state.json`
+3. Notify the requesting agent in its next context pack
+
+Cache deduplication check: before dispatching GOLDDIGGER Mode 2 for a requested domain, COMMANDER checks `golddigger_completed_domains`. If the domain is already listed, read from `.specify/squad/golddigger-cache/{domain}.md` and skip dispatch entirely.
+
+**GOLDDIGGER status reporting:** GOLDDIGGER writes a `golddigger_status` field to `state.json` on every run:
+- `complete` — Mode 1 or Mode 2 ran to successful completion
+- `partial` — pipeline exited early; `brownfield-index.md` may be incomplete
+- `failed` — pipeline did not produce usable output
+
+COMMANDER logs `partial` or `failed` status as a degraded-brownfield run warning. SCOUT proceeds with whatever `brownfield-index.md` is present (or falls back to manual analysis if absent).
 
 **Available tools:** Skill (for reverse-eng invocation), Read, Bash, Glob
 
@@ -147,13 +176,13 @@ SCOUT still produces all standard output artifacts (glossary, mental-model, boun
 
 ### 4.2 COMMANDER (MANAGER) — Dispatch additions
 
-Two additions to dispatch logic:
+Three additions to dispatch logic:
 
 1. **PROSPECTOR at init:** Add PROSPECTOR as the first dispatch in every run, before mode detection. Block on completion before proceeding.
 
 2. **GOLDDIGGER in brownfield path:** After brownfield mode is confirmed, check `extension-capabilities.json`. If `reverse-eng` is available and relevant, dispatch GOLDDIGGER (Mode 1) before SCOUT. Block SCOUT dispatch on GOLDDIGGER completion.
 
-3. **GOLDDIGGER Mode 2 queue:** After each Phase 1 agent completes, check `state.json` for pending `golddigger_requests`. If any exist, dispatch GOLDDIGGER (Mode 2) for each queued domain before the next agent runs. Notify the requesting agent in its next context pack.
+3. **GOLDDIGGER Mode 2 queue:** After each Phase 1 agent completes, check `state.json` for pending `golddigger_requests`. If any exist, for each entry: check `golddigger_completed_domains` first (cache hit → read from cache, skip dispatch); otherwise dispatch GOLDDIGGER (Mode 2). After completion, remove the entry from `golddigger_requests`, add to `golddigger_completed_domains`, and notify the requesting agent in its next context pack.
 
 ### 4.3 `extension.yml` — Fix misleading binary claim
 
@@ -167,14 +196,12 @@ Add PROSPECTOR and GOLDDIGGER to the central registry with layer, phase, dispatc
 
 ## 5. Source Fix: python → python3
 
-All RADAR invocations across the codebase use `python` which fails on macOS where only `python3` is in PATH. This affects:
+All RADAR invocations in the command files use `python` which fails on macOS where only `python3` is in PATH. This affects:
 
-- `commands/squad.run.md` — 5 invocations
-- `commands/squad.build.md` — 2 invocations
-- `radar/emitter.py` — any internal subprocess calls
-- `radar/server.py` — any internal subprocess calls
-
-All occurrences updated to `python3`.
+- `commands/squad.run.md` — 5 invocations (already applied in current diff)
+- `commands/squad.build.md` — 2 invocations (already applied in current diff)
+- `radar/emitter.py` — no subprocess calls to python; no change needed
+- `radar/server.py` — no subprocess calls to python; no change needed
 
 ---
 
@@ -239,7 +266,7 @@ PROSPECTOR currently handles discovery for a known extension set. The next evolu
 
 | ID | Item | Owner |
 |---|---|---|
-| OI-001 | Where exactly are spec-kit extensions installed? Confirm scan paths for PROSPECTOR. | PROSPECTOR implementation |
+| OI-001 | Confirm scan paths for PROSPECTOR. Starting hypothesis: `~/.specify/extensions/` (user-global) and `.specify/extensions/` (project-local). Verify against actual spec-kit installation behavior. | PROSPECTOR implementation |
 | OI-002 | Expose `golddigger` config block in `squad-config.yml` for user-tunable thresholds (post-MVP). | Future |
 | OI-003 | Latent bug in reverse-eng: `verify.md` reads `analysis["file_inventory"]["files"]` but extract produces only `file_counts`. Confirm whether Mode 1 (signatures level) hits this code path. If yes, flag to spec-kit-reverse-eng maintainer. | GOLDDIGGER implementation |
 
@@ -249,13 +276,11 @@ PROSPECTOR currently handles discovery for a known extension set. The next evolu
 
 | Action | Path |
 |---|---|
-| Create | `agents/exploration/prospector.md` |
+| Create | `agents/control/prospector.md` |
 | Create | `agents/exploration/golddigger.md` |
 | Modify | `agents/exploration/scout.md` — remove binary check, add brownfield-index.md consumption |
 | Modify | `agents/control/commander.md` — PROSPECTOR init dispatch + GOLDDIGGER brownfield dispatch + Mode 2 queue handling |
 | Modify | `agents.yaml` — register PROSPECTOR and GOLDDIGGER |
 | Modify | `extension.yml` — fix binary invocation claim |
-| Modify | `commands/squad.run.md` — python → python3 |
-| Modify | `commands/squad.build.md` — python → python3 |
-| Modify | `radar/emitter.py` — python → python3 (if applicable) |
-| Modify | `radar/server.py` — python → python3 (if applicable) |
+| Modify | `commands/squad.run.md` — (1) python → python3 (5 occurrences); (2) Section 15 error table: replace the `spec-kit-reverse-eng` row from "DISCOVER falls back to greenfield mode..." to: `\| spec-kit-reverse-eng \| PROSPECTOR fails or reverse-eng not installed \| COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. \|`; (3) line ~619 advisory text: replace "Option A: If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns" with "Option A: If GOLDDIGGER ran and brownfield-index.md is present, derive principles from the domain inventory and hotspot analysis already captured there." |
+| Modify | `commands/squad.build.md` — python → python3 (2 occurrences) |
