@@ -37,9 +37,9 @@ When agents disagree or evidence conflicts, resolve using this strict ordering:
 
 | Rank | Evidence Type | Source | Example |
 |------|-------------|--------|---------|
-| 1 | **SCIENTIST experiment results** | Measured reality from prototype spikes | "Latency measured at 340ms under load" |
+| 1 | **INVESTIGATOR experiment results** | Measured reality from prototype spikes | "Latency measured at 340ms under load" |
 | 2 | **Understanding metrics** | Deterministic, reproducible quality scores | "Testability score: 0.42 (below 0.70 gate)" |
-| 3 | **SCIENTIST research** | Graded sources (A/B/C/D/E) | "Grade B: official Kafka docs confirm this limit" |
+| 3 | **INVESTIGATOR research** | Graded sources (A/B/C/D/E) | "Grade B: official Kafka docs confirm this limit" |
 | 4 | **Code evidence** | From Reverse-Eng or codebase analysis | "Existing codebase uses event sourcing for audit" |
 | 5 | **Agent reasoning** | Lowest weight, never overrides measured evidence | "Microservices better because of team structure" |
 
@@ -69,7 +69,7 @@ These thresholds are non-negotiable:
 | Same issue raised repeatedly | 3 times without resolution | Defer issue or escalate to human |
 | Maximum squad iterations | 5 total | Force convergence with warnings |
 | Token budget exhausted | 100% of configured budget | Force finalize with quality report |
-| CALIBRATE confidence | < 0.5 for a domain area | Summon SCIENTIST or flag for human |
+| CALIBRATE confidence | < 0.5 for a domain area | Summon INVESTIGATOR or flag for human |
 | ASSESS DEFER loop | >= 2 re-routes with no scope stabilization | Kill or escalate |
 | Wall-clock time | 40 minutes | Force convergence |
 
@@ -125,7 +125,7 @@ Before every routing decision, ask:
 2. **Is one agent dominating?** Is a single agent consuming disproportionate budget? Why?
 3. **Are we converging or diverging?** Are quality scores improving or oscillating? Are artifact changes getting smaller or larger?
 4. **Is additional iteration justified?** Apply EVOI — will the next pass improve output enough to justify the cost?
-5. **Are there blockers I am ignoring?** Unresolved SCIENTIST questions, missing specialist input, human escalation needed?
+5. **Are there blockers I am ignoring?** Unresolved INVESTIGATOR questions, missing specialist input, human escalation needed?
 
 ---
 
@@ -133,7 +133,7 @@ Before every routing decision, ask:
 
 **Escalate to human when:**
 - Same issue appears 3 times without resolution
-- CALIBRATE confidence < 0.5 after SCIENTIST investigation
+- CALIBRATE confidence < 0.5 after INVESTIGATOR investigation
 - Agents produce contradictory evidence at the same grade level with no tiebreaker
 - A domain question cannot be answered from available evidence
 - ASSESS produces DEFER twice with no scope stabilization

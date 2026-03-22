@@ -2,6 +2,11 @@
 # Int-Gate: evaluate gate verdict from metric scores
 # Formula: PASS if absorption >= threshold AND accuracy >= threshold
 # Inputs: $1=absorption_score, $2=accuracy_score, $3=tier (deep|moderate|minimal|exempt)
+#
+# Null handling:
+#   - Both null → INSUFFICIENT_DATA (no gate decision possible)
+#   - One null → awk comparison fails → treated as FAIL (conservative)
+#   - This is intentional: agents must produce measurable output to pass
 export LC_NUMERIC=C
 set -euo pipefail
 

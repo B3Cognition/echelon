@@ -516,6 +516,42 @@ agents:
     never:
       - "NEVER skip impact analysis"
 
+  ENGINEERING_MANAGER:
+    codename: ENGINEERING_MANAGER
+    function: SIGN_OFF
+    file: agents/build/engineering-manager.md
+    layer: build
+    phase: build
+    role: "Validates workflow compliance, report consistency, readiness for verification"
+    when: "Before final verification in BUILD_DONE"
+    inputs: [tasks.md, spec.md, all gate reports, state.json, reasoning-journal.json]
+    outputs: [workflow-compliance-report.md]
+    verdicts: [PASS, FAIL]
+
+  VERIFICATION:
+    codename: VERIFICATION
+    function: VERIFY
+    file: agents/build/verification.md
+    layer: build
+    phase: build
+    role: "Full backpropagation verification — checks ALL requirements against ALL code"
+    when: "After Engineering Manager sign-off"
+    inputs: [spec.md, all code, all tests, all gate reports]
+    outputs: [gap-report.md, excess-report.md, traceability-matrix.md, verification-summary.md]
+    verdicts: [PASS, FAIL]
+
+  VISUAL_VALIDATOR:
+    codename: VISUAL_VALIDATOR
+    function: VALIDATE_VISUAL
+    file: agents/build/visual-validator.md
+    layer: build
+    phase: build
+    role: "Visual regression testing via screenshot comparison"
+    when: "After implementation of UI components"
+    inputs: [screenshots, visual spec, prior baselines]
+    outputs: [visual-validation-report.md]
+    verdicts: [PASS, FAIL]
+
   # ═══════════════════════════════════════════
   # LAYER: LEARNING — Continuous Improvement
   # ═══════════════════════════════════════════
