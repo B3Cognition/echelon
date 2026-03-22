@@ -335,6 +335,7 @@ agents:
   INVESTIGATOR:
     codename: INVESTIGATOR
     function: RESEARCH
+    alias: SCIENTIST  # Functional role name used in Evidence Hierarchy and Role Separation table
     file: agents/specialists/investigator.md
     layer: specialists
     phase: solution

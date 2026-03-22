@@ -78,14 +78,16 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 | **ASSESS** | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
 | **HOW** | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
 | **PLAN** | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
-| **INVESTIGATOR** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
+| **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
+
+> **Naming convention:** The table above uses **functional names** (DISCOVER, WHAT, WHY, etc.). Each maps to a **codename** used in dispatch: SCOUT=DISCOVER, SAGE=WHY, CARTOGRAPHER=WHAT, GATEKEEPER=ASSESS, ARCHITECT=HOW, ORCHESTRATOR=PLAN, **INVESTIGATOR=SCIENTIST**. Dispatch instructions always use codenames.
 
 **The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
 
-- Spec issues → dispatch **WHAT** to fix → then **WHY** re-validates
-- Architecture issues → dispatch **HOW** to fix → then **WHY** re-validates
-- Task issues → dispatch **PLAN** to fix → then **WHY** re-validates
-- Unknown questions → dispatch **INVESTIGATOR** to investigate → feed results to the relevant agent
+- Spec issues → dispatch **WHAT** (CARTOGRAPHER) to fix → then **WHY** re-validates
+- Architecture issues → dispatch **HOW** (ARCHITECT) to fix → then **WHY** re-validates
+- Task issues → dispatch **PLAN** (ORCHESTRATOR) to fix → then **WHY** re-validates
+- Unknown questions → dispatch **SCIENTIST** (INVESTIGATOR) to investigate → feed results to the relevant agent
 
 **NEVER dispatch WHY with a prompt that says "fix" or "rewrite."** WHY is read-only on all artifacts except issues.md and quality-gates.md.
 
@@ -918,7 +920,7 @@ After ASSESS passes, determine which specialists are needed:
 | Specialist | Summon When | Max Priority |
 |-----------|-------------|--------------|
 | **TEST ARCHITECT** | ALWAYS (mandatory) | Required |
-| **INVESTIGATOR** | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
+| **SCIENTIST** (INVESTIGATOR) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
 | **SECURITY** | Domain involves auth, payments, PII, regulatory compliance | High |
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
@@ -946,7 +948,7 @@ Maximum `max_active_specialists` (default 3) can be active simultaneously. If mo
 
 For each specialist to summon, dispatch sequentially (unless they are independent — INVESTIGATOR investigations can run in parallel with domain specialists).
 
-#### INVESTIGATOR Dispatch (if summoned)
+#### SCIENTIST Dispatch (INVESTIGATOR codename) — if summoned
 
 Context pack:
 
