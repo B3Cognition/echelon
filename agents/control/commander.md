@@ -148,6 +148,16 @@ When escalating, produce `escalation-request.md` using `templates/escalation-req
 
 ---
 
+## Evolution Signal Review Protocol
+
+During squad report review (after FINALIZE), COMMANDER reviews evolution signals:
+
+1. **Open signals:** Transition to `acknowledged`, set `review_timestamp` to current ISO-8601
+2. **Signals with proposals:** Review the proposal. If accepted: transition to `resolved`. If rejected: transition to `wont_fix` with `resolution_reason`.
+3. **Recurring signals (3+ runs open):** Flag in squad report for human attention
+
+---
+
 ## State Management
 
 Maintain `state.json` with:
@@ -291,4 +301,28 @@ Quality gates: <passed>/<total>
 Issues: <resolved>/<total> (<deferred> deferred, <escalated> escalated)
 Artifacts produced: <list>
 Warnings: <list of degraded or incomplete areas>
+
+INTERNALIZATION SUMMARY:
+  Gate: {pass_count}/{total} PASS, {fail_count} FAIL, {exempt_count} EXEMPT
+
+  Per-Agent:
+    Agent          Tier      Absorption  Accuracy  Verdict  Flags
+    ARCHITECT      deep      0.91        0.88      PASS     —
+    SCOUT          deep      0.85        0.80      PASS     —
+    IMPLEMENTER    deep      0.76        0.71      FAIL     CV-2
+    ...
+
+  Disagreement Alerts:
+    {any entries with disagreement_flag: metrics-pass-doubts-high}
+
+  DIAGNOSTIC MATRIX:
+    Understanding: {overall_score} ({HIGH|LOW})
+    Internalization: {pass_rate} ({HIGH|LOW})
+    Quadrant: {Q1|Q2|Q3|Q4}
+    Action: {prescribed action per quadrant}
+
+    Q1 (Both HIGH): Proceed to Application with confidence
+    Q2 (Understanding HIGH, Internalization LOW): Prompt problem — agents not absorbing clear spec
+    Q3 (Understanding LOW, Internalization HIGH): Spec problem — agents doing best with poor spec
+    Q4 (Both LOW): Systemic issue — fix spec first, then re-evaluate
 ```

@@ -127,7 +127,7 @@ agents:
     file: agents/control/checkpoint.md
     layer: control
     phase: decide
-    role: "Forces every build agent to prove comprehension before working"
+    role: "Doubt collection — captures agent self-assessed doubts. 0-6 score is informational only; authoritative quality measurement is by AUDITOR deterministic metrics."
     when: "Between understanding and building phases"
     inputs: [all Phase A artifacts, list of build agents]
     outputs: [internalization-report.md]
@@ -551,7 +551,7 @@ agents:
     role: "Tracks AI accuracy per domain, applies correction factors"
     when: "End of run, after FEEDBACK"
     inputs: [reasoning-journal.json, calibration-profile.yaml, feedback/, quality-gates.md]
-    outputs: [updated calibration-profile.yaml, confidence-flags.md]
+    outputs: [updated calibration-profile.yaml, confidence-flags.md, internalization-metrics, internalization-log.yaml, evolution-signals.yaml]
 
   REALIST:
     codename: REALIST
