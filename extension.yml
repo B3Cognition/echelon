@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: "cognitive-squad"
   name: "Cognitive Squad"
-  version: "0.4.0"
-  description: "Multi-agent cognitive system v0.4: 7-layer, 35-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning, brownfield support, and RADAR real-time monitoring"
+  version: "0.5.0"
+  description: "Multi-agent cognitive system: 7-layer, 37-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
   author: "Testimonial"
   repository: "https://github.com/Testimonial/cognitive-squad"
   license: "MIT"
@@ -17,15 +17,11 @@ requires:
       required_for: "WHY2, WHY3 (spec-validation)"
       hard_stop: true
       note: "System CLI at ~/.local/bin/understanding. HARD STOP if unavailable for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident (PAT-006). WHY1 (assumption-challenge) does not require it."
-  skills:
-    - name: "speckit.reverse-eng.extract"
-      required_for: brownfield
-      hard_stop: true
-      note: "Claude Code skill, not a CLI tool. Invoked via Skill tool. HARD STOP if unavailable in brownfield mode — no manual fallback."
-    - name: "speckit.reverse-eng.analyze"
-      required_for: brownfield
-      hard_stop: true
-      note: "Claude Code skill, not a CLI tool. Invoked via Skill tool."
+    - name: "spec-kit-reverse-eng"
+      version: ">=1.0.0"
+      required: false
+      # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
+      # PROSPECTOR discovers availability; GOLDDIGGER drives Phase 1 extraction.
 
 provides:
   commands:

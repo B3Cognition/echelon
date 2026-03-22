@@ -41,40 +41,24 @@ You will receive a mode indicator from the MANAGER: either `greenfield` or `brow
 
 You are analyzing an existing codebase. Your goal is to extract understanding that goes far beyond what a directory listing provides.
 
-### Step 1: Run spec-kit reverse-eng extraction (MANDATORY — HARD STOP if unavailable)
+### Step 1: Check for GOLDDIGGER brownfield context
 
-**This step is non-negotiable in brownfield mode. If reverse-eng skills fail, you MUST stop and report the failure. Do NOT fall back to manual analysis. Do NOT proceed to Steps 2-5. Burning tokens on manual analysis when reverse-eng is available produces inferior results.**
-
-Invoke the `/speckit.reverse-eng.extract` skill using the Skill tool:
-
-```
-Skill: speckit.reverse-eng.extract
-Args: <target_path>
+```bash
+ls .specify/squad/brownfield-index.md 2>/dev/null
 ```
 
-Then invoke `/speckit.reverse-eng.analyze` to produce structured analysis data:
+**If present:** Read `.specify/squad/brownfield-index.md` as your enriched starting point. Use it to:
+- Seed `glossary.md` with domain names and terminology from the Domain Inventory
+- Seed `mental-model.md` topology from the dependency relationships between domains
+- Seed `boundaries.md` with entry points and External Integrations
+- Seed `unknowns.md` with hotspot files (high churn signals hidden complexity)
+- Seed `assumptions.md` from the Tech Stack (version constraints, framework conventions)
 
-```
-Skill: speckit.reverse-eng.analyze
-Args: <target_path>
-```
+Treat the index as a validated head-start, not as a complete answer. Enrich, validate, and extend every section — do not copy blindly.
 
-These are Claude Code skills (NOT CLI tools). Use the Skill tool to invoke them. Parse the outputs for: entities, relationships, APIs, data models, dependencies, and architectural patterns.
+**If absent:** Proceed with manual analysis (Steps 2-4 cover this). Log in your reasoning journal: "GOLDDIGGER brownfield-index.md not present — proceeding with manual structural analysis."
 
-**If a skill invocation fails** (tool error, timeout, or empty output):
-
-1. **STOP immediately.** Do not proceed to Steps 2-5.
-2. Write a failure report to the spec directory with the exact error message.
-3. Output the following signal for COMMANDER:
-
-```
-DISCOVER BLOCKED — reverse-eng skill invocation failed
-Error: <exact error message>
-Mode: brownfield
-Action required: Fix reverse-eng skill availability before retrying DISCOVER.
-```
-
-4. COMMANDER will set state.json status to "blocked" and escalate to human.
+Note: how the brownfield context was generated (from reverse-eng, a future tool, or manual analysis) is invisible to you and to all downstream agents. Your job is to produce the standard output artifacts regardless of source.
 
 ### Step 2: Structural Analysis
 
