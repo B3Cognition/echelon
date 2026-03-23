@@ -131,6 +131,8 @@ Optional keys:
 1. `name` (string)
 2. `description` (string)
 3. `status` (string)
+4. `project_fingerprint` (string or null — SHA-256 of the project's git remote origin URL, truncated to 12 hex characters. Identifies which project produced this pattern. Null for legacy entries predating project scoping.)
+5. `scope` (string, enum: `local_only` | `global` — default `local_only`. A `local_only` pattern is relevant only to its origin project. A `global` pattern has been observed across 3+ distinct project fingerprints and is shared across all projects. Promotion from `local_only` to `global` is managed by the VETERAN agent.)
 
 Minimum-valid example:
 
@@ -142,6 +144,8 @@ entries:
   created_at: 2026-03-19T00:00:00Z
   confidence: 0.8
   run_id: squad-001-1742401234
+  project_fingerprint: a1b2c3d4e5f6
+  scope: local_only
 ```
 
 ## pitfalls.yaml
@@ -164,6 +168,8 @@ Optional keys:
 1. `name` (string)
 2. `description` (string)
 3. `status` (string)
+4. `project_fingerprint` (string or null — SHA-256 of the project's git remote origin URL, truncated to 12 hex characters. Identifies which project produced this pitfall. Null for legacy entries predating project scoping.)
+5. `scope` (string, enum: `local_only` | `global` — default `local_only`. A `local_only` pitfall is relevant only to its origin project. A `global` pitfall has been observed across 3+ distinct project fingerprints and is shared across all projects. Promotion from `local_only` to `global` is managed by the VETERAN agent.)
 
 Minimum-valid example:
 
@@ -175,6 +181,8 @@ entries:
   created_at: 2026-03-19T00:00:00Z
   confidence: 0.6
   run_id: squad-001-1742401234
+  project_fingerprint: a1b2c3d4e5f6
+  scope: local_only
 ```
 
 ## agent-scores.yaml
@@ -419,6 +427,43 @@ signals:
     review_timestamp: null
     proposal_artifact_ref: null
     resolution_reason: null
+```
+
+## sage-decisions.yaml
+
+Schema version: `2`
+
+Required top-level keys:
+
+1. `schema_version` (integer, required — must be `2`)
+2. `append_only` (boolean, required — must be `true`)
+3. `max_entries` (integer, required — rolling window cap, default `100`)
+4. `entries` (array, required)
+
+`entries[]` required keys:
+
+1. `run_id` (string — squad run that triggered the decision)
+2. `artifact` (string — path to the artifact under review)
+3. `challenge_type` (string, enum: `logical_inconsistency` | `missing_evidence` | `assumption_violation` | `quality_threshold` | `specification_gap`)
+4. `challenge_summary` (string — concise description of the challenge raised)
+5. `outcome` (string, enum: `blocked` | `passed_with_warnings` | `passed`)
+6. `resolution` (string — how the challenge was resolved or why it blocked)
+7. `was_correct` (boolean — backfilled: `true` if the decision was validated by subsequent work, `false` if overturned)
+
+Minimum-valid example:
+
+```yaml
+schema_version: 2
+append_only: true
+max_entries: 100
+entries:
+  - run_id: squad-003-1742652000
+    artifact: specs/001-cognitive-squad-improvements/spec.md
+    challenge_type: logical_inconsistency
+    challenge_summary: "FR-03 contradicts boundary B-02 regarding external API access."
+    outcome: blocked
+    resolution: "WHAT agent revised FR-03 to respect boundary B-02 scope."
+    was_correct: true
 ```
 
 ## Pending Queue Structure (Alignment Requirement)

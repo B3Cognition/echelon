@@ -10,6 +10,8 @@ entries:
     description: When CRITICAL findings are converted into explicit contingent acceptance criteria and blocked-story preconditions, a single amendment pass can remove blockers without architecture churn.
     tags: ["why2", "cartographer", "acceptance-criteria", "reroute-reduction"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-002
     name: Early Synthesis Prevents Contradiction Drift
@@ -21,6 +23,8 @@ entries:
     description: Running SYNTHESIZER before assumption challenge exposes cross-document contradictions early, reducing late-phase rework in WHAT and HOW.
     tags: ["synthesizer", "discover", "why1", "consistency"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-003
     name: Constitution-Anchored ADRs Reduce Governance Rework
@@ -32,6 +36,8 @@ entries:
     description: ADRs that explicitly map decisions to constitution principles pass final governance checks with fewer follow-up corrections.
     tags: ["how", "adr", "constitution", "governance"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-004
     name: Full AC Coverage Mapping De-risks Consensus
@@ -43,6 +49,8 @@ entries:
     description: SENTINEL-style mapping of all acceptance criteria to test IDs improves implementability clarity and enables PLAN2 to resolve most consensus issues without returning to WHAT.
     tags: ["sentinel", "coverage-map", "implementability", "consensus"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-005
     name: Dual-Pass Estimation with Complexity Uplift
@@ -54,6 +62,8 @@ entries:
     description: Using ASSESS baseline estimates and ASSESS2 complexity uplift captures hidden integration cost and produces execution-ready planning numbers.
     tags: ["assess", "assess2", "estimation", "reality-check"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-006
     name: Deterministic Scoring Correction
@@ -68,6 +78,8 @@ entries:
     description: When heuristic quality reviews pass but deterministic tooling (Understanding v3.4.0) fails, the heuristic was overconfident by 15-29% on structure/testability. Always run deterministic tooling when available; treat heuristic as estimate only.
     tags: ["why2", "deterministic", "heuristic", "quality-gate", "understanding"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-007
     name: Parallel Scout Decomposition
@@ -82,6 +94,8 @@ entries:
     description: Splitting 24 repos across 4 category-focused scouts (Orchestration, Logic, Datalog, Cognitive) achieved 70% time reduction vs sequential analysis. Group by domain category, not alphabetically or by size.
     tags: ["discover", "parallel", "scout", "categorization", "time-reduction"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PAT-008
     name: Adversarial LOC Verification
@@ -96,3 +110,5 @@ entries:
     description: SYNTHESIZER LOC claims were off by 4-7x due to cherry-picking single files. Every LOC claim must be verified with cloc or wc -l on the full relevant directory, not single files.
     tags: ["why1", "loc", "verification", "cloc", "adversarial"]
     status: active
+    project_fingerprint: null
+    scope: local_only

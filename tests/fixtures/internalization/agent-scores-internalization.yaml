@@ -1,0 +1,113 @@
+schema_version: 1
+
+agents:
+  ARCHITECT:
+    lifetime_score: 42
+    current_run_score: 12
+    badges: []
+    internalization:
+      composite_score: 0.88
+      category_scores:
+        absorption: 0.91
+        accuracy: 0.85
+        calibration: 0.87
+        transfer: 0.82
+      metric_values:
+        I_01_requirement_coverage_rate: 0.93
+        I_02_constraint_adherence_score: 0.89
+        I_03_terminology_fidelity: 0.91
+        I_04_dependency_awareness: 0.90
+        I_05_numeric_contradiction_rate: 0.88
+        I_06_uncited_decision_rate: 0.84
+        I_07_cross_reference_accuracy: 0.86
+        I_08_keyword_scope_rate: 0.82
+        I_09_confidence_accuracy: 0.89
+        I_10_doubt_signal_quality: 0.85
+        I_11_blind_spot_rate: 0.87
+        I_12_escalation_precision: 0.86
+        I_13_first_pass_acceptance: 0.80
+        I_14_rework_severity: 0.85
+        I_15_explicit_decision_traceability: 0.82
+        I_16_priority_alignment: 0.81
+      trend: "improving"
+      run_id: "squad-010-1742652000"
+      cold_start_phase: 3
+      history:
+        - run_id: "squad-009"
+          composite_score: 0.85
+          timestamp: "2026-03-22T10:00:00Z"
+        - run_id: "squad-008"
+          composite_score: 0.83
+          timestamp: "2026-03-21T10:00:00Z"
+    history: []
+
+  IMPLEMENTER:
+    lifetime_score: 18
+    current_run_score: 5
+    badges: []
+    internalization:
+      composite_score: 0.62
+      category_scores:
+        absorption: 0.70
+        accuracy: 0.58
+        calibration: null
+        transfer: null
+      metric_values:
+        I_01_requirement_coverage_rate: 0.75
+        I_02_constraint_adherence_score: 0.68
+        I_03_terminology_fidelity: 0.72
+        I_04_dependency_awareness: 0.65
+        I_05_numeric_contradiction_rate: 0.60
+        I_06_uncited_decision_rate: 0.55
+        I_07_cross_reference_accuracy: 0.58
+        I_08_keyword_scope_rate: 0.59
+        I_09_confidence_accuracy: null
+        I_10_doubt_signal_quality: null
+        I_11_blind_spot_rate: null
+        I_12_escalation_precision: null
+        I_13_first_pass_acceptance: null
+        I_14_rework_severity: null
+        I_15_explicit_decision_traceability: null
+        I_16_priority_alignment: null
+      trend: "declining"
+      run_id: "squad-010-1742652000"
+      cold_start_phase: 1
+      history:
+        - run_id: "squad-009"
+          composite_score: 0.66
+          timestamp: "2026-03-22T10:00:00Z"
+    history: []
+
+  SCOUT:
+    lifetime_score: 10
+    current_run_score: 3
+    badges: []
+    internalization:
+      composite_score: null
+      category_scores:
+        absorption: null
+        accuracy: null
+        calibration: null
+        transfer: null
+      metric_values:
+        I_01_requirement_coverage_rate: null
+        I_02_constraint_adherence_score: null
+        I_03_terminology_fidelity: null
+        I_04_dependency_awareness: null
+        I_05_numeric_contradiction_rate: null
+        I_06_uncited_decision_rate: null
+        I_07_cross_reference_accuracy: null
+        I_08_keyword_scope_rate: null
+        I_09_confidence_accuracy: null
+        I_10_doubt_signal_quality: null
+        I_11_blind_spot_rate: null
+        I_12_escalation_precision: null
+        I_13_first_pass_acceptance: null
+        I_14_rework_severity: null
+        I_15_explicit_decision_traceability: null
+        I_16_priority_alignment: null
+      trend: "insufficient_data"
+      run_id: "squad-010-1742652000"
+      cold_start_phase: 1
+      history: []
+    history: []

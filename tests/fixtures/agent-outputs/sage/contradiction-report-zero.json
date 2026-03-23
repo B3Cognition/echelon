@@ -1,0 +1,10 @@
+{
+  "contradiction_check": {
+    "performed": true,
+    "artifacts_scanned": 6,
+    "artifacts": ["spec.md", "assumptions.md", "boundaries.md", "glossary.md", "mental-model.md", "unknowns.md"],
+    "contradictions_found": 0
+  },
+  "contradictions": [],
+  "summary": "No contradictions detected across 6 artifacts (spec.md, assumptions.md, boundaries.md, glossary.md, mental-model.md, unknowns.md). Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict."
+}

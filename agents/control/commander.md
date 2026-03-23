@@ -20,6 +20,7 @@ This agent uses values from `squad-config.yml`:
 - `build_budget.*` - Build phase budget allocation
 - `limits.wall_clock_timeout_minutes` - Timeout
 - `build.*` - Build phase settings
+- `guardian.mode` - GUARDIAN dispatch mode (`always_on` | `on_demand`, default: `always_on`)
 
 ## Prime Directive
 
@@ -183,7 +184,23 @@ Maintain `state.json` with:
 
 Before any mode detection or agent dispatch, COMMANDER must:
 
-### 1. Dispatch PROSPECTOR (always)
+### 1. Dispatch GUARDIAN (always-on by default)
+
+Check `squad-config.yml` for `guardian.mode`:
+
+- **`always_on`** (default): Dispatch GUARDIAN on every squad run, regardless of whether the domain involves security-sensitive areas. GUARDIAN runs its **Minimum Security Checklist** (5-item lightweight check) for all domains, and performs full STRIDE/OWASP analysis only when security-relevant domain signals are detected.
+- **`on_demand`**: Dispatch GUARDIAN only when the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or untrusted input (legacy behavior).
+
+When `guardian.mode` is `always_on`:
+1. Dispatch GUARDIAN after ASSESS completes (during the Specialist phase)
+2. GUARDIAN runs the Minimum Security Checklist regardless of domain classification
+3. If domain signals indicate security relevance, GUARDIAN also runs full STRIDE + OWASP + compliance analysis
+4. GUARDIAN results are included in every subsequent agent's context pack
+5. GUARDIAN does NOT count toward the `max_active_specialists` cap (same exemption as TEST ARCHITECT)
+
+Log `guardian_dispatch_mode` in `state.json` (`always_on` or `on_demand`).
+
+### 2. Dispatch PROSPECTOR (always)
 
 Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path, run_id). Block until PROSPECTOR completes.
 
@@ -194,7 +211,7 @@ After completion:
 
 **PROSPECTOR failure never blocks the run.** Continue to mode detection regardless.
 
-### 2. Brownfield Extension Check
+### 3. Brownfield Extension Check
 
 After brownfield mode is confirmed, before dispatching SCOUT:
 
@@ -207,7 +224,7 @@ After brownfield mode is confirmed, before dispatching SCOUT:
      - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual)
 3. If `reverse-eng` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
 
-### 3. GOLDDIGGER Mode 2 Queue (Phase 1 agents)
+### 4. GOLDDIGGER Mode 2 Queue (Phase 1 agents)
 
 After each Phase 1 agent (SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER) completes, before dispatching the next agent:
 
@@ -289,6 +306,128 @@ BUILD_DONE → final integration + summary
 
 ---
 
+## Token/Cost Tracking
+
+After every agent dispatch, COMMANDER logs a token tracking entry. This enables budget enforcement, cost attribution, and efficiency analysis.
+
+### Dispatch Logging
+
+After each agent dispatch completes, record in `state.json` under `token_ledger.dispatches[]`:
+
+```json
+{
+  "dispatch_id": "D-{sequential_padded}",
+  "agent_codename": "INVESTIGATOR",
+  "phase": "SPECIALISTS",
+  "estimated_tokens": 12000,
+  "timestamp": "<ISO 8601>"
+}
+```
+
+Fields:
+- **dispatch_id**: Sequential identifier (D-001, D-002, ...)
+- **agent_codename**: The codename of the dispatched agent (SCOUT, SAGE, ARCHITECT, etc.)
+- **estimated_tokens**: Estimated token consumption for this dispatch (input + output)
+- **phase**: Which phase the dispatch belongs to (DISCOVER, WHAT, WHY, HOW, PLAN, ASSESS, SPECIALISTS, BUILD, FINALIZE)
+
+### Cumulative Totals
+
+Maintain running totals in `state.json` under `token_ledger`:
+
+```json
+{
+  "token_ledger": {
+    "total_estimated_tokens": 84000,
+    "total_dispatches": 7,
+    "per_agent": {
+      "SCOUT": { "dispatches": 1, "estimated_tokens": 15000 },
+      "SAGE": { "dispatches": 2, "estimated_tokens": 24000 },
+      "ARCHITECT": { "dispatches": 1, "estimated_tokens": 18000 }
+    },
+    "per_phase": {
+      "DISCOVER": 15000,
+      "WHY": 24000,
+      "HOW": 18000,
+      "SPECIALISTS": 12000
+    },
+    "dispatches": [ ]
+  }
+}
+```
+
+### Budget Check Before Dispatch
+
+Before every agent dispatch, COMMANDER must:
+
+1. Read `token_ledger.total_estimated_tokens` from `state.json`
+2. Compare against the configured budget (`budget.total_tokens` in `squad-config.yml`)
+3. If `total_estimated_tokens + next_dispatch_estimate > budget.total_tokens`:
+   - Check if reserve budget (5%) is available and the dispatch is critical
+   - If no budget remains: force finalize with quality report (see Convergence Rules)
+   - Log a `BUDGET_EXHAUSTED` entry in `reasoning-journal.json`
+4. If within budget: proceed with dispatch and log the entry after completion
+
+### Per-Tier Budget Enforcement
+
+Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, apply the borrowing rules from that section before proceeding.
+
+---
+
+## Governance Trail
+
+COMMANDER maintains `governance-trail.json` as an append-only audit log for policy violations, security findings, and approval decisions. This provides a tamper-evident record of all governance-relevant events during a squad run.
+
+### When to Append
+
+Append a governance trail entry whenever any of the following occurs:
+
+| Event Type | Trigger |
+|------------|---------|
+| `policy_violation` | Constitution or ADR violation detected by CODE REVIEWER |
+| `security_finding` | GUARDIAN reports a security issue (any severity) |
+| `approval_decision` | COMMANDER approves a task, phase transition, or escalation resolution |
+| `escalation` | Human escalation is triggered |
+| `budget_override` | Token budget tier borrowing or reserve usage |
+| `convergence_forced` | COMMANDER forces convergence before natural completion |
+| `demotion_candidate` | VETERAN flags a global pattern for potential demotion |
+
+### Entry Schema
+
+Each entry in `governance-trail.json` is appended to the top-level array:
+
+```json
+{
+  "timestamp": "<ISO-8601>",
+  "event_type": "policy_violation | security_finding | approval_decision | escalation | budget_override | convergence_forced | demotion_candidate",
+  "agent": "<agent codename that triggered or is subject of the event>",
+  "description": "<human-readable description of what happened>",
+  "severity": "critical | high | medium | low | info",
+  "resolution": "<how the event was resolved, or 'pending' if unresolved>",
+  "context": {
+    "task_id": "<optional: T-NNN>",
+    "phase": "<optional: current phase>",
+    "evidence": "<optional: file:line or artifact reference>"
+  }
+}
+```
+
+### File Initialization
+
+If `governance-trail.json` does not exist at run start, COMMANDER creates it:
+
+```json
+[]
+```
+
+### Governance Trail Rules
+
+1. **Append-only.** Never modify or delete existing entries. Only add new entries.
+2. **Timestamp must be ISO-8601 UTC.** Use `Z` suffix, not local timezone.
+3. **Every `policy_violation` and `security_finding` must have a non-empty `resolution`** before the run completes. If unresolved, set `resolution: "deferred"` with a reason.
+4. **Include in squad report.** The Completion Signal must reference the governance trail entry count and any unresolved entries.
+
+---
+
 ## Completion Signal
 
 When the squad run is complete, output:
@@ -325,4 +464,52 @@ INTERNALIZATION SUMMARY:
     Q2 (Understanding HIGH, Internalization LOW): Prompt problem — agents not absorbing clear spec
     Q3 (Understanding LOW, Internalization HIGH): Spec problem — agents doing best with poor spec
     Q4 (Both LOW): Systemic issue — fix spec first, then re-evaluate
+
+CALIBRATION DASHBOARD: calibration-dashboard.md written to <spec_directory>
+  Calibration Health: {score} ({HEALTHY|DEGRADED|CRITICAL})
+  Domains at risk: {list of HIGH risk domains}
+  Agents declining: {list of agents with declining internalization trend}
 ```
+
+---
+
+## Per-Agent Internalization Data Handoff
+
+At end of run (during FINALIZE), COMMANDER collects per-agent internalization data and passes it to AUDITOR for scoring and dashboard generation.
+
+### Process
+
+1. **Collect internalization artifacts**: After all build-phase agents complete, gather:
+   - CHECKPOINT's `internalization-report.md` (per-agent scores and doubts)
+   - Verdict reports from SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN
+   - `knowledge-base/internalization-log.yaml` (prior entries for trend analysis)
+   - `knowledge-base/agent-scores.yaml` (existing scores for history)
+
+2. **Dispatch AUDITOR with internalization context**: Include in AUDITOR's context pack:
+   - All internalization artifacts listed above
+   - The current run's `reasoning-journal.json` entries
+   - `squad-config.yml` internalization section
+   - `knowledge-base/prompt-versions.yaml` (active versions per agent)
+   - List of agents that participated in the current run with their assigned tasks
+
+3. **Request per-agent internalization scoring**: Instruct AUDITOR to execute:
+   - Mode 4 (Internalization Measurement) — compute all 16 metrics per agent
+   - Per-Agent Internalization Scoring — compute category scores, composite, and trend
+   - Calibration Dashboard Generation — produce `calibration-dashboard.md`
+
+4. **Include internalization data in squad report**: After AUDITOR completes, read:
+   - `knowledge-base/agent-scores.yaml` → extract internalization sub-objects for the completion signal
+   - `calibration-dashboard.md` → extract calibration health score for the completion signal
+   - Per-agent trends for the INTERNALIZATION SUMMARY table
+
+5. **Pass internalization scores to SCOREKEEPER**: Forward the per-agent internalization composite scores and trends to SCOREKEEPER so it can incorporate them into the Agent Scorecard (see SCOREKEEPER internalization trend section).
+
+### Ordering
+
+The internalization data handoff follows this strict sequence within FINALIZE:
+1. AUDITOR Mode 1 (Post-Run Calibration)
+2. AUDITOR Mode 4 (Internalization Measurement)
+3. AUDITOR Per-Agent Internalization Scoring
+4. AUDITOR Calibration Dashboard Generation
+5. SCOREKEEPER scoring (receives internalization data)
+6. COMMANDER squad report assembly

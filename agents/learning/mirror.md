@@ -28,6 +28,26 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 
 ## Process
 
+### Step 0: Compute Project Fingerprint
+
+Before extracting any patterns or pitfalls, compute the project fingerprint for tagging:
+
+1. Read the git remote origin URL: `git remote get-url origin`
+2. Compute the SHA-256 hash of the URL string (including trailing newline stripped): `echo -n "<URL>" | shasum -a 256`
+3. Truncate the hex digest to the first 12 characters. This is the `project_fingerprint`.
+4. Store this value for use in Step 5 when creating new knowledge base entries.
+
+Example:
+```bash
+REMOTE_URL=$(git remote get-url origin)
+FINGERPRINT=$(echo -n "$REMOTE_URL" | shasum -a 256 | cut -c1-12)
+# e.g., "a1b2c3d4e5f6"
+```
+
+Every new pattern or pitfall entry MUST include:
+- `project_fingerprint: "<computed 12-char hex>"` — the fingerprint of the current project
+- `scope: local_only` — all new entries start as local_only; promotion to global is handled by the VETERAN agent
+
 ### Step 1: Chronological Review
 
 Read `reasoning-journal.json` from first entry to last. Build a mental timeline:
@@ -91,6 +111,8 @@ Append to `knowledge-base/patterns.yaml` — new validated patterns:
   description: "{what the pattern is, when to apply it, why it works}"
   tags: ["{tag1}", "{tag2}"]
   status: active
+  project_fingerprint: "{12-char hex from Step 0}"
+  scope: local_only
 ```
 
 Append to `knowledge-base/pitfalls.yaml` — new failure modes:
@@ -106,6 +128,8 @@ Append to `knowledge-base/pitfalls.yaml` — new failure modes:
   confidence: {0.0-1.0}
   tags: ["{tag1}", "{tag2}"]
   status: active
+  project_fingerprint: "{12-char hex from Step 0}"
+  scope: local_only
 ```
 
 ### Evidence Grading

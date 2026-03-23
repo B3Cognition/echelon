@@ -72,6 +72,22 @@ Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
 - **Grep** — search file contents
 - **Glob** — find files by pattern
 
+## Marketplace Search (Pre-Spec Check)
+
+Before writing new specs (Step 1), CARTOGRAPHER checks the marketplace for reusable patterns:
+
+1. Read `knowledge-base/marketplace-index.yaml`.
+2. For each entry in `entries[]`, compare the entry's `tags` and `name` against the current feature's domain keywords (from DISCOVER glossary and mental model).
+3. If a matching pattern is found (tag overlap >= 50% or name substring match):
+   - Note the pattern in the spec's **Assumptions in Effect** section as a reusable pattern reference.
+   - Include the pattern's `description` and `confidence` in the spec context.
+   - Increment the pattern's `reuse_count` in `marketplace-index.yaml`.
+4. If no matching patterns are found, proceed normally — marketplace search is advisory, never blocking.
+
+This ensures the squad does not reinvent patterns that have already been validated across multiple projects.
+
+---
+
 ## Inputs
 
 You will receive the following artifacts from DISCOVER (all are required):

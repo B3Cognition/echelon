@@ -100,6 +100,38 @@ Define test stages in the deployment pipeline:
 
 Define failure policies: which stage failures block deployment?
 
+### Step 8: Flakiness Management
+
+#### 8.1 Detection Protocol
+
+Run new tests with `--repeat-each=5` before merge. Any failure across the 5 repetitions marks the test as potentially flaky and blocks merge until investigated.
+
+#### 8.2 Quarantine Process
+
+Flaky tests MUST be quarantined immediately using:
+```typescript
+test.fixme(true, 'Flaky - Issue #NNN');
+```
+Link a tracking issue. Quarantined tests are excluded from CI gate but remain visible in reports.
+
+#### 8.3 Root Cause Taxonomy
+
+Classify every flaky test into exactly one root cause:
+- **race-condition** — async operations without proper awaits or guards
+- **network-timing** — API latency or timeout sensitivity
+- **state-leak** — shared state between tests (DB, globals, browser storage)
+- **animation-render** — CSS transitions or layout shifts causing selector misses
+- **data-dependency** — reliance on mutable external data or time-sensitive fixtures
+
+#### 8.4 Stability Targets
+
+- **Flaky rate:** < 5% of total test suite (quarantined / total)
+- **Critical journey pass rate:** 100% — smoke and L1 tests must never be flaky
+
+#### 8.5 Review Cadence
+
+Review quarantined tests weekly — fix or remove. Tests quarantined for more than 2 weeks without a fix attempt must be escalated or deleted.
+
 ## Output Requirements
 
 ### test-strategy.md

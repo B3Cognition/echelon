@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+export LC_NUMERIC=C
 
 ratio_ok=$(awk 'BEGIN { printf "%.2f", (1/10) }')
 ratio_fail=$(awk 'BEGIN { printf "%.2f", (3/10) }')

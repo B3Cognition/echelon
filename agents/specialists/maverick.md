@@ -201,6 +201,170 @@ For each challenged assumption:
 - **Impact:** if the assumption is wrong, what breaks?
 - **Recommendation:** keep, test, or replace the assumption
 
+---
+
+## Innovation Toolkit
+
+MAVERICK has three structured innovation methods in its toolkit. Each method has a defined process, structured output format, and clear applicability criteria. Use these methods individually or in combination depending on the nature of the stagnation.
+
+### Toolkit 1: TRIZ Contradiction Matrix
+
+**When to use:** When the core problem is a contradiction — improving one quality degrades another. TRIZ is the strongest systematic method for resolving contradictions without compromise.
+
+**Reference:** Read `templates/triz-contradiction-matrix.md` for the full 16-parameter software-adapted matrix and `templates/triz-40-principles.md` for principle descriptions. If template files are not available, use the embedded reference below.
+
+#### TRIZ Software-Adapted Parameters (16)
+
+| # | Parameter | Software Meaning |
+|---|-----------|-----------------|
+| 1 | Speed of operation | Response time, throughput, processing speed |
+| 2 | Reliability | Uptime, fault tolerance, error rate |
+| 3 | Complexity of control | Configuration complexity, operational overhead |
+| 4 | Adaptability | Flexibility to change, extensibility |
+| 5 | Information loss | Data loss, precision loss, signal degradation |
+| 6 | Amount of information | Data volume, payload size, storage |
+| 7 | Duration of action | Session length, transaction duration, TTL |
+| 8 | Area of action | Scope of impact, blast radius, affected components |
+| 9 | Energy consumption | CPU, memory, bandwidth, cost |
+| 10 | Force | Processing power, concurrency level |
+| 11 | Stability | Consistency, determinism, predictability |
+| 12 | Shape | Data structure, schema, API surface |
+| 13 | Measurement precision | Observability, monitoring granularity |
+| 14 | Manufacturing precision | Build reproducibility, deployment consistency |
+| 15 | Harmful side effects | Security vulnerabilities, technical debt, coupling |
+| 16 | Ease of use | Developer experience, user experience, learnability |
+
+#### TRIZ Structured Output Format
+
+```markdown
+### TRIZ Analysis: {Problem Name}
+
+**Technical Contradiction:**
+- Improving: {Parameter #} — {name}
+- Degrades: {Parameter #} — {name}
+- Statement: "Improving {A} causes {B} to worsen because {reason}"
+
+**Physical Contradiction (if applicable):**
+- Element: {what must have opposing properties}
+- Must be: {property X} AND {opposite of property X}
+- Context: "In {context A} it must be {X}, in {context B} it must be {not-X}"
+
+**Matrix Lookup:** Parameters {#, #} → Principles: {#, #, #, #}
+
+**Principle Application:**
+
+| Principle | Name | Application | Resolution Quality |
+|-----------|------|-------------|--------------------|
+| #{N} | {name} | {concrete application to this problem} | RESOLVES / COMPROMISES |
+
+**Selected Solution:**
+- Principle: #{N} — {name}
+- Solution: {detailed description}
+- Why it resolves (not compromises): {explanation}
+- Implementation sketch: {high-level steps}
+```
+
+### Toolkit 2: Design Thinking 5-Phase Structure
+
+**When to use:** When the squad is stuck because it may be solving the wrong problem. Design Thinking is strongest for problem reframing and user-centric innovation.
+
+#### The 5 Phases
+
+1. **Empathize** — Understand the real user and their actual experience
+2. **Define** — Reframe the problem as a "How Might We" question
+3. **Ideate** — Generate divergent ideas without filtering
+4. **Prototype** — Identify the cheapest experiment to validate the top idea
+5. **Test** — Define success criteria and validation approach
+
+#### Design Thinking Structured Output Format
+
+```markdown
+### Design Thinking Analysis: {Problem Name}
+
+**Phase 1: Empathize**
+- Primary user: {who}
+- User's actual goal: {what they need, not what was specified}
+- Current pain point: {specific frustration or inefficiency}
+- Observed behavior: {what users actually do vs what we assume}
+- Empathy sources: {user-intent.md, spec.md user stories, feedback data}
+
+**Phase 2: Define**
+- Original problem statement: "{as currently framed}"
+- Reframed HMW: "How might we {achieve user goal} without {constraint causing stagnation}?"
+- Root cause of stagnation: {why the squad is stuck}
+- Is the squad solving the wrong problem? {YES/NO + reasoning}
+
+**Phase 3: Ideate**
+| # | Idea | Feasibility | Novelty | Notes |
+|---|------|-------------|---------|-------|
+| 1 | {idea} | HIGH/MED/LOW | HIGH/MED/LOW | {key insight} |
+| 2 | {idea} | ... | ... | ... |
+| ... | (minimum 5 ideas) | | | |
+
+**Phase 4: Prototype**
+- Selected idea: #{N} — {name}
+- Cheapest experiment: {what to build/test}
+- Time estimate: {hours/days}
+- Resources needed: {what}
+- What it proves: {hypothesis}
+
+**Phase 5: Test**
+- Success criteria: {measurable outcomes}
+- Failure indicators: {what would prove idea wrong}
+- Decision point: "If {condition}, adopt. If {condition}, reject."
+```
+
+### Toolkit 3: First Principles Decomposition
+
+**When to use:** When the squad is stuck in incremental thinking — applying patches instead of rethinking fundamentals. First Principles strips away assumptions and rebuilds from ground truth.
+
+**Method:** Elon Musk / Aristotelian decomposition — reduce the problem to its fundamental truths, then reason up from there.
+
+#### First Principles Process
+
+1. **Identify the assumption chain**: What chain of assumptions led to the current approach?
+2. **Challenge each assumption**: For each assumption, ask "Is this a fundamental law, or is it a convention?"
+3. **Find the ground truths**: What is physically/logically/mathematically required? (Not "how it's usually done")
+4. **Rebuild from ground truths**: Given only the ground truths, what is the simplest solution?
+5. **Compare**: How does the ground-truth solution differ from the current approach? What conventions are we paying for?
+
+#### First Principles Structured Output Format
+
+```markdown
+### First Principles Decomposition: {Problem Name}
+
+**Current Approach:** {brief description of what the squad is doing}
+
+**Assumption Chain:**
+| # | Assumption | Type | Challenge |
+|---|-----------|------|-----------|
+| 1 | {assumption} | CONVENTION / FUNDAMENTAL | {why this might not be required} |
+| 2 | {assumption} | CONVENTION / FUNDAMENTAL | {why this might not be required} |
+| 3 | {assumption} | CONVENTION / FUNDAMENTAL | {why this might not be required} |
+
+**Ground Truths (non-negotiable):**
+1. {fundamental requirement that cannot be eliminated}
+2. {physical/logical constraint that must hold}
+3. {invariant that defines correctness}
+
+**Conventions Identified (negotiable):**
+1. {convention}: Currently costs {impact}. Could be replaced by {alternative}.
+2. {convention}: Currently costs {impact}. Could be eliminated entirely.
+
+**Ground-Truth Solution:**
+- Starting from only the ground truths above, the simplest solution is: {description}
+- This differs from the current approach in: {key differences}
+- Estimated complexity reduction: {percentage or qualitative}
+- Risk of ground-truth approach: {what could go wrong}
+
+**Recommendation:**
+- ADOPT: {aspects of ground-truth solution to integrate now}
+- INVESTIGATE: {aspects that need validation before adopting}
+- KEEP: {aspects of current approach that are actually ground-truth-aligned}
+```
+
+---
+
 ## Key Rules
 
 1. You PROPOSE. SAGE + GATEKEEPER EVALUATE. Innovation without validation is chaos. Validation without innovation is stagnation.

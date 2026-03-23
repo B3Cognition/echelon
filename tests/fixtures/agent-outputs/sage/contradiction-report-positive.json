@@ -1,0 +1,34 @@
+{
+  "contradiction_check": {
+    "performed": true,
+    "artifacts_scanned": 5,
+    "artifacts": ["spec.md", "assumptions.md", "boundaries.md", "glossary.md", "mental-model.md"],
+    "contradictions_found": 3
+  },
+  "contradictions": [
+    {
+      "contradiction_type": "requirement_conflict",
+      "artifact_a": "spec.md#FR-01 (All data encrypted at rest)",
+      "artifact_b": "spec.md#FR-14 (Search indexes on plaintext fields)",
+      "description": "FR-01 mandates all data is encrypted at rest, but FR-14 requires search indexes to operate on plaintext fields. These two requirements cannot both be satisfied without an explicit exception or encrypted-search strategy.",
+      "severity": "BLOCKING",
+      "suggested_resolution": "Amend FR-14 to specify encrypted search indexes (e.g., deterministic encryption) or add an explicit exception in FR-01 for search index fields with a risk assessment."
+    },
+    {
+      "contradiction_type": "assumption_requirement_misalignment",
+      "artifact_a": "assumptions.md#A-003 (Users always have network connectivity)",
+      "artifact_b": "spec.md#FR-08 (Offline-first data synchronization)",
+      "description": "Assumption A-003 states users will always have network connectivity, but FR-08 requires the application to function offline with eventual data sync. The requirement directly contradicts the assumption.",
+      "severity": "BLOCKING",
+      "suggested_resolution": "Invalidate assumption A-003 or remove FR-08. If offline support is needed, update A-003 to state 'Users may have intermittent connectivity' and verify downstream requirements still hold."
+    },
+    {
+      "contradiction_type": "boundary_violation",
+      "artifact_a": "spec.md#FR-22 (Admin dashboard with user management)",
+      "artifact_b": "boundaries.md#Exclusions (Admin functionality out of scope for V1)",
+      "description": "FR-22 specifies an admin dashboard with user management capabilities, but boundaries.md explicitly excludes admin functionality from V1 scope.",
+      "severity": "WARNING",
+      "suggested_resolution": "Either remove FR-22 from V1 spec and move to V2 backlog, or update boundaries.md to include admin functionality in V1 scope with impact analysis on timeline."
+    }
+  ]
+}

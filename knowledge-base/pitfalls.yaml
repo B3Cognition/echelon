@@ -10,6 +10,8 @@ entries:
     confidence: 0.9
     tags: ["state-machine", "checkpointing", "recovery", "phase-transition"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PIT-002
     name: LOC Cherry-Picking
@@ -25,6 +27,8 @@ entries:
     confidence: 0.93
     tags: ["loc", "estimation", "cherry-picking", "cloc", "why1"]
     status: active
+    project_fingerprint: null
+    scope: local_only
 
   - id: PIT-003
     name: Naming vs Designing
@@ -40,3 +44,5 @@ entries:
     confidence: 0.90
     tags: ["architecture", "naming", "resolution", "integration", "why1"]
     status: active
+    project_fingerprint: null
+    scope: local_only

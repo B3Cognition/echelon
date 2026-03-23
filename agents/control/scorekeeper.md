@@ -233,6 +233,104 @@ Append to `knowledge-base/agent-scores.yaml` with full run history.
 
 ---
 
+## Token Efficiency Scoring
+
+SCOREKEEPER evaluates each agent's token efficiency and incorporates it into the scoring system. Token efficiency measures whether an agent produces quality output relative to its token consumption.
+
+### Token Efficiency Points
+
+| Action | Points | Agent | Description |
+|--------|--------|-------|-------------|
+| Token-efficient task | +2 | Any | Task completed with token cost < 80% of average per-task budget |
+| Token-heavy task | -1 | Any | Task consumed > 150% of average per-task budget |
+| Token hog | -3 | Any | Single agent consumed > 40% of total run tokens |
+| Budget saver | +3 | Any | Agent completed all assigned work using < 60% of allocated tier budget |
+
+### Token Efficiency Metrics
+
+Track in `knowledge-base/agent-scores.yaml` per agent:
+
+```yaml
+  token_metrics:
+    total_tokens: 0
+    dispatch_count: 0
+    avg_tokens_per_dispatch: 0
+    efficiency_rating: "normal"  # efficient | normal | heavy | hog
+```
+
+Efficiency rating thresholds:
+- **efficient**: avg tokens/dispatch < 80% of squad-wide average
+- **normal**: 80-150% of squad-wide average
+- **heavy**: 150-200% of squad-wide average
+- **hog**: > 200% of squad-wide average
+
+### Token Efficiency Badge
+
+| Badge | Criteria | Emoji |
+|-------|----------|-------|
+| **Lean Machine** | Token efficiency rating "efficient" for 3+ consecutive runs | ★★ |
+| **Token Hog** | Token efficiency rating "hog" in a run | (negative) |
+
+### Scorecard Extension
+
+Add to the per-run scorecard output:
+
+```markdown
+## Token Efficiency
+
+| Agent | Tokens Used | Dispatches | Avg/Dispatch | Efficiency |
+|-------|------------|------------|--------------|------------|
+| IMPLEMENTER | 45000 | 12 | 3750 | normal |
+| SPEC GUARD | 18000 | 6 | 3000 | efficient |
+| ... | | | | |
+
+**Squad total:** {total} / {budget} ({percentage}%)
+**Most efficient:** {agent} ({rating})
+**Least efficient:** {agent} ({rating})
+```
+
+---
+
+## Marketplace Pattern Tracking
+
+SCOREKEEPER tracks pattern reuse from the marketplace and awards recognition for community contributions.
+
+### Reuse Count Tracking
+
+After each squad run, SCOREKEEPER:
+
+1. Reads `knowledge-base/marketplace-index.yaml`.
+2. For each entry with `reuse_count > 0`, records the reuse in `knowledge-base/agent-scores.yaml` under the originating agent (if identifiable from `source_fingerprints`).
+3. Updates the marketplace entry's `last_seen` timestamp.
+
+### Community Contributor Badge
+
+| Badge | Criteria | Emoji |
+|-------|----------|-------|
+| **Community Contributor** | A pattern the agent helped create has been reused 5+ times across projects | ★★★ |
+
+Badge award process:
+1. For each marketplace entry where `reuse_count >= 5`, check if the badge has already been awarded for that pattern.
+2. If not yet awarded, add the **Community Contributor** badge to the originating agent's profile with a reference to the pattern ID.
+3. Award +5 bonus points to the agent's lifetime score.
+
+### Marketplace Health Metrics
+
+Include in the run scorecard output:
+
+```markdown
+## Marketplace Metrics
+
+| Metric | Value |
+|--------|-------|
+| Total marketplace patterns | {count} |
+| Patterns reused this run | {count} |
+| Most reused pattern | {name} ({reuse_count} times) |
+| Community Contributor badges awarded | {count} |
+```
+
+---
+
 ## Integration with Triadic Model
 
 ```
@@ -252,3 +350,65 @@ LEARNING → REFLECT + CALIBRATE + SCOREKEEPER produce:
 ```
 
 The SCOREKEEPER is the thread that runs through all three phases, measuring performance at every step.
+
+---
+
+## Internalization Trend in Scorecard
+
+SCOREKEEPER incorporates per-agent internalization scores (computed by AUDITOR) into the Agent Scorecard. This provides visibility into how well each agent is absorbing and applying spec knowledge over time.
+
+### Data Source
+
+Read from `knowledge-base/agent-scores.yaml` under each agent's `internalization` sub-object:
+- `composite_score` — overall internalization quality (0.0-1.0)
+- `category_scores` — breakdown by Absorption, Accuracy, Calibration, Transfer
+- `trend` — improving / stable / declining / insufficient_data
+- `history` — prior run scores for trend visualization
+
+### Scorecard Extension
+
+Add to the per-run Agent Scorecard output:
+
+```markdown
+## Internalization Trend
+
+| Agent | Composite | Absorption | Accuracy | Calibration | Transfer | Trend | Δ vs Prev |
+|-------|-----------|------------|----------|-------------|----------|-------|-----------|
+| ARCHITECT | 0.88 | 0.91 | 0.85 | 0.87 | 0.82 | improving | +0.04 |
+| IMPLEMENTER | 0.72 | 0.78 | 0.71 | null | null | declining | -0.06 |
+| SCOUT | 0.80 | 0.82 | 0.79 | null | null | stable | +0.01 |
+| SPEC_GUARD | null | null | null | null | null | insufficient_data | — |
+
+### Internalization Alerts
+
+| Agent | Alert | Details |
+|-------|-------|---------|
+| IMPLEMENTER | declining trend | Composite dropped 0.06 over last 3 runs — Accuracy category weakest |
+| {agent} | cold-start | Phase 1 — Calibration and Transfer metrics unavailable |
+```
+
+### Trend Scoring Points
+
+| Action | Points | Description |
+|--------|--------|-------------|
+| Internalization improving for 3+ runs | +2 | Sustained learning improvement |
+| Internalization declining for 3+ runs | -2 | Sustained degradation — flag for prompt review |
+| Composite score >= 0.90 | +1 | Excellent spec comprehension |
+| Composite score < 0.50 | -1 | Poor spec comprehension — needs intervention |
+
+### Internalization Badge
+
+| Badge | Criteria | Emoji |
+|-------|----------|-------|
+| **Deep Learner** | Composite score >= 0.85 for 5 consecutive runs | ★★★ |
+| **Absorption Gap** | Absorption category < 0.50 for 2 consecutive runs | (negative) |
+
+### Self-Healing Integration
+
+| Signal | Action |
+|--------|--------|
+| Agent internalization declining for 3+ runs | Flag: agent context pack may be insufficient — increase artifact coverage |
+| Agent Absorption < 0.50 | Flag: agent may not be reading spec — add explicit requirement checklist to prompt |
+| Agent Accuracy < 0.50 | Flag: agent making uncited decisions — add "cite requirement IDs" instruction |
+| Agent Calibration < 0.50 | Flag: agent confidence is miscalibrated — add self-check instruction |
+| Agent Transfer < 0.50 | Flag: agent outputs not passing gates — add review examples to prompt |

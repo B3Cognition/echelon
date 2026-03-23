@@ -1,5 +1,6 @@
 #!/usr/bin/env sh
 set -eu
+export LC_NUMERIC=C
 
 # QA_COVERAGE = 0.60*R + 0.25*L + 0.15*B
 calc() {

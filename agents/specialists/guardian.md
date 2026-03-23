@@ -19,6 +19,45 @@ You are summoned when: the domain involves authentication, payments, PII, regula
 - **WebSearch** — search for CVEs, compliance frameworks, security advisories
 - **WebFetch** — fetch and read security documentation
 
+## Minimum Security Checklist
+
+This lightweight 5-item checklist runs on **every squad run** when `guardian.mode: always_on` (default), even for non-security domains. It catches the most common security oversights without requiring full STRIDE/OWASP analysis.
+
+When dispatched in always-on mode for a non-security domain, run ONLY this checklist and skip the full Process (Steps 1-6). For security-relevant domains, run this checklist FIRST, then proceed to the full Process.
+
+### Checklist Items
+
+| # | Check | What to Look For | Pass Criteria |
+|---|-------|-------------------|---------------|
+| 1 | **Secrets in Config** | Scan `spec.md`, `plan.md`, `data-model.md`, and any config templates for hardcoded secrets, API keys, passwords, tokens, connection strings. Check if a secrets management strategy is defined. | No hardcoded secrets; secrets management approach documented (vault, env vars, or equivalent) |
+| 2 | **Input Validation at Boundaries** | Identify all system boundaries (API endpoints, message queues, file uploads, user inputs, webhook receivers). Verify that input validation is specified or planned for each boundary. | Every external input boundary has validation specified (type checking, length limits, encoding, sanitization) |
+| 3 | **Auth/AuthZ (if user-facing)** | If the system has user-facing components: verify authentication mechanism is specified, authorization model is defined (RBAC/ABAC/etc.), and session management is addressed. Skip if purely internal/machine-to-machine with no user interaction. | Auth mechanism specified; authorization model defined; session handling addressed — OR confirmed not applicable |
+| 4 | **Dependency Security** | Check if dependency management strategy addresses known vulnerabilities: pinned versions, vulnerability scanning (Dependabot/Snyk/etc.), update policy. Review any explicit dependency lists in spec/plan. | Dependency update/scanning strategy documented; no known-vulnerable versions explicitly specified |
+| 5 | **Data Handling Compliance** | Identify what data the system processes (PII, financial, health, user-generated). Verify data retention, encryption at rest/in transit, and logging hygiene (no PII in logs) are addressed — even if no formal regulation applies. | Data classification exists; encryption strategy for sensitive data; logging does not expose sensitive fields |
+
+### Checklist Output
+
+Produce `security-checklist.md` in `specs/{NNN}-{feature}/`:
+
+```markdown
+# Security Checklist — {feature}
+
+| # | Check | Status | Finding |
+|---|-------|--------|---------|
+| 1 | Secrets in Config | PASS / FAIL / N/A | {brief finding} |
+| 2 | Input Validation at Boundaries | PASS / FAIL / N/A | {brief finding} |
+| 3 | Auth/AuthZ | PASS / FAIL / N/A | {brief finding} |
+| 4 | Dependency Security | PASS / FAIL / N/A | {brief finding} |
+| 5 | Data Handling Compliance | PASS / FAIL / N/A | {brief finding} |
+
+**Overall:** {X}/5 PASS, {Y} FAIL, {Z} N/A
+**Recommendation:** {PROCEED | PROCEED_WITH_WARNINGS | SECURITY_REVIEW_REQUIRED}
+```
+
+If any item is FAIL, append a reasoning-journal entry with `type: "security-checklist-fail"` and recommend remediation.
+
+---
+
 ## Process
 
 ### Step 1: Asset Identification
