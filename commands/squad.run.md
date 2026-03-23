@@ -305,8 +305,17 @@ pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
 # Read port from config (default 7891)
 RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
 
+# Optional: record SSE events for replay (set radar.record: true in squad-config.yml)
+# Note: -A3 is intentional — config-template.yml has a comment line between
+# "radar:" and "record:", so -A1 would miss it.
+RADAR_RECORD_FLAG=""
+if [ "$(grep -A3 'radar:' squad-config.yml 2>/dev/null | grep 'record:' | awk '{print $2}')" = "true" ]; then
+  RADAR_RECORD_FLAG="--record .specify/squad/radar-recording-${run_id}.jsonl"
+fi
+
 # Start RADAR in background (PYTHONPATH allows python -m radar.server to work)
 PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
+  ${RADAR_RECORD_FLAG} \
   >> .specify/squad/radar.log 2>&1 &
 echo $! > .specify/squad/radar.pid
 

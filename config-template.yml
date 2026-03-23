@@ -61,6 +61,11 @@ radar:
   # If port is in use, RADAR auto-increments until it finds an available port
   port: 7891
 
+  # Record all SSE events to a JSONL file for later replay in the mock server
+  # [default: false] Set true to enable recording.
+  # Recording file: .specify/squad/radar-recording-{run_id}.jsonl
+  record: false
+
   # Host binding
   # [default: localhost] Set to 0.0.0.0 to expose on LAN
   # host: localhost

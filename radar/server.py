@@ -3,6 +3,7 @@
 A lightweight Flask server that watches agent state files and streams
 changes to connected browsers via Server-Sent Events (SSE).
 """
+from __future__ import annotations
 
 import json
 import os
@@ -45,6 +46,25 @@ jsonl_offset: int = 0
 clients: dict[str, Queue] = {}  # client_id -> event queue
 start_time: float = time.time()
 observer: Observer | None = None
+
+# ── Recording ─────────────────────────────────────────────────────────────────
+
+_record_path: str | None = None   # set by --record PATH at startup
+_record_lock = threading.Lock()
+
+
+def _record_event(event_type: str, payload: dict) -> None:
+    """Append one JSONL line to the recording file (thread-safe, no-op if not recording)."""
+    if _record_path is None:
+        return
+    line = json.dumps({
+        "recorded_at_ms": int(time.time() * 1000),
+        "event_type": event_type,
+        "payload": payload,
+    })
+    with _record_lock:
+        with open(_record_path, "a") as f:
+            f.write(line + "\n")
 
 
 # ── File Watching ────────────────────────────────────────────────────────────
@@ -116,6 +136,7 @@ class AgentStateHandler(FileSystemEventHandler):
 
 def broadcast_event(event_type: str, data: dict) -> None:
     """Send event to all connected clients."""
+    _record_event(event_type, data)   # no-op if _record_path is None
     event_str = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
     dead_clients = []
 
@@ -264,15 +285,22 @@ def _now() -> str:
 
 
 def main():
-    global observer
+    global observer, _record_path
 
-    # Parse port from args or env
-    port = DEFAULT_PORT
-    for i, arg in enumerate(sys.argv):
-        if arg == "--port" and i + 1 < len(sys.argv):
-            port = int(sys.argv[i + 1])
-            break
-    port = int(os.environ.get("PORT", port))
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m radar.server",
+        description="RADAR SSE server — watches agent state files and streams to UI",
+    )
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
+                        help=f"Starting port (default: {DEFAULT_PORT})")
+    parser.add_argument("--record", metavar="PATH", default=None,
+                        help="Path to record all SSE events as JSONL for replay")
+    args = parser.parse_args()
+
+    port = int(os.environ.get("PORT", args.port))
+    _record_path = args.record
 
     # Find available port
     actual_port = find_available_port(port)
@@ -284,6 +312,10 @@ def main():
 
     # Load initial state
     load_initial_state()
+
+    # Record initial snapshot if recording is active
+    if _record_path:
+        _record_event("snapshot", snapshot)
 
     # Set up file watcher
     observer = setup_file_watcher()
@@ -298,6 +330,8 @@ def main():
 
     # Log startup
     print(f"[RADAR] listening on port {actual_port} — project: {os.getcwd()}", file=sys.stderr)
+    if _record_path:
+        print(f"[RADAR] Recording to {_record_path}", file=sys.stderr)
 
     # Run server
     app.run(host="localhost", port=actual_port, threaded=True, use_reloader=False)
