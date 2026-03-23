@@ -1,0 +1,48 @@
+{
+  "task_id": "T-042",
+  "task_title": "Implement user profile API endpoint",
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "confidence": 95,
+      "severity": "HIGH",
+      "file_line": "src/api/user-profile.ts:28",
+      "category": "Security",
+      "description": "User input passed directly to database query without parameterization. SQL injection risk.",
+      "suggested_fix": "Use parameterized queries via the repository pattern prescribed in ADR-005."
+    },
+    {
+      "id": 2,
+      "confidence": 88,
+      "severity": "MEDIUM",
+      "file_line": "src/api/user-profile.ts:45,src/api/user-profile.ts:72,src/api/user-profile.ts:110",
+      "category": "Quality",
+      "description": "3 functions missing error handling at I/O boundaries (fetchProfile, updateProfile, deleteProfile).",
+      "suggested_fix": "Wrap each I/O call in try/catch and return Result<T, E> as established in prior tasks.",
+      "consolidated_from": [
+        "src/api/user-profile.ts:45",
+        "src/api/user-profile.ts:72",
+        "src/api/user-profile.ts:110"
+      ]
+    },
+    {
+      "id": 3,
+      "confidence": 82,
+      "severity": "MEDIUM",
+      "file_line": "src/api/user-profile.ts:15",
+      "category": "Quality",
+      "description": "Magic number 86400 used for cache TTL without named constant.",
+      "suggested_fix": "Extract to a named constant CACHE_TTL_SECONDS = 86400."
+    }
+  ],
+  "summary": [
+    { "severity": "CRITICAL", "count": 0, "status": "PASS" },
+    { "severity": "HIGH", "count": 1, "status": "FAIL" },
+    { "severity": "MEDIUM", "count": 2, "status": "INFO" }
+  ],
+  "commendations": [
+    "Clean separation of route handler and business logic.",
+    "Proper use of discriminated unions for profile state."
+  ]
+}

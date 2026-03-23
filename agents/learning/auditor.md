@@ -589,3 +589,166 @@ When calibration data grows (5+ data points per domain), CALIBRATE should produc
 
 Save as `.specify/specs/{feature}/calibration-analytics.md`
 This makes learning VISIBLE, not just stored in YAML.
+
+---
+
+## Per-Agent Internalization Scoring
+
+After each squad run (during FINALIZE, after Mode 4 completes), AUDITOR computes a **per-agent internalization score** across all 4 categories of the 16-metric internalization framework. These scores are stored in `knowledge-base/agent-scores.yaml` under each agent's `internalization` sub-object.
+
+### Scoring Process
+
+1. **Gather metric values** from the current run's internalization-log entries (written in Mode 4).
+2. **Compute category scores** for each agent that participated in the run:
+
+   - **Absorption** (I-01 to I-04): Mean of non-null values among `requirement_coverage_rate`, `constraint_adherence_score`, `terminology_fidelity`, `dependency_awareness`
+   - **Accuracy** (I-05 to I-08): Mean of non-null values among `numeric_contradiction_rate`, `uncited_decision_rate`, `cross_reference_accuracy`, `keyword_scope_rate`
+   - **Calibration** (I-09 to I-12): Mean of non-null values among `confidence_accuracy`, `doubt_signal_quality`, `blind_spot_rate`, `escalation_precision` (null during cold-start Phase 1)
+   - **Transfer** (I-13 to I-16): Mean of non-null values among `first_pass_acceptance`, `rework_severity`, `explicit_decision_traceability`, `priority_alignment` (null during cold-start Phase 1)
+
+3. **Compute composite score**: Weighted average of the 4 category scores (only non-null categories contribute):
+   - Absorption weight: 0.30
+   - Accuracy weight: 0.30
+   - Calibration weight: 0.20
+   - Transfer weight: 0.20
+
+4. **Determine trend** by comparing to the agent's previous 3 internalization composite scores:
+   - `improving`: current composite > mean of last 3 by > 0.03
+   - `declining`: current composite < mean of last 3 by > 0.03
+   - `stable`: within 0.03 of mean of last 3
+   - `insufficient_data`: fewer than 3 prior scores
+
+### Storage Format
+
+Write to `knowledge-base/agent-scores.yaml` under each agent's entry:
+
+```yaml
+agents:
+  {AGENT_NAME}:
+    internalization:
+      composite_score: 0.82
+      category_scores:
+        absorption: 0.88
+        accuracy: 0.85
+        calibration: 0.72
+        transfer: 0.78
+      metric_values:
+        I_01_requirement_coverage_rate: 0.91
+        I_02_constraint_adherence_score: 0.85
+        I_03_terminology_fidelity: 0.88
+        I_04_dependency_awareness: 0.87
+        I_05_numeric_contradiction_rate: 0.90
+        I_06_uncited_decision_rate: 0.82
+        I_07_cross_reference_accuracy: 0.85
+        I_08_keyword_scope_rate: 0.83
+        I_09_confidence_accuracy: null
+        I_10_doubt_signal_quality: null
+        I_11_blind_spot_rate: null
+        I_12_escalation_precision: null
+        I_13_first_pass_acceptance: null
+        I_14_rework_severity: null
+        I_15_explicit_decision_traceability: null
+        I_16_priority_alignment: null
+      trend: "improving"
+      run_id: "squad-005-1742652000"
+      cold_start_phase: 1
+      history:
+        - run_id: "squad-004"
+          composite_score: 0.79
+          timestamp: "2026-03-22T10:00:00Z"
+        - run_id: "squad-003"
+          composite_score: 0.75
+          timestamp: "2026-03-21T10:00:00Z"
+```
+
+### Rules
+
+- If ALL metrics in a category are null, the category score is null and excluded from the composite.
+- If ALL four category scores are null, `composite_score` is null and `trend` is `insufficient_data`.
+- Null metric values are stored as `null` (not 0.0) — see Mode 4 Step 0 Rule 1.
+- History array is capped at 20 entries (oldest removed first).
+- All writes go through `kb-write.sh` per the Tier 1 KB Bootstrap Protocol.
+
+---
+
+## Calibration Dashboard Generation
+
+After completing per-agent internalization scoring, AUDITOR produces `calibration-dashboard.md` summarizing calibration health across all tracked domains and agents.
+
+### When to Generate
+
+Generate the calibration dashboard during FINALIZE, after Mode 4 and per-agent internalization scoring are complete. COMMANDER explicitly requests this dashboard at end of run (see COMMANDER prompt).
+
+### Dashboard Sections
+
+#### Section 1: Domain Calibration Overview
+
+For each domain in `calibration-profile.yaml`, summarize:
+
+```markdown
+## Domain Calibration Overview
+
+| Domain | Accuracy | Trend | Correction Factor | Sample Size | Risk Level |
+|--------|----------|-------|-------------------|-------------|------------|
+| backend | 0.82 | improving | 1.05 | 12 | LOW |
+| frontend | 0.61 | declining | 0.85 | 8 | MEDIUM |
+| security | 0.45 | stable | 1.30 | 4 | HIGH |
+```
+
+Risk levels: HIGH (accuracy < 0.5), MEDIUM (0.5-0.75), LOW (> 0.75).
+
+#### Section 2: Agent Internalization Health
+
+For each agent with internalization data:
+
+```markdown
+## Agent Internalization Health
+
+| Agent | Composite | Absorption | Accuracy | Calibration | Transfer | Trend | Phase |
+|-------|-----------|------------|----------|-------------|----------|-------|-------|
+| ARCHITECT | 0.88 | 0.91 | 0.85 | 0.87 | 0.82 | improving | 3 |
+| IMPLEMENTER | 0.72 | 0.78 | 0.71 | null | null | declining | 1 |
+```
+
+#### Section 3: Cross-Validation Flags Summary
+
+List all active cross-validation flags from the current run:
+
+```markdown
+## Cross-Validation Flags
+
+| Agent | Flag | Rule | Triggering Metrics |
+|-------|------|------|--------------------|
+| IMPLEMENTER | high-terminology-low-accuracy | CV-2 | I-03=0.92, I-05=0.68 |
+```
+
+#### Section 4: Evolution Signals Status
+
+Summarize open and acknowledged evolution signals:
+
+```markdown
+## Evolution Signals
+
+| Signal ID | Trigger | Severity | Status | Affected Agents |
+|-----------|---------|----------|--------|-----------------|
+| evo-sig-012 | int_declining_trend | HIGH | open | IMPLEMENTER |
+```
+
+#### Section 5: Calibration Health Score
+
+Compute an overall calibration health score:
+
+```
+calibration_health = (domains_above_threshold / total_domains) * 0.4
+                   + (agents_passing_int_gate / total_agents) * 0.4
+                   + (1 - open_evolution_signals / max(total_signals, 1)) * 0.2
+```
+
+Report as: `Calibration Health: {score} ({HEALTHY|DEGRADED|CRITICAL})`
+- HEALTHY: >= 0.75
+- DEGRADED: 0.50-0.74
+- CRITICAL: < 0.50
+
+### Output Path
+
+Save as `.specify/specs/{feature}/calibration-dashboard.md`

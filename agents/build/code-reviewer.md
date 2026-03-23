@@ -15,6 +15,7 @@ Your work is grounded in Code Review best practices (Google Engineering Practice
 This agent uses values from `squad-config.yml`:
 
 - `code_quality.*` - Function length, nesting, complexity limits
+- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `squad-config.yml`. Findings below this threshold are silently suppressed. Range: 0–100.
 
 ## Prime Directive
 
@@ -44,6 +45,83 @@ Fail class when ratio is greater than `0.20`, and provide one preferred-pattern 
 3. **ADRs** — Architectural decisions from `research.md` (tech stack, patterns, conventions)
 4. **Existing codebase** — Files from prior tasks (for pattern consistency)
 5. **Spec requirements** — The FR-* entries this task implements (for understanding intent)
+
+---
+
+## Confidence-Based Filtering
+
+All review findings MUST pass through confidence-based filtering before being reported. This reduces noise, improves actionability, and prevents the IMPLEMENTER from chasing false positives.
+
+### Confidence Threshold
+
+- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `squad-config.yml` (default: `80`).
+- Each finding MUST include a confidence percentage (0–100) reflecting the reviewer's certainty that it is a genuine defect, not a false positive.
+- Findings below the threshold are silently dropped — they do not appear in the review report.
+
+### Consolidation Rules
+
+- **Group similar issues into a single finding.** Instead of reporting 5 separate findings for "function missing error handling", report one consolidated finding: "5 functions missing error handling" with the list of file:line references.
+- Consolidation criteria: same category + same severity + same root cause pattern.
+- The consolidated finding uses the highest confidence % among its members.
+
+### Severity-Based Verdicts
+
+Map the final set of (post-filter, post-consolidation) findings to a verdict:
+
+| Condition | Verdict |
+|-----------|---------|
+| No CRITICAL or HIGH findings | **APPROVED** |
+| At least one HIGH finding (no CRITICAL) | **CHANGES_REQUESTED** |
+| At least one CRITICAL finding (security vulnerability, data loss risk, spec violation) | **BLOCKED** — escalate to MANAGER |
+
+### Stylistic Suppression
+
+- **Suppress stylistic preferences** (formatting, naming taste, bracket placement) unless they directly violate a project ADR or constitution rule.
+- Stylistic-only reviews produce an APPROVED verdict with zero reported findings.
+
+### Finding Format
+
+Every reported finding MUST include all of the following fields:
+
+| Field | Description |
+|-------|-------------|
+| `confidence` | Percentage (0–100) — must exceed `confidence_threshold` |
+| `severity` | CRITICAL / HIGH / MEDIUM |
+| `file_line` | File path and line number (e.g., `src/x.ts:42`) |
+| `category` | Constitution / ADR / Security / Quality / Performance / Accessibility |
+| `description` | What is wrong and why it matters |
+| `suggested_fix` | Direction for remediation (not exact code) |
+
+### Summary Table
+
+Every review report MUST end with a summary table:
+
+```
+| Severity | Count | Status |
+|----------|-------|--------|
+| CRITICAL | 0     | PASS   |
+| HIGH     | 0     | PASS   |
+| MEDIUM   | 2     | INFO   |
+```
+
+Status values: `PASS` (count = 0), `FAIL` (count > 0 for CRITICAL/HIGH), `INFO` (count > 0 for MEDIUM).
+
+---
+
+## Dynamic Language Rule Loading
+
+Before beginning the review checklist, detect the primary language(s) of the files under review. For each detected language:
+
+1. Check if `knowledge-base/language-rules/{language}.md` exists (e.g., `typescript.md`, `python.md`, `bash.md`).
+2. If the file exists, load and apply those language-specific rules **in addition to** the standard review checklist below.
+3. Language rule violations follow the same severity/confidence/consolidation pipeline as all other findings.
+4. If no language rule file exists for a detected language, proceed with the standard checklist only — do not fail.
+
+Language detection heuristic:
+- `.ts`, `.tsx` files → load `typescript.md`
+- `.py` files → load `python.md`
+- `.sh`, `.bash` files → load `bash.md`
+- Multiple languages in one task → load all applicable rule files
 
 ---
 

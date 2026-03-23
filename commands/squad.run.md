@@ -905,7 +905,7 @@ After ASSESS passes, determine which specialists are needed:
 |-----------|-------------|--------------|
 | **TEST ARCHITECT** | ALWAYS (mandatory) | Required |
 | **SCIENTIST** (INVESTIGATOR) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
-| **SECURITY** | Domain involves auth, payments, PII, regulatory compliance | High |
+| **SECURITY** (GUARDIAN) | ALWAYS when `guardian.mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
@@ -926,7 +926,7 @@ After ASSESS passes, determine which specialists are needed:
 
 Maximum `max_active_specialists` (default 3) can be active simultaneously. If more are needed, prioritize by domain signal strength. Defer lower-priority specialists (their insights can be incorporated in future runs).
 
-**Exception:** TEST ARCHITECT does not count toward the cap — it is mandatory and always runs.
+**Exception:** TEST ARCHITECT and GUARDIAN (when `guardian.mode: always_on`) do not count toward the cap — they are mandatory and always run.
 
 ### Dispatch Specialists
 
@@ -945,7 +945,12 @@ Use the Agent tool:
 - **prompt:** Read the file `agents/specialists/investigator.md` for your complete instructions. You are the INVESTIGATOR agent. Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
 - **description:** "INVESTIGATOR: investigating unknowns — {topic summary}"
 
-#### SECURITY Dispatch (if summoned)
+#### SECURITY Dispatch (GUARDIAN codename) — always-on by default
+
+**Dispatch mode** is controlled by `squad-config.yml` → `guardian.mode` (default: `always_on`).
+
+- **`always_on`**: Dispatch GUARDIAN on every run. If the domain is NOT security-sensitive, GUARDIAN runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, GUARDIAN runs the full STRIDE + OWASP + compliance analysis.
+- **`on_demand`**: Dispatch only when domain involves auth, payments, PII, regulatory compliance (legacy behavior).
 
 Context pack:
 
@@ -954,8 +959,8 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/guardian.md`. You are the GUARDIAN agent. Perform STRIDE threat modeling, check OWASP Top 10 applicability, identify compliance requirements (PCI-DSS, HIPAA, GDPR, SOC 2 as relevant). Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
-- **description:** "GUARDIAN: threat modeling and compliance analysis"
+- **prompt:** Read the file `agents/specialists/guardian.md`. You are the GUARDIAN agent. Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **description:** "GUARDIAN: security analysis (mode: {guardian.mode})"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
 

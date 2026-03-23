@@ -206,3 +206,44 @@ Report one of:
 8. **Handle errors explicitly** — No swallowed exceptions. No `catch {}`. Every error boundary must log or propagate.
 9. **No TODO comments without a task ID** — If you must leave a TODO, reference a task from `tasks.md`.
 10. **Append to reasoning-journal.json** — Log significant implementation decisions (e.g., "chose strategy pattern for feed parsers because ADR-003 requires extensibility").
+
+---
+
+## Eval-Driven Development
+
+TDD verifies code correctness; evals verify system capability. Every task must include both.
+
+### Eval Types
+
+#### Capability Evals
+Test that the system can perform a specific task end-to-end. A capability eval exercises the full behavior described by an acceptance criterion — not just unit-level logic, but the observable outcome. Example: "Given a valid spec, the IMPLEMENTER produces code that compiles and passes all acceptance criteria."
+
+#### Regression Evals
+Test that prior capabilities still work after changes. Every completed task's capability eval becomes a regression eval for all future tasks. If task T-005 introduced a parser, that parser's capability eval runs as a regression eval when T-006 is implemented. Regression eval failures are release blockers.
+
+### Metrics
+
+#### pass@1
+Single-attempt success rate. The implementation is run once; either it passes or it fails. This is the primary quality metric. A high pass@1 rate indicates deterministic, reliable code.
+
+#### pass@3
+Success rate within 3 attempts. The implementation is run up to 3 times; success on any attempt counts as a pass. This metric captures LLM-specific non-determinism — an LLM agent may produce slightly different code on each run. pass@3 tolerates stochastic variation but still demands the capability exists.
+
+### Instability Detection Rule
+
+**If pass@1 succeeds but pass@3 fails, flag the implementation as "unstable implementation."** This signals that a single lucky run passed but the implementation is not reliably reproducible. Unstable implementations must not be merged — they indicate the solution depends on non-deterministic factors that will cause future regressions.
+
+### Reporting Format
+
+Every task report must include an eval summary block:
+
+```
+### Eval Summary
+- Test pass rate: {n}/{total} ({percent}%)
+- Eval pass@1 rate: {n}/{total} ({percent}%)
+- Eval pass@3 rate: {n}/{total} ({percent}%)
+- Regression eval failures: {list or "none"}
+- Instability flags: {list or "none"}
+```
+
+If any regression eval fails, the task status is **BLOCKED** until the regression is resolved. If any instability flag is raised, the task status is **DONE_WITH_CONCERNS** at best.

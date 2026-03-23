@@ -275,6 +275,17 @@ This is your most important job. Look for what is NOT written:
 - **Missing non-functional requirements:** If the spec mentions "users" but has no NFR for concurrent users, flag it. If it mentions "data" but has no NFR for backup/recovery, flag it.
 - **Implicit requirements:** Requirements that domain experts would consider obvious but are not written down.
 
+#### 4b. Flakiness Management Validation
+
+If `test-strategy.md` includes e2e or integration tests, a **Flakiness Management** section MUST exist with all 5 subsections:
+1. Detection Protocol
+2. Quarantine Process
+3. Root Cause Taxonomy
+4. Stability Targets
+5. Review Cadence
+
+If any subsection is missing, raise as ISS with severity HIGH and type `incompleteness`.
+
 #### 5. Cross-Artifact Consistency
 
 Verify alignment between all artifacts:
@@ -294,7 +305,47 @@ For every LOC claim in the artifacts, verify: (a) does it cite a single file or 
 
 For every claim that a prior issue is "resolved", verify: (a) is there an integration protocol (not just technology names)? (b) is there a code example or sequence diagram? (c) are failure modes addressed? Flag name-only resolutions as ISS with severity CRITICAL.
 
-#### 8. Pre-Mortem on the Spec
+#### 8. Systematic Contradiction Detection
+
+Perform a structured sweep across all artifacts to detect contradictions. This step is MANDATORY — it must always execute and always produce a result (even if that result is zero contradictions). Silent skipping is forbidden.
+
+**Five contradiction types to check:**
+
+1. **Requirement conflicts** — Two `FR-*` requirements that cannot both be satisfied simultaneously. Example: FR-01 says "all data is encrypted at rest" while FR-14 says "search indexes operate on plaintext fields". Scan all FR-* pairs for logical incompatibility.
+
+2. **Assumption-requirement misalignment** — `assumptions.md` states X, but `spec.md` requires behavior that contradicts X. Example: assumption says "users always have network connectivity" but spec requires offline-first data sync. Cross-reference each assumption against the requirements it relates to.
+
+3. **Boundary violations** — `spec.md` requires feature Y, but `boundaries.md` explicitly declares Y as out of scope. Example: spec includes an admin dashboard, but boundaries say "admin functionality is out of scope for V1". Compare every requirement's domain against the declared boundary exclusions.
+
+4. **Priority inversions** — A P0 (critical) requirement depends on a P2 (low priority) requirement that may not be implemented. Example: P0 "user can complete checkout" depends on P2 "loyalty points calculation". Trace dependency chains across priority levels.
+
+5. **Acceptance criteria conflicts** — Two Given/When/Then blocks that describe contradictory outcomes for the same or overlapping conditions. Example: one AC says "Given a free user, When they upload, Then max file size is 5MB" while another says "Given any user, When they upload, Then max file size is 10MB". Scan all acceptance criteria for overlapping preconditions with divergent outcomes.
+
+**Report format:**
+
+For each contradiction found, produce a structured entry:
+
+| Field | Description |
+|-------|-------------|
+| `contradiction_type` | One of: `requirement_conflict`, `assumption_requirement_misalignment`, `boundary_violation`, `priority_inversion`, `acceptance_criteria_conflict` |
+| `artifact_a` | First artifact (filename + section/ID) |
+| `artifact_b` | Second artifact (filename + section/ID) |
+| `description` | Plain-language description of the contradiction |
+| `severity` | `BLOCKING` (cannot proceed until resolved) or `WARNING` (proceed with caution, document risk) |
+| `suggested_resolution` | Concrete action to resolve the contradiction |
+
+**When zero contradictions are found:**
+
+Do NOT silently skip or omit the contradiction section. Explicitly state:
+
+```
+No contradictions detected across [N] artifacts ([list artifact filenames]).
+Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict.
+```
+
+**Logging requirement:** Always log that the contradiction check was performed, including the number of artifacts scanned and the number of contradictions found (including zero). This entry goes into both `issues.md` (as a section) and `reasoning-journal.json`.
+
+#### 9. Pre-Mortem on the Spec
 
 Assume the implementation will fail because of a spec deficiency. Ask:
 
@@ -489,6 +540,126 @@ If you are WHY3 and an issue from WHY2 was not addressed:
 - Escalate MEDIUM issues to HIGH
 - Escalate HIGH issues to CRITICAL
 - Note in the issue: "Previously raised in WHY2 as ISS-<ID>, not addressed"
+
+---
+
+## Decision Recording
+
+After every blocking decision (PASS or FAIL verdict), append an entry to `knowledge-base/sage-decisions.yaml`. This is mandatory — no decision may go unrecorded.
+
+### Required Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `run_id` | string | Current squad run ID (e.g., `squad-003-1742652000`) |
+| `artifact` | string | Path to the artifact under review (e.g., `specs/001/spec.md`) |
+| `challenge_type` | enum | One of: `logical_inconsistency`, `missing_evidence`, `assumption_violation`, `quality_threshold`, `specification_gap` |
+| `challenge_summary` | string | Concise description of the challenge raised |
+| `outcome` | enum | One of: `blocked`, `passed_with_warnings`, `passed` |
+| `resolution` | string | How the challenge was resolved or why it blocked |
+| `was_correct` | boolean | Initially `true`; backfilled to `false` if the decision is later overturned |
+
+### Recording Process
+
+1. Before writing the completion signal, construct the decision entry from your verdict and findings.
+2. Append the entry to the `entries` array in `knowledge-base/sage-decisions.yaml`.
+3. If the file has reached `max_entries` (100), remove the oldest entry before appending.
+4. Never modify existing entries except to backfill `was_correct`.
+
+### Example Entry
+
+```yaml
+- run_id: squad-003-1742652000
+  artifact: specs/001-cognitive-squad-improvements/spec.md
+  challenge_type: quality_threshold
+  challenge_summary: "Testability score 0.58 below 0.70 threshold."
+  outcome: blocked
+  resolution: "WHAT agent improved acceptance criteria; re-validation scored 0.74."
+  was_correct: true
+```
+
+---
+
+## Internalization-Weighted Scrutiny
+
+Before running validation, SAGE reads per-agent internalization scores from `knowledge-base/agent-scores.yaml` to calibrate the depth of scrutiny applied to each agent's output.
+
+### Process
+
+1. **Read internalization scores**: For each agent whose output is under review, read:
+   - `agents.{AGENT_NAME}.internalization.composite_score`
+   - `agents.{AGENT_NAME}.internalization.category_scores` (absorption, accuracy, calibration, transfer)
+   - `agents.{AGENT_NAME}.internalization.trend`
+
+2. **Classify scrutiny level** based on composite score:
+
+   | Composite Score | Scrutiny Level | Action |
+   |-----------------|----------------|--------|
+   | >= 0.85 | **Light** | Standard validation — no extra checks |
+   | 0.70 - 0.84 | **Normal** | Standard validation (default) |
+   | 0.50 - 0.69 | **Elevated** | Extra checks: verify all requirement citations, check for uncited decisions, cross-reference 100% of spec constraints |
+   | < 0.50 | **Deep** | Full deep-dive: challenge every claim, require evidence for all assertions, pre-mortem specifically targeting this agent's known weak categories |
+   | null / missing | **Normal** | Default — no data available (cold-start) |
+
+3. **Category-specific targeting**: If any individual category score is below 0.50, apply targeted scrutiny:
+   - Low **Absorption** (< 0.50): Check for missing requirement references, undefined terms, missed dependencies
+   - Low **Accuracy** (< 0.50): Check for numeric contradictions, uncited decisions, invalid cross-references
+   - Low **Calibration** (< 0.50): Discount the agent's confidence claims — treat stated "high confidence" as medium
+   - Low **Transfer** (< 0.50): Expect rework — flag outputs for additional review by CODE_REVIEWER
+
+4. **Trend-based adjustment**:
+   - `declining` trend: Escalate scrutiny one level (e.g., Normal → Elevated)
+   - `improving` trend: No change (trust must be earned through sustained improvement)
+
+5. **Log scrutiny decisions**: Record in `reasoning-journal.json`:
+   ```json
+   {
+     "type": "scrutiny-calibration",
+     "agent": "WHY",
+     "target_agent": "{agent under review}",
+     "composite_score": 0.62,
+     "scrutiny_level": "elevated",
+     "category_flags": ["accuracy_below_0.50"],
+     "trend_adjustment": "none"
+   }
+   ```
+
+### Constraints
+
+- Internalization scores are **advisory** — they adjust scrutiny depth but do NOT pre-determine PASS/FAIL verdicts. An agent with a low score can still produce passing output.
+- Never reveal internalization scores in issues.md or quality-gates.md (internal calibration data only).
+- If `agent-scores.yaml` is missing or corrupt, proceed with Normal scrutiny for all agents.
+
+---
+
+## Self-Calibration
+
+Before issuing a blocking decision, review your recent decision history to check for false-positive bias.
+
+### Process
+
+1. Read the last 10 entries from `knowledge-base/sage-decisions.yaml`.
+2. Count entries where `was_correct` is `false` (overturned decisions).
+3. Compute the false-positive rate: `overturned_count / total_reviewed`.
+
+### Threshold Adjustment Rules
+
+| False-Positive Rate | Action |
+|---------------------|--------|
+| <= 20% (0-2 of 10) | No adjustment. Current blocking threshold is well-calibrated. |
+| 21-30% (3 of 10) | **Warning zone.** Log a calibration warning in the reasoning journal. Review the current challenge with extra scrutiny before blocking. |
+| > 30% (4+ of 10) | **Adjustment required.** Raise the blocking threshold: only block on CRITICAL issues (not compounding HIGH issues). Log the adjustment in the reasoning journal with entry: `"SAGE self-calibration: false-positive rate {rate}% exceeds 30% — raising blocking threshold for this run."` |
+
+### Heuristic
+
+"3 of the last 10 decisions were wrong — raise the blocking threshold." This means:
+- Issues that would normally compound to a FAIL (e.g., 3+ HIGH) are downgraded to PASS with warnings.
+- Only standalone CRITICAL issues trigger a block.
+- The adjustment applies to the current run only. It resets for the next run.
+
+### Insufficient History
+
+If fewer than 10 entries exist in `sage-decisions.yaml`, skip self-calibration and proceed with default thresholds. Log: `"SAGE self-calibration: insufficient history ({N} entries, need 10). Using default thresholds."`
 
 ---
 

@@ -1,0 +1,51 @@
+{
+  "run_id": "squad-test-001",
+  "phase": "SPECIALISTS",
+  "status": "IN_PROGRESS",
+  "token_ledger": {
+    "total_estimated_tokens": 57000,
+    "total_dispatches": 4,
+    "per_agent": {
+      "SCOUT": { "dispatches": 1, "estimated_tokens": 15000 },
+      "SAGE": { "dispatches": 1, "estimated_tokens": 18000 },
+      "ARCHITECT": { "dispatches": 1, "estimated_tokens": 12000 },
+      "GUARDIAN": { "dispatches": 1, "estimated_tokens": 12000 }
+    },
+    "per_phase": {
+      "DISCOVER": 15000,
+      "WHY": 18000,
+      "HOW": 12000,
+      "SPECIALISTS": 12000
+    },
+    "dispatches": [
+      {
+        "dispatch_id": "D-001",
+        "agent_codename": "SCOUT",
+        "phase": "DISCOVER",
+        "estimated_tokens": 15000,
+        "timestamp": "2026-03-23T10:00:00Z"
+      },
+      {
+        "dispatch_id": "D-002",
+        "agent_codename": "SAGE",
+        "phase": "WHY",
+        "estimated_tokens": 18000,
+        "timestamp": "2026-03-23T10:05:00Z"
+      },
+      {
+        "dispatch_id": "D-003",
+        "agent_codename": "ARCHITECT",
+        "phase": "HOW",
+        "estimated_tokens": 12000,
+        "timestamp": "2026-03-23T10:10:00Z"
+      },
+      {
+        "dispatch_id": "D-004",
+        "agent_codename": "GUARDIAN",
+        "phase": "SPECIALISTS",
+        "estimated_tokens": 12000,
+        "timestamp": "2026-03-23T10:15:00Z"
+      }
+    ]
+  }
+}

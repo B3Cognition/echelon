@@ -172,6 +172,51 @@ When a threshold is breached, append an alert to the progress report AND to `rea
 
 ---
 
+## Token Tracking Aggregation
+
+PROGRESS TRACKER aggregates token usage data from `state.json.token_ledger` alongside effort tracking to provide a unified cost/effort view.
+
+### Token Metrics Per Task
+
+After each task completion, read `state.json.token_ledger.dispatches[]` and compute:
+
+- **Task token cost**: Sum of `estimated_tokens` for all dispatches associated with this task (match by task_id in dispatch context)
+- **Task token efficiency**: `task_token_cost / estimated_tokens_for_task` (ratio — 1.0 = on budget)
+- **Cumulative token burn rate**: `total_tokens_used / total_budget` as percentage
+
+### Token Aggregation in Progress Report
+
+Append to the progress report after each task:
+
+```markdown
+### Token Usage
+- **This task:** {token_cost} tokens ({dispatch_count} dispatches)
+- **Cumulative:** {total_tokens} / {budget} ({percentage}%)
+- **Token burn rate:** {tokens_per_task} tokens/task (avg)
+- **Projected total:** {projected_total} tokens (based on remaining tasks * avg)
+- **Token budget status:** {WITHIN_BUDGET | AT_RISK | OVER_BUDGET}
+```
+
+### Token Drift Alerts
+
+| Signal | Threshold | Action |
+|--------|-----------|--------|
+| Single task token spike | task tokens > 3x average | Log TOKEN_SPIKE warning |
+| Cumulative overrun | total > 80% budget with > 30% tasks remaining | Flag TOKEN_BUDGET_AT_RISK to MANAGER |
+| Agent token hog | single agent > 40% of total tokens | Flag AGENT_TOKEN_DOMINANCE |
+
+### Estimates Log Extension
+
+Append token data to `knowledge-base/estimates-log.yaml` entries:
+
+```yaml
+  token_cost: {value}
+  token_dispatches: {count}
+  token_efficiency: {ratio}
+```
+
+---
+
 ## Rules
 
 1. **Measure, do not guess** — Use actual task completion data, not feelings about progress.

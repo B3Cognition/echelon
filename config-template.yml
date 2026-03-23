@@ -657,7 +657,14 @@ specialists:
   # Auto-summon SCIENTIST (INVESTIGATOR) for unknowns
   auto_scientist: true
 
-  # Auto-summon SECURITY (GUARDIAN) when these keywords appear in spec
+  # GUARDIAN dispatch mode
+  # - always_on: GUARDIAN runs on every squad run (Minimum Security Checklist for non-security
+  #   domains, full STRIDE/OWASP for security domains). Does not count toward max_active cap.
+  # - on_demand: GUARDIAN only dispatched when security domain keywords detected (legacy).
+  # [default: always_on]
+  guardian_mode: always_on
+
+  # Auto-summon SECURITY (GUARDIAN) when these keywords appear in spec (on_demand mode only)
   auto_security_keywords:
     - auth
     - login
