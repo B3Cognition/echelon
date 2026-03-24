@@ -6,12 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- Understanding v3.6 integration: Depth quality gate (>= 0.30) in config-template and SAGE
 - v0.4.0 BUILD/QA split workflow artifacts under `specs/002-build-qa-phase-split/`
 - Deterministic BUILD light-gate evaluator and US1/US2/US3 test harnesses
 - Split-phase state schema fields and rework telemetry checkpoints
 
 ### Changed
 
+- SAGE references updated from 31 to 34 metrics (Understanding v3.6 adds Depth category)
+- run-understanding.sh fixed: added missing `scan` subcommand
 - Build command guidance now includes dependency-safe lane execution and QA handoff policy
 - Verify command guidance now includes QA entry gate and deterministic QA completion criteria
 

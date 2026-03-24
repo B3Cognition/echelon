@@ -12,4 +12,4 @@ if ! command -v understanding &>/dev/null; then
   exit 1
 fi
 
-understanding "$SPEC_FILE" --enhanced "$@"
+understanding scan "$SPEC_FILE" --enhanced "$@"

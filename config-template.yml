@@ -172,13 +172,14 @@ limits:
 # =============================================================================
 
 quality_gates:
-  # WHY spec-validation mode thresholds (from Understanding CLI)
+  # WHY spec-validation mode thresholds (from Understanding CLI v3.6+)
   overall: 0.70
   structure: 0.70
   testability: 0.70
   semantic: 0.60
   cognitive: 0.60
   readability: 0.50
+  depth: 0.30        # NEW in Understanding v3.6 — low bar initially, raise as baseline stabilizes
 
   # Margin for "borderline" warnings
   borderline_margin: 0.05
