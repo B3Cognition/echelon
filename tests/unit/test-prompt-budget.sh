@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export LC_ALL=C
+
+SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+SCRIPT="$REPO_ROOT/scripts/bash/prompt-budget.sh"
+
+pass=0
+fail=0
+
+assert() {
+  local desc="$1" result="$2"
+  if [[ "$result" == "OK" ]]; then
+    pass=$((pass + 1))
+    printf 'PASS: %s\n' "$desc"
+  else
+    fail=$((fail + 1))
+    printf 'FAIL: %s — %s\n' "$desc" "$result"
+  fi
+}
+
+# Test 1: script exists and is executable
+[[ -x "$SCRIPT" ]] && assert "script executable" "OK" || assert "script executable" "not executable"
+
+# Test 2: check command exits 1 (we know 3 agents exceed 500)
+bash "$SCRIPT" check --max 500 >/dev/null 2>&1 && assert "check --max 500 exits 1" "should have failed" || assert "check --max 500 exits 1" "OK"
+
+# Test 3: check with high limit passes
+bash "$SCRIPT" check --max 1000 >/dev/null 2>&1 && assert "check --max 1000 exits 0" "OK" || assert "check --max 1000 exits 0" "should have passed"
+
+# Test 4: report outputs all agents
+count=$(bash "$SCRIPT" report | grep -c "^[a-z]")
+[[ "$count" -ge 37 ]] && assert "report lists >=37 agents ($count)" "OK" || assert "report lists >=37 agents ($count)" "only $count"
+
+# Test 5: top 5 returns exactly 5
+top_count=$(bash "$SCRIPT" top 5 | grep -c "^[0-9]")
+[[ "$top_count" -eq 5 ]] && assert "top 5 returns 5 rows" "OK" || assert "top 5 returns 5 rows" "got $top_count"
+
+# Test 6: check identifies the 3 known violators
+violations=$(bash "$SCRIPT" check --max 500 2>&1 || true)
+echo "$violations" | grep -q "auditor" && assert "check flags auditor" "OK" || assert "check flags auditor" "missing"
+echo "$violations" | grep -q "sage" && assert "check flags sage" "OK" || assert "check flags sage" "missing"
+echo "$violations" | grep -q "commander" && assert "check flags commander" "OK" || assert "check flags commander" "missing"
+
+# Test 7: report shows TOTAL line
+bash "$SCRIPT" report | grep -q "TOTAL" && assert "report has TOTAL" "OK" || assert "report has TOTAL" "missing"
+
+# Test 8: report shows AVERAGE line
+bash "$SCRIPT" report | grep -q "AVERAGE" && assert "report has AVERAGE" "OK" || assert "report has AVERAGE" "missing"
+
+echo ""
+echo "=========================================="
+echo "TOTAL: $pass passed, $fail failed"
+echo "=========================================="
+[[ "$fail" -eq 0 ]] && exit 0 || exit 1
