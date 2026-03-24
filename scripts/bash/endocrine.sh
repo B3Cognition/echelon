@@ -178,9 +178,9 @@ get_hormone_baseline() {
 agent_to_archetype() {
   local agent="$1"
   case "$agent" in
-    SCOUT|SYNTHESIZER|SAGE|CARTOGRAPHER|MODELER)
+    SCOUT|SYNTHESIZER|CARTOGRAPHER|MODELER)
       echo "exploration" ;;
-    VALIDATOR|CHECKPOINT)
+    SAGE|VALIDATOR|CHECKPOINT)
       echo "validation" ;;
     GATEKEEPER)
       echo "feasibility" ;;
