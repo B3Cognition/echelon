@@ -180,6 +180,48 @@ Maintain `state.json` with:
 
 ---
 
+## Endocrine System (Hormone-Modulated Motivation)
+
+The endocrine system provides bio-inspired urgency signals that modulate agent behavior based on budget pressure, task complexity, and run phase. When enabled, it injects prompt modifiers that steer agents between thorough exploration (low adrenaline) and focused efficiency (high adrenaline).
+
+### Configuration
+
+Check `squad-config.yml` for `endocrine.enabled`:
+- **`false`** (default): Skip all endocrine processing. No prompt modifiers injected.
+- **`true`**: Execute the endocrine protocol below before and after each dispatch.
+
+Log `endocrine_enabled` in `state.json` at run start.
+
+### Pre-Dispatch Protocol (when endocrine.enabled = true)
+
+Before each agent dispatch, COMMANDER executes:
+
+1. **Budget pressure check**: Read `token_ledger.total_estimated_tokens` and compare against `analysis.token_budget_k`. Compute `budget_consumed_ratio = used / total`. If `budget_consumed_ratio >= endocrine.adrenaline.budget_threshold` (default: 0.80):
+   - Run `scripts/bash/endocrine.sh broadcast_adrenaline <budget_boost>` to apply the budget pressure signal to ALL agents.
+   - Log `ENDOCRINE_BUDGET_TRIGGER` in `reasoning-journal.json`.
+
+2. **Task complexity adjustment**: Estimate the next task's complexity (1-10 scale based on agent role and task description). Compute adrenaline delta:
+   - Simple tasks (complexity <= 3): set target to `endocrine.adrenaline.task_complexity_low`
+   - Complex tasks (complexity >= 7): set target to `endocrine.adrenaline.task_complexity_high`
+   - Between: linear interpolation.
+   - Run `scripts/bash/endocrine.sh update_adrenaline <agent> <delta>` where delta moves current toward target.
+
+3. **Inject prompt modifier**: Run `scripts/bash/endocrine.sh get_prompt_modifier <agent>`. Prepend the returned text to the agent's context pack. This modifier tells the agent its urgency level (LOW/MEDIUM/HIGH/CRITICAL).
+
+4. **Circuit breaker check**: Run `scripts/bash/endocrine.sh check_circuit_breakers <agent>`. If result starts with "RESET", log `ENDOCRINE_CIRCUIT_BREAKER_RESET` in `reasoning-journal.json`.
+
+### Post-Dispatch Protocol (when endocrine.enabled = true)
+
+After each agent dispatch completes:
+
+1. **Apply decay**: Run `scripts/bash/endocrine.sh decay_hormones <agent>`. This exponentially decays the agent's adrenaline toward its archetype baseline, preventing sustained extreme states.
+
+### Phase 1 Limitations
+
+In Phase 1 (`endocrine.phase: 1`), only adrenaline is active. Dopamine, cortisol, serotonin, oxytocin, and norepinephrine baselines are stored but not used for prompt modifiers. Future phases will activate additional neuromodulators.
+
+---
+
 ## Run Initialization
 
 Before any mode detection or agent dispatch, COMMANDER must:
