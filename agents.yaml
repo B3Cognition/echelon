@@ -62,7 +62,7 @@ phases:
 agents:
 # ─────────────────────────────────────────────
 # Layer totals: Control: 6, Exploration: 6, Feasibility: 2, Solution: 3,
-#               Specialists: 6, Build: 8, Learning: 6 — Total: 37 agents
+#               Specialists: 6, Build: 8, Learning: 7 — Total: 38 agents
 # ─────────────────────────────────────────────
 
   COMMANDER:
@@ -585,10 +585,24 @@ agents:
     file: agents/learning/auditor.md
     layer: learning
     phase: build
-    role: "Tracks AI accuracy per domain, applies correction factors"
+    role: "Tracks AI accuracy per domain, applies correction factors, generates calibration dashboard"
     when: "End of run, after FEEDBACK"
     inputs: [reasoning-journal.json, calibration-profile.yaml, feedback/, quality-gates.md]
-    outputs: [updated calibration-profile.yaml, confidence-flags.md, internalization-metrics, internalization-log.yaml, evolution-signals.yaml]
+    outputs: [updated calibration-profile.yaml, confidence-flags.md, calibration-dashboard.md, evolution-signals.yaml]
+
+  INTERNALIZER:
+    codename: INTERNALIZER
+    function: INTERNALIZE_METRICS
+    file: agents/learning/internalizer.md
+    layer: learning
+    phase: build
+    role: "Computes 16 internalization metrics per agent, scores spec-to-output comprehension"
+    when: "End of run, during FINALIZE after AUDITOR Mode 1"
+    inputs: [all agent outputs from the run, agent-scores.yaml, reasoning-journal.json, internalization-log.yaml, spec.md, verdict reports]
+    outputs: [internalization-metrics.md, internalization-log.yaml, per-agent internalization scores in agent-scores.yaml]
+    never:
+      - "NEVER modify calibration-profile.yaml (AUDITOR does that)"
+      - "NEVER modify agent prompts"
 
   REALIST:
     codename: REALIST
@@ -669,5 +683,5 @@ totals:
   solution: 3
   specialists: 6
   build: 8
-  learning: 6
-  total: 37
+  learning: 7
+  total: 38
