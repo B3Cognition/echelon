@@ -37,9 +37,8 @@ count=$(bash "$SCRIPT" report | grep -c "^[a-z]")
 top_count=$(bash "$SCRIPT" top 5 | grep -c "^[0-9]")
 [[ "$top_count" -eq 5 ]] && assert "top 5 returns 5 rows" "OK" || assert "top 5 returns 5 rows" "got $top_count"
 
-# Test 6: check identifies the 3 known violators
+# Test 6: check identifies the 2 known violators (AUDITOR was split, now under 500)
 violations=$(bash "$SCRIPT" check --max 500 2>&1 || true)
-echo "$violations" | grep -q "auditor" && assert "check flags auditor" "OK" || assert "check flags auditor" "missing"
 echo "$violations" | grep -q "sage" && assert "check flags sage" "OK" || assert "check flags sage" "missing"
 echo "$violations" | grep -q "commander" && assert "check flags commander" "OK" || assert "check flags commander" "missing"
 

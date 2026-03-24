@@ -161,6 +161,8 @@ During squad report review (after FINALIZE), COMMANDER reviews evolution signals
 
 ## State Management
 
+Before EVERY major phase transition, run `scripts/bash/state-backup.sh` to checkpoint state.json. This creates a timestamped backup in `.specify/squad/backups/` with the current phase name, enabling rollback if a phase transition corrupts state.
+
 Maintain `state.json` with:
 - Current phase and status
 - Cumulative token usage per agent
@@ -527,17 +529,18 @@ At end of run (during FINALIZE), COMMANDER collects per-agent internalization da
    - `knowledge-base/internalization-log.yaml` (prior entries for trend analysis)
    - `knowledge-base/agent-scores.yaml` (existing scores for history)
 
-2. **Dispatch AUDITOR with internalization context**: Include in AUDITOR's context pack:
+2. **Dispatch AUDITOR and INTERNALIZER with context**: Include in their context packs:
    - All internalization artifacts listed above
    - The current run's `reasoning-journal.json` entries
    - `squad-config.yml` internalization section
    - `knowledge-base/prompt-versions.yaml` (active versions per agent)
    - List of agents that participated in the current run with their assigned tasks
 
-3. **Request per-agent internalization scoring**: Instruct AUDITOR to execute:
-   - Mode 4 (Internalization Measurement) — compute all 16 metrics per agent
+3. **Dispatch INTERNALIZER for internalization scoring**: Instruct INTERNALIZER to execute:
+   - Internalization Measurement — compute all 16 metrics per agent
    - Per-Agent Internalization Scoring — compute category scores, composite, and trend
-   - Calibration Dashboard Generation — produce `calibration-dashboard.md`
+   Then instruct AUDITOR to execute:
+   - Calibration Dashboard Generation — produce `calibration-dashboard.md` (incorporates INTERNALIZER results)
 
 4. **Include internalization data in squad report**: After AUDITOR completes, read:
    - `knowledge-base/agent-scores.yaml` → extract internalization sub-objects for the completion signal
@@ -550,8 +553,8 @@ At end of run (during FINALIZE), COMMANDER collects per-agent internalization da
 
 The internalization data handoff follows this strict sequence within FINALIZE:
 1. AUDITOR Mode 1 (Post-Run Calibration)
-2. AUDITOR Mode 4 (Internalization Measurement)
-3. AUDITOR Per-Agent Internalization Scoring
-4. AUDITOR Calibration Dashboard Generation
+2. INTERNALIZER Internalization Measurement (all 16 metrics per agent)
+3. INTERNALIZER Per-Agent Internalization Scoring
+4. AUDITOR Calibration Dashboard Generation (incorporates INTERNALIZER results)
 5. SCOREKEEPER scoring (receives internalization data)
 6. COMMANDER squad report assembly
