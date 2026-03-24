@@ -737,3 +737,55 @@ banzai:
     - "compliance requirements detected"
     - "security-critical domain"
     - "ASSESS confidence < 0.5"
+
+# =============================================================================
+# ENDOCRINE SYSTEM — Hormone-modulated agent motivation
+# =============================================================================
+#
+# Bio-inspired neuromodulator system that dynamically adjusts agent behavior
+# based on budget pressure, task complexity, and run phase.
+#
+# Phase 1: Adrenaline only (urgency signal)
+# Phase 2: Four neuromodulators (dopamine, cortisol, serotonin, norepinephrine)
+# Phase 3: Full six hormones
+# Phase 4: Adaptive baselines from run history
+#
+
+endocrine:
+  enabled: false  # Disabled by default for v0.6.0
+  phase: 1  # 1=adrenaline only, 2=four neuromodulators, 3=full 6, 4=adaptive
+
+  # Adrenaline triggers (Phase 1)
+  adrenaline:
+    budget_threshold: 0.80  # Trigger at 80% budget consumed
+    budget_boost: 0.2       # +0.2 adrenaline when triggered
+    task_complexity_low: 0.3  # Adrenaline for simple tasks
+    task_complexity_high: 0.7  # Adrenaline for complex tasks
+
+  # Baseline per archetype (all 6 hormones, but only adrenaline used in Phase 1)
+  # Order: [adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine]
+  baselines:
+    exploration: [0.4, 0.5, 0.4, 0.5, 0.5, 0.3]
+    validation: [0.3, 0.5, 0.7, 0.5, 0.4, 0.6]
+    feasibility: [0.5, 0.5, 0.6, 0.5, 0.5, 0.5]
+    solution: [0.5, 0.5, 0.5, 0.6, 0.5, 0.5]
+    build: [0.6, 0.5, 0.5, 0.5, 0.6, 0.8]
+    innovation: [0.3, 0.5, 0.3, 0.5, 0.5, 0.2]
+    learning: [0.3, 0.5, 0.5, 0.7, 0.6, 0.4]
+    control: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+
+  # Circuit breakers
+  circuit_breakers:
+    max_change_per_cycle: 0.3
+    ceiling: 1.0
+    floor: 0.0
+    consecutive_extreme_reset: 3  # Reset after 3 cycles at ceiling/floor
+
+  # Decay rates (per dispatch cycle)
+  decay:
+    adrenaline: 0.7
+    dopamine: 0.8
+    cortisol: 0.85
+    serotonin: 0.95
+    oxytocin: 0.9
+    norepinephrine: 0.75
