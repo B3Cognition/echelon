@@ -23,7 +23,7 @@ For BUILD phase tasks in `002-build-qa-phase-split`, mark `BUILD_COMPLETE` based
 3. `lint_clean = true`
 4. `required_outputs_present = true`
 
-Do not require SPEC_GUARD/CODE_REVIEWER/TEST_GUARDIAN verdicts to mark `BUILD_COMPLETE` in Phase 4. Those remain QA-phase gates.
+SPEC_GUARD/CODE_REVIEWER/TEST_GUARDIAN verdicts are not required to mark `BUILD_COMPLETE` in Phase 4 — those remain QA-phase gates. However, `BUILD_COMPLETE` does NOT mean "fully verified." It means "build phase done, ready for QA." The Pre-Verification Sanity Check below still applies before declaring the full build ready for verification. Do not confuse phase completion with build verification.
 
 ## Rework Routing Policy (v0.4.0)
 

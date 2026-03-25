@@ -114,6 +114,8 @@ test.fixme(true, 'Flaky - Issue #NNN');
 ```
 Link a tracking issue. Quarantined tests are excluded from CI gate but remain visible in reports.
 
+**Quarantine creates a blocking debt item, not a permanent exemption.** Quarantined tests are tracked as open items that block final build verification if unresolved.
+
 #### 8.3 Root Cause Taxonomy
 
 Classify every flaky test into exactly one root cause:
@@ -130,7 +132,9 @@ Classify every flaky test into exactly one root cause:
 
 #### 8.5 Review Cadence
 
-Review quarantined tests weekly — fix or remove. Tests quarantined for more than 2 weeks without a fix attempt must be escalated or deleted.
+Review quarantined tests weekly — fix or remove. Tests quarantined for more than 2 weeks without a fix attempt must be escalated to COMMANDER (not silently deleted or deferred).
+
+**After fixing a quarantined test:** re-run with `--repeat-each=10` to validate stability. Only remove the `test.fixme()` annotation after the re-run passes with zero failures. A fix that is not re-validated is not a fix.
 
 ## Output Requirements
 

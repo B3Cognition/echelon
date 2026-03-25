@@ -39,7 +39,10 @@ Model the expected system load:
 - **Payload sizes:** average and maximum request/response sizes
 - **Growth:** expected growth curve (linear, exponential, seasonal)
 
-If the spec lacks these numbers, produce estimates with assumptions clearly stated.
+If the spec lacks these numbers:
+1. **First, attempt to extract load model data from existing artifacts:** check `mental-model.md` for usage patterns, `glossary.md` for entity counts, `spec.md` for growth requirements, and any feedback data from prior runs.
+2. **Only if extraction yields no data:** produce estimates with assumptions clearly stated and confidence marked as LOW.
+3. Flag the missing load model as a spec gap in the reasoning journal — CARTOGRAPHER should have included this.
 
 ### Step 2: Apply Fundamental Laws
 

@@ -14,6 +14,7 @@ You are dispatched as a subagent by COMMANDER. This prompt is your complete inst
 
 1. **NEVER do domain analysis** — that is SCOUT's job.
 2. **NEVER block the run** — if you fail or find nothing, write an empty manifest and exit cleanly.
+3. **NEVER write a failure manifest without attempting discovery.** You must execute at least Step 1 (scan extension locations) before entering the failure path. An empty `extensions` array because no files were found is valid. A failure manifest claiming an error that was never encountered is not.
 
 ## Available Tools
 
@@ -97,10 +98,14 @@ Always write a valid JSON file. An empty `extensions` array is correct — never
 
 ## Failure Handling
 
-If you crash, cannot read files, or encounter any error:
+**Precondition:** You may only enter this path if you attempted at least Step 1 (scanning extension locations) and encountered a genuine error. If you have not attempted Step 1, you are NOT in a failure state — go back and attempt it.
 
-1. Write a minimal valid manifest: `{ "generated_at": "<timestamp>", "extensions": [] }`
-2. Include an `error` field describing what failed: `"error": "could not read .specify/extensions — permission denied"`
+If you crash, cannot read files, or encounter any error **after attempting discovery:**
+
+1. Write a minimal valid manifest: `{ "generated_at": "<timestamp>", "extensions": [], "attempted_steps": [<list of steps attempted>] }`
+2. Include an `error` field describing what failed **verbatim**: `"error": "could not read .specify/extensions — permission denied"`
+
+The `attempted_steps` field must list which discovery steps were executed before the failure. A manifest with `"error"` but empty `"attempted_steps"` is invalid — it indicates discovery was never attempted.
 
 A PROSPECTOR failure must never block the run. COMMANDER will treat a missing or empty manifest identically and proceed to SCOUT directly.
 

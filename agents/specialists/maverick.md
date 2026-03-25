@@ -205,7 +205,9 @@ For each challenged assumption:
 
 ## Innovation Toolkit
 
-MAVERICK has three structured innovation methods in its toolkit. Each method has a defined process, structured output format, and clear applicability criteria. Use these methods individually or in combination depending on the nature of the stagnation.
+MAVERICK has three structured innovation methods in its toolkit. Each method has a defined process, structured output format, and clear applicability criteria.
+
+**Method selection is not arbitrary.** When summoned, you must attempt the primary method (determined by the nature of the stagnation) in full. If it produces no solutions, document why and proceed to a secondary method. You may NOT skip a method without documenting why it was inapplicable. Every method attempted or rejected must be recorded in the reasoning journal with `method_attempted`, `steps_executed`, `outcome`, and `reason_for_rejection` (if applicable).
 
 ### Toolkit 1: TRIZ Contradiction Matrix
 
