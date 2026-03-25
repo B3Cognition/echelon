@@ -244,16 +244,19 @@ When `guardian.mode` is `always_on`:
 
 Log `guardian_dispatch_mode` in `state.json` (`always_on` or `on_demand`).
 
-### 2. Dispatch PROSPECTOR (always)
+### 2. Dispatch PROSPECTOR (MANDATORY)
 
-Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path, run_id). Block until PROSPECTOR completes.
+**You MUST dispatch PROSPECTOR.** This dispatch is not optional — PROSPECTOR must be invoked and must return before proceeding. Do not skip this step or treat PROSPECTOR's output as pre-known.
 
-After completion:
+Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path, run_id). Block until PROSPECTOR completes. Record `dispatch_id` and `timestamp` in `state.json` under `token_ledger.dispatches[]` as proof of dispatch.
+
+**ONLY after PROSPECTOR returns do you proceed:**
+
 - Read `.specify/squad/extension-capabilities.json`
 - If the file is absent, malformed, or empty: log `prospector_status: failed` in `state.json`; treat identically to empty-extensions (no GOLDDIGGER dispatch)
 - If valid: extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: reverse-eng 1.1.0 [relevant]" or "No extensions available")
 
-**PROSPECTOR failure never blocks the run.** Continue to mode detection regardless.
+**PROSPECTOR failure never blocks the run.** Continue to mode detection regardless. But PROSPECTOR must have been dispatched — a missing `dispatch_id` for PROSPECTOR in `token_ledger` is an invalid state.
 
 ### 3. Brownfield Extension Check
 
@@ -261,11 +264,11 @@ After brownfield mode is confirmed, before dispatching SCOUT:
 
 1. Read `extension-capabilities.json` (already loaded at init)
 2. If `reverse-eng` is listed with `relevant: true`:
-   - Dispatch GOLDDIGGER in Mode 1 (Survey)
-   - Block SCOUT dispatch until GOLDDIGGER completes
-   - Read `golddigger_status` from `state.json`:
+   - **Dispatch GOLDDIGGER in Mode 1 (Survey).** This dispatch is mandatory when `reverse-eng` is relevant. Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
+   - Block SCOUT dispatch until GOLDDIGGER returns
+   - **ONLY after GOLDDIGGER returns**, read `golddigger_status` from `state.json`:
      - `complete`: proceed normally, SCOUT will find `brownfield-index.md`
-     - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual)
+     - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual). The `golddigger_notes` field MUST contain a verbatim error from the Skill tool — if it instead contains "manual code analysis used" or references `execution_mode`, GOLDDIGGER has violated its NEVER rules. Re-dispatch GOLDDIGGER rather than accepting the invalid state.
 3. If `reverse-eng` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
 
 ### 4. GOLDDIGGER Mode 2 Queue (Phase 1 agents)
@@ -274,9 +277,10 @@ After each Phase 1 agent (SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER) compl
 
 1. Read `state.json.golddigger_requests` — if empty or absent, continue
 2. For each pending request entry:
-   a. Check `state.json.golddigger_completed_domains` — if the domain is already listed, skip (cache hit; domain data is in `.specify/squad/golddigger-cache/<domain>.md`). **COMMANDER checks this before dispatch; GOLDDIGGER also checks defensively inside — both are intentional.**
-   b. Otherwise: dispatch GOLDDIGGER in Mode 2 with the domain name
-   c. After GOLDDIGGER completes (GOLDDIGGER writes only its status fields):
+   a. Check `state.json.golddigger_completed_domains` — if the domain is already listed, verify the cache file exists at `.specify/squad/golddigger-cache/<domain>.md` before treating as a cache hit. If the file is missing, the cache entry is stale — re-dispatch GOLDDIGGER for this domain. **COMMANDER checks this before dispatch; GOLDDIGGER also checks defensively inside — both are intentional.**
+   b. Otherwise: dispatch GOLDDIGGER in Mode 2 with the domain name. Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
+   c. **ONLY after GOLDDIGGER returns** (GOLDDIGGER writes only its status fields):
+      - Validate that `golddigger_status` is not "complete" with notes indicating the Skill tool was skipped (same check as section 3 above)
       - **COMMANDER** removes the domain entry from `golddigger_requests` in `state.json`
       - **COMMANDER** adds the domain to `golddigger_completed_domains` in `state.json`
       - **COMMANDER** includes the cached domain file path (`.specify/squad/golddigger-cache/<domain>.md`) in the requesting agent's next context pack

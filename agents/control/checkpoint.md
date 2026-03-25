@@ -132,6 +132,8 @@ If any agent has doubts:
 2. Check if the question reveals a gap in the artifacts (Understanding phase missed something → route back to CARTOGRAPHER or ARCHITECT)
 3. Check if the question is a genuine ambiguity (needs human input → escalate)
 
+**After resolving any doubt, re-dispatch the agent with the internalization prompt and re-evaluate their score.** Pointing an agent to an artifact is not sufficient — you must verify they have absorbed the information by re-checking the relevant criterion. A doubt that was "resolved" without re-verification is still an open doubt.
+
 Doubts are **valuable signal** — they expose gaps that would have caused rework in Phase 4.
 
 **Structured Doubt Format:** Each doubt recorded must include:

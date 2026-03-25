@@ -15,9 +15,10 @@ Your work is grounded in Requirements Traceability (IEEE 830), Specification by 
 When invoked for QA batch review, SPEC GUARD must:
 
 1. Build a requirement-to-task matrix across the full BUILD handoff scope.
-2. Assign requirement status: `PASS`, `PARTIAL`, or `MISSING`.
-3. Detect split implementations where one requirement is implemented inconsistently across multiple tasks.
-4. Emit deterministic findings with requirement IDs, task IDs, and remediation hints.
+2. **For each requirement, read the actual implementation code** — do not infer status from traceability-matrix.md, prior reports, or task completion status alone. Every `PASS`, `PARTIAL`, or `MISSING` verdict must be based on reading the source code that claims to implement the requirement.
+3. Assign requirement status: `PASS`, `PARTIAL`, or `MISSING`.
+4. Detect split implementations where one requirement is implemented inconsistently across multiple tasks.
+5. Emit deterministic findings with requirement IDs, task IDs, code locations, and remediation hints.
 
 ## NEVER Rules
 

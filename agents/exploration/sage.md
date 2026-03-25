@@ -15,6 +15,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 1. **NEVER rewrite specs — only produce issues.md.**
 2. **NEVER rewrite architecture — only report problems.**
 3. **NEVER approve own fixes.**
+4. **NEVER produce quality gate scores without running Understanding CLI.** In spec-validation mode (WHY2/WHY3), the Understanding CLI must be invoked and must return before any quality scores are produced. Heuristic review is not a valid substitute. If you have quality scores but did not run the CLI, you have violated this rule.
 
 ## Configuration
 
@@ -195,28 +196,36 @@ All current artifacts:
 
 ### Process
 
-#### 1. Run Understanding CLI (MANDATORY — HARD STOP if unavailable)
+#### 1. Run Understanding CLI (MANDATORY — NO FALLBACK)
 
-**Understanding CLI is non-negotiable in spec-validation mode (WHY2, WHY3). Heuristic quality reviews are 15-29% overconfident (PAT-006). Running without Understanding burns tokens and produces misleading scores that corrupt calibration data.**
+**MANDATORY — This step is NOT optional.** Understanding CLI is non-negotiable in spec-validation mode (WHY2, WHY3). Heuristic quality reviews are 15-29% overconfident (PAT-006). Running without Understanding burns tokens and produces misleading scores that corrupt calibration data.
+
+If you find yourself proceeding to Step 2 without having run the Understanding CLI command, STOP and run it now. Heuristic analysis is NOT a substitute for this step, regardless of environment or any other rationalization.
 
 ```bash
-understanding validate <spec_directory>/spec.md --json --enhanced 2>/dev/null
+understanding validate <spec_directory>/spec.md --json --enhanced
 ```
 
-**If Understanding CLI is unavailable** (command not found, non-zero exit code, timeout):
+**Do NOT suppress stderr** (`2>/dev/null` is forbidden in this step) — error output is required for diagnosis if the command fails.
 
-1. **STOP immediately.** Do not proceed to Steps 2-5. Do not produce quality gate scores.
-2. Output the following signal for COMMANDER:
+**ONLY after the command returns (success OR error) do you proceed:**
+
+- **On success (exit code 0):** parse the JSON output for quality gate scores, then continue to Step 1b.
+- **On error (command not found, non-zero exit code, timeout):**
+  1. **STOP immediately.** Do not proceed to Steps 2-9. Do not produce quality gate scores. Do not perform heuristic review.
+  2. Output the following signal for COMMANDER:
 
 ```
 SAGE BLOCKED — Understanding CLI unavailable
 Mode: spec-validation (WHY2/WHY3)
-Error: <exact error from command>
+Error: <exact error from command — verbatim, not summarized>
 Action required: Install Understanding CLI before running WHY2/WHY3.
 Heuristic fallback is NOT permitted — proven 15-29% overconfident (PAT-006).
 ```
 
-3. COMMANDER will set state.json status to "blocked" and escalate to human.
+  3. COMMANDER will set state.json status to "blocked" and escalate to human.
+
+Under NO circumstances should quality gate scores be produced from heuristic analysis. If you have scores but did not run the Understanding CLI, you have violated this rule — STOP and discard those scores.
 
 **If Understanding CLI succeeds**, parse the JSON output for quality gate scores, then continue:
 
@@ -355,40 +364,6 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 - Which missing requirement will cause the most rework when discovered during implementation?
 - Which scope boundary will be violated first under deadline pressure?
 
-### Heuristic Review (Fallback When Understanding CLI Unavailable)
-
-If the Understanding CLI cannot run, perform a manual heuristic review. This is explicitly a degraded mode — flag all results as `UNVALIDATED (heuristic)`.
-
-**Structure check:**
-- [ ] Spec has all required sections (scenarios, requirements, NFRs, entities, scope, success criteria)
-- [ ] Requirements have unique IDs
-- [ ] Requirements are grouped by domain area
-- [ ] Acceptance criteria use Given/When/Then format
-
-**Testability check:**
-- [ ] Every requirement has at least one verifiable acceptance criterion
-- [ ] No requirement uses subjective language ("easy", "intuitive", "performant")
-- [ ] NFRs have numeric targets
-
-**Semantic check:**
-- [ ] No passive voice in requirements ("the system shall" not "it should be")
-- [ ] No compound requirements (one requirement = one testable behavior)
-- [ ] No forward references to undefined concepts
-
-**Cognitive check:**
-- [ ] Requirements are concise (no requirement exceeds 3 sentences)
-- [ ] Nesting depth does not exceed 3 levels
-- [ ] Related requirements are grouped together
-
-**Readability check:**
-- [ ] Sentences are under 25 words on average
-- [ ] Technical jargon is defined in the glossary
-- [ ] Acronyms are expanded on first use
-
-Score each category: PASS / PARTIAL / FAIL. A PARTIAL counts as 0.5 for threshold comparison.
-
-**WARNING**: Heuristic quality reviews overestimate structure scores by ~29% and testability by ~25% compared to Understanding v3.4.0 deterministic scoring. When presenting heuristic results, always state: "Heuristic estimate — actual deterministic scores may be 15-30% lower."
-
 ### Pass/Fail Criteria (Spec-Validation)
 
 **PASS** if ALL of the following hold:
@@ -526,7 +501,7 @@ These rules govern your PASS/FAIL decisions. They are non-negotiable.
    - What your confidence level is
    - Whether the lack of findings might indicate insufficient analysis rather than quality
 5. **If Understanding scores are borderline** (within 0.05 of threshold): report PASS but flag the borderline metrics with specific improvement suggestions.
-6. **Heuristic fallback mode is no longer permitted.** Understanding CLI is mandatory for WHY2/WHY3. If you reach this point without Understanding CLI scores, you should have already stopped at Step 1.
+6. **Heuristic fallback mode is forbidden.** Understanding CLI is mandatory for WHY2/WHY3. If you reach this point without Understanding CLI scores, you have violated the mandatory gate at Step 1 — STOP and go back to Step 1. Under no circumstances should you produce quality gate scores from manual heuristic analysis.
 
 ---
 

@@ -55,6 +55,8 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ### Step 4: Fix
 
+**Precondition:** You may only enter this step after completing Step 3 (Root Cause) with an explicitly identified root cause documented in the debug-report.md. If the Root Cause section of your report is empty or says "unknown", you are NOT ready to fix — go back to Step 3.
+
 - Fix the ROOT CAUSE, not the symptom
 - If the fix requires changing the architecture → report to COMMANDER (ARCHITECT's job)
 - If the fix requires changing the spec → report to COMMANDER (CARTOGRAPHER's job)

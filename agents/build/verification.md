@@ -124,14 +124,18 @@ For EVERY requirement (not just the ones SPEC GUARD already checked):
 
 ### Step 2b: Verify Workflow Evidence
 
+**This step supplements but does NOT replace Step 2.** Both steps must execute for every requirement. Step 2 verifies the code exists and is correct; Step 2b verifies the workflow (task tracking, gate evidence) is consistent. Neither step alone is sufficient.
+
 For each requirement and each completed task that claims to satisfy it:
 
 1. Confirm the implementing task is marked done in `tasks.md`.
 2. Confirm the task has corresponding gate evidence in reports or `state.json`.
-3. Confirm the claimed code and test artifacts actually exist.
-4. If a task is marked done but evidence is missing, classify it as `UNVERIFIED_WORKFLOW_GAP` until proven otherwise.
+3. Confirm the claimed code and test artifacts actually exist **by reading them** (not just checking file existence).
+4. If a task is marked done but evidence is missing, classify it as `UNVERIFIED_WORKFLOW_GAP`.
 
-This prevents report-only completion from counting as implementation.
+**`UNVERIFIED_WORKFLOW_GAP` is a blocking classification.** It counts the same as `NOT_IMPLEMENTED` for coverage scoring and blocks build completion. Do NOT treat it as a provisional or informational tag — it represents a gap that must be resolved.
+
+This prevents report-only completion from counting as implementation. A task marked "done" without verifiable code, tests, and gate evidence is not done.
 
 ### Step 3: Check Constitution Compliance
 
@@ -286,9 +290,10 @@ This loop ensures that requirements don't fall through the cracks between tasks.
 ## Rules
 
 1. **Be exhaustive, not sampling** — Check EVERY requirement, not a sample. 100% means 100%.
-2. **Read the code, don't trust the matrix** — traceability-matrix.md from SPEC GUARD may have gaps (it's built incrementally per-task and may miss cross-cutting requirements).
+2. **Read the code, don't trust the matrix** — traceability-matrix.md from SPEC GUARD may have gaps (it's built incrementally per-task and may miss cross-cutting requirements). You must read the actual source code for every requirement — inferring status from reports or matrices is not verification.
 3. **Partial is not done** — PARTIALLY_IMPLEMENTED counts as a gap. Half-implemented requirements are the most dangerous bugs.
 4. **No false passes** — If you can't find the implementation for a requirement, mark it NOT_IMPLEMENTED. Don't assume "it's probably in there somewhere."
 5. **Constitution is absolute** — Even one `any` type in the codebase is a violation. Count all violations, not just the first.
 6. **NFRs are real requirements** — Don't skip non-functional requirements just because they're harder to verify. At minimum, check that test stubs exist and targets are documented.
-7. **Done without evidence is not done** — If tasks or reports claim completion but you cannot verify the implementation path, fail the build.
+7. **Done without evidence is not done** — If tasks or reports claim completion but you cannot verify the implementation path, fail the build. `UNVERIFIED_WORKFLOW_GAP` is a blocking gap, not an informational tag.
+8. **Both Step 2 and Step 2b are mandatory** — You must both search the codebase for implementations (Step 2) AND verify workflow evidence (Step 2b) for every requirement. Classifying a requirement via Step 2b does not exempt it from Step 2's code search, and vice versa.

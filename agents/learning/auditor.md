@@ -92,10 +92,11 @@ For domains where prior FEEDBACK exists:
 
 For domains with no prior feedback:
 
-- Use WHY quality gate pass rates as proxy (higher pass rate = higher estimated accuracy)
-- Use GROUND reality-check alignment as secondary signal
-- Mark as `"estimated — no feedback data"`
-- These estimates are provisional and will be replaced by real data after FEEDBACK
+1. **First, verify that feedback collection was attempted in prior runs.** Check `knowledge-base/feedback/` for any files matching this domain. If feedback files exist but were not loaded, this is a data loading issue — fix it rather than falling back to proxy metrics.
+2. **Only if no feedback data genuinely exists:** use WHY quality gate pass rates as proxy (higher pass rate = higher estimated accuracy)
+3. Use GROUND reality-check alignment as secondary signal
+4. Mark as `"estimated — no feedback data (verified absent)"`
+5. These estimates are provisional and will be replaced by real data after FEEDBACK. Mark confidence as LOW for proxy-based estimates.
 
 #### Step 5: Compute Correction Factors
 
