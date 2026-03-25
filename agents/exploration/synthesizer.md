@@ -88,6 +88,38 @@ Produce a **contradictions-and-gaps** analysis:
 
 This is the most valuable output — contradictions found BEFORE WHY1 even runs.
 
+### Step 3b: Request Deep Dives for Unresolvable Contradictions (brownfield only)
+
+If `brownfield-index.md` exists and your contradiction analysis reveals domain-specific conflicts that cannot be resolved from the available data, request a GOLDDIGGER Mode 2 deep dive for the affected domain.
+
+**Trigger conditions:**
+- A contradiction between code analysis and documentation that involves a specific domain's internal structure (e.g., code says service A uses REST, docs say message queue — resolving this requires tracing the actual call graph inside the domain)
+- A gap where a domain's boundaries are unclear because the survey only captured signatures, not full logic
+- A suspicious finding (stale code, abandoned module) where deeper analysis would determine if the code is active or dead
+
+**Do NOT request Mode 2 to resolve contradictions that are answerable from existing sources.** If the answer is in the docs, the code comments, or the git history, resolve it yourself. Only request when the contradiction specifically requires deeper code-level structural analysis.
+
+Check `.specify/squad/golddigger-cache/<domain>.md` first — if a deep dive was already completed by a prior agent's request, use the cached result instead of requesting again.
+
+```bash
+python3 -c "
+import json
+with open('.specify/squad/state.json', 'r') as f:
+    s = json.load(f)
+
+s.setdefault('golddigger_requests', []).append({
+    'domain': '<domain-name>',
+    'requester': 'SYNTHESIZER',
+    'reason': '<specific contradiction or gap that requires deep structural analysis>'
+})
+
+with open('.specify/squad/state.json', 'w') as f:
+    json.dump(s, f, indent=2)
+"
+```
+
+COMMANDER will process the queue after your dispatch completes and before the next Phase 1 agent runs.
+
 ### Step 4: Identify Patterns Across Sources
 
 Look for patterns that only emerge when you see all sources together:
