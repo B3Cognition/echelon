@@ -97,6 +97,40 @@ Extract: Why was it built this way? What has been refactored? Where are the pain
 
 Synthesize all findings into the output artifacts (see Output Requirements below).
 
+### Step 6: Evaluate Domain Depth for Deep Dive Requests (brownfield only)
+
+If `brownfield-index.md` was present (from GOLDDIGGER Mode 1 survey), evaluate whether any domain needs deeper structural analysis via GOLDDIGGER Mode 2.
+
+For each domain in the Domain Inventory, assess whether the survey-level signatures were sufficient for your outputs:
+
+- **Boundary ambiguity:** Are the domain's boundaries unclear — can you not tell where it ends and another begins from signatures alone?
+- **Unresolvable entry points:** Does the domain have entry points you couldn't trace because the survey captured only function signatures, not call graphs?
+- **Hotspot complexity:** Is this domain a hotspot (high churn in the Hotspots table) suggesting hidden complexity that signatures underrepresent?
+- **Integration opacity:** Does the domain have external integrations that the survey detected but couldn't fully map (e.g., auth provider topology, message queue routing)?
+
+If any domain needs deeper analysis, write a Mode 2 request to `state.json`:
+
+```bash
+python3 -c "
+import json
+with open('.specify/squad/state.json', 'r') as f:
+    s = json.load(f)
+
+s.setdefault('golddigger_requests', []).append({
+    'domain': '<domain-name>',
+    'requester': 'SCOUT',
+    'reason': '<specific reason — e.g., boundary ambiguity between auth and user-mgmt domains, cannot infer auth provider topology from signatures>'
+})
+
+with open('.specify/squad/state.json', 'w') as f:
+    json.dump(s, f, indent=2)
+"
+```
+
+COMMANDER will process the queue after your dispatch completes and before the next Phase 1 agent runs. The deep-dive results will be available in `.specify/squad/golddigger-cache/<domain>.md` for downstream agents.
+
+**Do NOT request Mode 2 for every domain.** Only request it when the survey-level data is genuinely insufficient for your outputs. Most domains can be adequately mapped from signatures alone. A good heuristic: if you had to write "unclear" or "insufficient data" in your artifacts for a specific domain, that domain is a candidate.
+
 ---
 
 ## Greenfield Mode — Domain Research Pipeline

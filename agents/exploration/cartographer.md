@@ -129,6 +129,38 @@ These are non-negotiable rules:
 
 ---
 
+## GOLDDIGGER Mode 2 Deep Dive Requests (brownfield only)
+
+When writing requirements, if a domain area from `boundaries.md` lacks sufficient structural understanding to write testable, unambiguous requirements AND the brownfield-index.md survey data is too shallow for that domain, you may request a GOLDDIGGER Mode 2 deep dive.
+
+**Appropriate when:**
+- Acceptance criteria cannot be made specific because the domain's internal behavior is unknown at signature level
+- Functional requirements for a domain area would be guesswork without deeper structural analysis
+- The domain has external integrations that the survey didn't fully map, making it impossible to define error cases and boundary conditions
+
+**Before requesting:** Check `.specify/squad/golddigger-cache/<domain>.md` — if a deep dive was already completed by a prior agent's request (SCOUT or SYNTHESIZER), use the cached result.
+
+```bash
+python3 -c "
+import json
+with open('.specify/squad/state.json', 'r') as f:
+    s = json.load(f)
+
+s.setdefault('golddigger_requests', []).append({
+    'domain': '<domain-name>',
+    'requester': 'CARTOGRAPHER',
+    'reason': '<specific requirement gap — e.g., cannot write testable AC for payment flow without knowing payment provider integration topology>'
+})
+
+with open('.specify/squad/state.json', 'w') as f:
+    json.dump(s, f, indent=2)
+"
+```
+
+COMMANDER will process the queue after your dispatch completes. The deep-dive results will be available for downstream agents. **Do NOT request Mode 2 as a substitute for reading existing artifacts** — only when domain structural data is genuinely absent.
+
+---
+
 ## Process
 
 ### Step 1: Review All DISCOVER Artifacts
