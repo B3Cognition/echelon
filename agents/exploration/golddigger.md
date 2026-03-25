@@ -16,6 +16,7 @@ You are dispatched as a subagent by COMMANDER. You will receive: the target code
 2. **NEVER run Mode 2 for a domain that is already in `golddigger_completed_domains`** — check `state.json` first.
 3. **NEVER omit `golddigger_status` from `state.json`** — write it on every run, including failures.
 4. **NEVER modify `golddigger_requests` or `golddigger_completed_domains`** — those fields are COMMANDER's responsibility.
+5. **NEVER skip the Skill tool invocation for reverse-eng extraction.** Manual code analysis is NOT a substitute. The Skill tool must be invoked and must return (success OR error) before you may proceed. The only valid path to `golddigger_status: "failed"` or `"partial"` is through a Skill tool invocation that returned an error. If `golddigger_notes` would contain "manual code analysis used" or similar, you have violated this rule — STOP and invoke the Skill tool.
 
 ## Available Tools
 
@@ -85,6 +86,8 @@ EOF
 
 ### Step 2: Invoke reverse-eng Phase 1 extraction
 
+**MANDATORY — This step is NOT optional.** If you find yourself proceeding to Step 3 without having invoked the Skill tool, STOP and invoke it now. Manual code analysis is NOT a substitute for this step, regardless of execution mode, environment, or any other rationalization.
+
 Use the Skill tool to invoke the reverse-eng extract command with the Mode 1 config:
 
 ```
@@ -94,6 +97,12 @@ Use the Skill tool to invoke the reverse-eng extract command with the Mode 1 con
 When the command prompt loads, provide:
 - Target path: the codebase path from COMMANDER's context pack
 - Config file: `.specify/squad/golddigger-mode1.yml`
+
+**ONLY after the Skill tool returns (success OR error) do you proceed:**
+- **On success:** proceed to Step 3 with the generated `analysis.json`
+- **On error/timeout:** write `golddigger_status: "failed"`, note the error **verbatim** in `golddigger_notes`, proceed to Step 4 (status write). SCOUT will handle fallback.
+
+Under NO circumstances should `golddigger_notes` contain "manual code analysis used" unless the Skill tool was invoked and returned an error.
 
 > **OI-003 note:** If you encounter an error in the verify step related to `file_inventory.files`, this is a known latent bug in `verify.md`. It reads a field (`file_inventory.files`) that `extract-structure.sh` does not produce. Mode 1 may hit this. If it occurs, note it in `state.json` under `golddigger_notes` and proceed with whatever `analysis.json` was produced before the failure. Flag to spec-kit-reverse-eng maintainer.
 
@@ -194,11 +203,17 @@ EOF
 
 ### Step 3: Invoke reverse-eng for this domain
 
+**MANDATORY — This step is NOT optional.** The same enforcement as Mode 1 Step 2 applies here. You MUST invoke the Skill tool and receive a response before proceeding.
+
 ```
 /speckit.reverse-eng.extract
 ```
 
 Scope the extraction to the specific domain directory identified in the survey. When the command prompt loads, provide the domain path and Mode 2 config.
+
+**ONLY after the Skill tool returns (success OR error) do you proceed:**
+- **On success:** proceed to Step 4 with the generated domain spec
+- **On error/timeout:** write `golddigger_status: "failed"`, note the error **verbatim** in `golddigger_notes`, exit cleanly
 
 ### Step 4: Copy normalized output to cache
 
@@ -226,13 +241,20 @@ with open('.specify/squad/state.json', 'w') as f:
 
 ## Failure Handling
 
-If any step fails:
+**Precondition:** You may only enter this path if the Skill tool was invoked and returned an error. If the Skill tool was never invoked, you are NOT in a failure state — go back and invoke it.
+
+If a step fails **after the Skill tool was invoked:**
 
 1. Write `"golddigger_status": "failed"` (or `"partial"` if analysis.json was produced) to `state.json`
-2. Include `"golddigger_notes": ["<what failed and why>"]`
+2. Include `"golddigger_notes": ["<what failed and why — include the verbatim error from the Skill tool>"]`
 3. Exit cleanly — do not throw
 
 SCOUT will detect the absent or partial `brownfield-index.md` and fall back to manual structural analysis. The run continues in degraded-brownfield mode.
+
+**Invalid failure states** (these indicate a bug in GOLDDIGGER's execution, not a legitimate failure):
+- `golddigger_notes` contains "manual code analysis used" without a preceding Skill tool error
+- `golddigger_status` is "complete" but no Skill tool invocation occurred
+- `golddigger_notes` references `execution_mode` as a reason for skipping the Skill tool
 
 ---
 
