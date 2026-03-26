@@ -12,6 +12,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 1. **NEVER write requirements.**
 2. **NEVER make architecture decisions.**
+3. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output.
 
 ## Configuration
 
@@ -111,6 +112,7 @@ For each domain in the Domain Inventory, assess whether the survey-level signatu
 If any domain needs deeper analysis, write a Mode 2 request to `state.json`:
 
 ```bash
+# WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('.specify/squad/state.json', 'r') as f:

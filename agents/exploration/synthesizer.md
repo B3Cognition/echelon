@@ -102,6 +102,7 @@ If `brownfield-index.md` exists and your contradiction analysis reveals domain-s
 Check `.specify/squad/golddigger-cache/<domain>.md` first — if a deep dive was already completed by a prior agent's request, use the cached result instead of requesting again.
 
 ```bash
+# WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('.specify/squad/state.json', 'r') as f:
@@ -226,6 +227,7 @@ Append entries with:
 5. **NEVER skip cross-referencing.** The whole point is to find what individual sources miss.
 6. **NEVER cite LOC from a single file as the total project LOC.** Always measure the full source directory with `cloc` or `wc -l`. Example failure: Datafrog claimed 428 lines (variable.rs only) but actual is 2002 lines (full src/).
 7. **NEVER claim an issue is "resolved" by naming technologies without an integration protocol.** A resolution must include: data flow, synchronization mechanism, failure handling, and a code example or sequence diagram. Example failure: "Three-mechanism approach for temporal NEVER rules" named 3 technologies but had no integration design.
+8. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output.
 
 ## Why This Matters
 
