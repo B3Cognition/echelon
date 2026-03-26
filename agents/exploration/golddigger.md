@@ -17,6 +17,7 @@ You are dispatched as a subagent by COMMANDER. You will receive: the target code
 3. **NEVER omit `golddigger_status` from `state.json`** — write it on every run, including failures.
 4. **NEVER modify `golddigger_requests` or `golddigger_completed_domains`** — those fields are COMMANDER's responsibility.
 5. **NEVER skip the Skill tool invocation for reverse-eng extraction.** Manual code analysis is NOT a substitute. The Skill tool must be invoked and must return (success OR error) before you may proceed. The only valid path to `golddigger_status: "failed"` or `"partial"` is through a Skill tool invocation that returned an error. If `golddigger_notes` would contain "manual code analysis used" or similar, you have violated this rule — STOP and invoke the Skill tool.
+6. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output. This applies to all inline `python3 -c` snippets.
 
 ## Available Tools
 
@@ -174,8 +175,16 @@ You will receive the domain name from COMMANDER's context pack.
 
 ```bash
 # Check if already completed (defensive check)
-cat .specify/squad/state.json | python3 -c "import json,sys; s=json.load(sys.stdin); print(s.get('golddigger_completed_domains', []))"
+python3 -c "
+import json
+with open('.specify/squad/state.json', 'r') as f:
+    s = json.load(f)
+domains = s.get('golddigger_completed_domains', [])
+print(json.dumps(domains))
+"
 ```
+
+> **Do NOT add print() statements to any python3 script that reads or writes state.json.** A stray `print()` corrupts the file if output is captured or redirected. Use `json.dumps()` for any output that must be machine-readable.
 
 If the domain is already in `golddigger_completed_domains`, output the cache path and stop:
 ```
@@ -224,6 +233,7 @@ Copy the generated domain spec to `.specify/squad/golddigger-cache/<domain>.md`.
 Write only your status fields — COMMANDER handles the queue and completed-domains list:
 
 ```bash
+# WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('.specify/squad/state.json', 'r') as f:
