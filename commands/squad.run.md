@@ -374,39 +374,17 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 - **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
 - Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
 
-### Preflight: spec-kit Dependency Detection
+### Spec-kit Availability Detection (via PROSPECTOR)
 
-Before transitioning to DISCOVER, COMMANDER executes `scripts/bash/preflight-speckit.sh` (in test mode, pass `--cmd tests/mocks/spec-kit`).
+Spec-kit availability is detected by PROSPECTOR, not by a preflight bash script. PROSPECTOR enumerates available `speckit.*` skills from its conversation context and writes `extension-capabilities.json` with a `spec_kit_available` field.
 
-Required handling:
+COMMANDER reads `extension-capabilities.json` after PROSPECTOR completes (see COMMANDER section 2) and sets fallback mode accordingly:
+- `spec_kit_available: true` → normal mode
+- `spec_kit_available: false` → `state.json.fallback_mode=true`, `execution_mode=manual_specification`
 
-1. Run the probe and persist `state.json.dependency_checks.spec_kit` with:
+CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
 
-- `status` (`available|unavailable|timeout|incompatible`)
-- `checked_at` (ISO-8601 timestamp)
-- `error_code` (nullable)
-- `version` (nullable)
-
-1. If probe exit code is non-zero:
-
-- Set `state.json.fallback_mode=true`
-- Set `state.json.execution_mode=manual_specification`
-- Append `spec-kit` to `state.json.dependency_fallbacks` (deduplicated)
-- Append `quality_degradation` record with `dependency=spec-kit`, affected artifacts, and degradation type `unvalidated`
-- Append `reasoning-journal.json` entry:
-    `{type: dependency_failure, dependency: spec-kit, phase: phase1-understand, fallback_mode: true}`
-
-1. If probe exit code is zero:
-
-- Set dependency status to `available` with discovered version
-- If prior state had `fallback_mode=true`, clear fallback:
-  - Set `fallback_mode=false`
-  - Remove `spec-kit` from `dependency_fallbacks`
-  - Append `reasoning-journal.json` entry:
-     `{type: fallback_recovery, prior_run_id: <id>, recovery_run_id: <id>}`
-
-1. CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
-2. For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
+For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
 
 ### Preflight: KB Evolution Validation
 
@@ -1599,7 +1577,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 |------|---------|----------|
 | Understanding CLI | Not installed, crashes, or times out | **HARD STOP for WHY2/WHY3.** SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding CLI and is unaffected. |
 | spec-kit-reverse-eng | PROSPECTOR fails or reverse-eng not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
-| spec-kit skills | Skill invocation fails | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. Note: spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are Claude Code skills, not CLI tools. |
+| spec-kit skills | Skill invocation fails or PROSPECTOR finds no `speckit.*` skills | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are AI coding assistant skills, not CLI tools — availability is detected by PROSPECTOR from the agent's context, not by filesystem scanning. |
 
 ### Subagent Failures
 
