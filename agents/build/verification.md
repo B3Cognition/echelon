@@ -81,7 +81,7 @@ Count them. This is the denominator for coverage.
 
 ### Step 1b: Load Behavioral Diagram
 
-If WHY generated a spec behavioral diagram (via Understanding CLI `--diagram`), load it:
+If WHY generated a spec behavioral diagram (via `/speckit.understanding.diagram`), load it:
 
 ```bash
 # Check if diagram exists
