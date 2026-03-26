@@ -18,6 +18,7 @@ You are dispatched as a subagent by COMMANDER. You will receive: the target code
 4. **NEVER modify `golddigger_requests` or `golddigger_completed_domains`** — those fields are COMMANDER's responsibility.
 5. **NEVER skip the Skill tool invocation for reverse-eng extraction.** Manual code analysis is NOT a substitute. The Skill tool must be invoked and must return (success OR error) before you may proceed. The only valid path to `golddigger_status: "failed"` or `"partial"` is through a Skill tool invocation that returned an error. If `golddigger_notes` would contain "manual code analysis used" or similar, you have violated this rule — STOP and invoke the Skill tool.
 6. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output. This applies to all inline `python3 -c` snippets.
+7. **NEVER write config to `.specify/squad/golddigger-mode*.yml`.** reverse-eng does not read from that path. Use the spec-kit 4-layer config system: write to `.specify/extensions/reverse-eng/local-config.yml` (layer 2 — overrides project config and defaults, gitignored). Remove the file after extraction completes.
 
 ## Available Tools
 
@@ -30,13 +31,15 @@ You are dispatched as a subagent by COMMANDER. You will receive: the target code
 
 ## Configuration Profiles
 
-Do NOT let agents or users pass arbitrary reverse-eng config. Use exactly these two named profiles:
+Do NOT let agents or users pass arbitrary reverse-eng config. Use exactly these two named profiles, written to `.specify/extensions/reverse-eng/local-config.yml` (spec-kit config layer 2 — overrides project config and extension defaults, gitignored).
+
+**Config lifecycle:** Write `local-config.yml` → invoke extract → remove `local-config.yml`. This ensures the override is temporary and does not persist to subsequent runs.
 
 ### Mode 1 — Survey
 
 ```yaml
-# golddigger-mode1.yml (write to .specify/squad/ before invoking)
-analysis:
+# Write to .specify/extensions/reverse-eng/local-config.yml
+depth:
   level: signatures
 workflow:
   coverage_threshold: 60
@@ -51,8 +54,8 @@ output:
 ### Mode 2 — Deep Dive
 
 ```yaml
-# golddigger-mode2.yml (write to .specify/squad/ before invoking)
-analysis:
+# Write to .specify/extensions/reverse-eng/local-config.yml
+depth:
   level: full
 workflow:
   coverage_threshold: 95
@@ -70,9 +73,11 @@ output:
 
 ### Step 1: Write Mode 1 config
 
+Write the survey profile to reverse-eng's local config (layer 2 override):
+
 ```bash
-cat > .specify/squad/golddigger-mode1.yml << 'EOF'
-analysis:
+cat > .specify/extensions/reverse-eng/local-config.yml << 'EOF'
+depth:
   level: signatures
 workflow:
   coverage_threshold: 60
@@ -89,15 +94,13 @@ EOF
 
 **MANDATORY — This step is NOT optional.** If you find yourself proceeding to Step 3 without having invoked the Skill tool, STOP and invoke it now. Manual code analysis is NOT a substitute for this step, regardless of execution mode, environment, or any other rationalization.
 
-Use the Skill tool to invoke the reverse-eng extract command with the Mode 1 config:
+Use the Skill tool to invoke the reverse-eng extract command. The Mode 1 config is already active via `local-config.yml`:
 
 ```
 /speckit.reverse-eng.extract
 ```
 
-When the command prompt loads, provide:
-- Target path: the codebase path from COMMANDER's context pack
-- Config file: `.specify/squad/golddigger-mode1.yml`
+When the command prompt loads, provide the target path from COMMANDER's context pack. reverse-eng will automatically read the local-config.yml overrides.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 3 with the generated `analysis.json`
@@ -149,6 +152,14 @@ Read the outputs produced by reverse-eng (primarily `analysis.json` from `.speci
 
 Save raw survey artifacts to `.specify/squad/golddigger-cache/survey.md` for reference.
 
+### Step 3b: Clean up config override
+
+Remove the local-config.yml so it does not affect subsequent reverse-eng runs:
+
+```bash
+rm -f .specify/extensions/reverse-eng/local-config.yml
+```
+
 ### Step 4: Write status to state.json
 
 Update only the GOLDDIGGER-owned fields in `state.json` (do NOT modify `golddigger_requests` or `golddigger_completed_domains` — those are COMMANDER's responsibility):
@@ -195,9 +206,11 @@ Cached at: .specify/squad/golddigger-cache/<domain>.md
 
 ### Step 2: Write Mode 2 config
 
+Write the deep-dive profile to reverse-eng's local config (layer 2 override):
+
 ```bash
-cat > .specify/squad/golddigger-mode2.yml << 'EOF'
-analysis:
+cat > .specify/extensions/reverse-eng/local-config.yml << 'EOF'
+depth:
   level: full
 workflow:
   coverage_threshold: 95
@@ -218,7 +231,7 @@ EOF
 /speckit.reverse-eng.extract
 ```
 
-Scope the extraction to the specific domain directory identified in the survey. When the command prompt loads, provide the domain path and Mode 2 config.
+Scope the extraction to the specific domain directory identified in the survey. When the command prompt loads, provide the domain path. reverse-eng will automatically read the local-config.yml overrides.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 4 with the generated domain spec
@@ -227,6 +240,12 @@ Scope the extraction to the specific domain directory identified in the survey. 
 ### Step 4: Copy normalized output to cache
 
 Copy the generated domain spec to `.specify/squad/golddigger-cache/<domain>.md`.
+
+### Step 4b: Clean up config override
+
+```bash
+rm -f .specify/extensions/reverse-eng/local-config.yml
+```
 
 ### Step 5: Write completion status to state.json
 
