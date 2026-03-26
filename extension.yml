@@ -10,15 +10,15 @@ extension:
   license: "MIT"
 
 requires:
-  speckit_version: ">=0.3.0"
+  speckit_version: ">=0.4.2"
   tools:
     - name: "understanding"
-      version: ">=3.4.0"
+      version: ">=3.6.0"
       required_for: "WHY2, WHY3 (spec-validation)"
       hard_stop: true
       note: "System CLI at ~/.local/bin/understanding. HARD STOP if unavailable for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident (PAT-006). WHY1 (assumption-challenge) does not require it."
     - name: "spec-kit-reverse-eng"
-      version: ">=1.0.0"
+      version: ">=1.1.0"
       required: false
       # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
       # PROSPECTOR discovers availability; GOLDDIGGER drives Phase 1 extraction.

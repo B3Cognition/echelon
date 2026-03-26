@@ -303,9 +303,9 @@ specify extension add --dev /path/to/cognitive-squad
 
 ## Requirements
 
-- **spec-kit** >= 0.3.0 (required)
-- **understanding** >= 3.4.0 (optional — enables quality gates in WHY2/WHY3; hard stop if unavailable)
-- **spec-kit-reverse-eng** >= 1.0.0 (optional — brownfield extraction via GOLDDIGGER)
+- **spec-kit** >= 0.4.2 (required)
+- **understanding** >= 3.6.0 (hard stop for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident; WHY1 does not require it)
+- **spec-kit-reverse-eng** >= 1.1.0 (optional — brownfield extraction via GOLDDIGGER)
 
 ## Directory Structure
 
