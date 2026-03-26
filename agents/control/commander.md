@@ -253,10 +253,16 @@ Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path
 **ONLY after PROSPECTOR returns do you proceed:**
 
 - Read `.specify/squad/extension-capabilities.json`
-- If the file is absent, malformed, or empty: log `prospector_status: failed` in `state.json`; treat identically to empty-extensions (no GOLDDIGGER dispatch)
-- If valid: extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: reverse-eng 1.1.0 [relevant]" or "No extensions available")
+- If the file is absent, malformed, or empty: log `prospector_status: failed` in `state.json`; treat identically to empty-extensions (no GOLDDIGGER dispatch, fallback mode)
+- If valid:
+  - Read `spec_kit_available` field:
+    - `true`: spec-kit skills are available. Set `state.json.fallback_mode = false`.
+    - `false`: no spec-kit skills found. Set `state.json.fallback_mode = true`, `state.json.execution_mode = manual_specification`. Append `reasoning-journal.json` entry: `{type: dependency_failure, dependency: spec-kit, phase: phase1-understand, fallback_mode: true}`.
+  - Extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: reverse-eng [relevant], understanding [relevant]" or "No spec-kit skills available — fallback mode")
 
 **PROSPECTOR failure never blocks the run.** Continue to mode detection regardless. But PROSPECTOR must have been dispatched — a missing `dispatch_id` for PROSPECTOR in `token_ledger` is an invalid state.
+
+**Note:** PROSPECTOR replaces the former `preflight-speckit.sh` script. There is no separate spec-kit dependency detection step — PROSPECTOR is the single source of truth for all spec-kit capability discovery.
 
 ### 3. Brownfield Extension Check
 

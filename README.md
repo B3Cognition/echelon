@@ -237,7 +237,7 @@ Scripts for managing the knowledge base with concurrent write protection:
 | `kb-recover.sh` | Recover from failed KB operations |
 | `kb-seed.sh` | Initialize KB with baseline data |
 | `phase-timing.sh` | Track phase execution timing |
-| `preflight-speckit.sh` | Check spec-kit availability |
+| ~~`preflight-speckit.sh`~~ | Removed — spec-kit availability is now detected by PROSPECTOR agent from conversation context |
 
 ## Quality Gates
 
@@ -309,7 +309,7 @@ scripts/bash/
 ├── dry-run.sh         # Validation script
 ├── kb-*.sh            # Knowledge base management (6 scripts)
 ├── phase-timing.sh    # Phase execution timing
-└── preflight-speckit.sh # Spec-kit availability check
+└── phase-timing.sh    # (preflight-speckit.sh removed — detection moved to PROSPECTOR agent)
 templates/
 ├── triz-40-principles.md
 ├── triz-contradiction-matrix.md
