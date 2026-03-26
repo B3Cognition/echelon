@@ -257,8 +257,8 @@ Use the Agent tool:
 
 ### 3.2 Handle Result
 
-- **PASS** — Proceed to CODE REVIEWER
-- **FAIL** — Route back to IMPLEMENTER with the specific gaps. IMPLEMENTER fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
+- **PASS** — Run `endocrine.sh on_gate_pass IMPLEMENTER`. Proceed to CODE REVIEWER.
+- **FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER` + `endocrine.sh on_rework IMPLEMENTER`. Route back to IMPLEMENTER with the specific gaps. IMPLEMENTER fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
 - **WARN** — Proceed to CODE REVIEWER. Warnings are logged but do not block.
 
 ### On Non-Obvious FAIL
@@ -291,9 +291,9 @@ Use the Agent tool:
 
 ### 4.2 Handle Result
 
-- **APPROVED** — Proceed to TEST GUARDIAN
-- **CHANGES_REQUESTED** — Route back to IMPLEMENTER with the specific issues. IMPLEMENTER fixes and re-submits for review. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
-- **BLOCKED** — Fundamental architectural issue. MANAGER decides: skip task, amend ADR, or escalate to human.
+- **APPROVED** — Run `endocrine.sh on_gate_pass IMPLEMENTER`. Proceed to TEST GUARDIAN.
+- **CHANGES_REQUESTED** — Run `endocrine.sh on_gate_fail IMPLEMENTER` + `endocrine.sh on_rework IMPLEMENTER`. Route back to IMPLEMENTER with the specific issues. IMPLEMENTER fixes and re-submits for review. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
+- **BLOCKED** — Run `endocrine.sh on_low_confidence IMPLEMENTER`. Fundamental architectural issue. MANAGER decides: skip task, amend ADR, or escalate to human.
 
 ---
 
@@ -316,8 +316,8 @@ Use the Agent tool:
 
 ### 5.2 Handle Result
 
-- **PASS** — Task complete. Proceed to PROGRESS TRACKER.
-- **FAIL** — Route back to IMPLEMENTER to add missing tests. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
+- **PASS** — Run `endocrine.sh on_gate_pass IMPLEMENTER`. Task complete. Proceed to PROGRESS TRACKER.
+- **FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER` + `endocrine.sh on_rework IMPLEMENTER`. Route back to IMPLEMENTER to add missing tests. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
 - **WARN** — Task complete with noted improvements. Proceed to PROGRESS TRACKER.
 
 ---
@@ -390,8 +390,8 @@ Use the Agent tool:
 
 ### 7.2 Handle Result
 
-- **PASS** — Record checkpoint. Proceed to next phase group.
-- **FAIL** — Route integration failures back to the responsible task's IMPLEMENTER. Re-run INTEGRATOR after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
+- **PASS** — Run `endocrine.sh on_gate_pass INTEGRATOR`. Record checkpoint. Proceed to next phase group.
+- **FAIL** — Run `endocrine.sh on_gate_fail INTEGRATOR` + `endocrine.sh on_low_confidence IMPLEMENTER` (for responsible task). Route integration failures back to the responsible task's IMPLEMENTER. Re-run INTEGRATOR after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
 
 ### 7.3 Record Checkpoint
 
