@@ -975,6 +975,12 @@ USAGE
 cmd="${1:-}"
 shift || true
 
+# Enforce kill switch — if endocrine.enabled is not true, no-op silently and exit.
+# get_enabled() reads the value from config; default is "false" when key is absent.
+if [[ "$(get_enabled)" != "true" ]]; then
+  exit 0
+fi
+
 case "$cmd" in
   init)                          cmd_init ;;
   get_adrenaline)                cmd_get_adrenaline "$@" ;;

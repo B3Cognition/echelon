@@ -270,8 +270,10 @@ implementability:
 # =============================================================================
 
 assess:
-  # Maximum DEFER iterations before forcing decision
-  defer_max_iterations: 5
+  # Maximum DEFER iterations before forcing decision.
+  # MUST match convergence.defer_loop_limit — COMMANDER is the enforcement authority.
+  # [authoritative key: convergence.defer_loop_limit]
+  defer_max_iterations: 2
 
 # =============================================================================
 # CALIBRATION (AUDITOR)
@@ -462,7 +464,7 @@ internalization:
     # Threshold above which Understanding score is considered "high"
     understanding_high_threshold: 0.70
     # Threshold above which internalization score is considered "high"
-    understanding_low_threshold: 0.70
+    internalization_high_threshold: 0.70
 
   # ───────────────────────────────────────────────────────────────────────────
   # EVOLUTION SIGNALS — Internalization-specific (FR-052..FR-055)
@@ -753,7 +755,7 @@ banzai:
 #
 
 endocrine:
-  enabled: false  # Disabled by default for v0.6.0
+  enabled: true  # Enabled by default; set to false to disable all endocrine mutations
   phase: 1  # 1=adrenaline only, 2=four neuromodulators, 3=full 6, 4=adaptive
 
   # Adrenaline triggers (Phase 1)

@@ -20,7 +20,7 @@ This agent uses values from `squad-config.yml`:
 - `build_budget.*` - Build phase budget allocation
 - `limits.wall_clock_timeout_minutes` - Timeout
 - `build.*` - Build phase settings
-- `guardian.mode` - GUARDIAN dispatch mode (`always_on` | `on_demand`, default: `always_on`)
+- `specialists.guardian_mode` - GUARDIAN dispatch mode (`always_on` | `on_demand`, default: `always_on`)
 
 ## Prime Directive
 
@@ -71,7 +71,7 @@ These thresholds are non-negotiable:
 | Maximum squad iterations | 5 total | Force convergence with warnings |
 | Token budget exhausted | 100% of configured budget | Force finalize with quality report |
 | CALIBRATE confidence | < 0.5 for a domain area | Summon INVESTIGATOR or flag for human |
-| ASSESS DEFER loop | >= 2 re-routes with no scope stabilization | Kill or escalate |
+| ASSESS DEFER loop | >= `assess.defer_loop_limit` (default: 2) re-routes with no scope stabilization | Kill or escalate |
 | Wall-clock time | 40 minutes | Force convergence |
 
 When forcing convergence, always produce a quality report documenting what was not completed and why.
@@ -137,7 +137,7 @@ Before every routing decision, ask:
 - CALIBRATE confidence < 0.5 after INVESTIGATOR investigation
 - Agents produce contradictory evidence at the same grade level with no tiebreaker
 - A domain question cannot be answered from available evidence
-- ASSESS produces DEFER twice with no scope stabilization
+- ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read from `squad-config.yml`) with no scope stabilization
 
 **Resolve autonomously when:**
 - Evidence hierarchy provides a clear winner
@@ -230,12 +230,12 @@ Before any mode detection or agent dispatch, COMMANDER must:
 
 ### 1. Dispatch GUARDIAN (always-on by default)
 
-Check `squad-config.yml` for `guardian.mode`:
+Check `squad-config.yml` for `specialists.guardian_mode`:
 
 - **`always_on`** (default): Dispatch GUARDIAN on every squad run, regardless of whether the domain involves security-sensitive areas. GUARDIAN runs its **Minimum Security Checklist** (5-item lightweight check) for all domains, and performs full STRIDE/OWASP analysis only when security-relevant domain signals are detected.
 - **`on_demand`**: Dispatch GUARDIAN only when the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or untrusted input (legacy behavior).
 
-When `guardian.mode` is `always_on`:
+When `specialists.guardian_mode` is `always_on`:
 1. Dispatch GUARDIAN after ASSESS completes (during the Specialist phase)
 2. GUARDIAN runs the Minimum Security Checklist regardless of domain classification
 3. If domain signals indicate security relevance, GUARDIAN also runs full STRIDE + OWASP + compliance analysis
@@ -414,8 +414,8 @@ Maintain running totals in `state.json` under `token_ledger`:
 Before every agent dispatch, COMMANDER must:
 
 1. Read `token_ledger.total_estimated_tokens` from `state.json`
-2. Compare against the configured budget (`budget.total_tokens` in `squad-config.yml`)
-3. If `total_estimated_tokens + next_dispatch_estimate > budget.total_tokens`:
+2. Compare against the configured budget (`analysis.token_budget_k` in `squad-config.yml`, value in thousands of tokens)
+3. If `total_estimated_tokens + next_dispatch_estimate > analysis.token_budget_k * 1000`:
    - Check if reserve budget (5%) is available and the dispatch is critical
    - If no budget remains: force finalize with quality report (see Convergence Rules)
    - Log a `BUDGET_EXHAUSTED` entry in `reasoning-journal.json`
