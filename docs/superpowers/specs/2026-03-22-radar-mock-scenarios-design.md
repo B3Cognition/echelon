@@ -319,7 +319,7 @@ No temp-file/rename pattern — plain append with lock. Partial lines are not po
 
 Recording is append-safe on server restart (file opened in `"a"` mode). Partial files are replayable up to the last complete line.
 
-**`commands/squad.run.md` integration** — RADAR startup block gains, before the `python3 -m radar.server` call:
+**`commands/cognitive-squad.run.md` integration** — RADAR startup block gains, before the `python3 -m radar.server` call:
 
 ```bash
 RADAR_RECORD_FLAG=""
@@ -429,7 +429,7 @@ Handover document for the UI session. Three sections:
 | Create | `radar/scenarios/replay.py` | `load_replay()` only; no scenario registration |
 | Modify | `radar/mock_server.py` | `run_state_change` handling in `scenario_loop`, `run` in `mock_snapshot`, `/journal` endpoint, `--replay` flag |
 | Modify | `radar/server.py` | `--record PATH` flag + `_record_lock` append logic |
-| Modify | `commands/squad.run.md` | `RADAR_RECORD_FLAG` block before `python3 -m radar.server` call |
+| Modify | `commands/cognitive-squad.run.md` | `RADAR_RECORD_FLAG` block before `python3 -m radar.server` call |
 | Modify | `config-template.yml` | Add `record: false` inside existing `radar:` block |
 | Create | `docs/radar-protocol-contract.md` | UI handover interface contract |
 

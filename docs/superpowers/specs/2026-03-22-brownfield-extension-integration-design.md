@@ -198,8 +198,8 @@ Add PROSPECTOR and GOLDDIGGER to the central registry with layer, phase, dispatc
 
 All RADAR invocations in the command files use `python` which fails on macOS where only `python3` is in PATH. This affects:
 
-- `commands/squad.run.md` — 5 invocations (already applied in current diff)
-- `commands/squad.build.md` — 2 invocations (already applied in current diff)
+- `commands/cognitive-squad.run.md` — 5 invocations (already applied in current diff)
+- `commands/cognitive-squad.build.md` — 2 invocations (already applied in current diff)
 - `radar/emitter.py` — no subprocess calls to python; no change needed
 - `radar/server.py` — no subprocess calls to python; no change needed
 
@@ -282,5 +282,5 @@ PROSPECTOR currently handles discovery for a known extension set. The next evolu
 | Modify | `agents/control/commander.md` — PROSPECTOR init dispatch + GOLDDIGGER brownfield dispatch + Mode 2 queue handling |
 | Modify | `agents.yaml` — register PROSPECTOR and GOLDDIGGER |
 | Modify | `extension.yml` — fix binary invocation claim |
-| Modify | `commands/squad.run.md` — (1) python → python3 (5 occurrences); (2) Section 15 error table: replace the `spec-kit-reverse-eng` row from "DISCOVER falls back to greenfield mode..." to: `\| spec-kit-reverse-eng \| PROSPECTOR fails or reverse-eng not installed \| COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. \|`; (3) line ~619 advisory text: replace "Option A: If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns" with "Option A: If GOLDDIGGER ran and brownfield-index.md is present, derive principles from the domain inventory and hotspot analysis already captured there." |
-| Modify | `commands/squad.build.md` — python → python3 (2 occurrences) |
+| Modify | `commands/cognitive-squad.run.md` — (1) python → python3 (5 occurrences); (2) Section 15 error table: replace the `spec-kit-reverse-eng` row from "DISCOVER falls back to greenfield mode..." to: `\| spec-kit-reverse-eng \| PROSPECTOR fails or reverse-eng not installed \| COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. \|`; (3) line ~619 advisory text: replace "Option A: If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns" with "Option A: If GOLDDIGGER ran and brownfield-index.md is present, derive principles from the domain inventory and hotspot analysis already captured there." |
+| Modify | `commands/cognitive-squad.build.md` — python → python3 (2 occurrences) |

@@ -16,7 +16,7 @@ Collect post-implementation feedback for a completed squad run. This closes the 
 
 ## Step 1: Validate Input
 
-If `$ARGUMENTS` is empty, report **"Please provide the spec ID. Usage: /speckit.squad.feedback 001"** and stop.
+If `$ARGUMENTS` is empty, report **"Please provide the spec ID. Usage: /speckit.cognitive-squad.feedback 001"** and stop.
 
 Extract `{spec-id}` from `$ARGUMENTS` (first token, e.g., "001").
 

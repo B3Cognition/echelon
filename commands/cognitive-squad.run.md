@@ -1382,10 +1382,10 @@ WARNINGS:
   {any unresolved unknowns}
 
 Spec ID for feedback: {NNN}
-Run: /speckit.squad.feedback {NNN} after implementation
+Run: /speckit.cognitive-squad.feedback {NNN} after implementation
 
 BRANCH: {NNN}-{feature}
-Ready for: /speckit.squad.build {NNN}-{feature}
+Ready for: /speckit.cognitive-squad.build {NNN}-{feature}
 ============================================
 ```
 
@@ -1405,7 +1405,7 @@ When the user starts a new squad run while implementation of the current spec is
 2. Spec-kit handles branch stacking (new branch based on current feature branch)
 3. This allows parallel specification work while implementation continues
 
-**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `/speckit.squad.build`.
+**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `/speckit.cognitive-squad.build`.
 
 ---
 
@@ -1644,11 +1644,11 @@ Escalation to human is triggered when:
 
    Recommended: {option}
 
-   Respond with: /speckit.squad.resume {your answer}
+   Respond with: /speckit.cognitive-squad.resume {your answer}
    ============================================
    ```
 
-5. **STOP execution.** Do not proceed. The user must run `/speckit.squad.resume` to continue.
+5. **STOP execution.** Do not proceed. The user must run `/speckit.cognitive-squad.resume` to continue.
 
 ---
 

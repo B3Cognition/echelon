@@ -24,8 +24,8 @@ cognitive-squad/
     requirements.txt     ← Dependencies: flask, flask-cors, watchdog
     README.md            ← Quick-start documentation
   config-template.yml    ← Add radar: section
-  commands/squad.run.md  ← Add RADAR lifecycle + emitter calls
-  commands/squad.build.md ← Add RADAR lifecycle + emitter calls
+  commands/cognitive-squad.run.md  ← Add RADAR lifecycle + emitter calls
+  commands/cognitive-squad.build.md ← Add RADAR lifecycle + emitter calls
 ```
 
 **Installed paths** (when extension is installed in a project):
@@ -792,10 +792,10 @@ git commit -m "feat(config): add radar configuration section"
 
 ---
 
-## Task 6: Integrate RADAR into squad.run.md - Init
+## Task 6: Integrate RADAR into cognitive-squad.run.md - Init
 
 **Files:**
-- Modify: `commands/squad.run.md` (section 1.3, after state.json creation)
+- Modify: `commands/cognitive-squad.run.md` (section 1.3, after state.json creation)
 
 - [ ] **Step 1: Add RADAR startup after state.json creation**
 
@@ -831,16 +831,16 @@ PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import init_run; init_run(
 - [ ] **Step 2: Commit**
 
 ```bash
-git add commands/squad.run.md
+git add commands/cognitive-squad.run.md
 git commit -m "feat(squad.run): add RADAR startup in INIT phase"
 ```
 
 ---
 
-## Task 7: Integrate RADAR into squad.run.md - Finalize
+## Task 7: Integrate RADAR into cognitive-squad.run.md - Finalize
 
 **Files:**
-- Modify: `commands/squad.run.md` (section 12.8, after setting final state)
+- Modify: `commands/cognitive-squad.run.md` (section 12.8, after setting final state)
 
 - [ ] **Step 1: Add RADAR shutdown in FINALIZE**
 
@@ -860,7 +860,7 @@ fi
 
 - [ ] **Step 2: Add RADAR shutdown helper function for all exit paths**
 
-At the top of squad.run.md (in a preamble or helper section if one exists), add:
+At the top of cognitive-squad.run.md (in a preamble or helper section if one exists), add:
 
 ```markdown
 ### Helper: Stop RADAR
@@ -875,7 +875,7 @@ Use this command at any exit point (kill verdict, error, completion):
 - [ ] **Step 3: Commit**
 
 ```bash
-git add commands/squad.run.md
+git add commands/cognitive-squad.run.md
 git commit -m "feat(squad.run): add RADAR shutdown in FINALIZE phase"
 ```
 
@@ -884,11 +884,11 @@ git commit -m "feat(squad.run): add RADAR shutdown in FINALIZE phase"
 ## Task 8: Add emitter calls for agent dispatches
 
 **Files:**
-- Modify: `commands/squad.run.md` (various agent dispatch sections)
+- Modify: `commands/cognitive-squad.run.md` (various agent dispatch sections)
 
 - [ ] **Step 1: Document emitter pattern**
 
-Add to squad.run.md preamble (before section 1):
+Add to cognitive-squad.run.md preamble (before section 1):
 
 ```markdown
 ### RADAR Emitter Pattern
@@ -931,47 +931,47 @@ In section 1.3 "Initialize State", add to the state.json template:
 - [ ] **Step 3: Commit**
 
 ```bash
-git add commands/squad.run.md
+git add commands/cognitive-squad.run.md
 git commit -m "feat(squad.run): add RADAR emitter pattern documentation"
 ```
 
 ---
 
-## Task 9: Integrate RADAR into squad.build.md
+## Task 9: Integrate RADAR into cognitive-squad.build.md
 
 **Files:**
-- Modify: `commands/squad.build.md`
+- Modify: `commands/cognitive-squad.build.md`
 
 The same RADAR lifecycle applies to build runs. Add identical sections.
 
-- [ ] **Step 1: Find INIT section in squad.build.md**
+- [ ] **Step 1: Find INIT section in cognitive-squad.build.md**
 
 ```bash
-grep -n "Initialize State\|state\.json" commands/squad.build.md | head -5
+grep -n "Initialize State\|state\.json" commands/cognitive-squad.build.md | head -5
 ```
 
 - [ ] **Step 2: Add RADAR startup after state.json creation**
 
-Add the same section 1.3.1 content as in squad.run.md (see Task 6).
+Add the same section 1.3.1 content as in cognitive-squad.run.md (see Task 6).
 
-- [ ] **Step 3: Find FINALIZE section in squad.build.md**
+- [ ] **Step 3: Find FINALIZE section in cognitive-squad.build.md**
 
 ```bash
-grep -n "FINALIZE\|Final State\|status.*done" commands/squad.build.md | head -5
+grep -n "FINALIZE\|Final State\|status.*done" commands/cognitive-squad.build.md | head -5
 ```
 
 - [ ] **Step 4: Add RADAR shutdown in FINALIZE**
 
-Add the same shutdown block as in squad.run.md (see Task 7).
+Add the same shutdown block as in cognitive-squad.run.md (see Task 7).
 
 - [ ] **Step 5: Add emitter pattern reference**
 
-Reference the RADAR Emitter Pattern (can link to squad.run.md or duplicate).
+Reference the RADAR Emitter Pattern (can link to cognitive-squad.run.md or duplicate).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add commands/squad.build.md
+git add commands/cognitive-squad.build.md
 git commit -m "feat(squad.build): add RADAR lifecycle integration"
 ```
 
@@ -1085,8 +1085,8 @@ git log --oneline -10
 | 3 | SSE server | `radar/server.py` |
 | 4 | Documentation | `radar/README.md` |
 | 5 | Config section | `config-template.yml` |
-| 6 | INIT integration | `commands/squad.run.md` |
-| 7 | FINALIZE integration | `commands/squad.run.md` |
-| 8 | Emitter pattern | `commands/squad.run.md` |
-| 9 | Build integration | `commands/squad.build.md` |
+| 6 | INIT integration | `commands/cognitive-squad.run.md` |
+| 7 | FINALIZE integration | `commands/cognitive-squad.run.md` |
+| 8 | Emitter pattern | `commands/cognitive-squad.run.md` |
+| 9 | Build integration | `commands/cognitive-squad.build.md` |
 | 10 | Final verification | Manual testing |

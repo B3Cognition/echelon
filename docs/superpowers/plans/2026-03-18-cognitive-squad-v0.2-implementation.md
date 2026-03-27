@@ -4,7 +4,7 @@
 
 **Goal:** Reorganize cognitive-squad with layer-based directory structure, dual naming (functional + codename), 4-phase architecture, and autonomy modes.
 
-**Architecture:** Rename all agent files to use codenames as filenames while preserving functional names in prompts. Restructure into layers: control, exploration, feasibility, solution, specialists, learning, build. Update COMMANDER (squad.run.md) with phase-based execution and `--mode` flag.
+**Architecture:** Rename all agent files to use codenames as filenames while preserving functional names in prompts. Restructure into layers: control, exploration, feasibility, solution, specialists, learning, build. Update COMMANDER (cognitive-squad.run.md) with phase-based execution and `--mode` flag.
 
 **Tech Stack:** Markdown (agent prompts), YAML (config), JSON (state schema), Bash (file operations)
 
@@ -720,10 +720,10 @@ git commit -m "feat: update state schema with 4-phase model and autonomy trackin
 
 ## Chunk 4: Update Commands
 
-### Task 17: Update squad.run.md with 4-phase model
+### Task 17: Update cognitive-squad.run.md with 4-phase model
 
 **Files:**
-- Modify: `commands/squad.run.md`
+- Modify: `commands/cognitive-squad.run.md`
 
 This is the most complex update. The command needs to:
 1. Parse `--mode` argument
@@ -748,7 +748,7 @@ arguments:
 
 - [ ] **Step 2: Update all agent dispatch paths**
 
-Replace ALL agent path references in squad.run.md using these exact substitutions:
+Replace ALL agent path references in cognitive-squad.run.md using these exact substitutions:
 
 ```
 # Control layer
@@ -820,10 +820,10 @@ Restructure the dispatch logic to group agents by phase:
 
 Add checkpoint handling based on autonomy mode. This requires adding conditional blocks that check `state.autonomy_mode` before pausing.
 
-- [ ] **Step 5: Commit squad.run.md update**
+- [ ] **Step 5: Commit cognitive-squad.run.md update**
 
 ```bash
-git add commands/squad.run.md
+git add commands/cognitive-squad.run.md
 git commit -m "feat: implement 4-phase model with autonomy modes in squad.run"
 ```
 
@@ -832,15 +832,15 @@ git commit -m "feat: implement 4-phase model with autonomy modes in squad.run"
 ### Task 18: Update all commands with new agent paths
 
 **Files:**
-- Modify: `commands/squad.investigate.md`
-- Modify: `commands/squad.ground.md`
-- Modify: `commands/squad.innovate.md`
-- Modify: `commands/squad.build.md`
-- Modify: `commands/squad.status.md`
-- Modify: `commands/squad.resume.md`
-- Modify: `commands/squad.feedback.md`
-- Modify: `commands/squad.change.md`
-- Modify: `commands/squad.verify.md`
+- Modify: `commands/cognitive-squad.investigate.md`
+- Modify: `commands/cognitive-squad.ground.md`
+- Modify: `commands/cognitive-squad.innovate.md`
+- Modify: `commands/cognitive-squad.build.md`
+- Modify: `commands/cognitive-squad.status.md`
+- Modify: `commands/cognitive-squad.resume.md`
+- Modify: `commands/cognitive-squad.feedback.md`
+- Modify: `commands/cognitive-squad.change.md`
+- Modify: `commands/cognitive-squad.verify.md`
 
 - [ ] **Step 1: Search for all agent path references**
 
@@ -932,9 +932,9 @@ Replace existing agent list with layer-based organization showing dual naming.
 
 Document the three modes with examples:
 ```bash
-/squad.run "Build an app"                  # semi (default)
-/squad.run "Build an app" --mode guided    # checkpoint after each phase
-/squad.run "Build an app" --mode banzai    # full autonomous
+/speckit.cognitive-squad.run "Build an app"                  # semi (default)
+/speckit.cognitive-squad.run "Build an app" --mode guided    # checkpoint after each phase
+/speckit.cognitive-squad.run "Build an app" --mode banzai    # full autonomous
 ```
 
 - [ ] **Step 3: Add 4-phase diagram**
@@ -1077,7 +1077,7 @@ Expected: v0.2.0
 **Key Deliverables:**
 1. Layer-based directory structure
 2. Dual naming on all agents
-3. 4-phase execution model in squad.run.md
+3. 4-phase execution model in cognitive-squad.run.md
 4. Autonomy modes (guided, semi, banzai)
 5. Updated config and state schema
 6. Updated README documentation
