@@ -10,7 +10,7 @@
 <title>StateMachineFlow</title>
 <polygon fill="#fafafa" stroke="none" points="-36,36 -36,-2389.67 833.98,-2389.67 833.98,36 -36,36"/>
 <text xml:space="preserve" text-anchor="start" x="247.49" y="-2335.47" font-family="Helvetica Neue" font-weight="bold" font-size="16.00">Cognitive Squad — State Machine Flow</text>
-<text xml:space="preserve" text-anchor="start" x="249.74" y="-2325.17" font-family="Helvetica Neue" font-size="10.00" fill="#666666">squad.run.md execution sequence with convergence loops &amp; gates</text>
+<text xml:space="preserve" text-anchor="start" x="249.74" y="-2325.17" font-family="Helvetica Neue" font-size="10.00" fill="#666666">cognitive-squad.run.md execution sequence with convergence loops &amp; gates</text>
 <g id="clust1" class="cluster">
 <title>cluster_phase1</title>
 <path fill="#e8f5e9" stroke="#2e7d32" stroke-width="2" d="M50,-1836.09C50,-1836.09 220,-1836.09 220,-1836.09 226,-1836.09 232,-1842.09 232,-1848.09 232,-1848.09 232,-2299.67 232,-2299.67 232,-2305.67 226,-2311.67 220,-2311.67 220,-2311.67 50,-2311.67 50,-2311.67 44,-2311.67 38,-2305.67 38,-2299.67 38,-2299.67 38,-1848.09 38,-1848.09 38,-1842.09 44,-1836.09 50,-1836.09"/>

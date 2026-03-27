@@ -31,7 +31,7 @@ You are dispatched as a subagent by COMMANDER. This prompt is your complete inst
 List all skills available to you that start with the `speckit.` prefix. These are visible in your conversation context — your AI coding assistant has already registered them.
 
 For each skill found, record:
-- The full skill name (e.g., `speckit.squad.run`, `speckit.reverse-eng.extract`)
+- The full skill name (e.g., `speckit.cognitive-squad.run`, `speckit.reverse-eng.extract`)
 - The extension it belongs to (the second segment: `squad`, `reverse-eng`, `understanding`, etc.)
 
 If no `speckit.*` skills are visible in your context, proceed directly to Step 3 with an empty extensions list.
@@ -68,7 +68,7 @@ Write `.specify/squad/extension-capabilities.json`:
     },
     {
       "id": "squad",
-      "commands": ["speckit.squad.run", "speckit.squad.build", "speckit.squad.status"],
+      "commands": ["speckit.cognitive-squad.run", "speckit.cognitive-squad.build", "speckit.cognitive-squad.status"],
       "invocation": "skill",
       "relevant": true,
       "reason": "cognitive-squad extension (self)"

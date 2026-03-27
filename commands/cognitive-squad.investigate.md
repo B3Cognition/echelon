@@ -16,7 +16,7 @@ Dispatch the SCIENTIST agent to investigate a specific question using the full s
 
 ## Step 1: Validate Input
 
-If `$ARGUMENTS` is empty or missing, report **"Please provide a question to investigate. Usage: /speckit.squad.investigate <your question>"** and stop.
+If `$ARGUMENTS` is empty or missing, report **"Please provide a question to investigate. Usage: /speckit.cognitive-squad.investigate <your question>"** and stop.
 
 ---
 

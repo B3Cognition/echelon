@@ -10,7 +10,7 @@ digraph StateMachineFlow {
   pad=0.5;
   nodesep=0.35;
   ranksep=0.5;
-  label=<<B><FONT POINT-SIZE="16">Cognitive Squad — State Machine Flow</FONT></B><BR/><FONT POINT-SIZE="10" COLOR="#666666">squad.run.md execution sequence with convergence loops &amp; gates</FONT>>;
+  label=<<B><FONT POINT-SIZE="16">Cognitive Squad — State Machine Flow</FONT></B><BR/><FONT POINT-SIZE="10" COLOR="#666666">cognitive-squad.run.md execution sequence with convergence loops &amp; gates</FONT>>;
   labelloc=t;
 
   // ═══ PHASE 1: UNDERSTAND ═══
@@ -113,11 +113,11 @@ digraph StateMachineFlow {
     SCORE [label=<<B>SCOREKEEPER</B><BR/><FONT POINT-SIZE="7">agent scorecard<BR/>badges, self-healing</FONT>>, fillcolor="#BBDEFB", color="#1565C0"];
   }
 
-  DONE [label=<<B>DONE</B><BR/><FONT POINT-SIZE="7">artifacts delivered<BR/>ready for /squad.build</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
+  DONE [label=<<B>DONE</B><BR/><FONT POINT-SIZE="7">artifacts delivered<BR/>ready for /speckit.cognitive-squad.build</FONT>>, fillcolor="#B9F6CA", color="#00C853", shape=doubleoctagon];
 
   KILLED [label=<<B>KILLED</B><BR/><FONT POINT-SIZE="7">kill report generated</FONT>>, fillcolor="#FFCDD2", color="#C62828", shape=doubleoctagon];
 
-  BLOCKED [label=<<B>BLOCKED</B><BR/><FONT POINT-SIZE="7">human input required<BR/>/squad.resume to continue</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=doubleoctagon];
+  BLOCKED [label=<<B>BLOCKED</B><BR/><FONT POINT-SIZE="7">human input required<BR/>/speckit.cognitive-squad.resume to continue</FONT>>, fillcolor="#FFF9C4", color="#F57F17", shape=doubleoctagon];
 
   // ═══ EDGES ═══
   // Phase 1 flow

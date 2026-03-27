@@ -85,7 +85,7 @@ If `status` is `"blocked"`, prominently display:
 Question: {escalation_question}
 Reason:   {blocked_reason}
 
-Resume with: /speckit.squad.resume {your answer}
+Resume with: /speckit.cognitive-squad.resume {your answer}
 ```
 
 Print all entries from `issues_log`:

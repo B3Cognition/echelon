@@ -145,7 +145,7 @@ Before every routing decision, ask:
 - The issue is within a single agent's domain and does not affect other agents
 - A conservative default exists that mitigates risk
 
-When escalating, produce `escalation-request.md` using `templates/escalation-request.md` format. Enter BLOCKED state in `state.json`. Wait for `/speckit.squad.resume <answer>`.
+When escalating, produce `escalation-request.md` using `templates/escalation-request.md` format. Enter BLOCKED state in `state.json`. Wait for `/speckit.cognitive-squad.resume <answer>`.
 
 ---
 
@@ -296,11 +296,11 @@ After each Phase 1 agent (SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER) compl
 
 ## Build Phase Orchestration
 
-After FINALIZE completes Phase A (Understanding), the MANAGER may proceed to Phase B (Building) if the user invokes `/speckit.squad.build`. The MANAGER does NOT auto-start the build — the user must explicitly request it.
+After FINALIZE completes Phase A (Understanding), the MANAGER may proceed to Phase B (Building) if the user invokes `/speckit.cognitive-squad.build`. The MANAGER does NOT auto-start the build — the user must explicitly request it.
 
 ### Build State Machine
 
-When `/speckit.squad.build` is invoked, the MANAGER enters the BUILD state and orchestrates:
+When `/speckit.cognitive-squad.build` is invoked, the MANAGER enters the BUILD state and orchestrates:
 
 ```
 BUILD_INIT

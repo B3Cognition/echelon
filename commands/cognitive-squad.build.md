@@ -32,7 +32,7 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
-**RADAR Monitoring:** See squad.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
+**RADAR Monitoring:** See cognitive-squad.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
 
 ## v0.4.0 Operator Flow
 
@@ -82,7 +82,7 @@ Read and verify these files exist in `specs/{NNN}-{feature}/`:
 - `estimates.md` — Effort estimates per task
 - `calibration-profile.yaml` — Historical accuracy data
 
-If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `/speckit.squad.run` first."
+If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `/speckit.cognitive-squad.run` first."
 
 ### 1.2 Parse Tasks
 

@@ -27,7 +27,7 @@
 | Create | `radar/scenarios/replay.py` | `load_replay(filepath) -> Scenario` |
 | Modify | `radar/server.py` | `--record PATH` flag + `_record_lock` JSONL appender |
 | Modify | `config-template.yml` | Add `record: false` in radar block |
-| Modify | `commands/squad.run.md` | Add RADAR_RECORD_FLAG block |
+| Modify | `commands/cognitive-squad.run.md` | Add RADAR_RECORD_FLAG block |
 | Create | `docs/radar-protocol-contract.md` | UI handover interface contract |
 | Create | `radar/tests/unit/test_new_scenarios.py` | Tests for greenfield/brownfield/blocked-escalation |
 | Create | `radar/tests/unit/test_replay.py` | Tests for load_replay |
@@ -2055,15 +2055,15 @@ git commit -m "feat(radar): add --record PATH flag to server.py for SSE event re
 
 ---
 
-## Task 9: Infrastructure — `config-template.yml` + `commands/squad.run.md`
+## Task 9: Infrastructure — `config-template.yml` + `commands/cognitive-squad.run.md`
 
 **Files:**
 - Modify: `config-template.yml`
-- Modify: `commands/squad.run.md`
+- Modify: `commands/cognitive-squad.run.md`
 
 ### Context
 
-Two small additions: (1) `record: false` in the `radar:` block of `config-template.yml`, (2) `RADAR_RECORD_FLAG` shell block in `squad.run.md` before the `python3 -m radar.server` invocation.
+Two small additions: (1) `record: false` in the `radar:` block of `config-template.yml`, (2) `RADAR_RECORD_FLAG` shell block in `cognitive-squad.run.md` before the `python3 -m radar.server` invocation.
 
 - [ ] **Step 1: Update `config-template.yml`**
 
@@ -2090,7 +2090,7 @@ radar:
   # host: localhost
 ```
 
-- [ ] **Step 2: Update `commands/squad.run.md`**
+- [ ] **Step 2: Update `commands/cognitive-squad.run.md`**
 
 Find lines 305-310 (the RADAR startup block):
 
@@ -2133,8 +2133,8 @@ Expected: ALL PASS (no test covers these YAML/shell changes directly).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add config-template.yml commands/squad.run.md
-git commit -m "feat(radar): add record flag to config-template; add RADAR_RECORD_FLAG to squad.run.md"
+git add config-template.yml commands/cognitive-squad.run.md
+git commit -m "feat(radar): add record flag to config-template; add RADAR_RECORD_FLAG to cognitive-squad.run.md"
 ```
 
 ---

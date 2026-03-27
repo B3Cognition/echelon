@@ -369,7 +369,7 @@ else
 fi
 
 # Check MANAGER has role separation section
-if grep -q "Role Separation" "$ROOT/commands/squad.run.md" 2>/dev/null; then
+if grep -q "Role Separation" "$ROOT/commands/cognitive-squad.run.md" 2>/dev/null; then
   green "MANAGER command has Role Separation section"
 else
   red "MANAGER command missing Role Separation — agents may cross roles"

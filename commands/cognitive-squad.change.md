@@ -1,9 +1,9 @@
 ---
-name: speckit.squad.change
+name: speckit.cognitive-squad.change
 description: "Handle specification change during build phase"
 ---
 
-# /speckit.squad.change
+# /speckit.cognitive-squad.change
 
 Handle a specification change during the build phase by dispatching the CHANGE CONTROLLER agent.
 
@@ -15,7 +15,7 @@ The change description provided by the user. This should describe:
 - Why the change is needed
 - Any urgency or priority context
 
-Example: `/speckit.squad.change "FR-012 payment flow now requires 3DS2 authentication instead of 3DS1"`
+Example: `/speckit.cognitive-squad.change "FR-012 payment flow now requires 3DS2 authentication instead of 3DS1"`
 
 ---
 
@@ -81,8 +81,8 @@ If ACCEPTED:
 6. Notify PROGRESS TRACKER of the re-baseline
 
 7. Resolve re-entry dispatch target:
-   - `BUILD_RESTART` -> resume via `/speckit.squad.build {feature}`
-   - `QA_RESTART` -> resume via `/speckit.squad.verify {feature}`
+   - `BUILD_RESTART` -> resume via `/speckit.cognitive-squad.build {feature}`
+   - `QA_RESTART` -> resume via `/speckit.cognitive-squad.verify {feature}`
 
 If DEFERRED:
 

@@ -272,7 +272,7 @@ COMMANDER decides when to summon specialists based on context:
 | Deliverable | Description |
 |-------------|-------------|
 | Dual naming | Add codenames to all 18 agent prompts |
-| 4-phase model | Refactor `squad.run.md` with phase structure |
+| 4-phase model | Refactor `cognitive-squad.run.md` with phase structure |
 | Autonomy modes | Add `--mode guided\|semi\|banzai` flag |
 | Layer organization | Restructure `agents/` directory by layer |
 | Config updates | Add `banzai` section to `config-template.yml` |

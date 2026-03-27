@@ -16,7 +16,7 @@ Resume a blocked squad run by providing the human's answer to the escalation que
 
 ## Step 1: Validate Input
 
-If `$ARGUMENTS` is empty, report **"Please provide your answer. Usage: /speckit.squad.resume <your answer to the escalation question>"** and stop.
+If `$ARGUMENTS` is empty, report **"Please provide your answer. Usage: /speckit.cognitive-squad.resume <your answer to the escalation question>"** and stop.
 
 ---
 
@@ -119,7 +119,7 @@ Map the blocked `phase` to the appropriate agent to re-dispatch:
 
 Read the appropriate agent prompt file based on the blocked phase.
 
-Assemble the context pack for that phase (follow the same context pack rules as `squad.run.md` for that phase). Add the human's answer prominently:
+Assemble the context pack for that phase (follow the same context pack rules as `cognitive-squad.run.md` for that phase). Add the human's answer prominently:
 
 ```
 ## Human Escalation Response
@@ -141,10 +141,10 @@ Use the **Agent tool** to dispatch the subagent with the appropriate prompt, con
 
 After the re-dispatched agent completes:
 
-1. Verify its expected outputs (per `squad.run.md` phase definitions)
+1. Verify its expected outputs (per `cognitive-squad.run.md` phase definitions)
 2. Run the gate check for that phase
 3. Transition to the next phase as normal
-4. Continue executing the MANAGER state machine from `squad.run.md` through to FINALIZE
+4. Continue executing the MANAGER state machine from `cognitive-squad.run.md` through to FINALIZE
 
 The run proceeds exactly as if the escalation never happened -- the human's answer is now part of the context and the normal flow resumes.
 

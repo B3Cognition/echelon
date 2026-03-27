@@ -839,11 +839,11 @@ git commit -m "feat: add kb-validate-evolution.sh — referential integrity, sco
 ### Task 8: Add validation call to COMMANDER's pre-dispatch sequence
 
 **Files:**
-- Modify: `commands/squad.run.md`
+- Modify: `commands/cognitive-squad.run.md`
 
 - [ ] **Step 1: Add KB evolution validation to preflight section**
 
-In `commands/squad.run.md`, find the preflight section (around line 259-291 where `preflight-speckit.sh` is called). Add after the spec-kit dependency check:
+In `commands/cognitive-squad.run.md`, find the preflight section (around line 259-291 where `preflight-speckit.sh` is called). Add after the spec-kit dependency check:
 
 ```markdown
 ### Preflight: KB Evolution Validation
@@ -861,7 +861,7 @@ scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
 - [ ] **Step 2: Commit**
 
 ```bash
-git add commands/squad.run.md
+git add commands/cognitive-squad.run.md
 git commit -m "feat: add KB evolution validation to COMMANDER pre-dispatch sequence"
 ```
 

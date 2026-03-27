@@ -11,13 +11,13 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 specify extension add cognitive-squad
 
 # Run analysis on your project idea
-/speckit.squad.run "Build a photo album app with sharing and tagging"
+/speckit.cognitive-squad.run "Build a photo album app with sharing and tagging"
 
 # Build with quality gates
-/speckit.squad.build 001-photo-album
+/speckit.cognitive-squad.build 001-photo-album
 
 # Verify 100% spec coverage
-/speckit.squad.verify
+/speckit.cognitive-squad.verify
 
 # Validate the extension setup
 ./scripts/bash/dry-run.sh
@@ -188,17 +188,17 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 | Command | Purpose |
 |---------|---------|
-| `/speckit.squad.run` | Start analysis (Phase 1-3) |
-| `/speckit.squad.build` | Execute build phase |
-| `/speckit.squad.verify` | Check 100% spec coverage |
-| `/speckit.squad.health` | Periodic health check (drift, KB freshness) |
-| `/speckit.squad.status` | Check progress |
-| `/speckit.squad.resume` | Answer squad's question |
-| `/speckit.squad.change` | Handle spec change during build |
-| `/speckit.squad.investigate` | Trigger INVESTIGATOR |
-| `/speckit.squad.innovate` | Trigger MAVERICK |
-| `/speckit.squad.ground` | Trigger REALIST |
-| `/speckit.squad.feedback` | Post-implementation feedback |
+| `/speckit.cognitive-squad.run` | Start analysis (Phase 1-3) |
+| `/speckit.cognitive-squad.build` | Execute build phase |
+| `/speckit.cognitive-squad.verify` | Check 100% spec coverage |
+| `/speckit.cognitive-squad.health` | Periodic health check (drift, KB freshness) |
+| `/speckit.cognitive-squad.status` | Check progress |
+| `/speckit.cognitive-squad.resume` | Answer squad's question |
+| `/speckit.cognitive-squad.change` | Handle spec change during build |
+| `/speckit.cognitive-squad.investigate` | Trigger INVESTIGATOR |
+| `/speckit.cognitive-squad.innovate` | Trigger MAVERICK |
+| `/speckit.cognitive-squad.ground` | Trigger REALIST |
+| `/speckit.cognitive-squad.feedback` | Post-implementation feedback |
 
 ## Configuration
 
@@ -320,8 +320,8 @@ agents/
 └── build/             # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
 commands/
-├── squad.run.md       # Main squad run orchestration
-├── squad.build.md     # Build phase orchestration
+├── cognitive-squad.run.md       # Main squad run orchestration
+├── cognitive-squad.build.md     # Build phase orchestration
 └── squad.*.md         # Other squad commands (11 total)
 docs/
 └── fallback-mode.md   # Fallback mode documentation
