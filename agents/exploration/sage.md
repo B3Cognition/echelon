@@ -232,6 +232,33 @@ Under NO circumstances should quality gate scores be produced from heuristic ana
 
 **If Understanding succeeds**, parse the output for quality gate scores, then continue:
 
+#### 1a. Per-Requirement Analysis (MANDATORY after successful validation)
+
+After Understanding validate succeeds, invoke Understanding with per-requirement mode:
+
+```
+/speckit.understanding.scan <spec_directory>/spec.md --per-req --json --enhanced
+```
+
+Parse the JSON output:
+1. Extract the `requirements` array from the JSON response
+2. For each requirement, compare each category score against the gate threshold from squad-config.yml quality_gates
+3. Filter to requirements where ANY category score falls below its gate threshold
+4. Write the filtered failure list to issues.md under a new section:
+
+```markdown
+## Per-Requirement Failures
+
+| Requirement | Category | Score | Gate | Verdict |
+|------------|----------|-------|------|---------|
+| FR-003 | testability | 0.30 | 0.70 | FAIL |
+```
+
+5. If all requirements pass all gates: write "## Per-Requirement Failures\n\nNone — all requirements pass all category gates."
+6. Only include FAILING requirements and their FAILING metrics (context optimization: O(failing) not O(n*34)).
+
+This data is consumed by CARTOGRAPHER when COMMANDER routes amendments — see FR-003.
+
 #### 1b. Generate Behavioral Diagram
 
 Use the Skill tool to generate the entity relationship diagram:
@@ -262,11 +289,28 @@ This diagram visualizes the spec's entity model — actors, actions, objects, an
 | Cognitive | >= 0.60 | Sweller 1988 |
 | Readability | >= 0.50 | Flesch 1948 |
 | Depth | >= 0.30 | B3 Benchmark v0.1 (Understanding v3.6+) |
+| Behavioral | >= 0.50 | FR-004, Harel 2003/2005 |
 
 For each metric:
 - Record the actual score
 - If below threshold: identify which sections of `spec.md` are pulling the score down
 - Suggest specific improvements with before/after examples
+
+#### 2b. Extract Testability Sub-Metrics for SENTINEL
+
+From the Understanding JSON output (or quality-gates.md), extract and prominently display these testability sub-metrics:
+
+```markdown
+## Testability Sub-Metrics (for SENTINEL consumption)
+
+| Sub-Metric | Score | Interpretation |
+|-----------|-------|---------------|
+| hard_constraint_ratio | {score} | Proportion of requirements with numeric/quantitative thresholds |
+| constraint_density | {score} | Average measurable constraints per requirement |
+| negative_space_coverage | {score} | Proportion of requirements specifying error/edge/boundary cases |
+```
+
+These sub-metrics are consumed by SENTINEL (TEST ARCHITECT) to inform test strategy design. SENTINEL uses them to identify which testability dimension is weakest and prioritize test effort accordingly.
 
 #### 3. Challenge Requirements
 

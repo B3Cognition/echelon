@@ -76,6 +76,18 @@ Read `reasoning-journal.json`. Extract every entry that includes a confidence sc
 - SCIENTIST findings with evidence grades
 - WHY quality gate scores
 
+#### Step 1b: Extract Per-Metric Quality Scores (FR-006)
+
+Read `state.json.quality_scores[]` — each entry now contains ALL 7 category scores: `overall`, `structure`, `readability`, `cognitive`, `semantic`, `testability`, `behavioral`, `depth`.
+
+Also read `quality-gates.md` for the 34 individual metric values if available.
+
+For each WHY pass in the run:
+1. Record all 7 category scores
+2. Append each to `calibration-profile.yaml` `metric_history.{category}[]` with `run_id`, `score`, and `timestamp`
+3. Compute per-metric correction factors: if a metric drops > 0.15 between consecutive runs, flag as REGRESSION in `confidence-flags.md`
+4. Track per-category accuracy trends (not just pass/fail) — this enables AUDITOR to identify which quality dimension is degrading earliest
+
 #### Step 2: Group by Domain
 
 Categorize entries by domain tags (e.g., `backend`, `frontend`, `database`, `security`, `infrastructure`). A single entry may span multiple domains.

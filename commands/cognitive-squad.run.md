@@ -802,8 +802,8 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the SAGE agent operating in **spec-validation mode** (WHY2 — post-WHAT). Run Understanding `validate` against `spec.md` to get deterministic quality scores. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
-- **description:** "SAGE (WHY2): spec validation with Understanding quality gates"
+- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the SAGE agent operating in **spec-validation mode** (WHY2 — post-WHAT). Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for CARTOGRAPHER consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **description:** "SAGE (WHY2): spec validation with Understanding quality gates + per-requirement analysis"
 
 ### Expected Outputs
 
@@ -815,10 +815,9 @@ Use the Agent tool to dispatch a subagent with:
 Read WHY2 outputs:
 
 1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
-2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Increment iteration. Check limits.
-3. **Track quality scores** — append to `state.json.quality_scores[]`
-4. **Convergence check:** If this is iteration >= 2, compare quality scores:
-   - Delta < `convergence_delta` (0.02) for 2 consecutive passes → stop WHY iterations, proceed even if gates not fully met (flag as best-effort)
+2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in CARTOGRAPHER's context pack so CARTOGRAPHER knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
+3. **Track quality scores** — append to `state.json.quality_scores[]` an object with ALL of these fields: `pass` (iteration label), `overall`, `structure`, `readability`, `cognitive`, `semantic`, `testability`, `behavioral`, `depth`. All score values come from Understanding output (quality-gates.md). If a category score is not available, set to `null`.
+4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (0.02) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
 **Transition:** Update state.json phase to "assess". Proceed to ASSESS.
@@ -1090,14 +1089,15 @@ Read and include in the subagent prompt:
 - `plan.md` + `data-model.md`
 - `spec.md` (acceptance criteria)
 - `contracts/`
+- `quality-gates.md` — specifically the "Testability Sub-Metrics" section (hard_constraint_ratio, constraint_density, negative_space_coverage) for testability-informed test strategy
 - `reasoning-journal.json`
 
 ### Dispatch
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/solution/sentinel.md` for your complete instructions. You are the SENTINEL agent. Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to CARTOGRAPHER. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
-- **description:** "SENTINEL: test strategy and coverage mapping"
+- **prompt:** Read the file `agents/solution/sentinel.md` for your complete instructions. You are the SENTINEL agent. Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to CARTOGRAPHER. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **description:** "SENTINEL: testability-informed test strategy and coverage mapping"
 
 ### Expected Outputs
 

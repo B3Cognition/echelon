@@ -55,3 +55,39 @@ entries:
     notes: "FIRST REAL FEEDBACK ENTRY. Estimated 7.5h (P0+P1), actual 0.6h (35 min). 12.5x overestimate. Root cause: estimates used human-developer reference class; Claude Code executes md/yaml edits in seconds. Correction factor 0.08. 6 connections implemented + 1 orphan fix. All unit tests pass. Registry sync 42/42."
     run_type: implementation_run
     feedback_source: human
+
+  - id: est-004
+    run_id: squad-1774681342
+    spec_id: "squad-1774681342"
+    created_at: 2026-03-28T20:00:00Z
+    agent: AUDITOR
+    domain: understanding-integration
+    estimate_hours: 0.58
+    actual_hours: null
+    delta_hours: null
+    confidence: 0.65
+    source: "tasks.md (squad-1774681342)"
+    assess_raw_hours: 7.25
+    assess2_adjusted_hours: 0.58
+    correction_factor: 0.08
+    quality_convergence_iterations: 1
+    notes: "15 tasks across P0+P1. Raw estimate 7.25h (from estimates.md sum of all corrected estimates). Corrected 0.58h (~35 min) using 0.08 factor. Analysis-only spec, WHY2 best-effort (structure 0.29, semantic 0.57). No feedback yet."
+    run_type: validation_run
+
+  - id: est-005
+    run_id: squad-1774684827
+    spec_id: "squad-1774684827-futures"
+    created_at: 2026-03-28T22:00:00Z
+    agent: AUDITOR
+    domain: strategic-futures-analysis
+    estimate_hours: 2.0
+    actual_hours: null
+    delta_hours: null
+    confidence: 0.40
+    source: "confidence-flags.md (squad-1774684827)"
+    assess_raw_hours: 2.0
+    assess2_adjusted_hours: 2.0
+    correction_factor: null
+    quality_convergence_iterations: 0
+    notes: "Futures analysis run: 3 tasks (CARTOGRAPHER, GATEKEEPER, FINALIZE). 6 artifacts produced, 12 prior artifacts consumed, 3 KB files read. Estimated 2h for strategic analysis. Note: the 0.08 correction factor for md/yaml does NOT apply to strategic reasoning work -- reasoning time cannot be compressed like config editing. New domain 'strategic-futures-analysis' needs its own correction factor, likely 0.5-0.8. No feedback yet."
+    run_type: analysis_run
