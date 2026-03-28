@@ -246,13 +246,30 @@ The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its o
 
 ### 1.2 Create Staging Area
 
-The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outputs go to a staging area:
+The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outputs go to a staging area.
 
-```
+**Archive prior run before wiping.** If staging contains artifacts from a completed prior run, archive them so project knowledge persists:
+
+```bash
+# Archive prior staging artifacts if they exist
+if [ -d ".specify/squad/staging" ] && [ "$(ls .specify/squad/staging/ 2>/dev/null)" ]; then
+  # Read prior run_id from state.json (if available)
+  PRIOR_RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+  ARCHIVE_DIR=".specify/squad/archive/${PRIOR_RUN_ID}"
+  mkdir -p "$ARCHIVE_DIR"
+  cp -r .specify/squad/staging/* "$ARCHIVE_DIR/" 2>/dev/null || true
+  # Also archive state.json snapshot
+  cp .specify/squad/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
+  echo "Archived prior run ${PRIOR_RUN_ID} → ${ARCHIVE_DIR}/"
+fi
+
+# Now safe to wipe staging
 rm -rf .specify/squad/staging
 mkdir -p .specify/squad/staging
 mkdir -p .specify/squad
 ```
+
+**Archive structure:** `.specify/squad/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.json, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
 
 **Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `/speckit.specify`, which creates the branch and directory structure.
 
@@ -347,6 +364,31 @@ If user specifies a prior spec (e.g., "continue with 012-feature"):
 - Set `iteration` to prior iteration + 1
 - Set `spec_id` and `spec_dir` in state.json
 - Note: EVOLVE will diff against prior artifacts during FINALIZE
+
+**Load from archive (automatic):** If no explicit prior spec is given but `.specify/squad/archive/` contains prior runs:
+
+```bash
+# Find the most recent archived run
+LATEST_ARCHIVE=$(ls -td .specify/squad/archive/squad-* 2>/dev/null | head -1)
+if [ -n "$LATEST_ARCHIVE" ]; then
+  echo "Prior run found: ${LATEST_ARCHIVE}"
+  # Read prior reasoning journal for continuity
+  if [ -f "${LATEST_ARCHIVE}/reasoning-journal.json" ]; then
+    # Include prior journal entries as context for all agents
+    PRIOR_JOURNAL="${LATEST_ARCHIVE}/reasoning-journal.json"
+  fi
+  # Read prior issues for regression tracking
+  if [ -f "${LATEST_ARCHIVE}/issues.md" ]; then
+    PRIOR_ISSUES="${LATEST_ARCHIVE}/issues.md"
+  fi
+  # Read prior quality scores for convergence comparison
+  if [ -f "${LATEST_ARCHIVE}/state.json" ]; then
+    PRIOR_QUALITY=$(python3 -c "import json; s=json.load(open('${LATEST_ARCHIVE}/state.json')); print(json.dumps(s.get('quality_scores',[])))" 2>/dev/null)
+  fi
+fi
+```
+
+Prior run data is included in agent context packs so the squad can track improvement, detect regressions, and avoid re-discovering the same issues.
 
 ### 1.6 Load Configuration
 
@@ -1389,13 +1431,36 @@ Ready for: /speckit.cognitive-squad.build {NNN}-{feature}
 ============================================
 ```
 
-### 12.9 Cleanup Staging Area
+### 12.9 Archive and Cleanup Staging Area
 
-Remove the staging directory after successful completion:
+Archive the completed run artifacts, then clean staging:
 
 ```bash
+# Archive this run's artifacts
+RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+ARCHIVE_DIR=".specify/squad/archive/${RUN_ID}"
+mkdir -p "$ARCHIVE_DIR"
+cp -r .specify/squad/staging/* "$ARCHIVE_DIR/" 2>/dev/null || true
+cp .specify/squad/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
+echo "Run archived → ${ARCHIVE_DIR}/"
+
+# Clean staging for next run
 rm -rf .specify/squad/staging
 ```
+
+**What's preserved in the archive:**
+- `spec.md`, `tasks.md`, `plan.md` — the analysis products
+- `issues.md`, `quality-gates.md` — findings and quality scores
+- `reasoning-journal.json` — full decision log
+- `state.json` — run state snapshot
+- All specialist outputs (threat-model.md, etc.)
+
+**What lives in knowledge-base/ (already persistent):**
+- `calibration-profile.yaml` — per-domain accuracy corrections
+- `estimates-log.yaml` — predicted vs actual effort records
+- `patterns.yaml`, `pitfalls.yaml` — reusable learnings
+- `feedback/` — post-implementation outcome data
+- `agent-scores.yaml` — agent performance history
 
 ### 12.10 Branch Stacking (Next Spec)
 

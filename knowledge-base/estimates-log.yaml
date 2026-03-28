@@ -18,3 +18,40 @@ entries:
     assess2_adjusted_hours: 81.65
     correction_factor: 1.214
     quality_convergence_iterations: 2
+
+  - id: est-002
+    run_id: squad-1774654610
+    spec_id: "squad-1774654610"
+    created_at: 2026-03-28T00:00:00Z
+    agent: AUDITOR
+    domain: cognitive-orchestration
+    estimate_hours: 3.5
+    actual_hours: null
+    delta_hours: null
+    confidence: 0.52
+    source: estimates.md (squad-1774654610)
+    assess_raw_hours: 3.5
+    assess2_adjusted_hours: 4.25
+    correction_factor: 1.214
+    quality_convergence_iterations: 3
+    notes: "Brownfield analysis + task planning run. Estimated 3.5h from estimates.md. ASSESS2 uplift: 4.25h (1.214 correction factor from framework-modification domain). Quality: overall 0.6399, testability gap structural (0.4873). No feedback collected yet — actual_hours will be null until /speckit.cognitive-squad.feedback is run. 3 WHY passes (WHY1, WHY2, WHY2-rerun). Spec format was brownfield analysis, not BDD — this likely reduces testability convergence in future runs of similar type."
+    run_type: validation_run
+
+  - id: est-003
+    run_id: squad-1774677025
+    spec_id: "007"
+    created_at: 2026-03-28T18:00:00Z
+    agent: FEEDBACK
+    domain: cognitive-orchestration
+    estimate_hours: 7.5
+    actual_hours: 0.6
+    delta_hours: -6.9
+    confidence: 0.30
+    source: "feedback/007-cognitive-squad-6-connections.yaml"
+    assess_raw_hours: 3.5
+    assess2_adjusted_hours: 7.5
+    correction_factor: 0.08
+    quality_convergence_iterations: 3
+    notes: "FIRST REAL FEEDBACK ENTRY. Estimated 7.5h (P0+P1), actual 0.6h (35 min). 12.5x overestimate. Root cause: estimates used human-developer reference class; Claude Code executes md/yaml edits in seconds. Correction factor 0.08. 6 connections implemented + 1 orphan fix. All unit tests pass. Registry sync 42/42."
+    run_type: implementation_run
+    feedback_source: human
