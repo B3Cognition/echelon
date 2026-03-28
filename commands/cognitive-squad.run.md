@@ -729,7 +729,7 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 
 ### 4.2 Dispatch CARTOGRAPHER
 
-CARTOGRAPHER calls `/speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls reverse-eng and SAGE calls Understanding CLI. COMMANDER does NOT call `/speckit.specify`.
+CARTOGRAPHER calls `/speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls reverse-eng and SAGE calls Understanding via Skill tool. COMMANDER does NOT call `/speckit.specify`.
 
 Use the Agent tool to dispatch a subagent with:
 
@@ -759,46 +759,42 @@ After CARTOGRAPHER completes, read its output to get the created `spec_id` and `
 
 ## 5. WHY2 Phase (Spec Validation)
 
-### Preflight: Understanding CLI Availability (HARD STOP)
+### Preflight: Understanding Extension Availability (HARD STOP)
 
-Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding CLI is available:
+Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding is available. SAGE invokes Understanding via the Skill tool (`/speckit.understanding.validate`), not as a CLI binary. PROSPECTOR's `extension-capabilities.json` should list Understanding as available.
 
-```bash
-scripts/bash/run-understanding.sh --help 2>/dev/null || understanding --version 2>/dev/null
-```
-
-If exit code is non-zero (Understanding CLI not installed or not working):
+If Understanding extension is not available (PROSPECTOR did not find `speckit.understanding.*` skills):
 
 1. Set `state.json.status` to `"blocked"`
-2. Set `state.json.blocked_reason` to `"Understanding CLI unavailable — required for WHY2/WHY3 spec validation"`
+2. Set `state.json.blocked_reason` to `"Understanding extension unavailable — required for WHY2/WHY3 spec validation"`
 3. Print to terminal:
 
 ```
 ============================================
-  SQUAD BLOCKED — UNDERSTANDING CLI REQUIRED
+  SQUAD BLOCKED — UNDERSTANDING REQUIRED
 ============================================
 
 Phase: WHY2 (spec-validation)
-Required: understanding CLI (installed at ~/.local/bin/understanding)
+Required: Understanding extension (speckit.understanding.validate)
 
 Heuristic fallback is NOT permitted.
 Prior run (PAT-006) proved heuristic scoring is 15-29% overconfident,
 producing misleading quality gates that corrupt calibration data.
 
-Install: See Understanding CLI documentation.
+Install: specify extension add understanding
 ============================================
 ```
 
 4. **STOP execution.** Do not dispatch SAGE. Do not proceed.
 
-Persist `state.json.dependency_checks.understanding_cli` with `status`, `checked_at`.
+Persist `state.json.dependency_checks.understanding` with `status`, `checked_at`.
 
 ### Context Pack Assembly
 
 Read and include in the subagent prompt:
 
 - All current artifacts in `specs/{feature}/`
-- Understanding CLI access (via `scripts/bash/run-understanding.sh`)
+- Understanding access (via `/speckit.understanding.validate` Skill tool)
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 
@@ -1165,7 +1161,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 ### 11.1 WHY3 Context Pack
 
 - All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
-- Understanding CLI access
+- Understanding access (via `/speckit.understanding.validate` Skill tool)
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 

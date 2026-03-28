@@ -62,7 +62,7 @@ Validate DISCOVER's outputs before the WHAT agent builds requirements on top of 
 - `reference-architectures.md` (greenfield only)
 - `reasoning-journal.json` — prior agent reasoning
 
-**This mode does NOT run Understanding metrics.** No spec exists yet. Understanding CLI is not required for WHY1.
+**This mode does NOT run Understanding metrics.** No spec exists yet. Understanding is not required for WHY1.
 
 ### Process
 
@@ -193,7 +193,7 @@ All current artifacts:
 - `assumption-review.md` (from WHY1, if it ran)
 - `reasoning-journal.json`
 - `calibration-profile.yaml` (if available from knowledge base)
-- Access to Understanding CLI
+- Access to Understanding (via `/speckit.understanding.validate` Skill tool)
 
 ### Process
 
