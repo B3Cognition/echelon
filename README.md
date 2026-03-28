@@ -6,10 +6,31 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 
 ## Quick Start
 
-```bash
-# Install
-specify extension add cognitive-squad
+### First-time install
 
+```bash
+# 1. Install spec-kit with --dev update support
+uv tool install specify-cli --force --from "git+https://github.com/Testimonial/qag-spec-kit.git@35bc7c7"
+
+# 2. Clone cognitive-squad
+git clone https://github.com/Testimonial/cognitive-squad.git /tmp/cognitive-squad
+
+# 3. Install as dev extension
+specify extension add --dev /tmp/cognitive-squad
+```
+
+### Update to latest version
+
+```bash
+cd /tmp/cognitive-squad && git pull
+specify extension update --dev /tmp/cognitive-squad
+```
+
+Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
+
+### Usage
+
+```bash
 # Run analysis on your project idea
 /speckit.cognitive-squad.run "Build a photo album app with sharing and tagging"
 
@@ -18,6 +39,9 @@ specify extension add cognitive-squad
 
 # Verify 100% spec coverage
 /speckit.cognitive-squad.verify
+
+# Close the learning loop after implementation
+/speckit.cognitive-squad.feedback 001
 
 # Validate the extension setup
 ./scripts/bash/dry-run.sh
