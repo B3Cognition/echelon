@@ -153,6 +153,20 @@ For each failing requirement, apply the category-specific fix:
 
 If the failure list is empty ("None — all requirements pass"), do NOT modify any requirements. This is a no-op amendment.
 
+## Entity Coverage Check (if entity analysis available)
+
+If Understanding's `--json` output includes `entity_analysis`, check for coverage gaps:
+
+1. Read the `entities` array and extract all unique actors
+2. Compare against the glossary terms — are there glossary actors with no requirements?
+3. Compare against the requirement set — are there actors that appear in requirements but not in the glossary?
+
+**Flag gaps:**
+- "ADMIN defined in glossary but has no requirements referencing admin as an actor"
+- "PAYMENT_PROCESSOR appears in FR-012 but is not defined in the glossary"
+
+Report gaps in the spec amendment notes. Do NOT create requirements for missing actors — flag them for the user to decide.
+
 ## Constraints
 
 These are non-negotiable rules:
