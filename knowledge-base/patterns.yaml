@@ -10,7 +10,7 @@ entries:
     description: When CRITICAL findings are converted into explicit contingent acceptance criteria and blocked-story preconditions, a single amendment pass can remove blockers without architecture churn.
     tags: ["why2", "cartographer", "acceptance-criteria", "reroute-reduction"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-002
@@ -23,7 +23,7 @@ entries:
     description: Running SYNTHESIZER before assumption challenge exposes cross-document contradictions early, reducing late-phase rework in WHAT and HOW.
     tags: ["synthesizer", "discover", "why1", "consistency"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-003
@@ -36,7 +36,7 @@ entries:
     description: ADRs that explicitly map decisions to constitution principles pass final governance checks with fewer follow-up corrections.
     tags: ["how", "adr", "constitution", "governance"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-004
@@ -49,7 +49,7 @@ entries:
     description: SENTINEL-style mapping of all acceptance criteria to test IDs improves implementability clarity and enables PLAN2 to resolve most consensus issues without returning to WHAT.
     tags: ["sentinel", "coverage-map", "implementability", "consensus"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-005
@@ -62,7 +62,7 @@ entries:
     description: Using ASSESS baseline estimates and ASSESS2 complexity uplift captures hidden integration cost and produces execution-ready planning numbers.
     tags: ["assess", "assess2", "estimation", "reality-check"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-006
@@ -78,7 +78,7 @@ entries:
     description: When heuristic quality reviews pass but deterministic tooling (Understanding v3.4.0) fails, the heuristic was overconfident by 15-29% on structure/testability. Always run deterministic tooling when available; treat heuristic as estimate only.
     tags: ["why2", "deterministic", "heuristic", "quality-gate", "understanding"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-007
@@ -94,7 +94,7 @@ entries:
     description: Splitting 24 repos across 4 category-focused scouts (Orchestration, Logic, Datalog, Cognitive) achieved 70% time reduction vs sequential analysis. Group by domain category, not alphabetically or by size.
     tags: ["discover", "parallel", "scout", "categorization", "time-reduction"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
     scope: local_only
 
   - id: PAT-008
@@ -110,5 +110,31 @@ entries:
     description: SYNTHESIZER LOC claims were off by 4-7x due to cherry-picking single files. Every LOC claim must be verified with cloc or wc -l on the full relevant directory, not single files.
     tags: ["why1", "loc", "verification", "cloc", "adversarial"]
     status: active
-    project_fingerprint: null
+    project_fingerprint: "5672a686e71a"
+    scope: local_only
+
+  - id: PAT-009
+    name: Double-Breakage Detection via Parallel Assumption Challenge
+    domain: squad-orchestration
+    evidence_grade: D
+    source: squad-1774654610, reasoning-journal entries RJ-013 and RJ-011
+    validated_by_feedback: false
+    confidence: 0.78
+    description: When a loop or feature appears broken, challenging the input AND output assumptions simultaneously reveals double-break patterns that single-path analysis misses. Specifically, running WHY adversarial challenge against both the "data is collected" assumption and the "data is consumed" assumption found the feedback loop broken at both ends — a pattern invisible if only one assumption is challenged.
+    tags: ["why1", "adversarial", "loop-analysis", "double-break", "assumption-challenge"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
+
+  - id: PAT-010
+    name: Brownfield Intelligence Gathered Before SCOUT Dispatch Reduces Iterations
+    domain: squad-orchestration
+    evidence_grade: D
+    source: squad-1774654610, reasoning-journal entries RJ-001 through RJ-009 (DISCOVER phase)
+    validated_by_feedback: false
+    confidence: 0.72
+    description: In brownfield analysis runs, conducting direct file inspection and git history analysis within the DISCOVER phase (before dispatching specialized SCOUTs) allowed SYNTHESIZER to confirm 22 contradictions and 4 structural patterns without additional agent dispatches. When the codebase is accessible and small enough to read directly, inline intelligence reduces SCOUT round-trips.
+    tags: ["discover", "brownfield", "scout", "pre-gathering", "git-history"]
+    status: active
+    project_fingerprint: eafaa0807e7b
     scope: local_only

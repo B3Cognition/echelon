@@ -228,6 +228,51 @@ In Phase 1 (`endocrine.phase: 1`), only adrenaline is active. Dopamine, cortisol
 
 Before any mode detection or agent dispatch, COMMANDER must:
 
+### 0. Read Knowledge-Base Learning Outputs
+
+**This step is mandatory on every run. Files may not exist on the first run — skip gracefully.**
+
+Read the following files from `knowledge-base/`:
+
+1. `knowledge-base/calibration-profile.yaml` — per-domain accuracy corrections for GATEKEEPER
+2. `knowledge-base/patterns.yaml` — reusable patterns for context injection into agents
+3. `knowledge-base/pitfalls.yaml` — known failure modes for context injection into agents
+4. `knowledge-base/agent-scores.yaml` — historical agent performance for dispatch decisions
+
+For each file: if it exists, read and extract relevant fields. If absent, note absence and continue without error.
+
+**After reading, append to `reasoning-journal.json`:**
+
+```json
+{
+  "id": "RJ-<sequential>",
+  "type": "init_knowledge_read",
+  "agent": "COMMANDER",
+  "timestamp": "<ISO 8601>",
+  "files_read": ["<list of files that existed and were read>"],
+  "files_absent": ["<list of files that did not exist>"],
+  "cold_start": true
+}
+```
+
+**Cold-start detection:** If `knowledge-base/feedback/` does not exist OR contains fewer than 3 files, set `cold_start: true` and append a warning entry:
+
+```json
+{
+  "id": "RJ-<sequential+1>",
+  "type": "cold_start_warning",
+  "agent": "COMMANDER",
+  "timestamp": "<ISO 8601>",
+  "message": "COLD START: no real feedback data. calibration-profile.yaml values are proxy-estimated. Run /speckit.cognitive-squad.feedback after this project completes to start improving calibration accuracy."
+}
+```
+
+**Calibration application rule:** For each domain in `calibration-profile.yaml`, read `sample_size`. Only apply the domain's accuracy value as a correction factor to GATEKEEPER if `sample_size >= 3`. Below-threshold values are logged as informational only and do not affect estimates.
+
+Set `state.json` field `init_reads.completed: true` after this step.
+
+---
+
 ### 1. Dispatch GUARDIAN (always-on by default)
 
 Check `squad-config.yml` for `specialists.guardian_mode`:
@@ -306,6 +351,16 @@ When `/speckit.cognitive-squad.build` is invoked, the MANAGER enters the BUILD s
 BUILD_INIT
   │ validate Phase A artifacts exist (tasks.md, spec.md, constitution.md, research.md)
   │ parse tasks, resolve dependencies, determine build order
+  │
+  ▼
+PRE-BUILD: VALIDATOR DISPATCH (mandatory — exactly once per run)
+  │ dispatch VALIDATOR (internalization gate) before any build agent
+  │ block until verdict: INTERNALIZED | PARTIAL | FAILED
+  │   INTERNALIZED → proceed to FOR EACH task
+  │   PARTIAL      → log doubts in reasoning-journal.json, proceed with enhanced context packs
+  │   FAILED       → escalate to human — build cannot proceed
+  │ append reasoning-journal.json entry: type "validator_dispatch"
+  │ VALIDATOR is NEVER dispatched again in this run (phase_gate uses VERIFICATION)
   │
   ▼
 FOR EACH task (ordered by phase group, then dependency order):

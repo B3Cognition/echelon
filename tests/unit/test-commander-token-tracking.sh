@@ -32,7 +32,14 @@ assert_grep "total_estimated_tokens" "commander.md tracks cumulative total"
 
 # Budget check before dispatch
 assert_grep "Budget Check Before Dispatch" "commander.md has budget check section"
-assert_grep "budget.total_tokens" "commander.md references budget config"
+assert_grep "analysis.token_budget_k" "commander.md references correct budget config key"
+# Negative assertion: old broken key must not appear
+if grep -q "budget\.total_tokens" "$COMMANDER"; then
+  echo "FAIL: commander.md still references non-existent budget.total_tokens key"
+  FAILURES=$((FAILURES + 1))
+else
+  echo "PASS: commander.md does not reference non-existent budget.total_tokens key"
+fi
 assert_grep "BUDGET_EXHAUSTED" "commander.md defines budget exhausted signal"
 
 # Dispatch logging

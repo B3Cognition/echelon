@@ -618,7 +618,7 @@ agents:
   VETERAN:
     codename: VETERAN
     function: GLOBAL_MEMORY
-    file: agents/learning/global-memory.md
+    file: agents/learning/veteran.md
     layer: learning
     phase: build
     role: "Cross-project knowledge — promotes validated learnings to global memory"
@@ -667,7 +667,7 @@ routing:
   build_sequence: [IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN]
 
   # Phase gate agents:
-  phase_gate: [INTEGRATOR, VALIDATOR]
+  phase_gate: [INTEGRATOR, VERIFICATION]
 
   # Continuous monitors:
   continuous: [PROGRESS_TRACKER, MODELER, MONITOR, SCOREKEEPER]
