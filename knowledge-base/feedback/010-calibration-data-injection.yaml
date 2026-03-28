@@ -1,0 +1,52 @@
+spec_id: "010"
+project_name: "calibration-data-injection"
+feedback_date: "2026-03-28T12:30:00Z"
+run_id: "build-010"
+domain: "cognitive-orchestration"
+
+effort:
+  estimated_hours: 1.0          # 1 hr from spec
+  actual_hours: 0.1             # ~6 min — 4 file edits
+  accuracy_ratio: 0.10          # 10x overestimate
+  notes: "Spec estimated 1 hr including endocrine.sh bash changes (1.0 correction factor for scripts). Actual: endocrine.sh change was 35 lines of Python-in-bash, executed in one Edit call. The 1.0 correction factor for bash scripts is too high when the change is a self-contained function addition."
+
+architecture_decisions:
+  - decision: "Inject calibration via endocrine get_full_prompt_modifier (reuse existing delivery mechanism)"
+    held: "yes"
+    notes: "Clean integration — endocrine already runs at dispatch time, adding [CALIBRATION] section was natural."
+  - decision: "SCOREKEEPER records failure_modes in agent-scores.yaml"
+    held: "yes"
+    notes: "Format defined, categories listed. Will validate on next real run."
+  - decision: "COMMANDER Step 0 builds calibration_map from agent-scores.yaml"
+    held: "yes"
+    notes: "Pseudocode provided. Actual Python parsing left to COMMANDER's runtime."
+
+requirements:
+  total_count: 5
+  correct_count: 4
+  needed_clarification: 0
+  missing: []
+  unnecessary: []
+  deferred:
+    - "FR-005 (measurable improvement proof) — requires 3+ sequential runs to validate"
+
+risks:
+  - risk: "Calibration data injection increases prompt length beyond context window"
+    materialized: false
+    actual_impact: "Calibration block is ~5 lines per agent — negligible context impact"
+  - risk: "agent-scores.yaml format incompatible with Python parsing in endocrine.sh"
+    materialized: false
+    actual_impact: "Python yaml.safe_load handles the format; fallback to COLD START on error"
+  unpredicted: []
+
+test_strategy:
+  implementation_gaps:
+    - "No end-to-end test of calibration injection pipeline (would need a mock squad run)"
+    - "endocrine.sh calibration block untested with real agent-scores data (only cold-start path exists)"
+  production_gaps: []
+  over_tested: []
+
+scientist_recommendations: []
+
+quality_scores:
+  notes: "No Understanding scan — these are infrastructure changes to dispatch pipeline"

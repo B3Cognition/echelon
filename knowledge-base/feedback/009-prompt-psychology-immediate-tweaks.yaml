@@ -1,0 +1,44 @@
+spec_id: "009"
+project_name: "prompt-psychology-immediate-tweaks"
+feedback_date: "2026-03-28T12:30:00Z"
+run_id: "build-009"
+domain: "prompt-engineering"
+
+effort:
+  estimated_hours: 0.5          # 30 min from spec, corrected at 0.08
+  actual_hours: 0.08            # ~5 min — single agent dispatched, 42 Edit tool calls
+  accuracy_ratio: 0.16          # 6x overestimate even with 0.08 correction
+  notes: "Spec estimated 30 min for manual edits. Agent tool batch-edited 42 files in one dispatch (~5 min wall clock). The 0.08 correction factor is still too high for pure prompt-text edits executed by a subagent."
+
+architecture_decisions:
+  - decision: "Apply expert personas to top 12 agents, lighter touch for remaining 30"
+    held: "yes"
+    notes: "12 full persona rewrites + 30 accountability lines. Clean separation worked — no conflicts."
+  - decision: "Defer FR-002 (primacy/recency ordering) as structural rewrite"
+    held: "yes"
+    notes: "Correct call — reordering sections in 42 prompts is a different kind of change than adding lines."
+
+requirements:
+  total_count: 3
+  correct_count: 2
+  needed_clarification: 0
+  missing:
+    - "No spec for the remaining 30 agents' persona upgrades — only accountability lines were specified"
+  unnecessary: []
+
+risks:
+  - risk: "Persona changes alter agent behavior unexpectedly"
+    materialized: false
+    actual_impact: "No behavioral change observed — changes are additive"
+  unpredicted: []
+
+test_strategy:
+  implementation_gaps:
+    - "No automated test for persona content quality — only registry sync tested"
+  production_gaps: []
+  over_tested: []
+
+scientist_recommendations: []
+
+quality_scores:
+  notes: "No Understanding scan — these are prompt edits, not a spec document"

@@ -91,3 +91,35 @@ entries:
     quality_convergence_iterations: 0
     notes: "Futures analysis run: 3 tasks (CARTOGRAPHER, GATEKEEPER, FINALIZE). 6 artifacts produced, 12 prior artifacts consumed, 3 KB files read. Estimated 2h for strategic analysis. Note: the 0.08 correction factor for md/yaml does NOT apply to strategic reasoning work -- reasoning time cannot be compressed like config editing. New domain 'strategic-futures-analysis' needs its own correction factor, likely 0.5-0.8. No feedback yet."
     run_type: analysis_run
+
+  - id: est-006
+    run_id: build-009
+    spec_id: "009"
+    created_at: 2026-03-28T12:30:00Z
+    agent: FEEDBACK
+    domain: prompt-engineering
+    estimate_hours: 0.5
+    actual_hours: 0.08
+    delta_hours: -0.42
+    confidence: 0.25
+    source: "feedback/009-prompt-psychology-immediate-tweaks.yaml"
+    correction_factor: 0.16
+    notes: "Spec 009: 42 agent file edits. Estimated 30 min, actual 5 min. Subagent batch-edited all 42 files in one dispatch. New domain 'prompt-engineering' — correction factor 0.16 for batch prompt edits."
+    run_type: implementation_run
+    feedback_source: human
+
+  - id: est-007
+    run_id: build-010
+    spec_id: "010"
+    created_at: 2026-03-28T12:30:00Z
+    agent: FEEDBACK
+    domain: cognitive-orchestration
+    estimate_hours: 1.0
+    actual_hours: 0.1
+    delta_hours: -0.9
+    confidence: 0.30
+    source: "feedback/010-calibration-data-injection.yaml"
+    correction_factor: 0.10
+    notes: "Spec 010: 4 files (commander.md, endocrine.sh, scorekeeper.md, run.md). Estimated 1h, actual 6 min. Even bash script changes (endocrine.sh) executed fast as self-contained function additions. Correction factor declining: est-003=0.08, est-007=0.10. Average ~0.09."
+    run_type: implementation_run
+    feedback_source: human
