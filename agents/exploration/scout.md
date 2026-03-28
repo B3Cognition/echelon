@@ -44,24 +44,51 @@ You will receive a mode indicator from the MANAGER: either `greenfield` or `brow
 
 You are analyzing an existing codebase. Your goal is to extract understanding that goes far beyond what a directory listing provides.
 
-### Step 1: Check for GOLDDIGGER brownfield context
+### Step 1: Check for GOLDDIGGER extraction artifacts
+
+Read `state.json` to check if GOLDDIGGER produced artifacts:
 
 ```bash
-ls .specify/squad/brownfield-index.md 2>/dev/null
+# WARNING: Do NOT add print() statements — they corrupt state.json
+python3 -c "
+import json
+with open('.specify/squad/state.json', 'r') as f:
+    s = json.load(f)
+status = s.get('golddigger_status', 'absent')
+artifacts = s.get('golddigger_artifacts', {})
+print(json.dumps({'status': status, 'artifacts': artifacts}))
+"
 ```
 
-**If present:** Read `.specify/squad/brownfield-index.md` as your enriched starting point. Use it to:
-- Seed `glossary.md` with domain names and terminology from the Domain Inventory
-- Seed `mental-model.md` topology from the dependency relationships between domains
-- Seed `boundaries.md` with entry points and External Integrations
-- Seed `unknowns.md` with hotspot files (high churn signals hidden complexity)
-- Seed `assumptions.md` from the Tech Stack (version constraints, framework conventions)
+**If `golddigger_status` is `complete` or `partial`:**
 
-Treat the index as a validated head-start, not as a complete answer. Enrich, validate, and extend every section — do not copy blindly.
+Read the artifacts directly — no intermediate normalization layer.
 
-**If absent:** Proceed with manual analysis (Steps 2-4 cover this). Log in your reasoning journal: "GOLDDIGGER brownfield-index.md not present — proceeding with manual structural analysis."
+**Polyrepo mode** (if `golddigger_artifacts.manifest` exists):
 
-Note: how the brownfield context was generated (from reverse-eng, a future tool, or manual analysis) is invisible to you and to all downstream agents. Your job is to produce the standard output artifacts regardless of source.
+1. Read `.specify/reverse-eng/repos-manifest.json` for repo list
+2. Read `.specify/reverse-eng/cross-repo.json` for dependency links and shared tech
+3. For each repo: read `.specify/reverse-eng/{repo}/analysis.json` for structure, dependencies, git history, hotspots
+4. If domain specs exist (from auto-promoted full-depth repos): read `specs/NNN-re-{repo}-{domain}/spec.md`
+
+Use the data to seed your output artifacts:
+- `repos-manifest.json` → seeds **boundaries** (each repo is a top-level boundary)
+- `cross-repo.json` → seeds **dependencies** between boundaries and **integration points**
+- Per-repo `analysis.json` → seeds **glossary** (tech stack, entry points), **mental-model** (domain inventory, hotspots)
+- Per-repo domain specs (if exist) → seeds **assumptions** and **unknowns** with evidence
+
+**Single-repo mode** (if `golddigger_artifacts.analysis` exists):
+
+1. Read `.specify/reverse-eng/analysis.json` for structure, dependencies, git history, hotspots
+2. If domain specs exist: read `specs/NNN-re-{domain}/spec.md`
+
+Use the data to seed your output artifacts:
+- `analysis.json` → seeds **glossary**, **mental-model**, **boundaries**
+- Domain specs (if exist) → seeds **assumptions** and **unknowns**
+
+**If `golddigger_status` is `failed` or absent:** Proceed with manual analysis (Steps 2-4). Log in your reasoning journal: "GOLDDIGGER artifacts not available — proceeding with manual structural analysis."
+
+Treat extraction artifacts as a validated head-start, not as a complete answer. Enrich, validate, and extend every section — do not copy blindly.
 
 ### Step 2: Structural Analysis
 
@@ -102,7 +129,7 @@ Synthesize all findings into the output artifacts (see Output Requirements below
 
 ### Step 6: Evaluate Domain Depth for Deep Dive Requests (brownfield only)
 
-If `brownfield-index.md` was present (from GOLDDIGGER Mode 1 survey), evaluate whether any domain needs deeper structural analysis via GOLDDIGGER Mode 2.
+If GOLDDIGGER artifacts were present, evaluate whether any domain needs deeper structural analysis via GOLDDIGGER Mode 2.
 
 For each domain in the Domain Inventory, assess whether the survey-level signatures were sufficient for your outputs:
 
@@ -122,7 +149,8 @@ with open('.specify/squad/state.json', 'r') as f:
 
 s.setdefault('golddigger_requests', []).append({
     'domain': '<domain-name>',
-    'requester': 'SCOUT',
+    'repo': '<repo-name-or-null>',
+    'requested_by': 'SCOUT',
     'reason': '<specific reason — e.g., boundary ambiguity between auth and user-mgmt domains, cannot infer auth provider topology from signatures>'
 })
 
@@ -131,7 +159,9 @@ with open('.specify/squad/state.json', 'w') as f:
 "
 ```
 
-COMMANDER will process the queue after your dispatch completes and before the next Phase 1 agent runs. The deep-dive results will be available in `.specify/squad/golddigger-cache/<domain>.md` for downstream agents.
+In polyrepo mode, always include the `repo` field so COMMANDER can dispatch GOLDDIGGER to the correct repo subdirectory. In single-repo mode, set `repo` to `null`.
+
+COMMANDER will process the queue after your dispatch completes and before the next Phase 1 agent runs. Deep-dive results will be available in `.specify/squad/golddigger-cache/{repo}--{domain}.md` (polyrepo) or `.specify/squad/golddigger-cache/{domain}.md` (single-repo).
 
 **Do NOT request Mode 2 for every domain.** Only request it when the survey-level data is genuinely insufficient for your outputs. Most domains can be adequately mapped from signatures alone. A good heuristic: if you had to write "unclear" or "insufficient data" in your artifacts for a specific domain, that domain is a candidate.
 
