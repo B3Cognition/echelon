@@ -88,6 +88,22 @@ If no mode is specified, infer from context:
 
 ### Process
 
+#### Step 0: Read Requirement Dependency Graph (if available)
+
+If `quality-gates.md` contains a "## Dependency Graph" section (populated by SAGE from Understanding output), read the adjacency data:
+
+```
+FR-001 → [FR-003, FR-005, FR-007]  (3 dependents)
+FR-002 → []                         (0 dependents)
+FR-003 → [FR-001]                   (references FR-001)
+```
+
+**Task ordering rule:** Requirements with the highest in-degree (most other requirements depend on them) SHOULD be implemented in earlier phases. This is because:
+- A bug in FR-001 (referenced by 3 others) has 3x the blast radius of a bug in FR-002 (referenced by none)
+- Implementing foundations first reduces rework
+
+If no dependency graph is available, proceed with the standard phase-based ordering from plan.md.
+
 #### 1. Task Decomposition
 
 Break the plan into concrete tasks organized by phase:

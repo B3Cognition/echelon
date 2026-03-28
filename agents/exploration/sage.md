@@ -259,6 +259,13 @@ Parse the JSON output:
 5. If all requirements pass all gates: write "## Per-Requirement Failures\n\nNone — all requirements pass all category gates."
 6. Only include FAILING requirements and their FAILING metrics (context optimization: O(failing) not O(n*34)).
 
+For each failing requirement, also include constraint diagnostics from Understanding:
+- `hard_constraints`: number of numeric thresholds found (0 = untestable)
+- `soft_words`: list of subjective words found (e.g., ["fast", "appropriate"])
+- `diagnosis`: human-readable fix suggestion (e.g., "Replace 'fast' with 'within 200ms'")
+
+CARTOGRAPHER uses these diagnostics for targeted amendments — see cartographer.md "Per-Requirement Failure Consumption" section.
+
 This data is consumed by CARTOGRAPHER when COMMANDER routes amendments — see FR-003.
 
 #### 1b. Generate Behavioral Diagram
@@ -298,6 +305,26 @@ For each metric:
 - If below threshold: identify which sections of `spec.md` are pulling the score down
 - Suggest specific improvements with before/after examples
 
+#### 2d. EARS Pattern Gap Detection
+
+If Understanding's `--per-req --json` output includes `ears_pattern` per requirement, scan for requirements classified as `unclassified`:
+
+- Count requirements per EARS category: ubiquitous, event_driven, state_driven, optional, unwanted, unclassified
+- If any requirements are `unclassified`, flag them in issues.md:
+
+```markdown
+## EARS Pattern Gaps
+
+{N} of {total} requirements match no EARS pattern (Mavin et al., 2009).
+Unclassified requirements may have unclear intent — review for clarity.
+
+| Requirement | Text Preview | Suggested Pattern |
+|------------|-------------|-------------------|
+| FR-007 | "The system should handle..." | Consider: ubiquitous (add SHALL) or event_driven (add WHEN trigger) |
+```
+
+Requirements matching no EARS pattern are not automatically failures — but they correlate with ambiguity. Flag for review, don't block.
+
 #### 2b. Extract Testability Sub-Metrics for SENTINEL
 
 From the Understanding JSON output (or quality-gates.md), extract and prominently display these testability sub-metrics:
@@ -313,6 +340,23 @@ From the Understanding JSON output (or quality-gates.md), extract and prominentl
 ```
 
 These sub-metrics are consumed by SENTINEL (TEST ARCHITECT) to inform test strategy design. SENTINEL uses them to identify which testability dimension is weakest and prioritize test effort accordingly.
+
+#### 2c. Extract Behavioral Transitions for SENTINEL
+
+From Understanding's `--json --enhanced` output, extract the `behavioral_analysis.transitions[]` array. Include in quality-gates.md:
+
+```markdown
+## Behavioral Transitions (for SENTINEL consumption)
+
+| # | Guard | Action | Outcome | Complete | Requirement |
+|---|-------|--------|---------|----------|-------------|
+| 1 | when  | validate | display | true    | FR-003      |
+```
+
+SENTINEL uses these transitions to auto-generate Given/When/Then test case templates:
+- guard → Given [guard condition]
+- action → When [action is performed]
+- outcome → Then [outcome is observed]
 
 #### 3. Challenge Requirements
 
