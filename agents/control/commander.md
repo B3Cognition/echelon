@@ -271,6 +271,26 @@ For each file: if it exists, read and extract relevant fields. If absent, note a
 
 **Calibration application rule:** For each domain in `calibration-profile.yaml`, read `sample_size`. Only apply the domain's accuracy value as a correction factor to GATEKEEPER if `sample_size >= 3`. Below-threshold values are logged as informational only and do not affect estimates.
 
+**Build calibration dispatch map (FR-004, Spec 010):** After reading `agent-scores.yaml`, build a dispatch-ready calibration map in memory:
+
+```
+calibration_map = {}
+For each agent in agent-scores.yaml:
+  history = agent.history (or agent.run_history)
+  if history is not empty:
+    last_entry = history[-1]  # most recent run only
+    calibration_map[agent_name] = {
+      prior_score: last_entry.quality_score or last_entry.score,
+      target: last_entry.target or "0.70",
+      failure_modes: last_entry.failure_modes or [],
+      correction_factor: calibration_profile[domain].correction_factor or 1.0
+    }
+```
+
+This map is used by the Pre-Dispatch Calibration Injection protocol (see `commands/cognitive-squad.run.md` → "Calibration Injection") to prepend each agent's prior performance data into their dispatch prompt.
+
+Log `calibration_map_agents_loaded: {count}` in the `init_knowledge_read` journal entry.
+
 Set `state.json` field `init_reads.completed: true` after this step.
 
 ---
