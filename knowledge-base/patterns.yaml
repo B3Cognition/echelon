@@ -138,3 +138,99 @@ entries:
     status: active
     project_fingerprint: eafaa0807e7b
     scope: local_only
+
+  - id: PAT-011
+    name: Per-Requirement Failure Routing Eliminates Blind Amendment Cycles
+    domain: understanding-integration
+    evidence_grade: C
+    source: squad-1774681342, spec.md FR-002/FR-003 analysis
+    run_id: squad-1774681342
+    created_at: 2026-03-28T00:00:00Z
+    last_updated: 2026-03-28
+    validated_by_feedback: false
+    confidence: 0.82
+    description: When SAGE passes per-requirement failure data (requirement ID + failing category + score + gate) to CARTOGRAPHER, amendment becomes O(failing) instead of O(n). Estimated reduction from 4-6 WHY-WHAT iteration cycles to 1-2. The key insight is that Understanding already has per-requirement mode (--per-req since v3.3) but it was never invoked -- the signal existed but the pipe was missing.
+    tags: ["understanding", "sage", "cartographer", "per-req", "amendment", "iteration-reduction"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
+
+  - id: PAT-012
+    name: Multi-Category Convergence Prevents False Stabilization
+    domain: understanding-integration
+    evidence_grade: C
+    source: squad-1774681342, spec.md FR-001 analysis, G-001 gap
+    run_id: squad-1774681342
+    created_at: 2026-03-28T00:00:00Z
+    last_updated: 2026-03-28
+    validated_by_feedback: false
+    confidence: 0.78
+    description: Using only overall score for convergence delta allows false convergence when individual categories oscillate (e.g., structure improves +0.05 while semantic drops -0.04, overall unchanged). Checking MAX(abs(delta)) across all 7 categories catches this. Requires state.json to store all 7 scores (not 3).
+    tags: ["convergence", "state-json", "quality-scores", "false-convergence", "understanding"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
+
+  - id: PAT-013
+    name: Analysis Spec Format Creates Structural Scoring Floor
+    domain: quality-assessment
+    evidence_grade: B
+    source: squad-1774681342, quality-gates.md WHY2, ISS-012
+    run_id: squad-1774681342
+    created_at: 2026-03-28T00:00:00Z
+    last_updated: 2026-03-28
+    validated_by_feedback: false
+    confidence: 0.86
+    description: Analysis-format specs (diagnosis, priority matrices, contradiction tables) systematically score low on Structure (0.29) and Semantic (0.57) because Understanding extracts context paragraphs as requirements. The actual FR-NNN requirements have GWT acceptance criteria and observable outputs. Best-effort rule should be applied proactively for analysis specs rather than after failed amendment attempts. Related to PIT-005.
+    tags: ["analysis-spec", "structure", "semantic", "understanding", "best-effort", "format"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
+
+  - id: PAT-014
+    name: Architecture Outpaces Data by 10x in Novel Multi-Agent Systems
+    domain: strategic-futures-analysis
+    evidence_grade: B
+    source: squad-1774684827, structural-maturity-report (architecture 4/5, data 2/5), contradictions-and-gaps (5 CRITICAL gaps all data-related)
+    run_id: squad-1774684827
+    created_at: 2026-03-28T00:00:00Z
+    last_updated: 2026-03-28
+    validated_by_feedback: false
+    confidence: 0.82
+    description: In novel multi-agent systems, architecture naturally outpaces operational data by roughly 10x. Features like calibration (59 files), internalization (43 files), and endocrine modulation (28 files) are fully scaffolded but data-starved (1 feedback entry, 0 internalization entries, 0 A/B evidence). The roadmap priority must be data generation, not feature addition. Every future vector requiring accumulated data is blocked; every vector depending on existing architecture is enabled.
+    tags: ["architecture", "data-starvation", "roadmap-priority", "futures-analysis"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
+
+  - id: PAT-015
+    name: RICE Score Ordering Prevents Premature Complexity Investment
+    domain: strategic-futures-analysis
+    evidence_grade: C
+    source: squad-1774684827, feasibility.md RICE calculations
+    run_id: squad-1774684827
+    created_at: 2026-03-28T00:00:00Z
+    last_updated: 2026-03-28
+    validated_by_feedback: false
+    confidence: 0.76
+    description: Applying RICE scoring to multi-phase roadmaps reveals 40x value asymmetry between quick-ship phases (Phase 1 RICE 8.10) and platform phases (Phase 4-5 RICE 0.20). The asymmetry exists because early phases have low effort denominators and high confidence numerators, while late phases invert both. This prevents the common trap of building complex infrastructure before validating the underlying premise.
+    tags: ["rice", "prioritization", "phase-ordering", "premature-complexity"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
+
+  - id: PAT-016
+    name: Prior Staging Artifacts Eliminate Redundant Strategic Analysis
+    domain: squad-orchestration
+    evidence_grade: D
+    source: squad-1774684827, CARTOGRAPHER/GATEKEEPER cross-referencing 12 prior artifacts
+    run_id: squad-1774684827
+    created_at: 2026-03-28T00:00:00Z
+    last_updated: 2026-03-28
+    validated_by_feedback: false
+    confidence: 0.72
+    description: When CARTOGRAPHER and GATEKEEPER phases can read ALL prior staging artifacts (mental-model, assumptions, novelty-assessment, risks, alternatives, issues, contradictions) before starting, the roadmap and feasibility analysis can directly reference prior findings (e.g., ISS-004 kill criteria, CG-001 agent utilization, A-002 feedback risk) instead of re-deriving them. This reduces strategic analysis time by an estimated 40-60% and ensures cross-artifact consistency.
+    tags: ["staging-artifacts", "cross-reference", "strategic-analysis", "consistency"]
+    status: active
+    project_fingerprint: eafaa0807e7b
+    scope: local_only
