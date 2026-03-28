@@ -326,6 +326,7 @@ Create `.specify/squad/state.json`:
   "golddigger_status": null,
   "golddigger_mode": null,
   "golddigger_notes": null,
+  "golddigger_artifacts": null,
   "golddigger_requests": [],
   "golddigger_completed_domains": []
 }
@@ -491,7 +492,7 @@ If `detected_mode` is `brownfield` AND `extension-capabilities.json` lists an ex
    - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
 2. Block until GOLDDIGGER completes.
 3. Read `state.json.golddigger_status`:
-   - `complete`: proceed — SCOUT will find `.specify/squad/brownfield-index.md`
+   - `complete`: proceed — SCOUT will read artifact paths from `state.json.golddigger_artifacts`
    - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual structural analysis)
 
 If `reverse-eng` is not listed or `extensions` is empty: skip GOLDDIGGER, proceed directly to DISCOVER.
@@ -501,11 +502,13 @@ If `reverse-eng` is not listed or `extensions` is empty: skip GOLDDIGGER, procee
 After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, MODELER) completes, before dispatching the next agent:
 
 1. Read `state.json.golddigger_requests` — if empty or absent, continue
-2. For each pending request entry:
-   a. Check `state.json.golddigger_completed_domains` — if the domain is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/<domain>.md`). Notify the requesting agent in its next context pack.
-   b. Otherwise: dispatch GOLDDIGGER in Mode 2 (Deep Dive) for that domain
-      - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 2 (Deep Dive)** for domain `{domain}` at target path `{target_path}`.
-   c. After GOLDDIGGER completes: remove the domain from `state.json.golddigger_requests`, add it to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{domain}.md` in the requesting agent's next context pack.
+2. For each pending request entry (each entry is an object: `{domain, repo, requested_by, reason}`):
+   - **Backward compatibility:** If a `golddigger_requests` entry is a plain string (old format), treat it as `{domain: <string>, repo: null, requested_by: "unknown", reason: ""}`.
+   a. Compute the cache key: if `repo` is non-null → `"{repo}--{domain}"`, if `repo` is null → `"{domain}"`
+   b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
+   c. Otherwise: dispatch GOLDDIGGER in Mode 2 (Deep Dive) for that domain
+      - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 2 (Deep Dive)** for domain `"{domain}"` in repo `"{repo}"` at target path `"{target_path}"`. If repo is null, target path is `"{target_path}"` (single-repo mode).
+   d. After GOLDDIGGER completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
 3. Continue to next Phase 1 agent dispatch.
 
 **Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
@@ -523,6 +526,10 @@ Read and include in the subagent prompt:
 - User input (the `$ARGUMENTS` from above)
 - `knowledge-base/calibration-profile.yaml`
 - Previous run's `evolution-report.md` (if re-run)
+- If `state.json.golddigger_artifacts` exists: include artifact paths so the agent knows where to read brownfield data
+  - Polyrepo: include `repos-manifest.json` path, `cross-repo.json` path, per-repo directory paths
+  - Single-repo: include `analysis.json` path
+- If any `golddigger_completed_domains` have new entries since last dispatch: include the corresponding cache file paths
 
 ### Dispatch
 
