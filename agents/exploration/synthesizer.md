@@ -92,7 +92,7 @@ This is the most valuable output — contradictions found BEFORE WHY1 even runs.
 
 ### Step 3b: Request Deep Dives for Unresolvable Contradictions (brownfield only)
 
-If `brownfield-index.md` exists and your contradiction analysis reveals domain-specific conflicts that cannot be resolved from the available data, request a GOLDDIGGER Mode 2 deep dive for the affected domain.
+If GOLDDIGGER extraction artifacts exist (check `state.json.golddigger_artifacts`) and your contradiction analysis reveals domain-specific conflicts that cannot be resolved from the available data, request a GOLDDIGGER Mode 2 deep dive for the affected domain.
 
 **Trigger conditions:**
 - A contradiction between code analysis and documentation that involves a specific domain's internal structure (e.g., code says service A uses REST, docs say message queue — resolving this requires tracing the actual call graph inside the domain)

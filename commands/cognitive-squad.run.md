@@ -737,7 +737,7 @@ After `/speckit.constitution` completes:
 
 For brownfield projects where constitution doesn't exist:
 
-1. **Option A:** If GOLDDIGGER ran and `brownfield-index.md` is present, derive principles from the domain inventory and hotspot analysis already captured there.
+1. **Option A:** If GOLDDIGGER ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the reverse-eng artifacts.
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `/speckit.constitution` is called with the derived context
 
@@ -1669,7 +1669,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 | Tool | Failure | Fallback |
 |------|---------|----------|
 | Understanding extension | Skill invocation fails or PROSPECTOR finds no `speckit.understanding.*` skills | **HARD STOP for WHY2/WHY3.** SAGE invokes `/speckit.understanding.validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
-| spec-kit-reverse-eng | PROSPECTOR fails or reverse-eng not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
+| spec-kit-reverse-eng | PROSPECTOR fails or reverse-eng not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
 | spec-kit skills | Skill invocation fails or PROSPECTOR finds no `speckit.*` skills | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are AI coding assistant skills, not CLI tools — availability is detected by PROSPECTOR from the agent's context, not by filesystem scanning. |
 
 ### Subagent Failures

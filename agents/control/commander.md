@@ -363,7 +363,7 @@ After brownfield mode is confirmed, before dispatching SCOUT:
    - **Dispatch GOLDDIGGER in Mode 1 (Survey).** This dispatch is mandatory when `reverse-eng` is relevant. Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
    - Block SCOUT dispatch until GOLDDIGGER returns
    - **ONLY after GOLDDIGGER returns**, read `golddigger_status` from `state.json`:
-     - `complete`: proceed normally, SCOUT will find `brownfield-index.md`
+     - `complete`: proceed normally, SCOUT will read artifact paths from `state.json.golddigger_artifacts`
      - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual). The `golddigger_notes` field MUST contain a verbatim error from the Skill tool — if it instead contains "manual code analysis used" or references `execution_mode`, GOLDDIGGER has violated its NEVER rules. Re-dispatch GOLDDIGGER rather than accepting the invalid state.
 3. If `reverse-eng` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
 

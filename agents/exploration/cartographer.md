@@ -181,7 +181,7 @@ These are non-negotiable rules:
 
 ## GOLDDIGGER Mode 2 Deep Dive Requests (brownfield only)
 
-When writing requirements, if a domain area from `boundaries.md` lacks sufficient structural understanding to write testable, unambiguous requirements AND the brownfield-index.md survey data is too shallow for that domain, you may request a GOLDDIGGER Mode 2 deep dive.
+When writing requirements, if a domain area from `boundaries.md` lacks sufficient structural understanding to write testable, unambiguous requirements AND the GOLDDIGGER survey data (from `state.json.golddigger_artifacts`) is too shallow for that domain, you may request a GOLDDIGGER Mode 2 deep dive.
 
 **Appropriate when:**
 - Acceptance criteria cannot be made specific because the domain's internal behavior is unknown at signature level
