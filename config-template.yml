@@ -284,6 +284,13 @@ discovery:
   # @belief(claim: "3 reference architectures is the minimum for triangulating a sound greenfield recommendation", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.65, severity: medium)
   min_reference_architectures: 3
 
+  # Polyrepo: repos with fewer source files than this threshold
+  # are auto-promoted to full depth during GOLDDIGGER Mode 1 survey.
+  # This saves Mode 2 roundtrips for small repos that are cheap to analyze fully.
+  # Set to 0 to disable auto-promotion (all repos get signatures depth).
+  # [range: 0-200] [default: 50]
+  polyrepo_full_depth_threshold: 50
+
 # =============================================================================
 # SCORING (GATEKEEPER, SCOUT, AUDITOR)
 # =============================================================================
