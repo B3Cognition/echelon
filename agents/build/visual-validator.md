@@ -96,12 +96,12 @@ For each component on the page:
 
 ## Step 6: Include Spec Behavioral Diagram
 
-If WHY generated a behavioral diagram via Understanding CLI (`spec-diagram.svg` or `.png`), include it in the visual report:
+If WHY generated a behavioral diagram via `/speckit.understanding.diagram` (`spec-diagram.svg` or `.png`), include it in the visual report:
 
 ```markdown
 ## Spec Behavioral Diagram
 
-The Understanding CLI generated this state machine diagram from the specification.
+Understanding generated this entity relationship diagram from the specification.
 It shows every state, transition, and guard that the code should implement.
 
 ![Spec Behavioral Diagram](spec-diagram.svg)

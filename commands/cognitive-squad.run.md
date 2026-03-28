@@ -1640,7 +1640,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 | Tool | Failure | Fallback |
 |------|---------|----------|
-| Understanding CLI | Not installed, crashes, or times out | **HARD STOP for WHY2/WHY3.** SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding CLI and is unaffected. |
+| Understanding extension | Skill invocation fails or PROSPECTOR finds no `speckit.understanding.*` skills | **HARD STOP for WHY2/WHY3.** SAGE invokes `/speckit.understanding.validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
 | spec-kit-reverse-eng | PROSPECTOR fails or reverse-eng not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
 | spec-kit skills | Skill invocation fails or PROSPECTOR finds no `speckit.*` skills | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are AI coding assistant skills, not CLI tools — availability is detected by PROSPECTOR from the agent's context, not by filesystem scanning. |
 
