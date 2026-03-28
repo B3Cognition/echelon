@@ -4,7 +4,7 @@ extension:
   id: "cognitive-squad"
   name: "Cognitive Squad"
   version: "0.5.0"
-  description: "Multi-agent cognitive system: 7-layer, 41-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
+  description: "Multi-agent cognitive system: 7-layer, 42-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
   author: "Testimonial"
   repository: "https://github.com/Testimonial/cognitive-squad"
   license: "MIT"

@@ -62,7 +62,7 @@ phases:
 agents:
 # ─────────────────────────────────────────────
 # Layer totals: Control: 6, Exploration: 6, Feasibility: 2, Solution: 3,
-#               Specialists: 6, Build: 11, Learning: 7 — Total: 41 agents
+#               Specialists: 6, Build: 11, Learning: 8 — Total: 42 agents
 # ─────────────────────────────────────────────
 
   COMMANDER:
@@ -617,17 +617,31 @@ agents:
 
   VETERAN:
     codename: VETERAN
-    function: GLOBAL_MEMORY
+    function: PATTERN_PROMOTION
     file: agents/learning/veteran.md
     layer: learning
-    phase: build
-    role: "Cross-project knowledge — promotes validated learnings to global memory"
-    when: "At run start (read global), at run end (write to global), after FEEDBACK"
-    inputs: [local knowledge-base/, ~/.specify/squad-global/]
-    outputs: [updated global knowledge base, merged calibration data]
+    phase: finalize
+    role: "Pattern scope promotion — evaluates local patterns for promotion to cross-project global scope"
+    when: "During FINALIZE, after MIRROR; decides which patterns are project-specific vs universal"
+    inputs: [knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, ~/.specify/squad-global/]
+    outputs: [updated scope fields in patterns.yaml, promotion candidates for GLOBAL_MEMORY]
     never:
-      - "NEVER promote unvalidated learnings to global"
-      - "NEVER let local contradict global without flagging"
+      - "NEVER promote a pattern without project_fingerprint set"
+      - "NEVER promote fewer than 3 confirmed observations to global scope"
+
+  GLOBAL_MEMORY:
+    codename: GLOBAL_MEMORY
+    function: CROSS_PROJECT_SYNC
+    file: agents/learning/global-memory.md
+    layer: learning
+    phase: finalize
+    role: "Cross-project knowledge sync — reads and writes ~/.specify/squad-global/ across all projects"
+    when: "At run start (read global into local context), at run end after VETERAN (write promoted patterns)"
+    inputs: [knowledge-base/patterns.yaml, knowledge-base/calibration-profile.yaml, ~/.specify/squad-global/]
+    outputs: [merged ~/.specify/squad-global/, cold_start_warning if no global data]
+    never:
+      - "NEVER write to global without VETERAN's promotion decision"
+      - "NEVER let local knowledge contradict global without flagging the conflict"
 
   MONITOR:
     codename: MONITOR
@@ -683,5 +697,5 @@ totals:
   solution: 3
   specialists: 6
   build: 11
-  learning: 7
-  total: 41
+  learning: 8
+  total: 42
