@@ -1,0 +1,74 @@
+spec_id: "007"
+project_name: "cognitive-squad-6-connections"
+feedback_date: "2026-03-28T18:00:00Z"
+run_ids:
+  - "squad-1774654610"  # analysis run
+  - "squad-1774677025"  # implementation + validation run
+domain: "cognitive-orchestration"
+
+effort:
+  estimated_hours: 7.5       # P0+P1 from estimates.md (uncalibrated)
+  actual_hours: 0.6          # ~35 min for all implementation (not counting analysis)
+  accuracy_ratio: 0.08       # actual/estimated — 12.5x overestimate
+  notes: "Estimates assumed human developer speed (30-90 min per md/yaml edit). Claude Code executes these as single Edit tool calls in seconds. The estimation reference class for LLM prompt edits needs a separate calibration track from human developer speed."
+
+architecture_decisions:
+  - decision: "VALIDATOR dispatch location in commander.md Build State Machine"
+    held: "yes"
+    notes: "Found exact section at line 297, inserted PRE-BUILD step in state diagram"
+  - decision: "feedback command path compatibility with knowledge-base/feedback/"
+    held: "partially"
+    notes: "Directory created with schema; actual skill-driven feedback command uses different flow — minor alignment needed"
+  - decision: "global-memory.md needs its own agent registration"
+    held: "yes"
+    notes: "Predicted as P2 but surfaced as P1 during validation — registry sync test caught it"
+  - decision: "CHECKPOINT rule 2 semantics"
+    held: "deferred"
+    notes: "Not needed for this cycle"
+
+requirements:
+  total_count: 33
+  correct_count: 28
+  needed_clarification: 3
+  missing:
+    - "GLOBAL_MEMORY agent registration (discovered during validation, not in spec)"
+  unnecessary:
+    - "T-003 endocrine confirm (already done in PR #32)"
+    - "FR-CFG-001 endocrine kill switch (already wired in PR #32)"
+
+risks:
+  - risk: "R-001: Budget enforcement failure"
+    materialized: false
+    actual_impact: "Already fixed in PR #32"
+  - risk: "R-002: Endocrine mutations on disabled config"
+    materialized: false
+    actual_impact: "Already fixed in PR #32"
+  - risk: "R-003: CHECKPOINT/VALIDATOR internalization-report collision"
+    materialized: false
+    actual_impact: "Naming collision still exists but ADR-001 prevents concurrent writes"
+  - risk: "R-004: SAGE uncalibrated false positives"
+    materialized: true
+    actual_impact: "LOW — WHY1 assumption-challenge mode does not use spec-validation thresholds"
+  - risk: "R-005: Self-improvement loop never closed"
+    materialized: true
+    actual_impact: "PRIMARY FIX — loop now wired at both ends"
+  - risk: "R-006: Pattern promotion never worked"
+    materialized: true
+    actual_impact: "FIXED — fingerprints set, VETERAN redirected to veteran.md"
+  unpredicted:
+    - "GLOBAL_MEMORY orphan after VETERAN redirect — cascading effect not predicted"
+
+test_strategy:
+  implementation_gaps:
+    - "No formal test-strategy.md for this analysis run"
+  production_gaps: []
+  over_tested: []
+  notes: "test-unit-registry-sync.sh caught the GLOBAL_MEMORY orphan — sole automated test that flagged a real issue"
+
+scientist_recommendations: []
+
+quality_scores:
+  final_overall: 0.6399
+  final_testability: 0.4873
+  best_effort_accepted: true
+  notes: "Brownfield analysis spec format inherently scores low on testability metric (requires Given/When/Then structure)"

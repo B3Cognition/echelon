@@ -87,3 +87,12 @@ domains:
     source: squad-1710950401
     status: validation
     notes: "Heuristic quality reviews overestimated structure/testability by 15-29% vs deterministic tooling (Understanding v3.4.0). Correction factor 0.65 reflects the average deflation needed."
+  cognitive-orchestration:
+    accuracy: 0.30
+    sample_size: 4
+    trend: declining
+    correction_factor: 0.08
+    last_updated: 2026-03-28
+    source: squad-1774677025
+    status: validation
+    notes: "FIRST REAL FEEDBACK: estimated 7.5h, actual 0.6h. Ratio 0.08 (12.5x overestimate). Root cause: estimates used human-developer speed reference class for md/yaml edits; Claude Code executes in seconds. Correction factor set to 0.08 — future estimates for LLM-assisted md/yaml edits should multiply by ~0.08. Accuracy dropped from 0.52 to 0.30 reflecting severe overestimation. This is the first feedback-backed datapoint for this domain."
