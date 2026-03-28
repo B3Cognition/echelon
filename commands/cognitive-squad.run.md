@@ -104,6 +104,31 @@ scripts/bash/pre-dispatch-gate.sh --agent "{AGENT_CODENAME}" --task "{task_or_ph
 - If exit code 0 (ALLOW): proceed with dispatch
 - If exit code non-zero (DENY): read the denial reason from stdout, log to reasoning-journal.json, and either skip the dispatch or resolve the violation before retrying
 
+### Calibration Injection (FR-001, Spec 010)
+
+Before EVERY agent dispatch, COMMANDER MUST prepend a **calibration block** to the agent's prompt. This block is assembled from the calibration map built during Step 0 (see `agents/control/commander.md` → Step 0).
+
+**Assembly process:**
+
+1. Look up `{AGENT_CODENAME}` in the calibration map (built from `knowledge-base/agent-scores.yaml` at Step 0)
+2. If data exists for this agent, prepend this block to the dispatch prompt:
+
+```markdown
+## Your Calibration Data (from prior runs)
+
+**Last run score:** {quality_score} (target: {gate_threshold})
+**Primary failure mode:** {failure_modes[0].type} ({failure_modes[0].count} occurrences)
+**Specific miss:** {failure_modes[0].example}
+**Domain correction factor:** {correction_factor} ({domain_name})
+
+Adjust your analysis to address these specific weaknesses.
+```
+
+3. If no data exists (cold start): prepend `## Calibration: COLD START — no prior data. Defaults apply.`
+4. Log to `reasoning-journal.json` entry type `calibration_injection` with fields: `agent`, `prior_score`, `failure_modes[]`, `correction_factor`
+
+**If endocrine is enabled**, also call `endocrine.sh get_full_prompt_modifier {AGENT_CODENAME}` and append the `[CALIBRATION]` section from its output.
+
 After EVERY agent dispatch completes, COMMANDER SHOULD run the post-execution audit:
 
 ```bash

@@ -233,6 +233,34 @@ After each agent action, SCOREKEEPER:
 
 Append to `knowledge-base/agent-scores.yaml` with full run history.
 
+### Failure Mode Recording (FR-003, Spec 010)
+
+For EVERY agent dispatched in this run, SCOREKEEPER MUST record not just the numeric score but the **top 2 failure modes** with concrete examples. This data is consumed by COMMANDER's calibration injection on the next run.
+
+**Required format per agent per run:**
+
+```yaml
+{AGENT_NAME}:
+  history:
+    - run_id: "{run_id}"
+      score: {numeric_score}
+      quality_score: {understanding_score_if_applicable}
+      target: {gate_threshold}
+      failure_modes:
+        - type: "{category_of_failure}"
+          count: {occurrences}
+          example: "{concrete_example_from_this_run}"
+        - type: "{second_category}"
+          count: {occurrences}
+          example: "{concrete_example}"
+```
+
+**Failure mode categories:** `missed_requirement`, `false_positive`, `ambiguous_output`, `incomplete_coverage`, `missed_implicit_requirement`, `wrong_estimate`, `stale_data`, `integration_miss`, `none` (when all gates pass).
+
+**If an agent scored above all gates:** write `failure_modes: []` (empty array, not omitted).
+
+COMMANDER reads `failure_modes` from the most recent run entry at Step 0 and injects it into the agent's dispatch prompt.
+
 ---
 
 ## Token Efficiency Scoring

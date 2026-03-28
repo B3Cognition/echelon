@@ -881,6 +881,41 @@ cmd_get_full_prompt_modifier() {
     high) output+="[NOREPINEPHRINE=HIGH] Stay focused on the specific task. Do not explore tangents.\n" ;;
   esac
 
+  # Calibration injection (FR-002, Spec 010)
+  # Read agent's prior score and failure modes from agent-scores.yaml
+  local SCORES_FILE
+  SCORES_FILE="$(dirname "$(dirname "$SCRIPT_DIR")")/knowledge-base/agent-scores.yaml"
+  if [[ -f "$SCORES_FILE" ]] && command -v python3 &>/dev/null; then
+    local cal_block
+    cal_block=$(python3 -c "
+import yaml, sys
+try:
+    with open('$SCORES_FILE') as f:
+        data = yaml.safe_load(f) or {}
+    agents = data.get('agents', {})
+    a = agents.get('$agent', {})
+    history = a.get('history', a.get('run_history', []))
+    if not history:
+        print('[CALIBRATION] COLD START — no prior data for $agent.')
+        sys.exit(0)
+    last = history[-1] if isinstance(history, list) else {}
+    score = last.get('quality_score', last.get('score', '?'))
+    modes = last.get('failure_modes', [])
+    if modes:
+        fm = modes[0]
+        print(f'[CALIBRATION] Prior score: {score}. Miss: {fm.get(\"type\",\"unknown\")} ({fm.get(\"count\",\"?\")}x). Example: {fm.get(\"example\",\"none\")}')
+    else:
+        print(f'[CALIBRATION] Prior score: {score}. No failure modes recorded.')
+except Exception as e:
+    print(f'[CALIBRATION] COLD START — error reading scores: {e}')
+" 2>/dev/null)
+    if [[ -n "$cal_block" ]]; then
+      output+="${cal_block}\n"
+    fi
+  else
+    output+="[CALIBRATION] COLD START — no agent-scores.yaml or python3 unavailable.\n"
+  fi
+
   if [[ -z "$output" ]]; then
     echo "[ENDOCRINE: all hormones MEDIUM] Normal operating conditions."
   else
