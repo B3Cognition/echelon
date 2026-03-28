@@ -96,3 +96,23 @@ domains:
     source: squad-1774677025
     status: validation
     notes: "FIRST REAL FEEDBACK: estimated 7.5h, actual 0.6h. Ratio 0.08 (12.5x overestimate). Root cause: estimates used human-developer speed reference class for md/yaml edits; Claude Code executes in seconds. Correction factor set to 0.08 — future estimates for LLM-assisted md/yaml edits should multiply by ~0.08. Accuracy dropped from 0.52 to 0.30 reflecting severe overestimation. This is the first feedback-backed datapoint for this domain."
+  understanding-integration:
+    accuracy: 0.50
+    sample_size: 1
+    trend: stable
+    correction_factor: 0.08
+    last_updated: 2026-03-28
+    source: squad-1774681342
+    status: validation
+    notes: "New domain — first run analyzing Understanding integration into cognitive-squad. Inherits cognitive-orchestration correction factor (0.08) since all changes are md/yaml/json edits. P0 estimated ~22 min corrected, P1 ~15 min. No feedback yet."
+
+# Per-category score history — populated by AUDITOR after each run (FR-006)
+# Schema: { run_id: string, score: number, timestamp: string }
+metric_history:
+  structure: []
+  readability: []
+  cognitive: []
+  semantic: []
+  testability: []
+  behavioral: []
+  depth: []

@@ -25,6 +25,21 @@ Read these artifacts before starting:
 - `spec.md` — acceptance criteria (your primary input)
 - `contracts/` — API contracts, interface definitions
 
+## Testability-Informed Test Strategy (FR-005)
+
+Before designing test strategy, read the testability sub-metrics from `quality-gates.md` (provided by SAGE via Understanding):
+
+| Sub-Metric | What it measures | Action when low (< 0.50) |
+|-----------|-----------------|-------------------------|
+| `hard_constraint_ratio` | Proportion of requirements with numeric thresholds | Flag requirements with soft constraints; recommend the spec add quantified acceptance criteria |
+| `constraint_density` | Average measurable constraints per requirement | Flag requirements as potentially untestable; add "specification gap" section to test strategy |
+| `negative_space_coverage` | Proportion of requirements specifying error/edge/boundary cases | Prioritize boundary value analysis and error path testing in the test pyramid |
+
+If all sub-metrics are >= 0.70: no deficiency warnings needed — proceed normally.
+If any sub-metric is < 0.50: add a "Testability Deficiency" section to `test-strategy.md` identifying which requirements lack the weakest dimension and recommending specification amendments.
+
+---
+
 ## Process
 
 ### Step 1: Acceptance Criteria Mapping

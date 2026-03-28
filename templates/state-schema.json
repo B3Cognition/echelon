@@ -129,6 +129,21 @@
           },
           "testability": {
             "type": "number"
+          },
+          "readability": {
+            "type": "number"
+          },
+          "cognitive": {
+            "type": "number"
+          },
+          "semantic": {
+            "type": "number"
+          },
+          "behavioral": {
+            "type": "number"
+          },
+          "depth": {
+            "type": "number"
           }
         }
       }

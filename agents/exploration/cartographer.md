@@ -118,6 +118,39 @@ Read ALL input artifacts before beginning. Pay special attention to:
 - Unknowns with priority `must-resolve-before-WHAT` — if any remain unresolved, flag them prominently
 - WHY1 issues — any findings from assumption-challenge mode must be addressed
 
+## Per-Requirement Failure Consumption (Amendment Mode)
+
+When COMMANDER routes you back for amendment after WHY2/WHY3 FAIL, you will receive a per-requirement failure list from SAGE's issues.md.
+
+### Parsing
+
+Read the "Per-Requirement Failures" table from issues.md. Each row contains:
+- **Requirement**: The FR-NNN identifier of the failing requirement
+- **Category**: The quality category that failed (structure, testability, semantic, cognitive, readability, behavioral, depth)
+- **Score**: The actual score achieved
+- **Gate**: The threshold that was not met
+- **Verdict**: FAIL
+
+### Amendment Strategy
+
+For each failing requirement, apply the category-specific fix:
+
+| Failing Category | Amendment Action |
+|-----------------|-----------------|
+| structure | Break multi-clause requirements into atomic single-clause statements |
+| testability | Add numeric thresholds, units, measurable hard constraints |
+| semantic | Add explicit actor-action-object pattern (Who does What producing What) |
+| cognitive | Simplify sentence structure, reduce nesting depth, shorten sentences |
+| readability | Use shorter sentences, simpler vocabulary, active voice |
+| behavioral | Add guard-action-outcome transitions, state change descriptions, error branches |
+| depth | Add cross-references to related requirements, dependency chains |
+
+### Preservation Rule
+
+**CRITICAL**: Do NOT modify requirements that are NOT in the failure list. Passing requirements MUST remain unchanged verbatim.
+
+If the failure list is empty ("None — all requirements pass"), do NOT modify any requirements. This is a no-op amendment.
+
 ## Constraints
 
 These are non-negotiable rules:
