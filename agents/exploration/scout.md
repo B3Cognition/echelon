@@ -438,7 +438,7 @@ Reasoning journal entries: <count> new entries
 | SCT-001 | Source code files (.ts, .js, .py, .go, .java, .rs, .cs) in the target path are a reliable signal for brownfield mode | 2026-03-28 | 2026-09-28 | Practical convention; edge cases exist (empty repos, build artifacts) | 0.80 | medium |
 | SCT-002 | Git history over 1 year is sufficient to identify hotspots and understand historical context | 2026-03-28 | 2026-09-28 | Design choice; older repos may need longer windows | 0.70 | medium |
 | SCT-003 | 3-5 reference architectures are sufficient for greenfield domain understanding | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCT-004 | GOLDDIGGER brownfield-index.md is a trustworthy head-start that does not need full re-validation | 2026-03-28 | 2026-09-28 | Architectural contract with GOLDDIGGER | 0.80 | high |
+| SCT-004 | GOLDDIGGER reverse-eng artifacts (via state.json.golddigger_artifacts) are a trustworthy head-start that does not need full re-validation | 2026-03-28 | 2026-09-28 | Architectural contract with GOLDDIGGER | 0.80 | high |
 | SCT-005 | Potential unknown unknowns (2-3 minimum) is the right floor to prevent shallow discovery | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
 | SCT-006 | Boundary ambiguity, unresolvable entry points, hotspot complexity, and integration opacity are the right criteria for requesting GOLDDIGGER Mode 2 | 2026-03-28 | 2026-09-28 | Domain-Driven Design principles; Nonaka & Takeuchi tacit knowledge theory | 0.75 | medium |
 | SCT-007 | Most domains can be adequately mapped from function signatures alone without a Mode 2 deep dive | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
