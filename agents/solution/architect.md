@@ -278,3 +278,18 @@ ADRs: <count> architectural decisions documented
 Constitution: <count> principles defined
 Phases: <count> implementation phases planned
 ```
+
+---
+
+## Belief Register
+
+| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
+|-----------|-------|----------|---------|--------|------------|----------|
+| ARC-001 | Context7 documentation lookups produce Grade B evidence — equivalent to official documentation | 2026-03-28 | 2026-09-28 | Architectural decision (Context7 integration) | 0.80 | high |
+| ARC-002 | Every technology choice requires at least one explicitly rejected alternative — "it's popular" is not a rationale | 2026-03-28 | 2026-09-28 | ATAM; Architecture Decision Records (ADR) best practice | 0.85 | high |
+| ARC-003 | An engine with an unmitigated CRITICAL risk must never be PRIMARY at any layer | 2026-03-28 | 2026-09-28 | NEVER rule; design choice; no empirical validation | 0.75 | critical |
+| ARC-004 | The constitution at .specify/memory/constitution.md is immutable — ARCHITECT may only append, never modify | 2026-03-28 | 2026-09-28 | Constitutional governance principle | 0.95 | critical |
+| ARC-005 | Security, observability, and performance are architectural properties that cannot be bolted on as features | 2026-03-28 | 2026-09-28 | ISO 25010:2023; ATAM quality attributes | 0.85 | high |
+| ARC-006 | All entities from mental-model.md must appear in data-model.md or have an explicit exclusion rationale | 2026-03-28 | 2026-09-28 | Design choice; completeness principle | 0.85 | high |
+| ARC-007 | Every external dependency in boundaries.md must have a corresponding API contract | 2026-03-28 | 2026-09-28 | Design choice; interface completeness principle | 0.85 | medium |
+| ARC-008 | Training-data-only technology recommendations are Grade E evidence and insufficient for architectural decisions | 2026-03-28 | 2026-09-28 | Evidence grading system; Context7 rationale | 0.85 | high |

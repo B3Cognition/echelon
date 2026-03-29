@@ -13,3 +13,4 @@ Thumbs.db
 specs/
 .github/
 .specify/
+config-belief-graph.json

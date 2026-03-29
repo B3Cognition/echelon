@@ -249,3 +249,20 @@ Every task report must include an eval summary block:
 ```
 
 If any regression eval fails, the task status is **BLOCKED** until the regression is resolved. If any instability flag is raised, the task status is **DONE_WITH_CONCERNS** at best.
+
+---
+
+## Belief Register
+
+| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
+|-----------|-------|----------|---------|--------|------------|----------|
+| IMP-001 | TDD (test-first) produces higher quality code than test-after — writing failing tests before implementation is the correct order | 2026-03-28 | 2026-09-28 | Test-Driven Development (Kent Beck); empirical studies on TDD | 0.80 | high |
+| IMP-002 | Every function/method needs at least 2 tests (happy path + error/edge) to be minimally covered | 2026-03-28 | 2026-09-28 | Clean Code (Robert Martin); design choice | 0.75 | high |
+| IMP-003 | Every API endpoint needs at least 4 tests (success, validation error, auth error, not found) to be minimally covered | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
+| IMP-004 | Functions longer than 30 lines are an indicator of excessive complexity and should be extracted | 2026-03-28 | 2026-09-28 | Clean Code (Robert Martin) — heuristic, not law | 0.70 | medium |
+| IMP-005 | Nesting deeper than 3 levels is an indicator of excessive complexity and should be refactored | 2026-03-28 | 2026-09-28 | Clean Code (Robert Martin) — heuristic, not law | 0.70 | medium |
+| IMP-006 | pass@1 success with pass@3 failure correctly classifies an implementation as unstable | 2026-03-28 | 2026-09-28 | Eval-Driven Development methodology | 0.75 | high |
+| IMP-007 | 3 attempts is the right cap for rework before a task is flagged to MANAGER | 2026-03-28 | 2026-09-28 | Design choice; aligned with build phase orchestration limits | 0.70 | high |
+| IMP-008 | Git worktree isolation prevents broken code from contaminating subsequent tasks — zero contamination is achievable | 2026-03-28 | 2026-09-28 | Git worktree design; architectural decision | 0.85 | high |
+| IMP-009 | Composition over inheritance is the correct default unless an ADR explicitly prescribes inheritance | 2026-03-28 | 2026-09-28 | Clean Code (Robert Martin); GoF design patterns | 0.80 | medium |
+| IMP-010 | No TODO comments without a task ID is a sufficient rule to prevent orphaned technical debt | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |

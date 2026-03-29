@@ -1,0 +1,8 @@
+# Config with zero belief annotations — must produce empty beliefs list without error
+
+execution:
+  max_parallel_agents: 3
+  agent_timeout_seconds: 300
+
+analysis:
+  mode: auto
