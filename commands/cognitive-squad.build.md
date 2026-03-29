@@ -224,6 +224,8 @@ Use the Agent tool:
 - **NEEDS_CONTEXT** — MANAGER reads the question, compiles additional context, re-dispatches IMPLEMENTER. Max 2 re-dispatches per task.
 - **BLOCKED** — Log the blocker. Skip to next task. If 3 tasks are BLOCKED, pause and assess (MANAGER may need to re-order tasks or escalate).
 
+**Inline execution mode:** If COMMANDER executes task work directly in the main conversation (without dispatching IMPLEMENTER as a subagent), COMMANDER MUST still execute Sections 3 through 6.3 in sequence: run quality gate checks, track progress, and update `state.json` via Section 6.3. Skipping subagent dispatch does NOT skip state tracking. The `build.completed_tasks` counter must be incremented after every task regardless of execution mode.
+
 ### 2.5 Build Handoff Package
 
 After BUILD wave completion, generate a handoff package for QA containing:
@@ -337,7 +339,7 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/progress-tracker.md` for your complete instructions. You are the PROGRESS TRACKER. Record completion of task {task_id}. Update running totals and check for drift. Here is your context pack: [include files]. Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`.
+- **prompt:** Read the file `agents/build/progress-tracker.md` for your complete instructions. You are the PROGRESS TRACKER. Record completion of task {task_id}. Update running totals and check for drift. Here is your context pack: [include files]. Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`. Also update `state.json.build.completed_tasks` (increment by 1) and `state.json.build.task_results` with the task's gate results.
 - **description:** "PROGRESS TRACKER: {task_id} — effort tracking"
 
 ### 6.2 Handle Alerts
@@ -348,9 +350,12 @@ If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
 - Print a warning to terminal
 - Continue building (do not stop unless MANAGER decides to re-scope)
 
-### 6.3 Update Task Result
+### 6.3 Update Task Result (COMMANDER — mandatory after every task)
 
-Record in `state.json.build.task_results`:
+**This is a COMMANDER action, not a PROGRESS TRACKER action.** COMMANDER performs this update after PROGRESS TRACKER returns, or after quality gates complete if PROGRESS TRACKER was skipped or if work was executed inline.
+
+1. **Increment `build.completed_tasks` by 1.**
+2. Record the task result in `state.json.build.task_results`:
 
 ```json
 {
@@ -364,6 +369,10 @@ Record in `state.json.build.task_results`:
   }
 }
 ```
+
+3. Update `state.json.updated_at` to current timestamp.
+
+**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for RADAR, ENGINEERING MANAGER, and any external tooling reading state.json.
 
 ---
 
