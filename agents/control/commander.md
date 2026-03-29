@@ -293,11 +293,28 @@ Log `calibration_map_agents_loaded: {count}` in the `init_knowledge_read` journa
 
 Set `state.json` field `init_reads.completed: true` after this step.
 
-> **Belief Freshness Check** — after `init_reads.completed` is set and before dispatching PROSPECTOR, run:
+> **Belief Freshness Gate** — after `init_reads.completed` is set and before dispatching PROSPECTOR, run:
 > ```bash
-> scripts/bash/belief-freshness-check.sh
+> BELIEF_JSON=$(scripts/bash/belief-freshness-check.sh 2>/dev/null)
+> BELIEF_EXIT=$?
 > ```
-> This reads `config-belief-graph.json` and emits structured warnings for stale or low-confidence beliefs. It always exits 0 and never blocks the run (FR-009). Critical-severity stale beliefs produce a prominent banner (FR-011). Review any warnings before proceeding, but do not halt on them.
+> The script reads `config-belief-graph.json` and classifies beliefs by staleness and severity.
+>
+> **Graduated exit codes (FR-001):**
+> - **Exit 0**: All beliefs fresh, or graph missing/unparseable. Proceed normally.
+> - **Exit 1**: High-severity expired beliefs OR 3+ low-confidence beliefs detected. **Defer** affected dispatches — log a `belief_gate_triggered` entry in `reasoning-journal.json`, flag the affected config keys, and apply conservative fallbacks for those keys until beliefs are re-verified. Do NOT dispatch INVESTIGATOR (the beliefs are stale but not critical).
+> - **Exit 2**: Critical-severity expired beliefs detected. **Dispatch INVESTIGATOR** with each critical belief's claim as an investigation question before any dispatch that depends on those beliefs. Log `belief_gate_triggered` with `recommended_action: investigate`.
+>
+> **When exit code is non-zero**, `$BELIEF_JSON` contains structured JSON (written to stdout) with fields: `exit_code`, `recommended_action` ("defer" or "investigate"), `stale_beliefs[]` (each with `belief_id`, `claim`, `severity`, `confidence`, `status`, `dependent_config_key`), and `summary`.
+>
+> **COMMANDER routing protocol:**
+> 1. Parse `$BELIEF_JSON` to extract `stale_beliefs[].dependent_config_key` values.
+> 2. For each stale belief, identify which dispatch decisions depend on that config key (e.g., `execution.models.control` → model tier selection for control agents).
+> 3. For exit 1 (defer): apply the conservative default for the affected config key (e.g., use `opus` instead of `sonnet` when the "sonnet is sufficient" belief is stale). Log the fallback in `reasoning-journal.json` type `belief_fallback_applied`.
+> 4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. INVESTIGATOR runs after PROSPECTOR and before DISCOVER. If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
+> 5. If endocrine system is enabled, call `endocrine.sh update_adrenaline {affected_agent} +0.2` for agents whose dispatch depends on stale beliefs.
+>
+> **Fallback (FR-010):** If the script exits 0 (including when the graph is missing or python3 is unavailable), proceed with no routing changes — full backward compatibility.
 
 ---
 
