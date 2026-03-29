@@ -1,7 +1,7 @@
 ---
 description: "Full autonomous cognitive squad run with 4-phase model. Set autonomy mode in squad-config.yml (guided/semi/banzai)."
 scripts:
-  sh: ../../scripts/bash/detect-project.sh
+  sh: ../../scripts/bash/startup-banner.sh
 ---
 
 ## User Input
