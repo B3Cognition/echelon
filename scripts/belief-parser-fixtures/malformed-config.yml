@@ -1,0 +1,15 @@
+# Test fixture for malformed annotations — parser must warn and continue
+
+good:
+  # @belief(claim: "This one is fine")
+  fine_key: 1
+
+bad:
+  # @belief(
+  #   claim: "Missing closing paren
+  #   confidence: 0.9
+  broken_key: 2
+
+also_good:
+  # @belief(claim: "Recovery after malformed annotation works")
+  recovery_key: 3

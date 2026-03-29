@@ -490,3 +490,18 @@ Non-functional requirements: <count>
 MVP scope: <count> stories / <count> requirements
 Open questions: <count>
 ```
+
+---
+
+## Belief Register
+
+| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
+|-----------|-------|----------|---------|--------|------------|----------|
+| CAR-001 | /speckit.specify must be invoked for every spec — manual spec creation produces inconsistent templates and skips branch creation | 2026-03-28 | 2026-09-28 | Architectural decision; spec-kit contract | 0.85 | critical |
+| CAR-002 | Every user story requires at least 2 acceptance criteria (happy path + error) to be minimally complete | 2026-03-28 | 2026-09-28 | IEEE 830-1998; ISO/IEC/IEEE 29148:2018 | 0.80 | high |
+| CAR-003 | Tag overlap >= 50% or name substring match is a sufficient heuristic for marketplace pattern reuse | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
+| CAR-004 | Technology-agnostic requirements can always be written without naming languages, frameworks, or databases | 2026-03-28 | 2026-09-28 | IEEE 830-1998; ISO 29148:2018 | 0.80 | high |
+| CAR-005 | Non-technical stakeholders are the correct readability target for spec.md | 2026-03-28 | 2026-09-28 | IEEE 830; User Story Mapping (Jeff Patton) | 0.80 | medium |
+| CAR-006 | Testability fix for low testability score is reliably achieved by adding numeric thresholds and units | 2026-03-28 | 2026-09-28 | ISO 29148:2018; Lucassen 2017 | 0.80 | high |
+| CAR-007 | Passing requirements not in the per-requirement failure list must remain unchanged verbatim during amendment | 2026-03-28 | 2026-09-28 | Design choice; amendment scope-containment rule | 0.85 | critical |
+| CAR-008 | GOLDDIGGER Mode 2 deep-dive requests should only be made when acceptance criteria would otherwise be written as guesswork | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |

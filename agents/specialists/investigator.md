@@ -157,3 +157,18 @@ Append entries to `reasoning-journal.json` for each investigation step:
   "implications": ["<downstream impact on architecture, plan, or other agents>"]
 }
 ```
+
+---
+
+## Belief Register
+
+| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
+|-----------|-------|----------|---------|--------|------------|----------|
+| INV-001 | The 5-grade evidence scale (A=1.0 / B=0.8 / C=0.6 / D=0.3 / E=0.1 weights) correctly represents relative source reliability | 2026-03-28 | 2026-09-28 | Scientific method; evidence hierarchy conventions | 0.80 | critical |
+| INV-002 | A recommendation based solely on Grade E evidence must be flagged LOW_CONFIDENCE — Grade E is never sufficient on its own | 2026-03-28 | 2026-09-28 | Evidence grading system; NEVER rule | 0.85 | critical |
+| INV-003 | An experiment that validates a Grade C-E finding upgrades it to Grade B | 2026-03-28 | 2026-09-28 | Scientific method — empirical validation principle | 0.80 | high |
+| INV-004 | 10 minutes of searching with no results above Grade D is the right time-box before documenting a gap | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
+| INV-005 | Conflicting evidence of the same grade should be resolved by recency (more recent wins) | 2026-03-28 | 2026-09-28 | Scientific method; recency convention for fast-moving tech | 0.75 | high |
+| INV-006 | The 8-step scientific method (Question → Research → Evaluate → Hypothesize → Experiment → Measure → Synthesize → Recommend) is complete and sufficient for squad investigations | 2026-03-28 | 2026-09-28 | Scientific method (Popper, Kuhn) | 0.80 | high |
+| INV-007 | Experiments should be run in isolated git worktrees — contamination to the main branch is a real risk | 2026-03-28 | 2026-09-28 | Design choice; git workflow best practice | 0.85 | medium |
+| INV-008 | Negative results ("we tested X and it failed") have equal scientific value to positive results | 2026-03-28 | 2026-09-28 | Scientific method; publication bias literature | 0.90 | medium |

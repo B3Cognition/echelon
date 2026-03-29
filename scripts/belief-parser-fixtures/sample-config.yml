@@ -1,0 +1,56 @@
+# Belief Parser Test Fixture — Config YAML
+#
+# Tests: multi-field belief, minimal belief, no-belief key, nested key,
+#        expired belief, approaching-expiry belief, low-confidence belief
+
+analysis:
+  # @belief(
+  #   claim: "Convergence delta of 0.02 is optimal for spec quality improvement detection"
+  #   verified: 2026-03-28
+  #   expires: 2026-09-28
+  #   anchor: "config-template.yml analysis section"
+  #   confidence: 0.75
+  #   severity: medium
+  # )
+  convergence_delta: 0.02
+
+  # @belief(claim: "Max 5 iterations prevents infinite loops")
+  max_squad_iterations: 5
+
+  # Ordinary comment — not a belief
+  mode: auto
+
+limits:
+  # @belief(
+  #   claim: "Wall clock timeout of 120 minutes covers even complex brownfield runs"
+  #   verified: 2025-09-01
+  #   expires: 2025-10-01
+  #   confidence: 0.80
+  #   severity: high
+  # )
+  wall_clock_timeout_minutes: 120
+
+  # @belief(
+  #   claim: "30 day warning window is sufficient for expiry notice"
+  #   verified: 2026-03-10
+  #   expires: 2026-04-15
+  #   confidence: 0.65
+  #   severity: low
+  # )
+  approaching_expiry_days: 30
+
+  # @belief(
+  #   claim: "Token cap of 500k is safe enough to prevent runaway costs"
+  #   verified: 2026-01-01
+  #   expires: 2026-12-31
+  #   confidence: 0.40
+  #   severity: low
+  # )
+  max_tokens: 500000
+
+nested:
+  deep:
+    # @belief(claim: "Nested key parsing must work for deeply nested config values")
+    some_value: true
+
+no_annotation_key: "just a plain value"
