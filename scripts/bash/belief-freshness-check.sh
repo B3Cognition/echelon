@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Belief freshness check — called by COMMANDER at run start
-# Reads config-belief-graph.json and warns about stale beliefs
-# Exit 0 always (never blocks the run per FR-009)
+# Reads config-belief-graph.json, classifies beliefs, and exits with graduated codes.
+#
+# EXIT CODES (FR-001):
+#   0 = all fresh, or graph missing/unparseable (backward compatible)
+#   1 = high-severity stale beliefs OR 3+ low-confidence beliefs (defer dispatch)
+#   2 = critical-severity stale beliefs detected (dispatch INVESTIGATOR)
+#
+# When exit code is non-zero, structured JSON is written to stdout (FR-002).
 #
 # Usage: ./scripts/bash/belief-freshness-check.sh [--belief-graph PATH]
 # Default graph path: config-belief-graph.json (repo root)
@@ -45,13 +51,13 @@ fi
 python3 - "$BELIEF_GRAPH" <<'PYEOF'
 import sys
 import json
-from datetime import date, timedelta
+from datetime import date
 
 BELIEF_GRAPH = sys.argv[1]
 LOW_CONFIDENCE_THRESHOLD = 0.50
 APPROACHING_EXPIRY_DAYS  = 30
 
-# ── Load and validate ─────────────────────────────────────────────
+# ── Load and validate (FR-010: missing/malformed → exit 0) ───────
 
 try:
     with open(BELIEF_GRAPH, "r", encoding="utf-8") as fh:
@@ -70,15 +76,16 @@ today = date.today()
 # ── Classify each belief ──────────────────────────────────────────
 
 fresh_count    = 0
-stale_beliefs  = []   # list of (belief_dict, derived_status)
+stale_beliefs  = []
 
 for belief in beliefs:
-    belief_id  = belief.get("belief_id", "<unknown>")
-    claim      = belief.get("claim", "")
-    confidence = float(belief.get("confidence", 1.0))
-    severity   = belief.get("severity", "medium")
+    belief_id   = belief.get("belief_id", "<unknown>")
+    claim       = belief.get("claim", "")
+    confidence  = float(belief.get("confidence", 1.0))
+    severity    = belief.get("severity", "medium")
     source_file = belief.get("source_file", "")
     source_line = belief.get("source_line", "")
+    config_key  = belief.get("config_key", "")
     raw_status  = belief.get("status", "fresh")
 
     expires_str = belief.get("expires_date") or ""
@@ -100,77 +107,100 @@ for belief in beliefs:
         fresh_count += 1
         continue
     else:
-        # Unknown status — treat as stale
         derived_status = raw_status
 
     stale_beliefs.append({
-        "belief_id":   belief_id,
-        "claim":       claim,
-        "confidence":  confidence,
-        "severity":    severity,
-        "source_file": source_file,
-        "source_line": source_line,
-        "status":      derived_status,
+        "belief_id":            belief_id,
+        "claim":                claim,
+        "confidence":           confidence,
+        "severity":             severity,
+        "source_file":          source_file,
+        "source_line":          source_line,
+        "status":               derived_status,
+        "dependent_config_key": config_key,
     })
 
-# Beliefs classified as stale and fresh above; count any remaining fresh
-# (approaching_expiry and expired ones are in stale_beliefs already)
-# Recount: fresh = total - stale
 fresh_count = len(beliefs) - len(stale_beliefs)
 
-# ── Emit per-belief warnings ──────────────────────────────────────
+# ── Determine graduated exit code (FR-001, FR-008, FR-011) ───────
+
+critical_stale     = [b for b in stale_beliefs if b["severity"] == "critical" and b["status"] == "expired"]
+high_stale         = [b for b in stale_beliefs if b["severity"] == "high" and b["status"] == "expired"]
+low_confidence_all = [b for b in stale_beliefs if b["status"] == "low_confidence"]
+
+if critical_stale:
+    exit_code = 2  # Critical-severity expired → INVESTIGATOR dispatch
+elif high_stale or len(low_confidence_all) >= 3:
+    exit_code = 1  # High-severity expired OR 3+ low-confidence → defer dispatch
+else:
+    exit_code = 0  # All others (approaching_expiry, low/medium expired) → log only
+
+# ── Emit human-readable warnings to stderr ────────────────────────
 
 CRITICAL_BANNER_TOP    = "╔══════════════════════════════════════════════╗"
 CRITICAL_BANNER_SEP    = "╠══════════════════════════════════════════════╣"
 CRITICAL_BANNER_BOTTOM = "╚══════════════════════════════════════════════╝"
 
-critical_stale = [b for b in stale_beliefs if b["severity"] == "critical"]
-non_critical_stale = [b for b in stale_beliefs if b["severity"] != "critical"]
+non_critical_stale = [b for b in stale_beliefs if not (b["severity"] == "critical" and b["status"] == "expired")]
 
-# Emit non-critical stale warnings first
 for b in non_critical_stale:
     source = f"{b['source_file']}:{b['source_line']}" if b['source_file'] else "<unknown>"
-    print(f"\u26a0 STALE BELIEF: {b['belief_id']}")
-    print(f"  Claim: {b['claim']}")
-    print(f"  Status: {b['status']}")
-    print(f"  Confidence: {b['confidence']}")
-    print(f"  Source: {source}")
+    print(f"\u26a0 STALE BELIEF: {b['belief_id']}", file=sys.stderr)
+    print(f"  Claim: {b['claim']}", file=sys.stderr)
+    print(f"  Status: {b['status']} | Severity: {b['severity']} | Confidence: {b['confidence']}", file=sys.stderr)
+    print(f"  Source: {source}", file=sys.stderr)
 
-# FR-011: Critical stale beliefs get a prominent banner
 for b in critical_stale:
     source = f"{b['source_file']}:{b['source_line']}" if b['source_file'] else "<unknown>"
-    print(CRITICAL_BANNER_TOP)
-    print("║  CRITICAL STALE BELIEF DETECTED             ║")
-    print(CRITICAL_BANNER_SEP)
-
-    # Pad lines to fit banner width (44 visible chars between ║  and  ║)
+    print(CRITICAL_BANNER_TOP, file=sys.stderr)
+    print("║  CRITICAL STALE BELIEF — INVESTIGATION REQ  ║", file=sys.stderr)
+    print(CRITICAL_BANNER_SEP, file=sys.stderr)
     def banner_line(text, width=44):
         padded = text[:width]
         return f"║  {padded:<{width}}║"
-
-    print(banner_line(b["belief_id"]))
-    # Truncate claim to 44 chars for display
+    print(banner_line(b["belief_id"]), file=sys.stderr)
     claim_display = b["claim"] if len(b["claim"]) <= 44 else b["claim"][:41] + "..."
-    print(banner_line(claim_display))
-    status_conf = f"Status: {b['status']} | Confidence: {b['confidence']}"
-    print(banner_line(status_conf))
-    print(CRITICAL_BANNER_BOTTOM)
-    # Also emit the structured warning for tooling/log parsing
-    print(f"\u26a0 STALE BELIEF: {b['belief_id']}")
-    print(f"  Claim: {b['claim']}")
-    print(f"  Status: {b['status']}")
-    print(f"  Confidence: {b['confidence']}")
-    print(f"  Source: {source}")
+    print(banner_line(claim_display), file=sys.stderr)
+    print(CRITICAL_BANNER_BOTTOM, file=sys.stderr)
 
-# ── Summary line ──────────────────────────────────────────────────
+# ── Summary to stderr ─────────────────────────────────────────────
 
-critical_count = len(critical_stale)
 stale_count    = len(stale_beliefs)
+critical_count = len(critical_stale)
+print(f"Belief freshness: {fresh_count} fresh, {stale_count} stale ({critical_count} critical) → exit {exit_code}", file=sys.stderr)
 
-print(f"Belief freshness: {fresh_count} fresh, {stale_count} stale ({critical_count} critical)")
+# ── Structured JSON to stdout when non-zero (FR-002) ─────────────
 
-sys.exit(0)
+if exit_code > 0:
+    recommended = "investigate" if exit_code == 2 else "defer"
+    output = {
+        "exit_code": exit_code,
+        "recommended_action": recommended,
+        "stale_beliefs": [
+            {
+                "belief_id":            b["belief_id"],
+                "claim":                b["claim"],
+                "severity":             b["severity"],
+                "confidence":           b["confidence"],
+                "status":               b["status"],
+                "dependent_config_key": b["dependent_config_key"],
+            }
+            for b in stale_beliefs
+            if b["status"] == "expired" or b["status"] == "low_confidence"
+        ],
+        "summary": {
+            "total_beliefs": len(beliefs),
+            "fresh": fresh_count,
+            "stale": stale_count,
+            "critical_expired": critical_count,
+            "high_expired": len(high_stale),
+            "low_confidence": len(low_confidence_all),
+        },
+    }
+    print(json.dumps(output, indent=2))
+
+sys.exit(exit_code)
 PYEOF
 
-# The python3 heredoc exits 0 always; propagate that
-exit 0
+# Propagate the python exit code to the shell
+exit $?
