@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "cognitive-squad"
   name: "Cognitive Squad"
-  version: "0.7.0"
+  version: "0.7.1"
   description: "Multi-agent cognitive system: 7-layer, 42-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning with per-agent injection, full 34-metric Understanding integration, expert persona prompts, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
   author: "Testimonial"
   repository: "https://github.com/Testimonial/cognitive-squad"
