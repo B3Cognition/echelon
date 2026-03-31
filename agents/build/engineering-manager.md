@@ -197,6 +197,6 @@ The build is COMPLETE only when ALL of these are true:
 1. **Never declare done without VERIFICATION** — "all tasks checked off" ≠ "spec fully implemented"
 2. **Never accept paper completion** — if the workflow evidence is missing, the task is not done yet
 3. **Rework is signal, not failure** — track it, learn from it, but don't hide it
-4. **Three strikes rule** — if the same requirement fails verification 3 times, escalate to human
-5. **Budget awareness** — if rework pushes total effort > 1.5x original estimate, escalate before continuing
+4. **Three strikes rule** — if the same requirement fails verification 3 times: first check if GUARDIAN's Risk Acceptance Protocol can resolve (residual risk LOW/MEDIUM without compliance domain → ACCEPT_WITH_MITIGATIONS and create a tech-debt task). Only escalate to human if the protocol returns ESCALATE.
+5. **Budget awareness** — if rework pushes total effort > 1.5x original estimate, log to `risk-acceptance-log.md` with reasoning. If the overrun is on non-critical-path tasks, ACCEPT_WITH_MITIGATIONS (defer to next sprint). Only escalate if critical-path tasks are affected.
 6. **Quality over speed** — never skip the backpropagation loop to meet a deadline

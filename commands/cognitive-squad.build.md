@@ -584,6 +584,27 @@ WARNINGS:
   {any BLOCKED tasks}
   {any drift alerts}
 
+RISKS ACCEPTED AUTONOMOUSLY:
+  {count from risk-acceptance-log.md, or "None"}
+  {for each ACCEPT_WITH_MITIGATIONS: one-line summary + mitigation status}
+
+──────────────────────────────────────────
+  HUMAN ACTIONS REQUIRED
+──────────────────────────────────────────
+  {This section is MANDATORY. ALWAYS print it, even if empty.}
+  {If no human actions: "None — build completed autonomously."}
+  {For each ESCALATE item from risk-acceptance-log.md:}
+    [ ] {RAR-ID}: {one-line description} — {reason human must decide}
+  {For each BLOCKED task that needs external input:}
+    [ ] {task ID}: {what is blocked} — {who/what can unblock}
+  {For each HUMAN_REVIEW_REQUIRED flag:}
+    [ ] {source agent}: {what needs review}
+  {For each manual verification needed:}
+    [ ] {what to verify} — {how to verify it}
+  {For each deployment/release action:}
+    [ ] {action}: {command or step}
+──────────────────────────────────────────
+
 ============================================
 ```
 

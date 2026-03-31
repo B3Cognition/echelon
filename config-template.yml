@@ -858,6 +858,33 @@ specialists:
     - HIPAA
     - compliance
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # RISK ACCEPTANCE PROTOCOL (GUARDIAN)
+  # Controls when GUARDIAN can autonomously accept risk vs escalate to human.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  risk_acceptance:
+    # Enable autonomous risk acceptance (disable to always escalate)
+    # @belief(claim: "Autonomous risk acceptance reduces human bottlenecks by 70-80% while preserving escalation for genuine compliance risks", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: high)
+    enabled: true
+
+    # Maximum residual risk GUARDIAN can accept autonomously (without human)
+    # LOW = only low residual risk | MEDIUM = up to medium | HIGH = up to high (not recommended)
+    # @belief(claim: "MEDIUM is the right autonomous ceiling — HIGH residual risk requires human judgment", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: critical)
+    max_autonomous_residual: MEDIUM
+
+    # Compliance domains that always require human sign-off for MEDIUM+ residual risk
+    # @belief(claim: "GDPR/HIPAA/PCI-DSS require human accountability — autonomous acceptance creates legal liability", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.85, severity: critical)
+    compliance_escalation_domains:
+      - GDPR
+      - HIPAA
+      - PCI-DSS
+      - SOC2
+
+    # Minimum evidence grade for autonomous ACCEPT_WITH_MITIGATIONS
+    # @belief(claim: "Grade C (general reference) is the minimum for autonomous risk acceptance — D/E evidence is too speculative", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: high)
+    min_evidence_grade: C
+
   # Auto-summon PERFORMANCE (BENCHMARK) when these keywords appear
   auto_performance_keywords:
     - real-time

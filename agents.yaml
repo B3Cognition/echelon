@@ -352,10 +352,14 @@ agents:
     file: agents/specialists/guardian.md
     layer: specialists
     phase: solution
-    role: "OWASP, STRIDE, threat modeling, compliance"
-    when: "Auth, payments, PII, compliance detected"
+    role: "OWASP, STRIDE, threat modeling, compliance, autonomous risk acceptance"
+    when: "Auth, payments, PII, compliance detected; also invoked by COMMANDER for risk arbitration"
     inputs: [spec.md, plan.md, data-model.md, contracts/]
-    outputs: [threat-model.md, compliance-requirements.md]
+    outputs: [threat-model.md, compliance-requirements.md, risk-acceptance-log.md]
+    capabilities:
+      - "Risk Acceptance Protocol — autonomously ACCEPT/ACCEPT_WITH_MITIGATIONS/ESCALATE"
+      - "Quantified RAR (Risk Acceptance Records) with evidence grades"
+      - "Only escalates to human for CRITICAL residual risk or compliance-domain HIGH risk"
 
   ORACLE:
     codename: ORACLE
