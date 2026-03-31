@@ -27,7 +27,7 @@ append_only: true
 max_entries: 100
 entries:
   - run_id: squad-003-1742652000
-    artifact: specs/001-cognitive-squad-improvements/spec.md
+    artifact: specs/001-echelon-improvements/spec.md
     challenge_type: logical_inconsistency
     challenge_summary: "FR-03 contradicts boundary B-02 regarding external API access."
     outcome: blocked

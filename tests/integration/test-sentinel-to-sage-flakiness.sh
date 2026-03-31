@@ -3,7 +3,7 @@
 # of the 5 Flakiness Management subsections in SENTINEL test-strategy output
 set -euo pipefail
 
-FIXTURES_DIR="/Users/ladislavbihari/myWork/competition/cognitive-squad/tests/fixtures/agent-outputs/sentinel"
+FIXTURES_DIR="/Users/ladislavbihari/myWork/competition/echelon/tests/fixtures/agent-outputs/sentinel"
 POSITIVE="$FIXTURES_DIR/test-strategy-with-flakiness.md"
 NEGATIVE="$FIXTURES_DIR/test-strategy-without-flakiness.md"
 

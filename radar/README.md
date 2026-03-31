@@ -1,6 +1,6 @@
 # RADAR - Real-time Agent Display And Relay
 
-RADAR is a lightweight SSE server that enables real-time monitoring of cognitive-squad agent execution via the squad-monitor UI.
+RADAR is a lightweight SSE server that enables real-time monitoring of echelon agent execution via the squad-monitor UI.
 
 ## Quick Start
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# startup-banner.sh — Cognitive Squad initialization banner
+# startup-banner.sh — Echelon initialization banner
 # Runs via frontmatter scripts.sh before every squad command
 
 # Colors

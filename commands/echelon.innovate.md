@@ -18,7 +18,7 @@ Manually dispatch the INNOVATE specialist to propose fundamentally different app
 
 Read `.specify/squad/state.json`.
 
-- If the file does not exist, report **"No active squad run. Run /speckit.cognitive-squad.run first."** and stop.
+- If the file does not exist, report **"No active squad run. Run /speckit.echelon.run first."** and stop.
 - If `status` is `"killed"` or `"done"`, report **"Squad run is already {status}. Start a new run first."** and stop.
 
 Extract `spec_id` and locate the spec directory: `.specify/specs/{spec_id}-*/`.
@@ -41,11 +41,11 @@ If `$ARGUMENTS` is provided, use it as the focus area for innovation. Otherwise,
 
 ## Step 3: Dispatch INNOVATE
 
-Read the INNOVATE agent prompt from `.specify/extensions/cognitive-squad/agents/specialists/maverick.md`.
+Read the INNOVATE agent prompt from `.specify/extensions/echelon/agents/specialists/maverick.md`.
 
 Use the **Agent tool** to dispatch INNOVATE as a subagent:
 
-- **prompt:** Read the file `.specify/extensions/cognitive-squad/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
 - **description:** "INNOVATE: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
 
 ---
@@ -95,6 +95,6 @@ Alternatives: {count from alternatives.md}
 Files:        alternatives.md, risk-opportunities.md, challenge-assumptions.md
 
 Review the alternatives and decide whether to incorporate
-them into the current approach via a re-run of /speckit.cognitive-squad.run.
+them into the current approach via a re-run of /speckit.echelon.run.
 ============================================
 ```

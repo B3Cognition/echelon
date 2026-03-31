@@ -7,7 +7,7 @@ This directory closes the learning loop input side.
 After every project that used the cognitive squad, run:
 
 ```bash
-/speckit.cognitive-squad.feedback {spec_id}
+/speckit.echelon.feedback {spec_id}
 ```
 
 This command collects post-implementation outcome data and writes a feedback file here.
@@ -22,7 +22,7 @@ Each feedback file is named `feedback-{spec_id}-{timestamp}.yaml` and has this s
 # feedback-007-1774677025.yaml
 spec_id: "007"
 run_id: "squad-1774677025"
-feature: "cognitive-squad-6-connections"
+feature: "echelon-6-connections"
 completed_at: "2026-03-28T00:00:00Z"
 domain: "cognitive-orchestration"
 

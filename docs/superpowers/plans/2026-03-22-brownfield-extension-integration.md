@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix the structural wiring gap that prevents cognitive-squad agents from using spec-kit extensions (specifically `spec-kit-reverse-eng`) during brownfield discovery, by introducing PROSPECTOR (extension discovery) and GOLDDIGGER (extension driver + normalizer).
+**Goal:** Fix the structural wiring gap that prevents echelon agents from using spec-kit extensions (specifically `spec-kit-reverse-eng`) during brownfield discovery, by introducing PROSPECTOR (extension discovery) and GOLDDIGGER (extension driver + normalizer).
 
 **Architecture:** PROSPECTOR runs first on every squad run and writes `.specify/squad/extension-capabilities.json` so COMMANDER knows what spec-kit extensions are available. In brownfield runs where `reverse-eng` is available, GOLDDIGGER is dispatched before SCOUT — it drives reverse-eng Phase 1 with two named config profiles (Mode 1: fast/signatures survey; Mode 2: full-depth per-domain on demand) and normalizes all output into a stable `brownfield-index.md` that SCOUT consumes as a head-start. SCOUT's output format and all downstream agents are unchanged.
 
@@ -24,24 +24,24 @@
 | Modify | `agents/control/commander.md` | Add PROSPECTOR init dispatch + GOLDDIGGER brownfield dispatch + Mode 2 queue |
 | Modify | `agents.yaml` | Register PROSPECTOR (control layer) + GOLDDIGGER (exploration layer) |
 | Modify | `extension.yml` | Fix misleading binary claim in description |
-| Modify | `commands/cognitive-squad.run.md` | Fix Section 15 error table row + line ~619 advisory text |
-| Modify | `commands/cognitive-squad.build.md` | python → python3 (already staged, just needs commit) |
+| Modify | `commands/echelon.run.md` | Fix Section 15 error table row + line ~619 advisory text |
+| Modify | `commands/echelon.build.md` | python → python3 (already staged, just needs commit) |
 
 ---
 
 ## Task 1: Commit existing python3 fixes
 
-The `python` → `python3` change in `commands/cognitive-squad.run.md` (5 occurrences) and `commands/cognitive-squad.build.md` (2 occurrences) is already in the working tree. Commit it standalone before touching anything else.
+The `python` → `python3` change in `commands/echelon.run.md` (5 occurrences) and `commands/echelon.build.md` (2 occurrences) is already in the working tree. Commit it standalone before touching anything else.
 
 **Files:**
-- Modify: `commands/cognitive-squad.run.md` (already done)
-- Modify: `commands/cognitive-squad.build.md` (already done)
+- Modify: `commands/echelon.run.md` (already done)
+- Modify: `commands/echelon.build.md` (already done)
 
 - [ ] **Step 1.1: Verify the diff is what we expect**
 
 ```bash
-git diff commands/cognitive-squad.run.md | grep "^[-+].*python"
-git diff commands/cognitive-squad.build.md | grep "^[-+].*python"
+git diff commands/echelon.run.md | grep "^[-+].*python"
+git diff commands/echelon.build.md | grep "^[-+].*python"
 ```
 
 Expected: lines showing `python` → `python3` replacements only. No other changes.
@@ -49,7 +49,7 @@ Expected: lines showing `python` → `python3` replacements only. No other chang
 - [ ] **Step 1.2: Stage and commit**
 
 ```bash
-git add commands/cognitive-squad.run.md commands/cognitive-squad.build.md
+git add commands/echelon.run.md commands/echelon.build.md
 git commit -m "fix: use python3 in all RADAR invocations (macOS PATH)"
 ```
 
@@ -833,10 +833,10 @@ git commit -m "fix(extension.yml): document Skill-based reverse-eng invocation, 
 
 ---
 
-## Task 8: Fix cognitive-squad.run.md — Section 15 error table + line ~619 advisory text
+## Task 8: Fix echelon.run.md — Section 15 error table + line ~619 advisory text
 
 **Files:**
-- Modify: `commands/cognitive-squad.run.md`
+- Modify: `commands/echelon.run.md`
 
 - [ ] **Step 8.1: Fix the Section 15 error table row**
 
@@ -869,25 +869,25 @@ Replace with:
 - [ ] **Step 8.3: Verify both changes**
 
 ```bash
-grep -n "spec-kit-reverse-eng.*suggest running" commands/cognitive-squad.run.md
+grep -n "spec-kit-reverse-eng.*suggest running" commands/echelon.run.md
 ```
 
 Expected: no output (old text gone).
 
 ```bash
-grep -n "brownfield-index.md is present" commands/cognitive-squad.run.md
+grep -n "brownfield-index.md is present" commands/echelon.run.md
 ```
 
 Expected: 1 hit (new text at line ~619).
 
 ```bash
-grep -n "DISCOVER falls back to greenfield mode" commands/cognitive-squad.run.md
+grep -n "DISCOVER falls back to greenfield mode" commands/echelon.run.md
 ```
 
 Expected: no output (old error table row gone).
 
 ```bash
-grep -n "COMMANDER treats as empty-extensions" commands/cognitive-squad.run.md
+grep -n "COMMANDER treats as empty-extensions" commands/echelon.run.md
 ```
 
 Expected: 1 hit.
@@ -895,7 +895,7 @@ Expected: 1 hit.
 - [ ] **Step 8.4: Commit**
 
 ```bash
-git add commands/cognitive-squad.run.md
+git add commands/echelon.run.md
 git commit -m "fix(squad.run): update error table and brownfield advisory text for PROSPECTOR+GOLDDIGGER"
 ```
 
@@ -911,7 +911,7 @@ Manual verification that the full dispatch sequence is coherent across all modif
 
 Read through the following files in sequence and verify the chain is unbroken:
 
-1. `commands/cognitive-squad.run.md` — user invokes the squad run command (note: `cognitive-squad.run.md` does NOT call PROSPECTOR directly; COMMANDER handles all agent dispatch, including PROSPECTOR)
+1. `commands/echelon.run.md` — user invokes the squad run command (note: `echelon.run.md` does NOT call PROSPECTOR directly; COMMANDER handles all agent dispatch, including PROSPECTOR)
 2. `agents/control/commander.md` — PROSPECTOR dispatched first (before `## Build Phase Orchestration`); reads capabilities; dispatches GOLDDIGGER if reverse-eng relevant; GOLDDIGGER before SCOUT
 3. `agents/control/prospector.md` — scans extension paths; writes valid JSON even on failure
 4. `agents/exploration/golddigger.md` — Mode 1: writes config → invokes reverse-eng → normalizes to brownfield-index.md → writes golddigger_status
@@ -985,8 +985,8 @@ git commit -m "chore: bump version to 0.5.0 — brownfield extension integration
 
 | File | Task | Change type |
 |------|------|-------------|
-| `commands/cognitive-squad.run.md` | 1, 8 | python3 fix + error table + advisory text |
-| `commands/cognitive-squad.build.md` | 1 | python3 fix |
+| `commands/echelon.run.md` | 1, 8 | python3 fix + error table + advisory text |
+| `commands/echelon.build.md` | 1 | python3 fix |
 | `agents/control/prospector.md` | 2 | New file |
 | `agents/exploration/golddigger.md` | 3 | New file |
 | `agents/exploration/scout.md` | 4 | Binary check → brownfield-index.md |

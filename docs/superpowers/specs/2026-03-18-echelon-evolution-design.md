@@ -1,4 +1,4 @@
-# Cognitive Squad Evolution Design
+# Echelon Evolution Design
 
 > **Status**: Approved
 > **Date**: 2026-03-18
@@ -6,7 +6,7 @@
 
 ## Summary
 
-Evolve cognitive-squad by incorporating the best ideas from BMAD-METHOD while preserving its autonomous-first philosophy. Key changes: dual naming system, 4-phase architecture with autonomy modes, new agents (CATALYST, SCRIBE), and layer-based organization.
+Evolve echelon by incorporating the best ideas from BMAD-METHOD while preserving its autonomous-first philosophy. Key changes: dual naming system, 4-phase architecture with autonomy modes, new agents (CATALYST, SCRIBE), and layer-based organization.
 
 ## Context
 
@@ -17,7 +17,7 @@ Evolve cognitive-squad by incorporating the best ideas from BMAD-METHOD while pr
 - Interactive menu-driven workflows
 - 4-phase lifecycle: Analysis → Planning → Solutioning → Implementation
 
-**Cognitive Squad** is a spec-kit extension for autonomous pre-code analysis with:
+**Echelon** is a spec-kit extension for autonomous pre-code analysis with:
 - Role-based agents (DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN)
 - Autonomous execution via MANAGER dispatch
 - Learning layer (CALIBRATE, EVOLVE) for continuous improvement
@@ -25,11 +25,11 @@ Evolve cognitive-squad by incorporating the best ideas from BMAD-METHOD while pr
 
 ### Key Insight
 
-BMAD and cognitive-squad solve adjacent but different problems:
+BMAD and echelon solve adjacent but different problems:
 - BMAD: Human guides AI through structured workflows (interactive)
-- Cognitive Squad: AI runs analysis autonomously, human reviews output (autonomous)
+- Echelon: AI runs analysis autonomously, human reviews output (autonomous)
 
-The goal is to strengthen cognitive-squad by importing valuable BMAD patterns without losing its autonomous-first identity.
+The goal is to strengthen echelon by importing valuable BMAD patterns without losing its autonomous-first identity.
 
 ## Design
 
@@ -272,7 +272,7 @@ COMMANDER decides when to summon specialists based on context:
 | Deliverable | Description |
 |-------------|-------------|
 | Dual naming | Add codenames to all 18 agent prompts |
-| 4-phase model | Refactor `cognitive-squad.run.md` with phase structure |
+| 4-phase model | Refactor `echelon.run.md` with phase structure |
 | Autonomy modes | Add `--mode guided\|semi\|banzai` flag |
 | Layer organization | Restructure `agents/` directory by layer |
 | Config updates | Add `banzai` section to `config-template.yml` |
@@ -305,16 +305,16 @@ COMMANDER decides when to summon specialists based on context:
 | Reason | Explanation |
 |--------|-------------|
 | Different philosophy | BMAD is interactive menu-driven; spec-kit is autonomous-first |
-| Overlap | cognitive-squad v0.3+ will have the best BMAD features |
+| Overlap | echelon v0.3+ will have the best BMAD features |
 | Maintenance burden | Two systems to maintain for similar outcomes |
 | BMAD is self-contained | Has its own installer, ecosystem, Discord |
 
 ### Spec-kit Core Changes: None
 
-BMAD ideas should flow through extensions (cognitive-squad), not spec-kit core. Spec-kit core should stay minimal.
+BMAD ideas should flow through extensions (echelon), not spec-kit core. Spec-kit core should stay minimal.
 
 ## References
 
 - [BMAD-METHOD](https://github.com/bmad-code-org/BMAD-METHOD) - Source of inspiration
 - [reverse-eng extension](https://github.com/spec-kit/spec-kit-reverse-eng) - Phase model reference
-- [cognitive-squad implementation plan](../plans/2026-03-16-cognitive-squad-implementation.md) - Original implementation
+- [echelon implementation plan](../plans/2026-03-16-echelon-implementation.md) - Original implementation

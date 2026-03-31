@@ -20,7 +20,7 @@ Then execute the build state machine below.
 
 ## Overview
 
-This command runs **Phase B: Building** of the Cognitive Agent Squad. You are the **COMMANDER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
+This command runs **Phase B: Building** of the Echelon. You are the **COMMANDER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
 
 The user provides:
 
@@ -32,7 +32,7 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
-**RADAR Monitoring:** See cognitive-squad.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
+**RADAR Monitoring:** See echelon.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
 
 ## v0.4.0 Operator Flow
 
@@ -82,7 +82,7 @@ Read and verify these files exist in `specs/{NNN}-{feature}/`:
 - `estimates.md` — Effort estimates per task
 - `calibration-profile.yaml` — Historical accuracy data
 
-If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `/speckit.cognitive-squad.run` first."
+If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `/speckit.echelon.run` first."
 
 ### 1.2 Parse Tasks
 
@@ -133,7 +133,7 @@ Read `radar.enabled` from squad-config.yml (default: true). If enabled:
 
 ```bash
 # Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/cognitive-squad"
+RADAR_EXT=".specify/extensions/echelon"
 
 # Install RADAR dependencies if needed
 pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
@@ -636,7 +636,7 @@ Append to `feedback-report.md`:
 
 ```
 ============================================
-  COGNITIVE SQUAD BUILD COMPLETE
+  ECHELON BUILD COMPLETE
 ============================================
 
 Feature:    {NNN}-{feature}

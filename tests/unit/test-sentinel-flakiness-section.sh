@@ -2,7 +2,7 @@
 # Unit test: verify SENTINEL prompt contains all 5 Flakiness Management subsections
 set -euo pipefail
 
-SENTINEL="/Users/ladislavbihari/myWork/competition/cognitive-squad/agents/solution/sentinel.md"
+SENTINEL="/Users/ladislavbihari/myWork/competition/echelon/agents/solution/sentinel.md"
 PASS=0
 FAIL=0
 

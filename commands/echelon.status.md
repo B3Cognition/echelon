@@ -4,7 +4,7 @@ description: "Check current cognitive squad state and progress"
 
 ## Overview
 
-Display the current state of the Cognitive Squad, including active run progress, quality trajectory, and artifact inventory. This is a read-only command -- it modifies nothing.
+Display the current state of the Echelon, including active run progress, quality trajectory, and artifact inventory. This is a read-only command -- it modifies nothing.
 
 ---
 
@@ -23,7 +23,7 @@ Print:
 
 ```
 ============================================
-  COGNITIVE SQUAD STATUS
+  ECHELON STATUS
 ============================================
 
 Run ID:      {run_id}
@@ -85,7 +85,7 @@ If `status` is `"blocked"`, prominently display:
 Question: {escalation_question}
 Reason:   {blocked_reason}
 
-Resume with: /speckit.cognitive-squad.resume {your answer}
+Resume with: /speckit.echelon.resume {your answer}
 ```
 
 Print all entries from `issues_log`:

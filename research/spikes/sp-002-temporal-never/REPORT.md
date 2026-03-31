@@ -101,7 +101,7 @@ Every failure path returns DENY:
 - No pending request => DENY
 
 ### 5. XState v5 Actor
-The enforcement logic is encapsulated in an XState machine with two states (idle, evaluating). This aligns with the cognitive-squad architecture where all agent coordination flows through state machines. The machine processes events synchronously — rule evaluation is fast enough that async is unnecessary.
+The enforcement logic is encapsulated in an XState machine with two states (idle, evaluating). This aligns with the echelon architecture where all agent coordination flows through state machines. The machine processes events synchronously — rule evaluation is fast enough that async is unnecessary.
 
 ## Limitations and Future Work
 
@@ -123,4 +123,4 @@ The temporal NEVER rule mechanism meets all ADOPT criteria:
 - **Fail-safe**: All error paths verified to return DENY per ADR-004
 - **Escape hatch**: Belief-change mechanism prevents false positives without compromising safety
 
-Recommend integrating into the cognitive-squad rule layer as the standard enforcement pattern for all temporal NEVER rules.
+Recommend integrating into the echelon rule layer as the standard enforcement pattern for all temporal NEVER rules.

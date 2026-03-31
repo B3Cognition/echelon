@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-belief-parser.py — Cognitive Squad Belief Annotation Parser
+belief-parser.py — Echelon Belief Annotation Parser
 
 Parses @belief(…) annotations from YAML config files and ## Belief Register
 tables from agent prompt Markdown files, producing a config-belief-graph.json.

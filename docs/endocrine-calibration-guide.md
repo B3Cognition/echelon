@@ -1,6 +1,6 @@
 # Endocrine System Calibration Guide
 
-This guide explains how to enable, calibrate, and tune the endocrine (hormone-modulated motivation) system for the Cognitive Agent Squad.
+This guide explains how to enable, calibrate, and tune the endocrine (hormone-modulated motivation) system for the Echelon.
 
 ## What is the Endocrine System?
 

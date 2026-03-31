@@ -104,7 +104,7 @@ domains:
     last_updated: 2026-03-28
     source: squad-1774681342
     status: validation
-    notes: "New domain — first run analyzing Understanding integration into cognitive-squad. Inherits cognitive-orchestration correction factor (0.08) since all changes are md/yaml/json edits. P0 estimated ~22 min corrected, P1 ~15 min. No feedback yet."
+    notes: "New domain — first run analyzing Understanding integration into echelon. Inherits cognitive-orchestration correction factor (0.08) since all changes are md/yaml/json edits. P0 estimated ~22 min corrected, P1 ~15 min. No feedback yet."
 
 # Per-category score history — populated by AUDITOR after each run (FR-006)
 # Schema: { run_id: string, score: number, timestamp: string }

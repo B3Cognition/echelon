@@ -2,14 +2,14 @@
 
 **Date:** 2026-03-31
 **Source:** Paperclip Reverse Engineering Analysis (6-agent deep dive)
-**Target:** Cognitive Squad v0.8.0 / Echelon
+**Target:** Echelon v0.8.0 / Echelon
 **Spec ID:** ECHELON-001
 
 ---
 
 ## 1. Purpose
 
-This specification defines 12 improvements to the Cognitive Squad architecture, derived from competitive analysis of Paperclip (paperclipai/paperclip). Each improvement addresses a gap identified in the reverse engineering analysis where Paperclip's infrastructure patterns would materially improve squad reasoning quality, cost efficiency, or operational reliability.
+This specification defines 12 improvements to the Echelon architecture, derived from competitive analysis of Paperclip (paperclipai/paperclip). Each improvement addresses a gap identified in the reverse engineering analysis where Paperclip's infrastructure patterns would materially improve squad reasoning quality, cost efficiency, or operational reliability.
 
 **Design principle:** Adopt Paperclip's infrastructure strengths without losing squad's cognitive depth. Brain stays ours; body gets an upgrade.
 
@@ -421,7 +421,7 @@ Create `.specify/squad/history.json` as a lightweight append-only run log:
 
 **Specification:**
 
-Both `cognitive-squad.run.md` and `cognitive-squad.build.md` final summaries MUST include:
+Both `echelon.run.md` and `echelon.build.md` final summaries MUST include:
 
 ```
 ──────────────────────────────────────────
@@ -528,7 +528,7 @@ Define standard environment variables for agent dispatch:
 |----|------------|---------------|
 | IMP-001 | Procedure-as-Prompt | 5 agent .md files |
 | IMP-002 | Anti-Pattern Tables | 42 agent .md files |
-| IMP-003 | Cost Ledger | commands/cognitive-squad.run.md, build.md |
+| IMP-003 | Cost Ledger | commands/echelon.run.md, build.md |
 | IMP-004 | Budget Cascade | config-template.yml, commander.md |
 | IMP-010 | Mandatory Output Checklist | Already in PR #42 |
 

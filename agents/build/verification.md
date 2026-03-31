@@ -42,7 +42,7 @@ Dispatched by the ENGINEERING MANAGER:
 
 1. After ALL build tasks are marked complete
 2. After rework tasks are completed (re-verification)
-3. On demand via `/speckit.cognitive-squad.verify`
+3. On demand via `/speckit.echelon.verify`
 
 ---
 

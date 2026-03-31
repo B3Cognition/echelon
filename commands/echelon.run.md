@@ -20,7 +20,7 @@ Then execute the state machine below.
 
 ## Overview
 
-This command runs the **Cognitive Agent Squad** autonomously. You are the **MANAGER** — the orchestrator of 19 cognitive functions that perform complete pre-code analysis.
+This command runs the **Echelon** autonomously. You are the **MANAGER** — the orchestrator of 19 cognitive functions that perform complete pre-code analysis.
 
 The user provides either:
 
@@ -192,7 +192,7 @@ For every agent dispatch, wrap the Agent tool call with emitter calls.
 **Setup (at start of run):**
 
 ```bash
-RADAR_EXT=".specify/extensions/cognitive-squad"
+RADAR_EXT=".specify/extensions/echelon"
 ```
 
 **Before dispatching:**
@@ -340,7 +340,7 @@ Read `radar.enabled` from squad-config.yml (default: true). If enabled:
 
 ```bash
 # Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/cognitive-squad"
+RADAR_EXT=".specify/extensions/echelon"
 
 # Install RADAR dependencies if needed
 pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
@@ -1420,7 +1420,7 @@ Print to terminal:
 
 ```
 ============================================
-  COGNITIVE SQUAD RUN COMPLETE
+  ECHELON RUN COMPLETE
 ============================================
 
 Run ID:     {run_id}
@@ -1472,10 +1472,10 @@ RISKS ACCEPTED AUTONOMOUSLY:
 ──────────────────────────────────────────
 
 Spec ID for feedback: {NNN}
-Run: /speckit.cognitive-squad.feedback {NNN} after implementation
+Run: /speckit.echelon.feedback {NNN} after implementation
 
 BRANCH: {NNN}-{feature}
-Ready for: /speckit.cognitive-squad.build {NNN}-{feature}
+Ready for: /speckit.echelon.build {NNN}-{feature}
 ============================================
 ```
 
@@ -1518,7 +1518,7 @@ When the user starts a new squad run while implementation of the current spec is
 2. Spec-kit handles branch stacking (new branch based on current feature branch)
 3. This allows parallel specification work while implementation continues
 
-**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `/speckit.cognitive-squad.build`.
+**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `/speckit.echelon.build`.
 
 ---
 
@@ -1757,11 +1757,11 @@ Escalation to human is triggered when:
 
    Recommended: {option}
 
-   Respond with: /speckit.cognitive-squad.resume {your answer}
+   Respond with: /speckit.echelon.resume {your answer}
    ============================================
    ```
 
-5. **STOP execution.** Do not proceed. The user must run `/speckit.cognitive-squad.resume` to continue.
+5. **STOP execution.** Do not proceed. The user must run `/speckit.echelon.resume` to continue.
 
 ---
 

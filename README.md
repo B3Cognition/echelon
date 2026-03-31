@@ -1,4 +1,4 @@
-# Cognitive Squad
+# Echelon
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
@@ -12,18 +12,18 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 # 1. Install spec-kit with --dev update support
 uv tool install specify-cli --force --from "git+https://github.com/Testimonial/qag-spec-kit.git@35bc7c7"
 
-# 2. Clone cognitive-squad
-git clone https://github.com/Testimonial/cognitive-squad.git /tmp/cognitive-squad
+# 2. Clone echelon
+git clone https://github.com/Testimonial/echelon.git /tmp/echelon
 
 # 3. Install as dev extension
-specify extension add --dev /tmp/cognitive-squad
+specify extension add --dev /tmp/echelon
 ```
 
 ### Update to latest version
 
 ```bash
-cd /tmp/cognitive-squad && git pull
-specify extension update --dev /tmp/cognitive-squad
+cd /tmp/echelon && git pull
+specify extension update --dev /tmp/echelon
 ```
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
@@ -32,16 +32,16 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 
 ```bash
 # Run analysis on your project idea
-/speckit.cognitive-squad.run "Build a photo album app with sharing and tagging"
+/speckit.echelon.run "Build a photo album app with sharing and tagging"
 
 # Build with quality gates
-/speckit.cognitive-squad.build 001-photo-album
+/speckit.echelon.build 001-photo-album
 
 # Verify 100% spec coverage
-/speckit.cognitive-squad.verify
+/speckit.echelon.verify
 
 # Close the learning loop after implementation
-/speckit.cognitive-squad.feedback 001
+/speckit.echelon.feedback 001
 
 # Validate the extension setup
 ./scripts/bash/dry-run.sh
@@ -212,17 +212,17 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 | Command | Purpose |
 |---------|---------|
-| `/speckit.cognitive-squad.run` | Start analysis (Phase 1-3) |
-| `/speckit.cognitive-squad.build` | Execute build phase |
-| `/speckit.cognitive-squad.verify` | Check 100% spec coverage |
-| `/speckit.cognitive-squad.health` | Periodic health check (drift, KB freshness) |
-| `/speckit.cognitive-squad.status` | Check progress |
-| `/speckit.cognitive-squad.resume` | Answer squad's question |
-| `/speckit.cognitive-squad.change` | Handle spec change during build |
-| `/speckit.cognitive-squad.investigate` | Trigger INVESTIGATOR |
-| `/speckit.cognitive-squad.innovate` | Trigger MAVERICK |
-| `/speckit.cognitive-squad.ground` | Trigger REALIST |
-| `/speckit.cognitive-squad.feedback` | Post-implementation feedback |
+| `/speckit.echelon.run` | Start analysis (Phase 1-3) |
+| `/speckit.echelon.build` | Execute build phase |
+| `/speckit.echelon.verify` | Check 100% spec coverage |
+| `/speckit.echelon.health` | Periodic health check (drift, KB freshness) |
+| `/speckit.echelon.status` | Check progress |
+| `/speckit.echelon.resume` | Answer squad's question |
+| `/speckit.echelon.change` | Handle spec change during build |
+| `/speckit.echelon.investigate` | Trigger INVESTIGATOR |
+| `/speckit.echelon.innovate` | Trigger MAVERICK |
+| `/speckit.echelon.ground` | Trigger REALIST |
+| `/speckit.echelon.feedback` | Post-implementation feedback |
 
 ## Configuration
 
@@ -316,13 +316,13 @@ Checks: agent files, commands, config, templates, state machine flow, role separ
 
 ### From catalog
 ```bash
-specify extension add cognitive-squad
+specify extension add echelon
 ```
 
 ### From source
 ```bash
-git clone https://github.com/Testimonial/cognitive-squad.git
-specify extension add --dev /path/to/cognitive-squad
+git clone https://github.com/Testimonial/echelon.git
+specify extension add --dev /path/to/echelon
 ```
 
 ## Requirements
@@ -344,8 +344,8 @@ agents/
 └── build/             # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
 commands/
-├── cognitive-squad.run.md       # Main squad run orchestration
-├── cognitive-squad.build.md     # Build phase orchestration
+├── echelon.run.md       # Main squad run orchestration
+├── echelon.build.md     # Build phase orchestration
 └── squad.*.md         # Other squad commands (11 total)
 docs/
 └── fallback-mode.md   # Fallback mode documentation

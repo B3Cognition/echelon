@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dry-run.sh — Validate the entire Cognitive Squad orchestration
+# dry-run.sh — Validate the entire Echelon orchestration
 # Usage: ./scripts/bash/dry-run.sh [path-to-extension-root]
 #
 # Checks:
@@ -26,7 +26,7 @@ header(){ printf "\n\033[1;36m═══ %s ═══\033[0m\n\n" "$1"; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║     COGNITIVE SQUAD — DRY RUN VALIDATION         ║"
+echo "║     ECHELON — DRY RUN VALIDATION         ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
 echo "Extension root: $ROOT"
@@ -369,7 +369,7 @@ else
 fi
 
 # Check MANAGER has role separation section
-if grep -q "Role Separation" "$ROOT/commands/cognitive-squad.run.md" 2>/dev/null; then
+if grep -q "Role Separation" "$ROOT/commands/echelon.run.md" 2>/dev/null; then
   green "MANAGER command has Role Separation section"
 else
   red "MANAGER command missing Role Separation — agents may cross roles"

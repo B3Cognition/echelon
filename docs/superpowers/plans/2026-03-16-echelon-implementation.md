@@ -1,10 +1,10 @@
-# Cognitive Agent Squad — Implementation Plan
+# Echelon — Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a Spec-Kit extension that implements 19 cognitive functions (7 core agents + 7 specialists + 4 learning + 1 feedback) for autonomous pre-code analysis.
 
-**Architecture:** Each cognitive function is a markdown prompt file. The MANAGER command (`cognitive-squad.run.md`) is the entry point that dispatches agent prompts as Claude Code subagents via the Agent tool. State is tracked in `state.json`, reasoning in `reasoning-journal.json`, artifacts in `.specify/specs/{feature}/`.
+**Architecture:** Each cognitive function is a markdown prompt file. The MANAGER command (`echelon.run.md`) is the entry point that dispatches agent prompts as Claude Code subagents via the Agent tool. State is tracked in `state.json`, reasoning in `reasoning-journal.json`, artifacts in `.specify/specs/{feature}/`.
 
 **Tech Stack:** Spec-Kit extension (YAML manifest + markdown commands), Claude Code Agent tool for subagent dispatch, Understanding CLI for quality gates, Reverse-Eng CLI for brownfield extraction, bash helper scripts.
 
@@ -30,12 +30,12 @@
 schema_version: "1.0"
 
 extension:
-  id: "cognitive-squad"
-  name: "Cognitive Squad"
+  id: "echelon"
+  name: "Echelon"
   version: "0.1.0"
   description: "19-function cognitive agent squad for autonomous pre-code analysis"
   author: "Testimonial"
-  repository: "https://github.com/Testimonial/cognitive-squad"
+  repository: "https://github.com/Testimonial/echelon"
   license: "MIT"
 
 requires:
@@ -50,26 +50,26 @@ requires:
 
 provides:
   commands:
-    - name: "speckit.cognitive-squad.run"
-      file: "commands/cognitive-squad.run.md"
+    - name: "speckit.echelon.run"
+      file: "commands/echelon.run.md"
       description: "Full autonomous cognitive squad run"
-    - name: "speckit.cognitive-squad.status"
-      file: "commands/cognitive-squad.status.md"
+    - name: "speckit.echelon.status"
+      file: "commands/echelon.status.md"
       description: "Check current squad state and progress"
-    - name: "speckit.cognitive-squad.innovate"
-      file: "commands/cognitive-squad.innovate.md"
+    - name: "speckit.echelon.innovate"
+      file: "commands/echelon.innovate.md"
       description: "Manually trigger INNOVATE specialist"
-    - name: "speckit.cognitive-squad.investigate"
-      file: "commands/cognitive-squad.investigate.md"
+    - name: "speckit.echelon.investigate"
+      file: "commands/echelon.investigate.md"
       description: "Manually trigger SCIENTIST for a specific question"
-    - name: "speckit.cognitive-squad.ground"
-      file: "commands/cognitive-squad.ground.md"
+    - name: "speckit.echelon.ground"
+      file: "commands/echelon.ground.md"
       description: "Manually trigger reality check on artifacts"
-    - name: "speckit.cognitive-squad.feedback"
-      file: "commands/cognitive-squad.feedback.md"
+    - name: "speckit.echelon.feedback"
+      file: "commands/echelon.feedback.md"
       description: "Post-implementation feedback intake"
-    - name: "speckit.cognitive-squad.resume"
-      file: "commands/cognitive-squad.resume.md"
+    - name: "speckit.echelon.resume"
+      file: "commands/echelon.resume.md"
       description: "Provide answer to human escalation"
 
   config:
@@ -80,7 +80,7 @@ provides:
 
 hooks:
   after_tasks:
-    command: "speckit.cognitive-squad.run"
+    command: "speckit.echelon.run"
     optional: true
     prompt: "Run cognitive squad analysis on generated tasks?"
     description: "Automatically analyze tasks with the cognitive squad"
@@ -96,7 +96,7 @@ tags:
 
 ```yaml
 # config-template.yml
-# Cognitive Squad Configuration
+# Echelon Configuration
 # Copy to squad-config.yml and customize
 
 # Analysis settings
@@ -543,7 +543,7 @@ Risks that materialized but were NOT predicted: {list}
 
 ## How to Respond
 
-Run: `/speckit.cognitive-squad.resume {your answer}`
+Run: `/speckit.echelon.resume {your answer}`
 
 The squad will incorporate your answer and continue from the {CURRENT_PHASE} phase.
 ```
@@ -680,16 +680,16 @@ git commit -m "feat: bash helper scripts — detect-project, run-understanding, 
 
 ## Chunk 2: MANAGER Command (The Brain)
 
-### Task 5: Create the MANAGER command — cognitive-squad.run.md
+### Task 5: Create the MANAGER command — echelon.run.md
 
 This is the most critical file. It contains the full state machine, context pack compilation logic, subagent dispatch, convergence detection, and all routing decisions.
 
 **Files:**
-- Create: `commands/cognitive-squad.run.md`
+- Create: `commands/echelon.run.md`
 
 - [ ] **Step 1: Write the MANAGER command**
 
-Create `commands/cognitive-squad.run.md` with the full orchestration prompt. This file is the brain of the system. It must contain:
+Create `commands/echelon.run.md` with the full orchestration prompt. This file is the brain of the system. It must contain:
 
 1. **YAML frontmatter** with description and script references
 2. **State machine definition** — all phases, transitions, and conditions
@@ -709,7 +709,7 @@ The command must instruct the AI agent to:
 - Enforce convergence rules (delta, max iterations, budget)
 - Produce final delivery artifacts
 
-Full content for this file is in the implementation — see `commands/cognitive-squad.run.md` in the repo. This is approximately 400-600 lines of markdown with embedded logic.
+Full content for this file is in the implementation — see `commands/echelon.run.md` in the repo. This is approximately 400-600 lines of markdown with embedded logic.
 
 - [ ] **Step 2: Verify frontmatter is valid**
 
@@ -721,7 +721,7 @@ Open the file and confirm:
 - [ ] **Step 3: Commit**
 
 ```bash
-git add commands/cognitive-squad.run.md
+git add commands/echelon.run.md
 git commit -m "feat: MANAGER command — full state machine, context packs, subagent dispatch"
 ```
 
@@ -730,34 +730,34 @@ git commit -m "feat: MANAGER command — full state machine, context packs, suba
 ### Task 6: Create supporting commands
 
 **Files:**
-- Create: `commands/cognitive-squad.status.md`
-- Create: `commands/cognitive-squad.innovate.md`
-- Create: `commands/cognitive-squad.investigate.md`
-- Create: `commands/cognitive-squad.ground.md`
-- Create: `commands/cognitive-squad.feedback.md`
-- Create: `commands/cognitive-squad.resume.md`
+- Create: `commands/echelon.status.md`
+- Create: `commands/echelon.innovate.md`
+- Create: `commands/echelon.investigate.md`
+- Create: `commands/echelon.ground.md`
+- Create: `commands/echelon.feedback.md`
+- Create: `commands/echelon.resume.md`
 
-- [ ] **Step 1: Write cognitive-squad.status.md**
+- [ ] **Step 1: Write echelon.status.md**
 
 Read `state.json` and present current squad state: phase, iteration, quality scores, active specialists, any blocked issues. Format as a readable summary.
 
-- [ ] **Step 2: Write cognitive-squad.innovate.md**
+- [ ] **Step 2: Write echelon.innovate.md**
 
 Dispatch the INNOVATE specialist agent. Read current artifacts, pass to INNOVATE agent prompt, collect alternatives.md output.
 
-- [ ] **Step 3: Write cognitive-squad.investigate.md**
+- [ ] **Step 3: Write echelon.investigate.md**
 
 Dispatch the SCIENTIST specialist agent with the user's question. Set up worktree if experiment needed. Collect investigation report.
 
-- [ ] **Step 4: Write cognitive-squad.ground.md**
+- [ ] **Step 4: Write echelon.ground.md**
 
 Dispatch the GROUND learning agent. Read all current artifacts, run reality check, produce reality-check.md + cost-analysis.md + benchmark-data.md.
 
-- [ ] **Step 5: Write cognitive-squad.feedback.md**
+- [ ] **Step 5: Write echelon.feedback.md**
 
 Guide user through feedback questionnaire (from template). Collect answers, update knowledge base YAML files (calibration-profile, estimates-log, patterns).
 
-- [ ] **Step 6: Write cognitive-squad.resume.md**
+- [ ] **Step 6: Write echelon.resume.md**
 
 Read `state.json` to find blocked state and escalation question. Incorporate user's answer. Resume MANAGER from blocked phase.
 
@@ -973,7 +973,7 @@ git commit -m "feat: PLAN agent — task breakdown with critical path and risk a
 
 - [ ] **Step 1: Write manager.md**
 
-The MANAGER agent prompt is the system prompt that gets embedded in `cognitive-squad.run.md`. It contains:
+The MANAGER agent prompt is the system prompt that gets embedded in `echelon.run.md`. It contains:
 - Full state machine definition with all phases and transitions
 - Decision rules for routing (which agent next, when to loop, when to stop)
 - Convergence detection rules
@@ -983,7 +983,7 @@ The MANAGER agent prompt is the system prompt that gets embedded in `cognitive-s
 - Error handling and fallback modes
 - Human escalation protocol
 
-This is the reference document that `cognitive-squad.run.md` follows.
+This is the reference document that `echelon.run.md` follows.
 
 - [ ] **Step 2: Commit**
 
@@ -1126,10 +1126,10 @@ git commit -m "feat: 4 learning agents — reflect, evolve, calibrate, ground"
 - [ ] **Step 1: Write README.md**
 
 Cover:
-- What is Cognitive Squad (one paragraph)
+- What is Echelon (one paragraph)
 - Architecture diagram (text-based, from design doc)
-- Installation (`specify extension add cognitive-squad`)
-- Quick start (`/speckit.cognitive-squad.run "Build a photo album app"`)
+- Installation (`specify extension add echelon`)
+- Quick start (`/speckit.echelon.run "Build a photo album app"`)
 - All 7 commands with descriptions
 - Configuration reference
 - Prerequisites (spec-kit, optionally understanding CLI, reverse-eng)
@@ -1169,8 +1169,8 @@ Expected: no output (all files exist).
 # List all agent files
 find agents/ -name "*.md" | sort
 
-# Cross-reference with cognitive-squad.run.md
-grep -o 'agents/[a-z/]*\.md' commands/cognitive-squad.run.md | sort | uniq
+# Cross-reference with echelon.run.md
+grep -o 'agents/[a-z/]*\.md' commands/echelon.run.md | sort | uniq
 ```
 
 Verify all agent files are referenced by the MANAGER command.
@@ -1215,7 +1215,7 @@ git push
 ## File Map (Complete)
 
 ```
-cognitive-squad/
+echelon/
 ├── extension.yml                         # Extension manifest
 ├── config-template.yml                   # Configuration template
 ├── README.md                             # User documentation
@@ -1226,13 +1226,13 @@ cognitive-squad/
 │   └── design.md                         # Design specification
 │
 ├── commands/                             # Slash commands (7)
-│   ├── cognitive-squad.run.md                      # MANAGER — main entry point
-│   ├── cognitive-squad.status.md                   # Check current state
-│   ├── cognitive-squad.innovate.md                 # Trigger INNOVATE
-│   ├── cognitive-squad.investigate.md              # Trigger SCIENTIST
-│   ├── cognitive-squad.ground.md                   # Trigger GROUND
-│   ├── cognitive-squad.feedback.md                 # Post-implementation feedback
-│   └── cognitive-squad.resume.md                   # Resume from BLOCKED
+│   ├── echelon.run.md                      # MANAGER — main entry point
+│   ├── echelon.status.md                   # Check current state
+│   ├── echelon.innovate.md                 # Trigger INNOVATE
+│   ├── echelon.investigate.md              # Trigger SCIENTIST
+│   ├── echelon.ground.md                   # Trigger GROUND
+│   ├── echelon.feedback.md                 # Post-implementation feedback
+│   └── echelon.resume.md                   # Resume from BLOCKED
 │
 ├── agents/                               # Agent prompts (18)
 │   ├── core/                             # Tier 1 (7)

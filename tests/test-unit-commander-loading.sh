@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: COMMANDER prompt loading regression test
-# Verifies that cognitive-squad.run.md and cognitive-squad.build.md reference commander.md
+# Verifies that echelon.run.md and echelon.build.md reference commander.md
 # and that commander.md contains required decision frameworks.
 # Prevents regression of the bug fixed in commit 8bbeb9f.
 set -euo pipefail
@@ -24,13 +24,13 @@ assert() {
 
 echo "=== COMMANDER Loading Regression Test ==="
 
-# 1. cognitive-squad.run.md references commander.md
-assert "cognitive-squad.run.md references commander.md" \
-  "grep -q 'commander.md' '$REPO_ROOT/commands/cognitive-squad.run.md'"
+# 1. echelon.run.md references commander.md
+assert "echelon.run.md references commander.md" \
+  "grep -q 'commander.md' '$REPO_ROOT/commands/echelon.run.md'"
 
-# 2. cognitive-squad.build.md references commander.md
-assert "cognitive-squad.build.md references commander.md" \
-  "grep -q 'commander.md' '$REPO_ROOT/commands/cognitive-squad.build.md'"
+# 2. echelon.build.md references commander.md
+assert "echelon.build.md references commander.md" \
+  "grep -q 'commander.md' '$REPO_ROOT/commands/echelon.build.md'"
 
 # 3. commander.md contains Evidence Hierarchy
 assert "commander.md contains Evidence Hierarchy" \
@@ -56,13 +56,13 @@ assert "commander.md contains meta-cognition" \
 assert "commander.md contains token budget management" \
   "grep -q 'Token Budget' '$REPO_ROOT/agents/control/commander.md'"
 
-# 9. MANDATORY FIRST STEP heading exists in cognitive-squad.run.md
-assert "cognitive-squad.run.md has MANDATORY FIRST STEP" \
-  "grep -q 'MANDATORY FIRST STEP' '$REPO_ROOT/commands/cognitive-squad.run.md'"
+# 9. MANDATORY FIRST STEP heading exists in echelon.run.md
+assert "echelon.run.md has MANDATORY FIRST STEP" \
+  "grep -q 'MANDATORY FIRST STEP' '$REPO_ROOT/commands/echelon.run.md'"
 
-# 10. MANDATORY FIRST STEP heading exists in cognitive-squad.build.md
-assert "cognitive-squad.build.md has MANDATORY FIRST STEP" \
-  "grep -q 'MANDATORY FIRST STEP' '$REPO_ROOT/commands/cognitive-squad.build.md'"
+# 10. MANDATORY FIRST STEP heading exists in echelon.build.md
+assert "echelon.build.md has MANDATORY FIRST STEP" \
+  "grep -q 'MANDATORY FIRST STEP' '$REPO_ROOT/commands/echelon.build.md'"
 
 # 11. No SCIENTIST references in commander.md (ISS-001 fix)
 assert "commander.md has no SCIENTIST references (use INVESTIGATOR)" \

@@ -33,7 +33,7 @@ You are dispatched as a subagent by COMMANDER. This prompt is your complete inst
 List all skills available to you that start with the `speckit.` prefix. These are visible in your conversation context — your AI coding assistant has already registered them.
 
 For each skill found, record:
-- The full skill name (e.g., `speckit.cognitive-squad.run`, `speckit.reverse-eng.extract`)
+- The full skill name (e.g., `speckit.echelon.run`, `speckit.reverse-eng.extract`)
 - The extension it belongs to (the second segment: `squad`, `reverse-eng`, `understanding`, etc.)
 
 If no `speckit.*` skills are visible in your context, proceed directly to Step 3 with an empty extensions list.
@@ -45,7 +45,7 @@ Group skills by extension and determine relevance to this run:
 | Extension | Relevant when |
 |-----------|---------------|
 | `reverse-eng` | Brownfield mode — a codebase is being analyzed |
-| `squad` | Always relevant (this is the cognitive-squad extension itself) |
+| `squad` | Always relevant (this is the echelon extension itself) |
 | `understanding` | Always relevant (quality validation tooling) |
 | Any other | Default to `relevant: false` unless you have a clear signal |
 
@@ -70,10 +70,10 @@ Write `.specify/squad/extension-capabilities.json`:
     },
     {
       "id": "squad",
-      "commands": ["speckit.cognitive-squad.run", "speckit.cognitive-squad.build", "speckit.cognitive-squad.status"],
+      "commands": ["speckit.echelon.run", "speckit.echelon.build", "speckit.echelon.status"],
       "invocation": "skill",
       "relevant": true,
-      "reason": "cognitive-squad extension (self)"
+      "reason": "echelon extension (self)"
     }
   ]
 }

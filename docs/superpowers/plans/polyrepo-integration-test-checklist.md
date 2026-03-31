@@ -5,7 +5,7 @@ Run `/speckit.squad.run` against your polyrepo (top-dir with cpp/, fet-frontend-
 ## Pre-flight
 - [ ] spec-kit initialized in top-dir (`specify init --here`)
 - [ ] reverse-eng extension installed (with System 1 polyrepo changes)
-- [ ] cognitive-squad extension installed (with System 2 polyrepo changes)
+- [ ] echelon extension installed (with System 2 polyrepo changes)
 
 ## During Squad Run — Verify
 - [ ] GOLDDIGGER detects polyrepo mode (check state.json for `golddigger_mode: "polyrepo-survey"`)

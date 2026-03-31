@@ -1,4 +1,4 @@
-"""State emitter for cognitive-squad agent monitoring.
+"""State emitter for echelon agent monitoring.
 
 Writes agent state changes to files that RADAR watches and streams to the UI.
 """
