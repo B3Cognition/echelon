@@ -1385,6 +1385,7 @@ Additional artifacts (conditional):
 - `user-flow.md` (if UX/A11Y ran)
 - `alternatives.md` (if INNOVATE ran)
 - `evolution-report.md` (if EVOLVE ran)
+- `risk-acceptance-log.md` (if GUARDIAN produced Risk Acceptance Records)
 
 ### 12.7 Run SCOREKEEPER
 
@@ -1450,6 +1451,25 @@ WARNINGS:
   {any UNVALIDATED artifacts}
   {any low-confidence domains}
   {any unresolved unknowns}
+
+RISKS ACCEPTED AUTONOMOUSLY:
+  {count from risk-acceptance-log.md, or "None"}
+  {for each ACCEPT_WITH_MITIGATIONS: one-line summary + mitigation task IDs}
+
+──────────────────────────────────────────
+  HUMAN ACTIONS REQUIRED
+──────────────────────────────────────────
+  {This section is MANDATORY. Always print it.}
+  {If no human actions: "None — squad resolved all items autonomously."}
+  {For each ESCALATE item from risk-acceptance-log.md:}
+    [ ] {RAR-ID}: {one-line description} — {reason human must decide}
+  {For each unresolved unknown:}
+    [ ] {unknown}: {what info is needed and from whom}
+  {For each blocked task:}
+    [ ] {task ID}: {what is blocked and what human action unblocks it}
+  {For each HUMAN_REVIEW_REQUIRED flag:}
+    [ ] {source agent}: {what needs review}
+──────────────────────────────────────────
 
 Spec ID for feedback: {NNN}
 Run: /speckit.cognitive-squad.feedback {NNN} after implementation

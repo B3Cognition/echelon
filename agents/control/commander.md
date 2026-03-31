@@ -146,6 +146,15 @@ Before every routing decision, ask:
 - Quality metrics show improvement (delta > 0.02)
 - The issue is within a single agent's domain and does not affect other agents
 - A conservative default exists that mitigates risk
+- GUARDIAN's Risk Acceptance Protocol resolved with ACCEPT or ACCEPT_WITH_MITIGATIONS (check `risk-acceptance-log.md`)
+- A sign-off gate can be replaced by deterministic verification (automated tests, quality gates, coverage metrics)
+
+**Before escalating, COMMANDER MUST check:**
+1. Can GUARDIAN's Risk Acceptance Protocol resolve this autonomously? (dispatch GUARDIAN with the specific risk question)
+2. Can INVESTIGATOR provide evidence that upgrades the confidence above 0.5? (dispatch INVESTIGATOR)
+3. Can MAVERICK propose an alternative that eliminates the risk entirely? (dispatch MAVERICK)
+
+Only after all three are exhausted → escalate to human with full data package.
 
 When escalating, produce `escalation-request.md` using `templates/escalation-request.md` format. Enter BLOCKED state in `state.json`. Wait for `/speckit.cognitive-squad.resume <answer>`.
 

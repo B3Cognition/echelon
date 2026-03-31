@@ -858,6 +858,33 @@ specialists:
     - HIPAA
     - compliance
 
+  # ─────────────────────────────────────────────────────────────────────────
+  # RISK ACCEPTANCE PROTOCOL (GUARDIAN)
+  # Controls when GUARDIAN can autonomously accept risk vs escalate to human.
+  # ─────────────────────────────────────────────────────────────────────────
+
+  risk_acceptance:
+    # Enable autonomous risk acceptance (disable to always escalate)
+    # @belief(claim: "Autonomous risk acceptance reduces human bottlenecks by 70-80% while preserving escalation for genuine compliance risks", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: high)
+    enabled: true
+
+    # Maximum residual risk GUARDIAN can accept autonomously (without human)
+    # LOW = only low residual risk | MEDIUM = up to medium | HIGH = up to high (not recommended)
+    # @belief(claim: "MEDIUM is the right autonomous ceiling — HIGH residual risk requires human judgment", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: critical)
+    max_autonomous_residual: MEDIUM
+
+    # Compliance domains that always require human sign-off for MEDIUM+ residual risk
+    # @belief(claim: "GDPR/HIPAA/PCI-DSS require human accountability — autonomous acceptance creates legal liability", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.85, severity: critical)
+    compliance_escalation_domains:
+      - GDPR
+      - HIPAA
+      - PCI-DSS
+      - SOC2
+
+    # Minimum evidence grade for autonomous ACCEPT_WITH_MITIGATIONS
+    # @belief(claim: "Grade C (general reference) is the minimum for autonomous risk acceptance — D/E evidence is too speculative", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: high)
+    min_evidence_grade: C
+
   # Auto-summon PERFORMANCE (BENCHMARK) when these keywords appear
   auto_performance_keywords:
     - real-time
@@ -866,6 +893,41 @@ specialists:
     - latency
     - scalab
     - high-load
+
+# =============================================================================
+# AUTO-FEEDBACK & POST-BUILD VALIDATION (ECHELON-002)
+# =============================================================================
+#
+# Autonomous feedback loop that closes the learning cycle without human input.
+# After every build, AUDITOR self-assesses by comparing predictions against
+# build outcomes. CRITICAL findings are routed to expert agents for investigation.
+#
+
+feedback:
+  # Enable autonomous post-build feedback (no human required)
+  # @belief(claim: "Auto-feedback eliminates the biggest learning loop gap — most runs never get human feedback, causing calibration stagnation", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.75, severity: high)
+  auto_feedback: true
+
+  # Dispatch expert agents for CRITICAL findings
+  # @belief(claim: "Expert triage of critical findings produces actionable KB updates that passive logging cannot", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: high)
+  expert_triage: true
+
+  # Maximum expert dispatches during feedback phase (budget control)
+  # [range: 1-5] Higher = more thorough but more expensive
+  # @belief(claim: "3 expert dispatches covers the most impactful critical findings without excessive budget drain in the feedback phase", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: medium)
+  max_expert_dispatches: 3
+
+  # Run Understanding re-scan on final state after build
+  # @belief(claim: "Post-build Understanding re-scan detects spec quality regressions caused by build-phase amendments", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.65, severity: medium)
+  post_build_validation: true
+
+  # Run TRACKER intent alignment check after build
+  # @belief(claim: "Post-build intent check catches scope drift that accumulated across many small build decisions", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.70, severity: medium)
+  post_build_intent_check: true
+
+  # Still allow manual /feedback override (human ground truth on top of auto)
+  # @belief(claim: "Human feedback adds perception, business outcome, and team friction data that agents cannot self-assess", verified: 2026-03-31, expires: 2026-09-30, confidence: 0.85, severity: medium)
+  allow_manual_override: true
 
 # =============================================================================
 # KNOWLEDGE BASE

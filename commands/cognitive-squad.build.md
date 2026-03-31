@@ -542,7 +542,97 @@ End of build:
   VERIFICATION found gaps: SPEC GUARD gets -2 per gap (Blind Spot badge candidate)
 ```
 
-### 8.5 Print Summary
+---
+
+## 8.5 Auto-Feedback & Post-Build Validation (Phase 5)
+
+After SCOREKEEPER and before final summary, COMMANDER runs the autonomous feedback pipeline. This closes the learning loop without human input.
+
+**Config gate:** Read `feedback.auto_feedback` from `squad-config.yml` (default: `true`). If `false`, skip to Section 8.6 Print Summary.
+
+### 8.5.1 Dispatch AUDITOR (Post-Build Self-Assessment)
+
+Use the Agent tool:
+
+- **prompt:** Read `agents/learning/auditor.md`. You are AUDITOR in **Mode 4: Post-Build Self-Assessment**. Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.json (risks), test-strategy.md + test-quality-report.md (tests). Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for COMMANDER triage.
+- **description:** "AUDITOR: post-build self-assessment — auto-feedback generation"
+
+Context pack: all build artifacts + spec artifacts + state.json + reasoning-journal.json + knowledge-base/
+
+### 8.5.2 COMMANDER Triage of Critical Findings
+
+Read `auto-feedback.yaml` → `critical_findings[]`. For each CRITICAL finding (max `feedback.max_expert_dispatches` from config, default 3):
+
+| Finding Type | Expert Dispatched | Prompt Focus |
+|---|---|---|
+| `architecture_pivot` | INVESTIGATOR + MAVERICK | "Why was this ADR abandoned? What should the analysis have caught?" |
+| `unpredicted_risk` | INVESTIGATOR (+ GUARDIAN if security) | "This risk was not predicted. Is it a known domain pattern?" |
+| `effort_overrun` (ratio > 2.0) | REALIST | "Run reference class forecasting. What do similar tasks actually take?" |
+| `requirements_gap` (missing > 3) | SAGE | "Why did Understanding miss these? Which metric should have caught them?" |
+| `test_gap` | SENTINEL | "What coverage pattern would have caught these gaps?" |
+
+For each expert dispatch:
+1. Include the specific CRITICAL finding as context
+2. Include relevant build artifacts
+3. Expert produces investigation results
+4. COMMANDER writes expert findings back into `auto-feedback.yaml` → `critical_findings[].expert_finding`
+
+**Non-critical findings** (HIGH/MEDIUM/LOW/INFO): auto-update KB directly in Step 8.5.4 without expert dispatch.
+
+### 8.5.3 Post-Build Validation (optional)
+
+**Config gate:** Read `feedback.post_build_validation` from `squad-config.yml` (default: `true`). If `false`, skip to 8.5.4.
+
+**a) Understanding re-scan:**
+
+Dispatch SAGE in post-build-validation mode:
+
+- **prompt:** Read `agents/exploration/sage.md`. You are SAGE in **post-build-validation mode**. Run `/speckit.understanding.validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT. Produce `post-build-validation.md`.
+- **description:** "SAGE: post-build Understanding re-scan"
+
+**b) Intent alignment check:**
+
+**Config gate:** Read `feedback.post_build_intent_check` from `squad-config.yml` (default: `true`).
+
+Dispatch TRACKER in post-build-alignment mode:
+
+- **prompt:** Read `agents/control/tracker.md`. You are TRACKER in **post-build-alignment mode**. Read `user-intent.md` (original user request) and the build output (verification-summary.md, gap-report.md, implemented code). Answer: "Does what was built match what the user asked for?" If MISALIGNED, describe the divergence. Produce `intent-alignment-final.md`.
+- **description:** "TRACKER: post-build intent alignment check"
+
+If TRACKER reports MISALIGNED: flag as CRITICAL in feedback-report.md. COMMANDER logs but does NOT block — build is already done.
+
+### 8.5.4 Auto-Update Knowledge Base
+
+After all expert investigations complete (or immediately for non-critical findings):
+
+1. **calibration-profile.yaml:** Update domain accuracy based on effort ratio, architecture decisions, requirements coverage. Use KB Bootstrap Protocol.
+2. **estimates-log.yaml:** Append per-task predicted vs actual effort entries.
+3. **patterns.yaml:** Reinforce architecture decisions that held. Add caveats for decisions that broke.
+4. **pitfalls.yaml:** Add entries for unpredicted risks and missing requirements patterns.
+
+All writes go through `kb-write.sh append_entry` with locking.
+
+### 8.5.5 Produce Final Feedback Summary
+
+Append to `feedback-report.md`:
+
+```markdown
+## Auto-Feedback Summary
+
+- Effort accuracy: {ratio}x ({severity})
+- Architecture decisions held: {count}/{total}
+- Requirements correct: {count}/{total}
+- Risks predicted accurately: {count}/{total}
+- Test coverage: {actual}% (planned: {planned}%)
+- Critical findings: {count} ({count} investigated by experts)
+- KB entries updated: {count}
+- Post-build validation: {PASS|REGRESSION|N/A}
+- Intent alignment: {ALIGNED|MISALIGNED|N/A}
+```
+
+---
+
+### 8.6 Print Summary
 
 ```
 ============================================
@@ -565,6 +655,17 @@ EFFORT:
   Burn rate:       {ratio}x
   Drift status:    {ON_TRACK | DRIFT_WARNING | OVERRUN}
 
+AUTO-FEEDBACK (closed loop):
+  Effort accuracy:      {ratio}x
+  Architecture held:    {count}/{total} decisions
+  Requirements correct: {count}/{total}
+  Risk predictions:     {count}/{total} accurate
+  Test coverage:        {actual}% (planned {planned}%)
+  Critical findings:    {count} ({investigated} expert-investigated)
+  Post-build validation:{PASS|REGRESSION|N/A}
+  Intent alignment:     {ALIGNED|MISALIGNED|N/A}
+  KB entries updated:   {count}
+
 REPORTS:
   spec-compliance-report.md
   code-review-report.md
@@ -573,6 +674,9 @@ REPORTS:
   progress-report.md
   gap-report.md
   verification-summary.md
+  feedback-report.md          (NEW — auto-generated)
+  post-build-validation.md    (NEW — if enabled)
+  intent-alignment-final.md   (NEW — if enabled)
 
 AGENT SCORECARD:
   Top performer: {agent} (+{score}) — {highlight}
@@ -583,6 +687,27 @@ WARNINGS:
   {any DEGRADED tasks}
   {any BLOCKED tasks}
   {any drift alerts}
+
+RISKS ACCEPTED AUTONOMOUSLY:
+  {count from risk-acceptance-log.md, or "None"}
+  {for each ACCEPT_WITH_MITIGATIONS: one-line summary + mitigation status}
+
+──────────────────────────────────────────
+  HUMAN ACTIONS REQUIRED
+──────────────────────────────────────────
+  {This section is MANDATORY. ALWAYS print it, even if empty.}
+  {If no human actions: "None — build completed autonomously."}
+  {For each ESCALATE item from risk-acceptance-log.md:}
+    [ ] {RAR-ID}: {one-line description} — {reason human must decide}
+  {For each BLOCKED task that needs external input:}
+    [ ] {task ID}: {what is blocked} — {who/what can unblock}
+  {For each HUMAN_REVIEW_REQUIRED flag:}
+    [ ] {source agent}: {what needs review}
+  {For each manual verification needed:}
+    [ ] {what to verify} — {how to verify it}
+  {For each deployment/release action:}
+    [ ] {action}: {command or step}
+──────────────────────────────────────────
 
 ============================================
 ```

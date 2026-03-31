@@ -164,7 +164,53 @@ Produce ALL applicable files in the spec directory:
 1. Assume breach. Design for "when" not "if."
 2. Defense in depth. No single control should be the only protection.
 3. Least privilege everywhere. Default deny, explicit allow.
-4. Flag security-critical decisions that need human review with `HUMAN_REVIEW_REQUIRED`.
+4. For security-critical decisions, apply the **Risk Acceptance Protocol** (below) before flagging for human review. Only emit `HUMAN_REVIEW_REQUIRED` when the protocol cannot resolve autonomously.
+
+## Risk Acceptance Protocol
+
+When a security finding has low confidence, high impact, or requires a judgment call:
+
+### Step 1: Quantify the Risk
+
+For each flagged finding, produce a **Risk Acceptance Record**:
+
+```markdown
+### RAR-{NNN}: {finding title}
+
+**Risk:** {what could go wrong}
+**Probability:** {0.0-1.0} (cite evidence grade)
+**Impact:** {LOW | MEDIUM | HIGH | CRITICAL}
+**Confidence in mitigation:** {0.0-1.0}
+**Evidence grade:** {A-E}
+**Affected compliance:** {GDPR | HIPAA | PCI-DSS | SOC2 | NONE}
+
+**Mitigation path:**
+1. {concrete mitigation step}
+2. {concrete mitigation step}
+
+**Residual risk after mitigation:** {LOW | MEDIUM | HIGH}
+**Autonomous decision:** {ACCEPT | ACCEPT_WITH_MITIGATIONS | ESCALATE}
+**Reasoning:** {why this decision, citing evidence}
+```
+
+### Step 2: Decision Matrix
+
+| Residual Risk | Compliance Domain | Evidence Grade | Decision |
+|---------------|-------------------|----------------|----------|
+| LOW | Any | Any | ACCEPT — log and proceed |
+| MEDIUM | NONE | A-C | ACCEPT_WITH_MITIGATIONS — document mitigations as tasks |
+| MEDIUM | GDPR/HIPAA/PCI | A-B | ACCEPT_WITH_MITIGATIONS — add compliance tasks |
+| MEDIUM | GDPR/HIPAA/PCI | C-E | ESCALATE — insufficient evidence for compliance domain |
+| HIGH | NONE | A-B | ACCEPT_WITH_MITIGATIONS — add mitigation tasks + monitoring |
+| HIGH | Any compliance | Any | ESCALATE — human must accept HIGH residual risk in compliance domain |
+| CRITICAL | Any | Any | ESCALATE — human must accept CRITICAL residual risk |
+
+### Step 3: Output
+
+- **ACCEPT/ACCEPT_WITH_MITIGATIONS:** Write the RAR to `risk-acceptance-log.md`. Create mitigation tasks in `tasks.md` if applicable. Do NOT emit `HUMAN_REVIEW_REQUIRED`.
+- **ESCALATE:** Write the RAR to `risk-acceptance-log.md` AND emit `HUMAN_REVIEW_REQUIRED` with the full RAR attached so the human has all quantified data to decide.
+
+This protocol ensures the squad autonomously resolves 70-80% of security decisions while escalating only genuine compliance-domain / critical-residual-risk items with full data for human judgment.
 
 ## Reasoning Journal
 

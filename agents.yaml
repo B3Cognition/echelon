@@ -352,10 +352,14 @@ agents:
     file: agents/specialists/guardian.md
     layer: specialists
     phase: solution
-    role: "OWASP, STRIDE, threat modeling, compliance"
-    when: "Auth, payments, PII, compliance detected"
+    role: "OWASP, STRIDE, threat modeling, compliance, autonomous risk acceptance"
+    when: "Auth, payments, PII, compliance detected; also invoked by COMMANDER for risk arbitration"
     inputs: [spec.md, plan.md, data-model.md, contracts/]
-    outputs: [threat-model.md, compliance-requirements.md]
+    outputs: [threat-model.md, compliance-requirements.md, risk-acceptance-log.md]
+    capabilities:
+      - "Risk Acceptance Protocol — autonomously ACCEPT/ACCEPT_WITH_MITIGATIONS/ESCALATE"
+      - "Quantified RAR (Risk Acceptance Records) with evidence grades"
+      - "Only escalates to human for CRITICAL residual risk or compliance-domain HIGH risk"
 
   ORACLE:
     codename: ORACLE
@@ -585,10 +589,15 @@ agents:
     file: agents/learning/auditor.md
     layer: learning
     phase: build
-    role: "Tracks AI accuracy per domain, applies correction factors, generates calibration dashboard"
-    when: "End of run, after FEEDBACK"
-    inputs: [reasoning-journal.json, calibration-profile.yaml, feedback/, quality-gates.md]
-    outputs: [updated calibration-profile.yaml, confidence-flags.md, calibration-dashboard.md, evolution-signals.yaml]
+    role: "Tracks AI accuracy per domain, applies correction factors, generates calibration dashboard, autonomous post-build self-assessment"
+    when: "End of run, after FEEDBACK, and automatically after BUILD_DONE (Mode 4)"
+    inputs: [reasoning-journal.json, calibration-profile.yaml, feedback/, quality-gates.md, state.json, all build artifacts]
+    outputs: [updated calibration-profile.yaml, confidence-flags.md, calibration-dashboard.md, evolution-signals.yaml, auto-feedback.yaml, feedback-report.md]
+    modes:
+      - "Mode 1: Post-run calibration (FINALIZE)"
+      - "Mode 2: Post-feedback calibration (after human /feedback)"
+      - "Mode 3: Evolution loop (FINALIZE, after Mode 1)"
+      - "Mode 4: Post-build self-assessment — compares predictions vs build outcomes, no human needed"
 
   INTERNALIZER:
     codename: INTERNALIZER
