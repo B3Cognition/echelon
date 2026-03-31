@@ -1,7 +1,7 @@
 ---
 description: "Execute the building phase — implement tasks with role-based agents and quality gates"
 scripts:
-  sh: ../../scripts/bash/detect-project.sh
+  sh: ../../scripts/bash/startup-banner.sh
 ---
 
 ## User Input
