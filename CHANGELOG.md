@@ -75,5 +75,5 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Optional: Understanding CLI >=3.4.0
 - Optional: spec-kit-reverse-eng >=1.0.0
 
-[Unreleased]: https://github.com/Testimonial/cognitive-squad/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/Testimonial/cognitive-squad/releases/tag/v0.1.0
+[Unreleased]: https://github.com/Testimonial/echelon/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Testimonial/echelon/releases/tag/v0.1.0

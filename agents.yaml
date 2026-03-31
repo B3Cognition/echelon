@@ -1,6 +1,6 @@
 schema_version: 1
 
-# Central Agent Registry — Single source of truth for the Cognitive Squad structure.
+# Central Agent Registry — Single source of truth for the Echelon structure.
 #
 # COMMANDER reads this file to know:
 #   - What agents exist (codename + functional name)

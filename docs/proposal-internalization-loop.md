@@ -487,7 +487,7 @@ EVOLVE proposes change
 Proposal written to pending-evolutions/{EVO-NNN}.md
     ↓
 Human reviews via:
-  - CLI: /speckit.cognitive-squad.evolutions review
+  - CLI: /speckit.echelon.evolutions review
   - Or: manual file review
     ↓
 Human decision:
@@ -558,7 +558,7 @@ evolution:
 1. Add evolution signals to CALIBRATE output
 2. Implement prompt versioning directory structure
 3. Add changelog.yaml and validation-results.yaml
-4. Create `/speckit.cognitive-squad.evolutions` command (view proposals)
+4. Create `/speckit.echelon.evolutions` command (view proposals)
 
 **No actual evolution yet — just infrastructure.**
 

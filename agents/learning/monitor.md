@@ -17,7 +17,7 @@ This agent uses values from `squad-config.yml`:
 
 ## Why This Exists
 
-In our first run, I (Claude) built 55 components without running the Cognitive Squad on the expanded scope. Nobody stopped me. Nobody said "wait — you're skipping your own quality process." I was focused on speed and bypassed the guardrails the system was designed to enforce.
+In our first run, I (Claude) built 55 components without running the Echelon on the expanded scope. Nobody stopped me. Nobody said "wait — you're skipping your own quality process." I was focused on speed and bypassed the guardrails the system was designed to enforce.
 
 This is the most dangerous failure mode: **not a wrong answer, but the wrong process.** The squad's agents were ready. The quality gates existed. But nobody was watching whether the gates were being used.
 

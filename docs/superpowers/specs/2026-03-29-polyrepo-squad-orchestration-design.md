@@ -1,12 +1,12 @@
-# Polyrepo Squad Orchestration — cognitive-squad (System 2 of 3)
+# Polyrepo Squad Orchestration — echelon (System 2 of 3)
 
 **Date:** 2026-03-29
-**Scope:** cognitive-squad only (System 2 — depends on System 1: spec-kit-reverse-eng polyrepo extraction)
+**Scope:** echelon only (System 2 — depends on System 1: spec-kit-reverse-eng polyrepo extraction)
 **Approach:** Thin GOLDDIGGER orchestrator, no normalization layer, SCOUT reads reverse-eng artifacts directly
 
 ## Problem
 
-cognitive-squad's GOLDDIGGER agent dispatches reverse-eng once for a single target path, normalizes output into a lossy `brownfield-index.md`, and SCOUT reads that summary. In a polyrepo layout (`top-dir/repo1/`, `top-dir/repo2/`, ...), this means:
+echelon's GOLDDIGGER agent dispatches reverse-eng once for a single target path, normalizes output into a lossy `brownfield-index.md`, and SCOUT reads that summary. In a polyrepo layout (`top-dir/repo1/`, `top-dir/repo2/`, ...), this means:
 
 - GOLDDIGGER runs one extraction that merges all repos together
 - `brownfield-index.md` normalization discards repo boundaries, per-repo git history, and domain-level detail
@@ -246,7 +246,7 @@ discovery:
 |-----------|------------|-------------|
 | `agents/exploration/golddigger.md` | **Modified** | Polyrepo orchestration, adaptive depth, artifact paths in state.json, no brownfield-index |
 | `agents/exploration/scout.md` | **Modified** | Read reverse-eng artifacts directly from state.json paths |
-| `commands/cognitive-squad.run.md` | **Modified** | Context pack assembly with artifact paths, Mode 2 request format, cache path convention |
+| `commands/echelon.run.md` | **Modified** | Context pack assembly with artifact paths, Mode 2 request format, cache path convention |
 | `config-template.yml` | **Modified** | Add `polyrepo_full_depth_threshold` under `discovery` |
 
 **Unchanged:**
@@ -258,7 +258,7 @@ discovery:
 
 ## Testing Strategy
 
-Since cognitive-squad changes are primarily AI agent prompts (markdown), testing is:
+Since echelon changes are primarily AI agent prompts (markdown), testing is:
 
 1. **Bash script tests:** `detect-project.sh` already handles polyrepo — verify with test fixtures
 2. **Schema validation:** Validate `state.json` against expected schema after GOLDDIGGER completes

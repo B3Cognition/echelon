@@ -6,7 +6,7 @@ confidence_policy:
   correction_factor_min: 0.5
   correction_factor_max: 3.0
 domains:
-  cognitive-squad:
+  echelon:
     accuracy: 0.75
     sample_size: 20
     trend: stable

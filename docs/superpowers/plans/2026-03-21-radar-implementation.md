@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement RADAR - a Python SSE server that enables real-time monitoring of cognitive-squad agent execution via the squad-monitor UI.
+**Goal:** Implement RADAR - a Python SSE server that enables real-time monitoring of echelon agent execution via the squad-monitor UI.
 
 **Architecture:** RADAR is a lightweight Flask server with watchdog file monitoring. It watches `agent-states.json` and `agent-states-events.jsonl`, streaming state changes to connected browsers via SSE. The MANAGER starts RADAR at run init and stops it at finalize. An emitter module writes agent state changes to the watched files.
 
@@ -16,7 +16,7 @@
 
 **Development paths** (in this repo):
 ```
-cognitive-squad/
+echelon/
   radar/
     __init__.py          ← Package marker
     server.py            ← Flask SSE server + watchdog file monitoring
@@ -24,21 +24,21 @@ cognitive-squad/
     requirements.txt     ← Dependencies: flask, flask-cors, watchdog
     README.md            ← Quick-start documentation
   config-template.yml    ← Add radar: section
-  commands/cognitive-squad.run.md  ← Add RADAR lifecycle + emitter calls
-  commands/cognitive-squad.build.md ← Add RADAR lifecycle + emitter calls
+  commands/echelon.run.md  ← Add RADAR lifecycle + emitter calls
+  commands/echelon.build.md ← Add RADAR lifecycle + emitter calls
 ```
 
 **Installed paths** (when extension is installed in a project):
 ```
 project/
-  .specify/extensions/cognitive-squad/
+  .specify/extensions/echelon/
     radar/
       __init__.py, server.py, emitter.py, requirements.txt, README.md
 ```
 
 **Note:** When the MANAGER runs RADAR, it runs from the project root with:
 ```bash
-PYTHONPATH=.specify/extensions/cognitive-squad python -m radar.server
+PYTHONPATH=.specify/extensions/echelon python -m radar.server
 ```
 
 ---
@@ -60,7 +60,7 @@ mkdir -p radar
 ```python
 """RADAR - Real-time Agent Display And Relay.
 
-A lightweight SSE server for monitoring cognitive-squad agent execution.
+A lightweight SSE server for monitoring echelon agent execution.
 """
 
 __version__ = "1.0.0"
@@ -92,7 +92,7 @@ git commit -m "feat(radar): initialize radar package structure"
 - [ ] **Step 1: Create emitter.py with core functions**
 
 ```python
-"""State emitter for cognitive-squad agent monitoring.
+"""State emitter for echelon agent monitoring.
 
 Writes agent state changes to files that RADAR watches and streams to the UI.
 """
@@ -292,7 +292,7 @@ def _now() -> str:
 - [ ] **Step 2: Verify emitter works**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad
+cd /Users/michalbachorik/work/echelon
 python3 -c "
 from radar.emitter import init_run, on_dispatched, on_complete
 init_run('test-001')
@@ -659,7 +659,7 @@ if __name__ == "__main__":
 - [ ] **Step 2: Verify server starts**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad
+cd /Users/michalbachorik/work/echelon
 timeout 3 python3 -m radar.server --port 7891 2>&1 || true
 ```
 
@@ -684,7 +684,7 @@ git commit -m "feat(radar): add Flask SSE server with watchdog file monitoring"
 ```markdown
 # RADAR - Real-time Agent Display And Relay
 
-RADAR is a lightweight SSE server that enables real-time monitoring of cognitive-squad agent execution via the squad-monitor UI.
+RADAR is a lightweight SSE server that enables real-time monitoring of echelon agent execution via the squad-monitor UI.
 
 ## Quick Start
 
@@ -792,10 +792,10 @@ git commit -m "feat(config): add radar configuration section"
 
 ---
 
-## Task 6: Integrate RADAR into cognitive-squad.run.md - Init
+## Task 6: Integrate RADAR into echelon.run.md - Init
 
 **Files:**
-- Modify: `commands/cognitive-squad.run.md` (section 1.3, after state.json creation)
+- Modify: `commands/echelon.run.md` (section 1.3, after state.json creation)
 
 - [ ] **Step 1: Add RADAR startup after state.json creation**
 
@@ -808,7 +808,7 @@ Read `radar.enabled` from squad-config.yml (default: true). If enabled:
 
 ```bash
 # Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/cognitive-squad"
+RADAR_EXT=".specify/extensions/echelon"
 
 # Install RADAR dependencies if needed
 pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
@@ -831,16 +831,16 @@ PYTHONPATH=${RADAR_EXT} python -c "from radar.emitter import init_run; init_run(
 - [ ] **Step 2: Commit**
 
 ```bash
-git add commands/cognitive-squad.run.md
+git add commands/echelon.run.md
 git commit -m "feat(squad.run): add RADAR startup in INIT phase"
 ```
 
 ---
 
-## Task 7: Integrate RADAR into cognitive-squad.run.md - Finalize
+## Task 7: Integrate RADAR into echelon.run.md - Finalize
 
 **Files:**
-- Modify: `commands/cognitive-squad.run.md` (section 12.8, after setting final state)
+- Modify: `commands/echelon.run.md` (section 12.8, after setting final state)
 
 - [ ] **Step 1: Add RADAR shutdown in FINALIZE**
 
@@ -860,7 +860,7 @@ fi
 
 - [ ] **Step 2: Add RADAR shutdown helper function for all exit paths**
 
-At the top of cognitive-squad.run.md (in a preamble or helper section if one exists), add:
+At the top of echelon.run.md (in a preamble or helper section if one exists), add:
 
 ```markdown
 ### Helper: Stop RADAR
@@ -875,7 +875,7 @@ Use this command at any exit point (kill verdict, error, completion):
 - [ ] **Step 3: Commit**
 
 ```bash
-git add commands/cognitive-squad.run.md
+git add commands/echelon.run.md
 git commit -m "feat(squad.run): add RADAR shutdown in FINALIZE phase"
 ```
 
@@ -884,11 +884,11 @@ git commit -m "feat(squad.run): add RADAR shutdown in FINALIZE phase"
 ## Task 8: Add emitter calls for agent dispatches
 
 **Files:**
-- Modify: `commands/cognitive-squad.run.md` (various agent dispatch sections)
+- Modify: `commands/echelon.run.md` (various agent dispatch sections)
 
 - [ ] **Step 1: Document emitter pattern**
 
-Add to cognitive-squad.run.md preamble (before section 1):
+Add to echelon.run.md preamble (before section 1):
 
 ```markdown
 ### RADAR Emitter Pattern
@@ -897,7 +897,7 @@ For every agent dispatch, wrap the Agent tool call with emitter calls.
 
 **Setup (at start of run):**
 ```bash
-RADAR_EXT=".specify/extensions/cognitive-squad"
+RADAR_EXT=".specify/extensions/echelon"
 ```
 
 **Before dispatching:**
@@ -931,47 +931,47 @@ In section 1.3 "Initialize State", add to the state.json template:
 - [ ] **Step 3: Commit**
 
 ```bash
-git add commands/cognitive-squad.run.md
+git add commands/echelon.run.md
 git commit -m "feat(squad.run): add RADAR emitter pattern documentation"
 ```
 
 ---
 
-## Task 9: Integrate RADAR into cognitive-squad.build.md
+## Task 9: Integrate RADAR into echelon.build.md
 
 **Files:**
-- Modify: `commands/cognitive-squad.build.md`
+- Modify: `commands/echelon.build.md`
 
 The same RADAR lifecycle applies to build runs. Add identical sections.
 
-- [ ] **Step 1: Find INIT section in cognitive-squad.build.md**
+- [ ] **Step 1: Find INIT section in echelon.build.md**
 
 ```bash
-grep -n "Initialize State\|state\.json" commands/cognitive-squad.build.md | head -5
+grep -n "Initialize State\|state\.json" commands/echelon.build.md | head -5
 ```
 
 - [ ] **Step 2: Add RADAR startup after state.json creation**
 
-Add the same section 1.3.1 content as in cognitive-squad.run.md (see Task 6).
+Add the same section 1.3.1 content as in echelon.run.md (see Task 6).
 
-- [ ] **Step 3: Find FINALIZE section in cognitive-squad.build.md**
+- [ ] **Step 3: Find FINALIZE section in echelon.build.md**
 
 ```bash
-grep -n "FINALIZE\|Final State\|status.*done" commands/cognitive-squad.build.md | head -5
+grep -n "FINALIZE\|Final State\|status.*done" commands/echelon.build.md | head -5
 ```
 
 - [ ] **Step 4: Add RADAR shutdown in FINALIZE**
 
-Add the same shutdown block as in cognitive-squad.run.md (see Task 7).
+Add the same shutdown block as in echelon.run.md (see Task 7).
 
 - [ ] **Step 5: Add emitter pattern reference**
 
-Reference the RADAR Emitter Pattern (can link to cognitive-squad.run.md or duplicate).
+Reference the RADAR Emitter Pattern (can link to echelon.run.md or duplicate).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add commands/cognitive-squad.build.md
+git add commands/echelon.build.md
 git commit -m "feat(squad.build): add RADAR lifecycle integration"
 ```
 
@@ -982,7 +982,7 @@ git commit -m "feat(squad.build): add RADAR lifecycle integration"
 - [ ] **Step 1: Verify all files exist**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad
+cd /Users/michalbachorik/work/echelon
 ls -la radar/
 cat radar/requirements.txt
 ```
@@ -999,7 +999,7 @@ server.py
 - [ ] **Step 2: Test full RADAR flow (development mode)**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad
+cd /Users/michalbachorik/work/echelon
 
 # Install deps
 pip install -q -r radar/requirements.txt
@@ -1085,8 +1085,8 @@ git log --oneline -10
 | 3 | SSE server | `radar/server.py` |
 | 4 | Documentation | `radar/README.md` |
 | 5 | Config section | `config-template.yml` |
-| 6 | INIT integration | `commands/cognitive-squad.run.md` |
-| 7 | FINALIZE integration | `commands/cognitive-squad.run.md` |
-| 8 | Emitter pattern | `commands/cognitive-squad.run.md` |
-| 9 | Build integration | `commands/cognitive-squad.build.md` |
+| 6 | INIT integration | `commands/echelon.run.md` |
+| 7 | FINALIZE integration | `commands/echelon.run.md` |
+| 8 | Emitter pattern | `commands/echelon.run.md` |
+| 9 | Build integration | `commands/echelon.build.md` |
 | 10 | Final verification | Manual testing |

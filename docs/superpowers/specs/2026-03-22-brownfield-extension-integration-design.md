@@ -2,19 +2,19 @@
 
 **Date:** 2026-03-22
 **Status:** Approved
-**Scope:** cognitive-squad + spec-kit-reverse-eng integration
+**Scope:** echelon + spec-kit-reverse-eng integration
 
 ---
 
 ## 1. Problem Statement
 
-cognitive-squad claims brownfield support via `spec-kit-reverse-eng`, but the wiring is structurally broken in three ways:
+echelon claims brownfield support via `spec-kit-reverse-eng`, but the wiring is structurally broken in three ways:
 
 **C-001 — Mechanism mismatch:** SCOUT's brownfield mode runs `which reverse-eng` looking for an OS binary. `spec-kit-reverse-eng` is a spec-kit extension providing slash-commands only. No binary exists. SCOUT always falls back to manual analysis.
 
 **C-003 — Format mismatch:** reverse-eng domain specs contain implementation details by design (source paths, function names, legacy tech). SAGE's quality gates explicitly reject implementation details in specs. Feeding reverse-eng output to CARTOGRAPHER/SAGE would trigger quality violations.
 
-**C-004 — Cardinality mismatch:** reverse-eng produces N domain specs per project. cognitive-squad expects a single project-level artifact flow from SCOUT.
+**C-004 — Cardinality mismatch:** reverse-eng produces N domain specs per project. echelon expects a single project-level artifact flow from SCOUT.
 
 **Missing layer:** No mechanism exists for agents to discover what spec-kit extensions are installed and how to invoke them. Agents look for OS binaries; extensions are AI-prompt packages. These two worlds have never been bridged.
 
@@ -25,7 +25,7 @@ cognitive-squad claims brownfield support via `spec-kit-reverse-eng`, but the wi
 - Agents can discover and use spec-kit extensions without knowing implementation details (binary vs slash-command)
 - SCOUT's output format is stable regardless of whether brownfield context came from reverse-eng, a future tool, or manual analysis
 - Context window pressure is managed — large codebases (10+ domains) do not dump full domain specs into SCOUT's context upfront
-- The spec-kit ecosystem advantage is preserved — no reimplementing extraction logic inside cognitive-squad
+- The spec-kit ecosystem advantage is preserved — no reimplementing extraction logic inside echelon
 - One named evolution path is captured for future generalization
 
 ---
@@ -198,8 +198,8 @@ Add PROSPECTOR and GOLDDIGGER to the central registry with layer, phase, dispatc
 
 All RADAR invocations in the command files use `python` which fails on macOS where only `python3` is in PATH. This affects:
 
-- `commands/cognitive-squad.run.md` — 5 invocations (already applied in current diff)
-- `commands/cognitive-squad.build.md` — 2 invocations (already applied in current diff)
+- `commands/echelon.run.md` — 5 invocations (already applied in current diff)
+- `commands/echelon.build.md` — 2 invocations (already applied in current diff)
 - `radar/emitter.py` — no subprocess calls to python; no change needed
 - `radar/server.py` — no subprocess calls to python; no change needed
 
@@ -282,5 +282,5 @@ PROSPECTOR currently handles discovery for a known extension set. The next evolu
 | Modify | `agents/control/commander.md` — PROSPECTOR init dispatch + GOLDDIGGER brownfield dispatch + Mode 2 queue handling |
 | Modify | `agents.yaml` — register PROSPECTOR and GOLDDIGGER |
 | Modify | `extension.yml` — fix binary invocation claim |
-| Modify | `commands/cognitive-squad.run.md` — (1) python → python3 (5 occurrences); (2) Section 15 error table: replace the `spec-kit-reverse-eng` row from "DISCOVER falls back to greenfield mode..." to: `\| spec-kit-reverse-eng \| PROSPECTOR fails or reverse-eng not installed \| COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. \|`; (3) line ~619 advisory text: replace "Option A: If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns" with "Option A: If GOLDDIGGER ran and brownfield-index.md is present, derive principles from the domain inventory and hotspot analysis already captured there." |
-| Modify | `commands/cognitive-squad.build.md` — python → python3 (2 occurrences) |
+| Modify | `commands/echelon.run.md` — (1) python → python3 (5 occurrences); (2) Section 15 error table: replace the `spec-kit-reverse-eng` row from "DISCOVER falls back to greenfield mode..." to: `\| spec-kit-reverse-eng \| PROSPECTOR fails or reverse-eng not installed \| COMMANDER treats as empty-extensions; SCOUT proceeds without brownfield-index.md using manual structural analysis. Run flagged as degraded-brownfield in state.json. \|`; (3) line ~619 advisory text: replace "Option A: If `spec-kit-reverse-eng` is available, suggest running it first to derive principles from existing code patterns" with "Option A: If GOLDDIGGER ran and brownfield-index.md is present, derive principles from the domain inventory and hotspot analysis already captured there." |
+| Modify | `commands/echelon.build.md` — python → python3 (2 occurrences) |

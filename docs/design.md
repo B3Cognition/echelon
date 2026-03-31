@@ -1,9 +1,9 @@
-# Cognitive Agent Squad — Design Specification
+# Echelon — Design Specification
 
 **Date:** 2026-03-16
 **Status:** Approved (design phase)
 **Runtime:** Spec-Kit Extension
-**Entry Point:** `/speckit.cognitive-squad.run`
+**Entry Point:** `/speckit.echelon.run`
 
 ---
 
@@ -17,7 +17,7 @@ The initial phase of software development — understanding requirements, mappin
 - No feedback loop — the AI never learns whether its output was correct
 - Equal confidence whether right or wrong
 
-This design specifies a **Cognitive Agent Squad** — a system of 26 specialized cognitive functions packaged as a Spec-Kit extension that handles the complete development lifecycle: from initial idea through to validated, tested implementation.
+This design specifies a **Echelon** — a system of 26 specialized cognitive functions packaged as a Spec-Kit extension that handles the complete development lifecycle: from initial idea through to validated, tested implementation.
 
 ---
 
@@ -446,9 +446,9 @@ Specialists are summoned by MANAGER on demand based on signals from DISCOVER and
 
 ### 6.5 FEEDBACK (Post-Implementation Intake)
 
-**When:** After implementation is complete (weeks/months later). Triggered manually via `/speckit.cognitive-squad.feedback <spec-id>`.
+**When:** After implementation is complete (weeks/months later). Triggered manually via `/speckit.echelon.feedback <spec-id>`.
 
-**The `spec-id` parameter:** The sequential feature number from the spec-kit naming convention (e.g., `001`, `002`). This matches the `.specify/specs/{NNN}-{feature-name}/` directory. The squad prints the `spec-id` on completion of each run. Use `/speckit.cognitive-squad.status` to list prior spec IDs and their run dates.
+**The `spec-id` parameter:** The sequential feature number from the spec-kit naming convention (e.g., `001`, `002`). This matches the `.specify/specs/{NNN}-{feature-name}/` directory. The squad prints the `spec-id` on completion of each run. Use `/speckit.echelon.status` to list prior spec IDs and their run dates.
 
 **Purpose:** Closes the loop between the squad's predictions and real-world outcomes. Without this, CALIBRATE has no ground truth.
 
@@ -612,7 +612,7 @@ When the squad must escalate to a human (same issue 3x, CALIBRATE < 0.5 after SC
 1. **MANAGER produces** `escalation-request.md` containing: the specific question, context (what was tried), options considered, and a recommended answer.
 2. **State machine enters BLOCKED state** — recorded in `state.json` with `"status": "blocked"`, `"reason": "..."`.
 3. **User is notified** via terminal output with the escalation summary.
-4. **User responds** via `/speckit.cognitive-squad.resume <answer>` — MANAGER incorporates the answer and re-routes to the appropriate agent.
+4. **User responds** via `/speckit.echelon.resume <answer>` — MANAGER incorporates the answer and re-routes to the appropriate agent.
 5. **If no response** within the session — squad produces artifacts with `UNRESOLVED` flags on blocked sections.
 
 ---
@@ -771,7 +771,7 @@ Phase B produces these report files in `.specify/specs/{feature}/`:
 
 ### 8.5 Build Entry Point
 
-The build phase is invoked via `/speckit.cognitive-squad.build`, which is separate from `/speckit.cognitive-squad.run` (Phase A). The MANAGER decides at the end of Phase A whether to offer the user the option to proceed to building, but the user must explicitly invoke the build command.
+The build phase is invoked via `/speckit.echelon.build`, which is separate from `/speckit.echelon.run` (Phase A). The MANAGER decides at the end of Phase A whether to offer the user the option to proceed to building, but the user must explicitly invoke the build command.
 
 ---
 
@@ -869,14 +869,14 @@ This is the shared memory that prevents lossy handoffs between subagents.
 ├── README.md                        # user documentation
 │
 ├── commands/
-│   ├── cognitive-squad.run.md                 # main entry: autonomous run
-│   ├── cognitive-squad.status.md              # check current state
-│   ├── cognitive-squad.innovate.md            # manually trigger INNOVATE
-│   ├── cognitive-squad.investigate.md         # manually trigger SCIENTIST
-│   ├── cognitive-squad.ground.md              # manually trigger reality check
-│   ├── cognitive-squad.feedback.md            # post-implementation feedback intake
-│   ├── cognitive-squad.resume.md              # provide answer to human escalation
-│   └── cognitive-squad.build.md               # execute building phase
+│   ├── echelon.run.md                 # main entry: autonomous run
+│   ├── echelon.status.md              # check current state
+│   ├── echelon.innovate.md            # manually trigger INNOVATE
+│   ├── echelon.investigate.md         # manually trigger SCIENTIST
+│   ├── echelon.ground.md              # manually trigger reality check
+│   ├── echelon.feedback.md            # post-implementation feedback intake
+│   ├── echelon.resume.md              # provide answer to human escalation
+│   └── echelon.build.md               # execute building phase
 │
 ├── agents/
 │   ├── core/
@@ -944,14 +944,14 @@ This is the shared memory that prevents lossy handoffs between subagents.
 
 | Command | Purpose | Trigger |
 |---------|---------|---------|
-| `/speckit.cognitive-squad.run <description\|repo-path>` | Full autonomous squad run (Phase A: Understanding) | User initiates |
-| `/speckit.cognitive-squad.build [feature-path] [task-ids]` | Execute building phase (Phase B: Building) | User initiates after Phase A |
-| `/speckit.cognitive-squad.status` | Check current squad state and progress | User checks progress |
-| `/speckit.cognitive-squad.innovate` | Manually trigger INNOVATE specialist | User wants fresh perspective |
-| `/speckit.cognitive-squad.investigate <question>` | Manually trigger SCIENTIST | User has specific unknown |
-| `/speckit.cognitive-squad.ground` | Manually trigger reality check | User wants grounding |
-| `/speckit.cognitive-squad.feedback <spec-id>` | Post-implementation feedback intake | After implementation complete |
-| `/speckit.cognitive-squad.resume <answer>` | Provide answer to human escalation | Squad is in BLOCKED state |
+| `/speckit.echelon.run <description\|repo-path>` | Full autonomous squad run (Phase A: Understanding) | User initiates |
+| `/speckit.echelon.build [feature-path] [task-ids]` | Execute building phase (Phase B: Building) | User initiates after Phase A |
+| `/speckit.echelon.status` | Check current squad state and progress | User checks progress |
+| `/speckit.echelon.innovate` | Manually trigger INNOVATE specialist | User wants fresh perspective |
+| `/speckit.echelon.investigate <question>` | Manually trigger SCIENTIST | User has specific unknown |
+| `/speckit.echelon.ground` | Manually trigger reality check | User wants grounding |
+| `/speckit.echelon.feedback <spec-id>` | Post-implementation feedback intake | After implementation complete |
+| `/speckit.echelon.resume <answer>` | Provide answer to human escalation | Squad is in BLOCKED state |
 
 ---
 
@@ -1209,7 +1209,7 @@ The knowledge base lives at the extension level (`.specify/extensions/squad/know
 
 ## Standards Alignment
 
-The Cognitive Squad aligns with established software engineering standards:
+The Echelon aligns with established software engineering standards:
 
 | Standard | Version | Coverage in Squad |
 |----------|---------|------------------|

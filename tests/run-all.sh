@@ -93,7 +93,7 @@ run_suite() {
 }
 
 # --- Main ---
-printf "${BOLD}Cognitive Agent Squad — Test Runner${RESET}\n"
+printf "${BOLD}Echelon — Test Runner${RESET}\n"
 printf "Root: %s\n" "$ROOT"
 printf "Time: %s\n" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 

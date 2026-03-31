@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMMANDER="$ROOT/agents/control/commander.md"
 GUARDIAN="$ROOT/agents/specialists/guardian.md"
-SQUAD_RUN="$ROOT/commands/cognitive-squad.run.md"
+SQUAD_RUN="$ROOT/commands/echelon.run.md"
 FAILURES=0
 
 assert_grep() {
@@ -41,9 +41,9 @@ assert_grep "$GUARDIAN" "guardian.mode" "guardian.md references guardian.mode co
 assert_grep "$GUARDIAN" "non-security domain" "guardian.md handles non-security domains"
 
 # Squad run: updated summoning rules
-assert_grep "$SQUAD_RUN" "always_on" "cognitive-squad.run.md references always_on mode"
-assert_grep "$SQUAD_RUN" "GUARDIAN" "cognitive-squad.run.md references GUARDIAN codename"
-assert_grep "$SQUAD_RUN" "guardian.mode" "cognitive-squad.run.md references guardian.mode config"
+assert_grep "$SQUAD_RUN" "always_on" "echelon.run.md references always_on mode"
+assert_grep "$SQUAD_RUN" "GUARDIAN" "echelon.run.md references GUARDIAN codename"
+assert_grep "$SQUAD_RUN" "guardian.mode" "echelon.run.md references guardian.mode config"
 
 echo ""
 if [ "$FAILURES" -eq 0 ]; then

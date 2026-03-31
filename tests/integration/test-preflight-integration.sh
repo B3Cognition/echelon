@@ -27,7 +27,7 @@ fail_result() { printf 'FAIL:%s' "$*"; }
 
 # commander_preflight_and_dispatch: simulates COMMANDER running preflight then
 # "dispatching" CARTOGRAPHER (simulated by selecting agent response mock).
-# Writes state.json and journal.json per the cognitive-squad.run.md procedure.
+# Writes state.json and journal.json per the echelon.run.md procedure.
 commander_preflight_and_dispatch() {
   local speckit_cmd="$1"
   local state_file="$2"

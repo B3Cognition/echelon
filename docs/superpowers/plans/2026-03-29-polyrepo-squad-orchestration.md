@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Update cognitive-squad's GOLDDIGGER, SCOUT, and COMMANDER to support polyrepo extraction with adaptive depth, direct artifact consumption (no brownfield-index normalization), and repo-aware Mode 2 requests.
+**Goal:** Update echelon's GOLDDIGGER, SCOUT, and COMMANDER to support polyrepo extraction with adaptive depth, direct artifact consumption (no brownfield-index normalization), and repo-aware Mode 2 requests.
 
 **Architecture:** GOLDDIGGER becomes a thin orchestrator — sets up per-repo depth config and invokes reverse-eng once. SCOUT reads reverse-eng artifacts directly via paths in `state.json.golddigger_artifacts`. COMMANDER's context packs point agents to artifact paths. Mode 2 requests gain repo context.
 
@@ -22,7 +22,7 @@
 |------|---------------|--------|
 | `agents/exploration/golddigger.md` | GOLDDIGGER agent instructions | Replace brownfield-index normalization with polyrepo orchestration, adaptive depth, artifact paths in state.json |
 | `agents/exploration/scout.md` | SCOUT agent instructions | Replace brownfield-index.md consumption with direct reverse-eng artifact reading |
-| `commands/cognitive-squad.run.md` | COMMANDER state machine | Update context pack assembly, Mode 2 request format, cache paths, GOLDDIGGER dispatch prompt |
+| `commands/echelon.run.md` | COMMANDER state machine | Update context pack assembly, Mode 2 request format, cache paths, GOLDDIGGER dispatch prompt |
 | `config-template.yml` | Squad configuration template | Add `polyrepo_full_depth_threshold` under `discovery` section |
 
 ### Unchanged Files
@@ -669,9 +669,9 @@ git commit -m "feat: SCOUT reads reverse-eng artifacts directly, repo-aware Mode
 ## Task 4: Update COMMANDER — Context Packs, Mode 2 Format, Cache Paths
 
 **Files:**
-- Modify: `commands/cognitive-squad.run.md` (sections 1.8 and 2)
+- Modify: `commands/echelon.run.md` (sections 1.8 and 2)
 
-- [ ] **Step 1: Read relevant sections of cognitive-squad.run.md**
+- [ ] **Step 1: Read relevant sections of echelon.run.md**
 
 Read lines 485-530 (GOLDDIGGER dispatch and Mode 2 queue sections).
 
@@ -745,14 +745,14 @@ After `"golddigger_notes": null,` add:
 
 ```bash
 # Verify key patterns
-grep -c "golddigger_artifacts" commands/cognitive-squad.run.md  # Should be >= 2
-grep -c "repo.*null" commands/cognitive-squad.run.md  # Should be >= 1 (backward compat)
-grep -c "cache.key" commands/cognitive-squad.run.md  # Should be >= 2
-grep -c "repo}--{domain}" commands/cognitive-squad.run.md  # Should be >= 1
+grep -c "golddigger_artifacts" commands/echelon.run.md  # Should be >= 2
+grep -c "repo.*null" commands/echelon.run.md  # Should be >= 1 (backward compat)
+grep -c "cache.key" commands/echelon.run.md  # Should be >= 2
+grep -c "repo}--{domain}" commands/echelon.run.md  # Should be >= 1
 ```
 
 ```bash
-git add commands/cognitive-squad.run.md
+git add commands/echelon.run.md
 git commit -m "feat: COMMANDER polyrepo context packs, repo-aware Mode 2 queue"
 ```
 
@@ -779,14 +779,14 @@ echo "=== golddigger_artifacts references ==="
 grep -rn "golddigger_artifacts" agents/ commands/ --include="*.md" | wc -l
 ```
 
-Expected: >= 5 references across golddigger.md, scout.md, and cognitive-squad.run.md.
+Expected: >= 5 references across golddigger.md, scout.md, and echelon.run.md.
 
 - [ ] **Step 3: Verify Mode 2 repo context is consistent**
 
 ```bash
 echo "=== repo field in Mode 2 ==="
 grep -n "'repo'" agents/exploration/golddigger.md agents/exploration/scout.md
-grep -n '"repo"' commands/cognitive-squad.run.md
+grep -n '"repo"' commands/echelon.run.md
 ```
 
 Expected: `repo` field appears in GOLDDIGGER (cache key), SCOUT (Mode 2 request), and COMMANDER (dispatch + cache key).
@@ -819,7 +819,7 @@ Run `/speckit.squad.run` against your polyrepo (top-dir with cpp/, fet-frontend-
 ## Pre-flight
 - [ ] spec-kit initialized in top-dir (`specify init --here`)
 - [ ] reverse-eng extension installed
-- [ ] cognitive-squad extension installed
+- [ ] echelon extension installed
 - [ ] System 1 changes deployed (polyrepo extraction in reverse-eng)
 
 ## During Squad Run — Verify

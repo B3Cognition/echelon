@@ -6,7 +6,7 @@
 
 ## Objective
 
-Build a minimal BDI reasoning cycle in TypeScript from the AgentSpeak(L) formal specification (Rao 1996, Bordini 2007). Validate feasibility for cognitive-squad architecture per ADR-001 (build from spec, not port Jason).
+Build a minimal BDI reasoning cycle in TypeScript from the AgentSpeak(L) formal specification (Rao 1996, Bordini 2007). Validate feasibility for echelon architecture per ADR-001 (build from spec, not port Jason).
 
 ## What Was Built
 
@@ -95,6 +95,6 @@ All three thresholds met with wide margins:
 
 1. Add plan argument binding (lightweight unification for plan parameters)
 2. Add intention scheduling policy (round-robin vs priority)
-3. Wire into cognitive-squad's actual XState machine topology
+3. Wire into echelon's actual XState machine topology
 4. Add async action support (actions that return Promises)
 5. Add plan annotations for priority/utility-based selection

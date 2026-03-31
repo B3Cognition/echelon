@@ -645,7 +645,7 @@ After every blocking decision (PASS or FAIL verdict), append an entry to `knowle
 
 ```yaml
 - run_id: squad-003-1742652000
-  artifact: specs/001-cognitive-squad-improvements/spec.md
+  artifact: specs/001-echelon-improvements/spec.md
   challenge_type: quality_threshold
   challenge_summary: "Testability score 0.58 below 0.70 threshold."
   outcome: blocked

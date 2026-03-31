@@ -23,7 +23,7 @@ Tier 2 files (schema version 2):
 2. All timestamps must be ISO-8601 date-time unless explicitly noted as date-only.
 3. Historical logs are append-only where marked by `append_only: true`.
 4. Every write operation must carry provenance (`run_id`, `source`, `created_at`).
-5. Queue records in `knowledge-base/.pending/` must match the model in this document and `specs/001-cognitive-squad-improvements/data-model.md`.
+5. Queue records in `knowledge-base/.pending/` must match the model in this document and `specs/001-echelon-improvements/data-model.md`.
 
 ## calibration-profile.yaml
 
@@ -62,7 +62,7 @@ confidence_policy:
  correction_factor_min: 0.5
  correction_factor_max: 3.0
 domains:
- cognitive-squad:
+ echelon:
   accuracy: 0.75
   sample_size: 20
   trend: stable
@@ -103,7 +103,7 @@ entries:
   run_id: squad-001-1742401234
   created_at: 2026-03-19T00:00:00Z
   agent: AUDITOR
-  domain: cognitive-squad
+  domain: echelon
   estimate_hours: 4
   actual_hours: null
   delta_hours: null
@@ -458,7 +458,7 @@ append_only: true
 max_entries: 100
 entries:
   - run_id: squad-003-1742652000
-    artifact: specs/001-cognitive-squad-improvements/spec.md
+    artifact: specs/001-echelon-improvements/spec.md
     challenge_type: logical_inconsistency
     challenge_summary: "FR-03 contradicts boundary B-02 regarding external API access."
     outcome: blocked

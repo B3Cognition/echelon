@@ -11,9 +11,9 @@
 
 Two critical gaps in the current squad architecture:
 
-1. **Feedback requires human** — `/speckit.cognitive-squad.feedback` asks a human 6 sections of questions (effort, architecture, requirements, risks, tests, recommendations). Most runs never get feedback → calibration stagnates → estimates don't improve.
+1. **Feedback requires human** — `/speckit.echelon.feedback` asks a human 6 sections of questions (effort, architecture, requirements, risks, tests, recommendations). Most runs never get feedback → calibration stagnates → estimates don't improve.
 
-2. **No automatic post-build validation** — after build completes, the squad prints a summary and stops. There's no automatic check that what was built actually matches what was specified. The user has to manually run `/speckit.cognitive-squad.verify` (which doesn't even exist yet).
+2. **No automatic post-build validation** — after build completes, the squad prints a summary and stops. There's no automatic check that what was built actually matches what was specified. The user has to manually run `/speckit.echelon.verify` (which doesn't even exist yet).
 
 ---
 
@@ -317,7 +317,7 @@ feedback:
 
 ## Changes to Existing Commands
 
-### cognitive-squad.build.md
+### echelon.build.md
 
 After Section 8 (BUILD_DONE), add new **Section 9: Auto-Feedback & Validation**:
 
@@ -334,7 +334,7 @@ After BUILD_DONE and before final summary:
 8. THEN print final summary (which now includes feedback data)
 ```
 
-### cognitive-squad.feedback.md
+### echelon.feedback.md
 
 **Keep it** but repurpose as **manual override**:
 
@@ -349,7 +349,7 @@ If auto_feedback did NOT run (e.g., build was manual):
   → Fall back to current human questionnaire (unchanged)
 ```
 
-This means `/speckit.cognitive-squad.feedback` becomes optional but still valuable — human ground truth corrects any auto-assessment errors.
+This means `/speckit.echelon.feedback` becomes optional but still valuable — human ground truth corrects any auto-assessment errors.
 
 ---
 

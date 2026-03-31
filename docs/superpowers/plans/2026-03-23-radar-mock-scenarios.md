@@ -27,7 +27,7 @@
 | Create | `radar/scenarios/replay.py` | `load_replay(filepath) -> Scenario` |
 | Modify | `radar/server.py` | `--record PATH` flag + `_record_lock` JSONL appender |
 | Modify | `config-template.yml` | Add `record: false` in radar block |
-| Modify | `commands/cognitive-squad.run.md` | Add RADAR_RECORD_FLAG block |
+| Modify | `commands/echelon.run.md` | Add RADAR_RECORD_FLAG block |
 | Create | `docs/radar-protocol-contract.md` | UI handover interface contract |
 | Create | `radar/tests/unit/test_new_scenarios.py` | Tests for greenfield/brownfield/blocked-escalation |
 | Create | `radar/tests/unit/test_replay.py` | Tests for load_replay |
@@ -96,7 +96,7 @@ def test_all_blocked_loop_is_false():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_scenario_data.py -v 2>&1 | tail -20
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_scenario_data.py -v 2>&1 | tail -20
 ```
 Expected: FAIL on `test_default_has_initial_run`, `test_default_has_journal_entries`, `test_all_blocked_has_initial_run`, `test_all_blocked_has_journal_entries`, `test_default_display_names_space_convention`, `test_all_blocked_display_names_space_convention`
 
@@ -292,7 +292,7 @@ register(ALL_BLOCKED)
 - [ ] **Step 6: Run all tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
 ```
 Expected: ALL PASS. The existing tests don't check for absence of `initial_run`; they only check specific keys exist.
 
@@ -434,7 +434,7 @@ def test_snapshot_has_run_key(mock_app):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_journal_endpoint.py radar/tests/unit/test_snapshot_endpoint.py -v 2>&1 | tail -20
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_journal_endpoint.py radar/tests/unit/test_snapshot_endpoint.py -v 2>&1 | tail -20
 ```
 Expected: journal tests FAIL (old dict shape returned), `test_snapshot_has_run_key` FAIL.
 
@@ -586,7 +586,7 @@ The `running_process` fixture remains unchanged (it invokes `mock_server` via su
 - [ ] **Step 8: Run all tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
 ```
 Expected: ALL PASS. If CLI tests fail, check that `main()` still handles `--scenario default` correctly via subprocess.
 
@@ -655,7 +655,7 @@ def test_greenfield_display_names_space_convention():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_new_scenarios.py::test_greenfield_registered -v 2>&1 | tail -10
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_new_scenarios.py::test_greenfield_registered -v 2>&1 | tail -10
 ```
 Expected: ImportError or NameError (scenario not registered yet).
 
@@ -865,7 +865,7 @@ from radar.scenarios import greenfield as _greenfield  # noqa: F401
 - [ ] **Step 5: Run tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v -k "greenfield or test_list or test_scenario" 2>&1 | tail -20
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v -k "greenfield or test_list or test_scenario" 2>&1 | tail -20
 ```
 Expected: All greenfield tests PASS. `test_list_scenarios_has_at_least_two` still PASS (now has 3+).
 
@@ -1090,7 +1090,7 @@ from radar.scenarios import brownfield as _brownfield  # noqa: F401
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v -k "brownfield" 2>&1 | tail -15
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v -k "brownfield" 2>&1 | tail -15
 ```
 Expected: All brownfield tests PASS.
 
@@ -1358,7 +1358,7 @@ from radar.scenarios import blocked_escalation as _blocked_escalation  # noqa: F
 - [ ] **Step 4: Run all tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
 ```
 Expected: ALL PASS.
 
@@ -1504,7 +1504,7 @@ def test_load_replay_skips_malformed_lines(tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_replay.py -v 2>&1 | tail -15
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_replay.py -v 2>&1 | tail -15
 ```
 Expected: ModuleNotFoundError (`radar.scenarios.replay` does not exist).
 
@@ -1610,14 +1610,14 @@ def load_replay(filepath: str) -> Scenario:
 - [ ] **Step 4: Run tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_replay.py -v 2>&1 | tail -20
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_replay.py -v 2>&1 | tail -20
 ```
 Expected: ALL PASS.
 
 - [ ] **Step 5: Run full suite**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -10
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -10
 ```
 Expected: ALL PASS (replay.py not auto-imported, doesn't affect other tests).
 
@@ -1840,7 +1840,7 @@ Also add `from pathlib import Path` to the import at the top of `main()` if not 
 - [ ] **Step 3: Run all tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -30
 ```
 Expected: ALL PASS.
 
@@ -1956,7 +1956,7 @@ def test_record_event_thread_safe(tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_recorder.py -v 2>&1 | tail -15
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/unit/test_recorder.py -v 2>&1 | tail -15
 ```
 Expected: AttributeError (`radar.server` has no `_record_path` or `_record_event`).
 
@@ -2042,7 +2042,7 @@ In `main()`, after `load_initial_state()` is called, add:
 - [ ] **Step 7: Run all tests**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -20
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -20
 ```
 Expected: ALL PASS.
 
@@ -2055,15 +2055,15 @@ git commit -m "feat(radar): add --record PATH flag to server.py for SSE event re
 
 ---
 
-## Task 9: Infrastructure — `config-template.yml` + `commands/cognitive-squad.run.md`
+## Task 9: Infrastructure — `config-template.yml` + `commands/echelon.run.md`
 
 **Files:**
 - Modify: `config-template.yml`
-- Modify: `commands/cognitive-squad.run.md`
+- Modify: `commands/echelon.run.md`
 
 ### Context
 
-Two small additions: (1) `record: false` in the `radar:` block of `config-template.yml`, (2) `RADAR_RECORD_FLAG` shell block in `cognitive-squad.run.md` before the `python3 -m radar.server` invocation.
+Two small additions: (1) `record: false` in the `radar:` block of `config-template.yml`, (2) `RADAR_RECORD_FLAG` shell block in `echelon.run.md` before the `python3 -m radar.server` invocation.
 
 - [ ] **Step 1: Update `config-template.yml`**
 
@@ -2090,7 +2090,7 @@ radar:
   # host: localhost
 ```
 
-- [ ] **Step 2: Update `commands/cognitive-squad.run.md`**
+- [ ] **Step 2: Update `commands/echelon.run.md`**
 
 Find lines 305-310 (the RADAR startup block):
 
@@ -2126,15 +2126,15 @@ PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
 - [ ] **Step 3: Run full test suite**
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -10
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -10
 ```
 Expected: ALL PASS (no test covers these YAML/shell changes directly).
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add config-template.yml commands/cognitive-squad.run.md
-git commit -m "feat(radar): add record flag to config-template; add RADAR_RECORD_FLAG to cognitive-squad.run.md"
+git add config-template.yml commands/echelon.run.md
+git commit -m "feat(radar): add record flag to config-template; add RADAR_RECORD_FLAG to echelon.run.md"
 ```
 
 ---
@@ -2317,13 +2317,13 @@ git commit -m "docs(radar): add UI handover protocol contract"
 After all 10 tasks:
 
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -20
+cd /Users/michalbachorik/work/echelon && PATH=/usr/bin:/bin python3 -m pytest radar/tests/ -v 2>&1 | tail -20
 ```
 Expected: ALL PASS, 0 FAIL.
 
 Smoke test all new scenarios:
 ```bash
-cd /Users/michalbachorik/work/cognitive-squad
+cd /Users/michalbachorik/work/echelon
 PATH=/usr/bin:/bin PYTHONPATH=. python3 -c "
 from radar.scenarios import list_scenarios
 for s in list_scenarios():

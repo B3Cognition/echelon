@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-31
 **Repo:** https://github.com/paperclipai/paperclip
-**Target:** Novelty adoption for cognitive-squad / echelon
+**Target:** Novelty adoption for echelon / echelon
 **Agents dispatched:** 6 (3 broad + 3 deep dive)
 
 ---
@@ -11,7 +11,7 @@
 
 **Paperclip** = 1300-file TypeScript monorepo (Node.js + React + PostgreSQL) for orchestrating "zero-human AI companies." 59 DB tables, 10 agent adapters, 21 plugin services, 40+ page React UI.
 
-**Cognitive Squad** = 367-file prompt-based cognitive architecture. 42 specialized agents, 7 layers, 4 phases, endocrine system, belief registers, calibration learning.
+**Echelon** = 367-file prompt-based cognitive architecture. 42 specialized agents, 7 layers, 4 phases, endocrine system, belief registers, calibration learning.
 
 **They are complementary, not competitive.** Paperclip is thick infrastructure + thin agent logic. Squad is thick cognitive logic + thin infrastructure.
 
@@ -32,7 +32,7 @@
 
 ---
 
-## What Paperclip Has That Cognitive Squad Doesn't
+## What Paperclip Has That Echelon Doesn't
 
 ### 1. Persistent Server with PostgreSQL State
 Full Node.js + Express REST API with 60+ DB tables (Drizzle ORM). Agents, issues, costs, approvals, plugins all persisted across reboots.
@@ -101,7 +101,7 @@ SSE/WebSocket push to browser for runtime updates.
 
 ---
 
-## What Cognitive Squad Has That Paperclip Doesn't
+## What Echelon Has That Paperclip Doesn't
 
 ### 1. 42-Agent Cognitive Architecture with 4-Phase Model
 Understand/Decide/Solution/Build phases, 7 functional layers (control/exploration/feasibility/solution/specialists/build/learning). Each agent has strict role separation with NEVER rules.
@@ -170,7 +170,7 @@ Agents receive a **9-step numbered runbook** (the heartbeat procedure) with exac
 9. Delegate if needed
 ```
 
-### Cognitive Squad: Persona-as-Prompt
+### Echelon: Persona-as-Prompt
 Agents receive role descriptions with belief registers, calibration injection, expert personas, and NEVER rules. More latitude in reasoning approach.
 
 ```
@@ -181,7 +181,7 @@ NEVER make architecture decisions based on findings (report to ARCHITECT)
 
 ### Key Differences
 
-| Dimension | Paperclip | Cognitive Squad |
+| Dimension | Paperclip | Echelon |
 |-----------|-----------|----------------|
 | Agent identity | Procedural (heartbeat steps) | Persona-based (SCIENTIST, ARCHITECT) |
 | Anti-patterns | 3-column tables (Mistake/Why/Fix) | NEVER rules in prose |
@@ -319,9 +319,9 @@ Thin ping (agent fetches own context) vs fat payload (Paperclip bundles everythi
 ## Fundamental Philosophical Contrast
 
 > **Paperclip** = agents as **employees in an organization** (HR, budgets, approval chains)
-> **Cognitive Squad** = agents as **cognitive specialists** (beliefs, calibration, endocrine arousal)
+> **Echelon** = agents as **cognitive specialists** (beliefs, calibration, endocrine arousal)
 
 > Paperclip optimizes for **reliability and auditability at organizational scale**.
-> Cognitive Squad optimizes for **reasoning quality at task scale**.
+> Echelon optimizes for **reasoning quality at task scale**.
 
-> The two systems are complementary. Paperclip could use cognitive-squad's analysis depth before building. Cognitive-squad could use Paperclip's runtime infrastructure for persistent execution.
+> The two systems are complementary. Paperclip could use echelon's analysis depth before building. Cognitive-squad could use Paperclip's runtime infrastructure for persistent execution.

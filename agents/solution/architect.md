@@ -183,7 +183,7 @@ These are architectural decisions, not feature add-ons. Address each as a design
 
 **If constitution doesn't exist (should not happen in normal flow):**
 
-- Constitution is created in section 3.5 of cognitive-squad.run.md (after UNDERSTAND phase)
+- Constitution is created in section 3.5 of echelon.run.md (after UNDERSTAND phase)
 - If missing: ERROR — escalate to COMMANDER. Squad flow requires constitution before ARCHITECT runs.
 
 **Appending technical principles:**
