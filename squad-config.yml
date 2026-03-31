@@ -398,6 +398,18 @@ specialists:
     - high-load
 
 # =============================================================================
+# AUTO-FEEDBACK & POST-BUILD VALIDATION (ECHELON-002)
+# =============================================================================
+
+feedback:
+  auto_feedback: true               # Autonomous feedback after every build
+  expert_triage: true                # Dispatch experts for CRITICAL findings
+  max_expert_dispatches: 5           # Banzai mode — generous expert budget
+  post_build_validation: true        # Understanding re-scan after build
+  post_build_intent_check: true      # TRACKER intent alignment after build
+  allow_manual_override: true        # Human can still add ground truth
+
+# =============================================================================
 # KNOWLEDGE BASE
 # =============================================================================
 

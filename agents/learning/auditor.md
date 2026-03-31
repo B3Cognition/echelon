@@ -336,3 +336,127 @@ When calibration data grows (5+ data points per domain), CALIBRATE should produc
 
 Save as `.specify/specs/{feature}/calibration-analytics.md`
 This makes learning VISIBLE, not just stored in YAML.
+
+---
+
+## Mode 4: Post-Build Self-Assessment (after BUILD_DONE)
+
+Dispatched by COMMANDER after build completes. Uses build artifacts as ground truth to auto-generate feedback without human input. Produces `auto-feedback.yaml` — the same schema as human feedback but populated from build data.
+
+### Step 1: Effort Assessment
+
+1. Read `estimates.md` — extract predicted effort per task
+2. Read `state.json` — extract `build.task_results`, phase timing data, rework cycles
+3. Read `progress-report.md` — extract actual effort tracking, drift data
+4. Compute per-task: `accuracy_ratio = actual / estimated`
+5. Compute overall: total estimated vs total actual build duration
+6. Severity: INFO if ratio 0.8-1.2, MEDIUM if 0.5-0.8 or 1.2-2.0, HIGH if 0.3-0.5 or 2.0-3.0, CRITICAL if <0.3 or >3.0
+
+### Step 2: Architecture Decision Assessment
+
+1. Read `plan.md` / `research.md` — extract each ADR and tech decision
+2. Read the actual implemented code structure (use Glob/Grep to check if planned patterns exist in code)
+3. Read `reasoning-journal.json` — search for entries with `type: "decision"` or `type: "pivot"` during build
+4. For each planned decision: classify as `held` (code matches plan), `partially` (code diverges but intent preserved), or `no` (decision abandoned)
+5. Any `no` classification is severity HIGH; `partially` is MEDIUM
+
+### Step 3: Requirements Assessment
+
+1. Read `spec.md` — count total FR-*, AC-*, NFR-*
+2. Read `verification-summary.md` and `gap-report.md` — extract coverage data
+3. Read `reasoning-journal.json` — search for NEEDS_CONTEXT dispatches (indicate missing requirements)
+4. Compute: implemented as-written, needed clarification (NEEDS_CONTEXT count), missing (gap-report gaps), unnecessary (excess-report items)
+5. Severity: CRITICAL if missing > 3, HIGH if missing 1-3, MEDIUM if clarification needed > 30%, INFO otherwise
+
+### Step 4: Risk Assessment
+
+1. Read `risk-matrix.md` — extract all predicted risks
+2. Read `reasoning-journal.json` — search for BLOCKED, DEGRADED, rework, and escalation entries during build
+3. Cross-reference: which predicted risks materialized (BLOCKED/DEGRADED entries matching risk descriptions)?
+4. What unpredicted blockers appeared? (BLOCKED entries with no matching risk-matrix entry)
+5. Severity: CRITICAL if unpredicted blockers > 2, HIGH if any predicted HIGH risk materialized, MEDIUM otherwise
+
+### Step 5: Test Assessment
+
+1. Read `test-strategy.md` and `coverage-map.md` — extract planned test approach
+2. Read `test-quality-report.md` — extract actual test results and coverage
+3. Compute coverage ratio: planned vs achieved
+4. Flag gaps: acceptance criteria with no corresponding test, or test types planned but not written
+5. Severity: HIGH if coverage < 70%, MEDIUM if < 85%, INFO if >= 85%
+
+### Step 6: Produce auto-feedback.yaml
+
+Write to `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
+
+```yaml
+spec_id: "{spec-id}"
+project_name: "{project-name}"
+feedback_date: "{ISO-8601}"
+feedback_source: "auto"
+run_id: "{run_id}"
+
+effort:
+  estimated_total_hours: {N}
+  actual_build_duration_minutes: {N}
+  tasks_completed: {N}
+  tasks_blocked: {N}
+  tasks_degraded: {N}
+  rework_cycles: {N}
+  accuracy_ratio: {N}
+  severity: "{severity}"
+
+architecture_decisions:
+  - decision: "{from plan.md}"
+    held: "{yes|no|partially}"
+    evidence: "{file path or reasoning-journal entry}"
+    severity: "{severity}"
+
+requirements:
+  total_in_spec: {N}
+  implemented_as_written: {N}
+  needed_clarification: {N}
+  missing_discovered_during_build: {N}
+  unnecessary: {N}
+  severity: "{severity}"
+
+risks:
+  predicted_count: {N}
+  materialized_count: {N}
+  unpredicted_blockers: {N}
+  severity: "{severity}"
+
+tests:
+  planned_coverage: {0.0-1.0}
+  actual_coverage: {0.0-1.0}
+  severity: "{severity}"
+
+critical_findings: []
+```
+
+### Step 7: Identify Critical Findings
+
+Scan all sections. For any finding with severity CRITICAL:
+1. Create a `critical_findings[]` entry with: id (CF-NNN), type, description, severity, recommended_expert
+2. Types: `architecture_pivot`, `unpredicted_risk`, `effort_overrun`, `requirements_gap`, `test_gap`
+3. Recommended expert mapping:
+   - `architecture_pivot` → INVESTIGATOR + MAVERICK
+   - `unpredicted_risk` → INVESTIGATOR + GUARDIAN (if security-related)
+   - `effort_overrun` (ratio > 2.0) → REALIST
+   - `requirements_gap` (missing > 3) → SAGE
+   - `test_gap` (production gaps) → SENTINEL
+
+### Step 8: Produce feedback-report.md
+
+Write a human-readable summary to `specs/{feature}/feedback-report.md` with:
+- Effort accuracy summary
+- Architecture decision outcomes table
+- Requirements coverage matrix
+- Risk prediction accuracy
+- Test strategy effectiveness
+- Critical findings list (for COMMANDER triage)
+
+### Output
+
+- `knowledge-base/feedback/{spec-id}-{project-name}.yaml` — structured auto-feedback
+- `specs/{feature}/feedback-report.md` — human-readable report
+- Both files produced via KB Bootstrap Protocol (lock, write, validate, release)
