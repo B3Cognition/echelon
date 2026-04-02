@@ -1,0 +1,51 @@
+[
+  {
+    "type": "phase_complete",
+    "agent": "SCOUT",
+    "phase": "discover",
+    "timestamp": "2026-04-02T20:20:00Z",
+    "summary": "Mapped validation territory. Identified 6 claim clusters with evidence grades. Proof topology written to mental-model.md.",
+    "output_files": ["mental-model.md", "boundaries.md", "assumptions.md"],
+    "quality_self_assessment": 0.82,
+    "blockers": [],
+    "prompt_tokens": 1840,
+    "completion_tokens": 620,
+    "total_tokens": 2460
+  },
+  {
+    "type": "phase_complete",
+    "agent": "CARTOGRAPHER",
+    "phase": "what",
+    "timestamp": "2026-04-02T20:55:00Z",
+    "summary": "Wrote spec.md with 8 requirements. All CA overlay claims explicitly gate-conditioned on U-CA-004.",
+    "output_files": ["spec.md", "00-overview.md"],
+    "quality_self_assessment": 0.83,
+    "blockers": [],
+    "usage": {
+      "prompt_tokens": 2100,
+      "completion_tokens": 910,
+      "total_tokens": 3010
+    }
+  },
+  {
+    "type": "phase_complete",
+    "agent": "SAGE",
+    "phase": "why1",
+    "timestamp": "2026-04-02T21:15:00Z",
+    "summary": "WHY1 validation. Overall score 0.78. 5 issues found. No critical issues. SPECULATION labels verified in 3 locations.",
+    "output_files": ["quality-gates.md", "issues.md"],
+    "quality_self_assessment": 0.85,
+    "blockers": []
+  },
+  {
+    "type": "phase_complete",
+    "agent": "SCOUT",
+    "phase": "recheck",
+    "timestamp": "2026-04-02T21:40:00Z",
+    "summary": "Verified amendment output. All 5 fixes confirmed. Spec coherent after CARTOGRAPHER amendment pass.",
+    "output_files": ["ground-check.md"],
+    "quality_self_assessment": 0.88,
+    "blockers": [],
+    "tokens_used": 1750
+  }
+]

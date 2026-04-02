@@ -1,0 +1,3283 @@
+{
+  "run_id": "scan-20260402T200100Z",
+  "spec_ids_scanned": [
+    "013-echelon-slm-replacement-feasibility",
+    "014-cognitive-architecture-llm-framing",
+    "015-ca-outcomes-validation"
+  ],
+  "scanned_at": "2026-04-02T20:01:00.069050+00:00",
+  "detection_method": "heuristic-pattern-matching",
+  "bound_type": "upper_bound",
+  "method_limitations": "This scanner applies three syntactic heuristics (count mismatch, status mismatch, boolean mismatch) over structured key-value lines, bold patterns, and table rows in Markdown artifacts. It is an UPPER BOUND estimator: (1) false positives occur when different entities share the same key name across artifacts; (2) false negatives occur for contradictions expressed in unstructured prose, multi-sentence reasoning, or non-adjacent pipeline stages. The output contradiction_rate_per_run is not a true precision-recall metric and must be interpreted as a detection signal, not a ground truth. Manual verification of the precision sample is required to calibrate the signal.",
+  "pairs_scanned": 560976,
+  "contradictions_detected": 197,
+  "contradiction_rate_per_run": 0.000351,
+  "per_pair_rates": {
+    "DISCOVER-ASSESS": {
+      "pairs": 193152,
+      "contradictions": 33,
+      "rate": 0.000171
+    },
+    "ASSESS-HOW": {
+      "pairs": 208624,
+      "contradictions": 52,
+      "rate": 0.000249
+    },
+    "HOW-PLAN": {
+      "pairs": 159200,
+      "contradictions": 112,
+      "rate": 0.000704
+    },
+    "PLAN-BUILD": {
+      "pairs": 0,
+      "contradictions": 0,
+      "rate": 0.0
+    },
+    "BUILD-FINALIZE": {
+      "pairs": 0,
+      "contradictions": 0,
+      "rate": 0.0
+    }
+  },
+  "contradictions": [
+    {
+      "id": "C-001",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/domain-analysis.md",
+        "line": 264,
+        "text": "| R-001 | LOW | REQ-Q2-001, REQ-S-001 | Add EU AI Act compliance placeholder |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/risks.md",
+        "line": 138,
+        "text": "| R-001 | SAGE false negatives at quality gate | H | 5 | **CRITICAL** | Yes (cascade) |"
+      },
+      "entity": "r-001",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-002",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/domain-analysis.md",
+        "line": 265,
+        "text": "| R-002 | MEDIUM | REQ-Q2-002 | Add model card template requirement to acceptance criteria |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/risks.md",
+        "line": 139,
+        "text": "| R-002 | Constitution compliance degrades | H | 5 | **CRITICAL** | Needs design (GAP-002) |"
+      },
+      "entity": "r-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-003",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 89,
+        "text": "| Phase | contains | Layer | 1:N | exploration, feasibility, control, solution, specialists, build, learning |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/estimates.md",
+        "line": 148,
+        "text": "| Phase 1: Parallel audits | U-010, taxonomy draft, U-014, U-019, REQ-Q2-005 | 1.5 weeks |"
+      },
+      "entity": "phase",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-004",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 89,
+        "text": "| Phase | contains | Layer | 1:N | exploration, feasibility, control, solution, specialists, build, learning |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/estimates.md",
+        "line": 149,
+        "text": "| Phase 2: Root blocker (U-001) | REQ-Q1-004 experiment — 10+ context packs, Understanding CLI scoring | 1.0 week |"
+      },
+      "entity": "phase",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-005",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 89,
+        "text": "| Phase | contains | Layer | 1:N | exploration, feasibility, control, solution, specialists, build, learning |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/estimates.md",
+        "line": 150,
+        "text": "| Phase 3: Characterization | REQ-Q1-002 (context window table), REQ-Q1-003 (100-run schema test) | 1.5 weeks |"
+      },
+      "entity": "phase",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-006",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 89,
+        "text": "| Phase | contains | Layer | 1:N | exploration, feasibility, control, solution, specialists, build, learning |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/estimates.md",
+        "line": 151,
+        "text": "| Phase 4: Protocol definitions | REQ-S-002, REQ-S-001 evaluation | 2.0 weeks |"
+      },
+      "entity": "phase",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-007",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 89,
+        "text": "| Phase | contains | Layer | 1:N | exploration, feasibility, control, solution, specialists, build, learning |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/estimates.md",
+        "line": 152,
+        "text": "| Phase 5: Q2 track | REQ-Q2-002 through REQ-Q2-005, LoRA pipeline design | 5.0 weeks |"
+      },
+      "entity": "phase",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-008",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 89,
+        "text": "| Phase | contains | Layer | 1:N | exploration, feasibility, control, solution, specialists, build, learning |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 77,
+        "text": "| Dependency Phase 0 completeness | 0.82 | All major dependencies listed with fallbacks; ISSUE-WHY3-004: CLI version not pinned (LOW) |"
+      },
+      "entity": "phase",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-009",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 90,
+        "text": "| Layer | contains | Agent | 1:N | 6, 6, 2, 3, 6, 11, 8 agents per layer (unverified count) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 201,
+        "text": "| \"Better layers\" misinterpretation | CARTOGRAPHER proceeds with Interpretation A (better pipeline layers) without user confirmation. The user actually meant Interpretation B (cleaner software architecture separation) or — less likely — Interpretation C (neural network layer augmentation). Work proc"
+      },
+      "entity": "layer",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-010",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 90,
+        "text": "| Layer | contains | Agent | 1:N | 6, 6, 2, 3, 6, 11, 8 agents per layer (unverified count) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 251,
+        "text": "| RJ-004 (\"better layers\" as innovation opportunity) | 0.65 | C | Q2 feasibility framing | ACCEPTABLE — appropriate confidence level for an exploratory framing; not yet driving design decisions. |"
+      },
+      "entity": "layer",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-011",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 90,
+        "text": "| Layer | contains | Agent | 1:N | 6, 6, 2, 3, 6, 11, 8 agents per layer (unverified count) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 14,
+        "text": "| Constitution R-IV: every fine-tuning task AC requires post-generation enforcement layer | TASK-027 AC: \"Post-generation enforcement layer (grammar + classifier) is invoked on all outputs during evaluation.\" TASK-028 AC: same. Coverage map: `test_enforcement_sequence_all_steps_executed`. | PASS |"
+      },
+      "entity": "layer",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-012",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 94,
+        "text": "| Artifact | consumed-by | Downstream Agent | 1:N | Files passed as context pack |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 254,
+        "text": "| RJ-002 (artifact protocol as key structural advantage) | 0.85 | B | Modularity and incremental replacement strategy | VALIDATED — highest confidence, highest grade; this is the most reliable finding. |"
+      },
+      "entity": "artifact",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-013",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 94,
+        "text": "| Artifact | consumed-by | Downstream Agent | 1:N | Files passed as context pack |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 80,
+        "text": "| Constitution compliance across all artifacts | 0.95 | R-I through R-VI compliant across all six reviewed artifacts |"
+      },
+      "entity": "artifact",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-014",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 95,
+        "text": "| Artifact | validated-by | Quality Gate | N:1 | Gates block pipeline if metrics fail |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 254,
+        "text": "| RJ-002 (artifact protocol as key structural advantage) | 0.85 | B | Modularity and incremental replacement strategy | VALIDATED — highest confidence, highest grade; this is the most reliable finding. |"
+      },
+      "entity": "artifact",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-015",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 95,
+        "text": "| Artifact | validated-by | Quality Gate | N:1 | Gates block pipeline if metrics fail |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 80,
+        "text": "| Constitution compliance across all artifacts | 0.95 | R-I through R-VI compliant across all six reviewed artifacts |"
+      },
+      "entity": "artifact",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-016",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 99,
+        "text": "| SAGE | enforces | Quality Gate | 1:N | Primary gating agent |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 198,
+        "text": "| SAGE replacement false-negative cascade | SAGE(WHY1) is replaced with a 7B SLM without resolving U-004. The SLM produces PASS verdicts on ambiguous requirements. CARTOGRAPHER, ARCHITECT, IMPLEMENTER all build downstream artifacts from a bad spec. Pipeline fails silently until the build phase. | HI"
+      },
+      "entity": "sage",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-017",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 100,
+        "text": "| Constitution | governs | All Agents | 1:42 | Immutable, highest authority |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 203,
+        "text": "| Constitution enforcement absent | No enforcement mechanism is designed for SLM constitution compliance. The first SLM deployed to a production Echelon run produces a spec that violates a constitution principle under an unusual edge-case input. The violation propagates through the pipeline because "
+      },
+      "entity": "constitution",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-018",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 100,
+        "text": "| Constitution | governs | All Agents | 1:42 | Immutable, highest authority |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 14,
+        "text": "| Constitution R-IV: every fine-tuning task AC requires post-generation enforcement layer | TASK-027 AC: \"Post-generation enforcement layer (grammar + classifier) is invoked on all outputs during evaluation.\" TASK-028 AC: same. Coverage map: `test_enforcement_sequence_all_steps_executed`. | PASS |"
+      },
+      "entity": "constitution",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-019",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 100,
+        "text": "| Constitution | governs | All Agents | 1:42 | Immutable, highest authority |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 15,
+        "text": "| Constitution R-VI: constitution compliance task is a GATE POINT before any positive Q2 verdict | GATE-4 (TASK-017) blocks TASK-027, TASK-028, TASK-045. Critical-path.md explicitly calls this the R-VI gate. | PASS |"
+      },
+      "entity": "constitution",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-020",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 100,
+        "text": "| Constitution | governs | All Agents | 1:42 | Immutable, highest authority |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 80,
+        "text": "| Constitution compliance across all artifacts | 0.95 | R-I through R-VI compliant across all six reviewed artifacts |"
+      },
+      "entity": "constitution",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-021",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 101,
+        "text": "| Understanding CLI | scores | Artifact quality | 1:N | 34-metric framework |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 199,
+        "text": "| Goodhart's Law on Understanding CLI metrics | RLAIF trains a SPEC_GUARD SLM to score well on the 34 metrics. The SLM produces requirements that score 95/100 on metrics but are subtly incomplete because the metrics do not capture every quality dimension. The quality gate passes the SLM's outputs be"
+      },
+      "entity": "understanding cli",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-022",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mental-model.md",
+        "line": 102,
+        "text": "| Understanding CLI | measures | Internalization | 1:N | 16 deterministic metrics |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/assumption-review.md",
+        "line": 199,
+        "text": "| Goodhart's Law on Understanding CLI metrics | RLAIF trains a SPEC_GUARD SLM to score well on the 34 metrics. The SLM produces requirements that score 95/100 on metrics but are subtly incomplete because the metrics do not capture every quality dimension. The quality gate passes the SLM's outputs be"
+      },
+      "entity": "understanding cli",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-023",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 193,
+        "text": "| REQ-Q1-003 | **PASS** | — | REM-002 (LOW) | LOW only; testability and conditionality otherwise clean |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 158,
+        "text": "| REQ-Q1-003 | Schema compliance testing (100-pass experiment) | Unit (constrained_decoder), integration (runner→scorer), statistical | Zero-violation assertion path; Spearman correlation computation |"
+      },
+      "entity": "req-q1-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-024",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 194,
+        "text": "| REQ-Q1-004 | **PASS** | ISS-010 | — | Threshold unit specified; binary verdict requirement intact |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 159,
+        "text": "| REQ-Q1-004 | Quality parity benchmarking (U-001) | Unit (benchmark_runner, wilcoxon_test), integration, reproducibility | Binary PASS/FAIL only; pre-specification timestamp invariant; Grade D caveat flag |"
+      },
+      "entity": "req-q1-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-025",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 195,
+        "text": "| REQ-Q1-005 | **PASS** | ISS-003 | — | Deferred Mitigations format specified; negative U-004 retraction clause correct |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 160,
+        "text": "| REQ-Q1-005 | SAGE cascade architecture | Unit (escalation_gate, hybrid_pipeline), integration, contract (C-002) | All 5 escalation triggers; deferred mitigations format; negative-U-004 retraction path |"
+      },
+      "entity": "req-q1-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-026",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 197,
+        "text": "| REQ-Q2-002 | **PASS** | ISS-006 | — | Deterministic lookup definition removes LLM reasoning ambiguity |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 162,
+        "text": "| REQ-Q2-002 | LoRA fine-tuning pipeline | Unit (sft_train), integration, contract (C-003) | Deterministic lookup only (no LLM call in routing); context window compatibility assertion |"
+      },
+      "entity": "req-q2-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-027",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 198,
+        "text": "| REQ-Q2-003 | **PASS** | ISS-004 | REM-001 (MEDIUM) | All acceptance criteria testable; some protocol detail remains in formal statement |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 163,
+        "text": "| REQ-Q2-003 | RLAIF pipeline (Goodhart's Law gate) | Unit (dpo_train, preference_gen), integration | U-016 PASS file check; false-pass rate computation; revision cycle bound (max 3) |"
+      },
+      "entity": "req-q2-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-028",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 200,
+        "text": "| REQ-Q2-005 | **PASS** | ISS-011 | — | Generalization criterion now statistically specified |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 165,
+        "text": "| REQ-Q2-005 | \"Better layer\" success criteria | Unit (regression_test), integration | Pre-specification timestamp; generalization set size (≥20); regression count (max 2) |"
+      },
+      "entity": "req-q2-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-029",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 201,
+        "text": "| REQ-S-001 | **PASS** | ISS-005 | REM-001 (MEDIUM) | \"Complete\" now defined; UNSOLVED flag correct; Approach A/B detail still in formal statement |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 166,
+        "text": "| REQ-S-001 | Constitution compliance enforcement | Unit (classifier_inference, grammar_constraints), integration, contract (C-003 §Component 5) | Approach A: precision≥0.90, recall≥0.85, latency p95<100ms; Approach B: field completeness; escalation path; 3-iteration bound |"
+      },
+      "entity": "req-s-001",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-030",
+      "type": "status_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 202,
+        "text": "| REQ-S-002 | **PASS** | — | — | Binary PASS/FAIL unchanged; no regression |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 167,
+        "text": "| REQ-S-002 | Pipeline-level regression test | Unit (regression_test), integration, reproducibility | Baseline timestamp predates hybrid test; binary PASS/FAIL; no post-hoc interpretation path |"
+      },
+      "entity": "req-s-002",
+      "confidence": 0.85
+    },
+    {
+      "id": "C-031",
+      "type": "status_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 202,
+        "text": "| REQ-S-002 | **PASS** | — | — | Binary PASS/FAIL unchanged; no regression |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 167,
+        "text": "| REQ-S-002 | Pipeline-level regression test | Unit (regression_test), integration, reproducibility | Baseline timestamp predates hybrid test; binary PASS/FAIL; no post-hoc interpretation path |"
+      },
+      "entity": "req-s-002",
+      "confidence": 0.85
+    },
+    {
+      "id": "C-032",
+      "type": "status_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 202,
+        "text": "| REQ-S-002 | **PASS** | — | — | Binary PASS/FAIL unchanged; no regression |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 167,
+        "text": "| REQ-S-002 | Pipeline-level regression test | Unit (regression_test), integration, reproducibility | Baseline timestamp predates hybrid test; binary PASS/FAIL; no post-hoc interpretation path |"
+      },
+      "entity": "req-s-002",
+      "confidence": 0.85
+    },
+    {
+      "id": "C-033",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/issues.md",
+        "line": 203,
+        "text": "| REQ-S-003 | **PASS** | ISS-007 | — | Rejection rationale minimum content defined; generic objections declared insufficient |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 168,
+        "text": "| REQ-S-003 | Cascade deployment architecture | Unit (escalation_gate), contract (C-002) | Exactly one confidence method; rejected-method rationale presence; cost model deductions |"
+      },
+      "entity": "req-s-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-034",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/data-model.md",
+        "line": 118,
+        "text": "| `total_score_pct` | float | yes | 0.0–100.0 | Aggregate Understanding CLI score |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 102,
+        "text": "| **Total** | | **~0.5 weeks** |"
+      },
+      "entity": "totalscorepct",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-035",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/data-model.md",
+        "line": 306,
+        "text": "| Constitution | Not persisted in data model | Constitution is a living document at `.specify/memory/constitution.md` |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 41,
+        "text": "| **REQ-S-001** (constitution compliance evaluation) | Non-negotiable per R-VI (constitution) — any positive Q1/Q2 verdict without this is constitutionally incomplete. The output may be an escalation recommendation, which is valid. |"
+      },
+      "entity": "constitution",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-036",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/spec.md",
+        "line": 357,
+        "text": "| R-IV: Fine-tuned SLMs require post-generation enforcement | REQ-Q2-003 and REQ-S-001 both mandate enforcement layer | COMPLIANT — Fine-tuning alone is not accepted anywhere |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/plan.md",
+        "line": 31,
+        "text": "| Post-generation enforcement | Hybrid: grammar constraint (syntactic) + classifier (semantic) | ADR-009 |"
+      },
+      "entity": "r-iv: fine-tuned slms require post-generation enforcement",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-037",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 157,
+        "text": "| REQ-Q1-002 | Context window measurement protocol | Unit (context_loader), integration | Token count computation, tier assignment, >128K strategy enforcement |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 40,
+        "text": "| **REQ-Q1-002** (context window measurement) | Required for SLM model selection — cannot give actionable Q1 recommendation without it |"
+      },
+      "entity": "req-q1-002",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-038",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 158,
+        "text": "| REQ-Q1-003 | Schema compliance testing (100-pass experiment) | Unit (constrained_decoder), integration (runner→scorer), statistical | Zero-violation assertion path; Spearman correlation computation |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 68,
+        "text": "| **REQ-Q1-003** (schema compliance testing, 100 runs) | U-001 PASS — model candidate identified | Requires a specific model to test; not useful before model selection |"
+      },
+      "entity": "req-q1-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-039",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 158,
+        "text": "| REQ-Q1-003 | Schema compliance testing (100-pass experiment) | Unit (constrained_decoder), integration (runner→scorer), statistical | Zero-violation assertion path; Spearman correlation computation |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 21,
+        "text": "| REQ-Q1-003 | Schema compliance testing (constrained decoding) | **Performance** | Confirms A-008 (high confidence assumption). Valuable but has a fallback: constrained decoding is already Evidence Grade B. |"
+      },
+      "entity": "req-q1-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-040",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 158,
+        "text": "| REQ-Q1-003 | Schema compliance testing (100-pass experiment) | Unit (constrained_decoder), integration (runner→scorer), statistical | Zero-violation assertion path; Spearman correlation computation |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 47,
+        "text": "| REQ-Q1-003 (schema compliance testing) | 6 | 1 | 1.0 | 0.5 | **12.0** | — |"
+      },
+      "entity": "req-q1-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-041",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 158,
+        "text": "| REQ-Q1-003 | Schema compliance testing (100-pass experiment) | Unit (constrained_decoder), integration (runner→scorer), statistical | Zero-violation assertion path; Spearman correlation computation |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 102,
+        "text": "REQ-Q1-003: Schema compliance testing (A-008 validation) — constrained decoding"
+      },
+      "entity": "req-q1-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-042",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 159,
+        "text": "| REQ-Q1-004 | Quality parity benchmarking (U-001) | Unit (benchmark_runner, wilcoxon_test), integration, reproducibility | Binary PASS/FAIL only; pre-specification timestamp invariant; Grade D caveat flag |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 41,
+        "text": "| REQ-Q1-004 (U-001 experiment) | 10 | 3 | 0.8 | 1.0 | **24.0** | 1 |"
+      },
+      "entity": "req-q1-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-043",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 160,
+        "text": "| REQ-Q1-005 | SAGE cascade architecture | Unit (escalation_gate, hybrid_pipeline), integration, contract (C-002) | All 5 escalation triggers; deferred mitigations format; negative-U-004 retraction path |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 69,
+        "text": "| **REQ-Q1-005** (SAGE cascade architecture) | U-004 positive result (7B adversarial critique capable) | Entirely conditional on U-004; designing it before U-004 is wasted effort |"
+      },
+      "entity": "req-q1-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-044",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 160,
+        "text": "| REQ-Q1-005 | SAGE cascade architecture | Unit (escalation_gate, hybrid_pipeline), integration, contract (C-002) | All 5 escalation triggers; deferred mitigations format; negative-U-004 retraction path |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 25,
+        "text": "| REQ-Q1-005 | SAGE replacement cascade architecture specification | **Performance** | Dependent on U-004 positive result. Valuable only if SAGE is determined replaceable. |"
+      },
+      "entity": "req-q1-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-045",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 160,
+        "text": "| REQ-Q1-005 | SAGE cascade architecture | Unit (escalation_gate, hybrid_pipeline), integration, contract (C-002) | All 5 escalation triggers; deferred mitigations format; negative-U-004 retraction path |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 51,
+        "text": "| REQ-Q1-005 (SAGE cascade architecture) | 5 | 1 | 0.5 | 2.0 | **1.25** | — |"
+      },
+      "entity": "req-q1-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-046",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 162,
+        "text": "| REQ-Q2-002 | LoRA fine-tuning pipeline | Unit (sft_train), integration, contract (C-003) | Deterministic lookup only (no LLM call in routing); context window compatibility assertion |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 70,
+        "text": "| **REQ-Q2-002** (LoRA fine-tuning pipeline spec) | REQ-Q2-001 go verdict + U-001 PASS or FAIL | Designing the training pipeline before knowing dataset feasibility is premature |"
+      },
+      "entity": "req-q2-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-047",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 162,
+        "text": "| REQ-Q2-002 | LoRA fine-tuning pipeline | Unit (sft_train), integration, contract (C-003) | Deterministic lookup only (no LLM call in routing); context window compatibility assertion |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 22,
+        "text": "| REQ-Q2-002 | LoRA fine-tuning pipeline specification | **Performance** | Directly answers Q2 track; value scales with Q1 positive result (more useful if U-001 PASS). |"
+      },
+      "entity": "req-q2-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-048",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 162,
+        "text": "| REQ-Q2-002 | LoRA fine-tuning pipeline | Unit (sft_train), integration, contract (C-003) | Deterministic lookup only (no LLM call in routing); context window compatibility assertion |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 48,
+        "text": "| REQ-Q2-002 (LoRA pipeline spec) | 6 | 2 | 0.5 | 2.0 | **3.0** | — |"
+      },
+      "entity": "req-q2-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-049",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 163,
+        "text": "| REQ-Q2-003 | RLAIF pipeline (Goodhart's Law gate) | Unit (dpo_train, preference_gen), integration | U-016 PASS file check; false-pass rate computation; revision cycle bound (max 3) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 79,
+        "text": "| **REQ-Q2-003** (RLAIF training pipeline) | U-014 resolved (GAP-001 metric system) + U-016 PASS (Goodhart's Law test) | Multiple pre-conditions; requires U-014 code inspection first. High upside (automated training loop) but complex dependency chain. |"
+      },
+      "entity": "req-q2-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-050",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 163,
+        "text": "| REQ-Q2-003 | RLAIF pipeline (Goodhart's Law gate) | Unit (dpo_train, preference_gen), integration | U-016 PASS file check; false-pass rate computation; revision cycle bound (max 3) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 49,
+        "text": "| REQ-Q2-003 (RLAIF pipeline) | 5 | 2 | 0.5 | 3.0 | **1.7** | — |"
+      },
+      "entity": "req-q2-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-051",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 165,
+        "text": "| REQ-Q2-005 | \"Better layer\" success criteria | Unit (regression_test), integration | Pre-specification timestamp; generalization set size (≥20); regression count (max 2) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 43,
+        "text": "| **REQ-Q2-005** (better layer success criteria) | Must be pre-specified before any Q2 experiments run. 0.25-week effort. Prevents post-hoc rationalization. |"
+      },
+      "entity": "req-q2-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-052",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 165,
+        "text": "| REQ-Q2-005 | \"Better layer\" success criteria | Unit (regression_test), integration | Pre-specification timestamp; generalization set size (≥20); regression count (max 2) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 52,
+        "text": "| REQ-Q2-005 (better layer success criteria) | 4 | 1 | 0.8 | 0.25 | **12.8** | — |"
+      },
+      "entity": "req-q2-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-053",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 166,
+        "text": "| REQ-S-001 | Constitution compliance enforcement | Unit (classifier_inference, grammar_constraints), integration, contract (C-003 §Component 5) | Approach A: precision≥0.90, recall≥0.85, latency p95<100ms; Approach B: field completeness; escalation path; 3-iteration bound |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 45,
+        "text": "| REQ-S-001 (constitution compliance eval) | 7 | 2 | 0.8 | 1.5 | **7.5** | — |"
+      },
+      "entity": "req-s-001",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-054",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 167,
+        "text": "| REQ-S-002 | Pipeline-level regression test | Unit (regression_test), integration, reproducibility | Baseline timestamp predates hybrid test; binary PASS/FAIL; no post-hoc interpretation path |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/mvp-scope.md",
+        "line": 42,
+        "text": "| **REQ-S-002** (pipeline regression protocol) | Required before any SLM hybrid test is initiated — spec mandates this predates test runs. Must be defined even if tests are deferred. |"
+      },
+      "entity": "req-s-002",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-055",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/test-strategy.md",
+        "line": 168,
+        "text": "| REQ-S-003 | Cascade deployment architecture | Unit (escalation_gate), contract (C-002) | Exactly one confidence method; rejected-method rationale presence; cost model deductions |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/013-echelon-slm-replacement-feasibility/prioritization.md",
+        "line": 53,
+        "text": "| REQ-S-003 (cascade deployment arch) | 4 | 1 | 0.5 | 2.0 | **1.0** | — |"
+      },
+      "entity": "req-s-003",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-056",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumptions.md",
+        "line": 15,
+        "text": "Risk if false: The entire CA framing for LLMs rests on this analogy. If the analogy is superficial, CA-specific mechanisms (chunking, spreading activation) may not transfer meaningfully."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 103,
+        "text": "Risk: CARTOGRAPHER may treat pseudocode as implementation decisions rather than illustrative sketches, skipping the evaluation that should happen in WHAT/HOW phases."
+      },
+      "entity": "risk if false",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-057",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumptions.md",
+        "line": 44,
+        "text": "Risk if false: If token usage is dominated by generation length (not context reading), context compression will have less impact than anticipated. Must measure."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 103,
+        "text": "Risk: CARTOGRAPHER may treat pseudocode as implementation decisions rather than illustrative sketches, skipping the evaluation that should happen in WHAT/HOW phases."
+      },
+      "entity": "risk if false",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-058",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumptions.md",
+        "line": 127,
+        "text": "| A-003 | Frontier LLM may not need CA framing | UNTESTED | — |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/risks.md",
+        "line": 149,
+        "text": "| RISK-A-003 | MEDIUM | HIGH | P3 |"
+      },
+      "entity": "a-003",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-059",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/domain-analysis.md",
+        "line": 29,
+        "text": "Consequence for design: REQ-CA-006's activation scoring formula is described as governing \"which artifacts are retrieved\" — this is correct for ACT-R's declarative memory activation (the base-level learning equation). But the spec conflates this with *operator selection*, which in ACT-R is handled b"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 61,
+        "text": "Consequence: REF-002's most scientifically grounded mechanism (residual stream injection) is not available to Echelon as designed. What IS available is a prompt-level approximation (context ordering by activation score). A prompt-level approximation is a prompt engineering technique, which feeds bac"
+      },
+      "entity": "consequence for design",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-060",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/domain-analysis.md",
+        "line": 75,
+        "text": "REQ-CA-001 explicitly acknowledges: \"No embodied CA profile was produced; the family is named but not surveyed.\" From a cognitive science perspective, this is the most significant omission in the survey. Embodied cognition (Varela, Thompson & Rosch 1991; Brooks 1991; Clark 1997) is not a fringe subf"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 16,
+        "text": "| REQ-CA-001 | Five CA Family Survey | 3 | 5 | Five profiles × ~half-day each; embodied family sparse (saves time); API-access qualifier classification adds half-day systematic review |"
+      },
+      "entity": "req-ca-001 explicitly acknowledges",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-061",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/domain-analysis.md",
+        "line": 189,
+        "text": "Recommendation for REQ-CA-004: Consider replacing or augmenting the \"frame\" concept with \"cognitive scaffolding\" and citing Wood, Bruner & Ross (1976). The scaffolding literature has extensive analysis of scaffold overhead, removal conditions, and internalization failure — all directly applicable to"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 86,
+        "text": "A-004: LLMs can generate valid Soar production rules (NL2GenSym 86%+) — Grade A. Confirmed. This is a measured result with a robust experimental design."
+      },
+      "entity": "recommendation for req-ca-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-062",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/domain-analysis.md",
+        "line": 189,
+        "text": "Recommendation for REQ-CA-004: Consider replacing or augmenting the \"frame\" concept with \"cognitive scaffolding\" and citing Wood, Bruner & Ross (1976). The scaffolding literature has extensive analysis of scaffold overhead, removal conditions, and internalization failure — all directly applicable to"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 19,
+        "text": "| REQ-CA-004 | Sun Metaphor Framing Paper | 2 | 3 | 1,500-word minimum on four defined sections; all sections grounded in prior SYNTHESIZER output; lowest retrieval dependency in the spec |"
+      },
+      "entity": "recommendation for req-ca-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-063",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mental-model.md",
+        "line": 56,
+        "text": "Evidence Grade: B (AAAI Symposium 2024 on Synergistic Integration; arxiv:2308.09830)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 246,
+        "text": "| EVIDENCE GRADE VIOLATIONS | 5 | EGV-001, EGV-002, EGV-003, EGV-004, EGV-005 |"
+      },
+      "entity": "evidence grade",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-064",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/research.md",
+        "line": 100,
+        "text": "Status: Accepted (Correction from ORACLE HIGH-001)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 72,
+        "text": "| U-CA-015 (ACPO publication status) | 0.25 |"
+      },
+      "entity": "status",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-065",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/research.md",
+        "line": 195,
+        "text": "Status: Deferred (potential integration with NS-003)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 72,
+        "text": "| U-CA-015 (ACPO publication status) | 0.25 |"
+      },
+      "entity": "status",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-066",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/user-intent.md",
+        "line": 16,
+        "text": "Echelon: A 19-agent cognitive pipeline for pre-code analysis."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 73,
+        "text": "| U-CA-013 (Echelon agent count reconciliation) | 0.5 |"
+      },
+      "entity": "echelon",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-067",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 86,
+        "text": "A-004: LLMs can generate valid Soar production rules (NL2GenSym 86%+) — Grade A. Confirmed. This is a measured result with a robust experimental design."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 250,
+        "text": "U-CA-004 gating: Rows that require positive U-CA-004 resolution before implementation can be justified are flagged with \"implementation justification pending U-CA-004 resolution.\""
+      },
+      "entity": "a-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-068",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 86,
+        "text": "A-004: LLMs can generate valid Soar production rules (NL2GenSym 86%+) — Grade A. Confirmed. This is a measured result with a robust experimental design."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 296,
+        "text": "| REQ-CA-004 | Yes — word count, 4 sections, 4 breakdowns | None |"
+      },
+      "entity": "a-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-069",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 109,
+        "text": "Action: Remove or clearly bracket as \"preliminary SCOUT hypothesis, requires WHAT-phase evaluation.\""
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 479,
+        "text": "propagation_action: \"FLAG_STALE_ONLY\"    // flag stale; no rerun needed (minor revision)"
+      },
+      "entity": "action",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-070",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 114,
+        "text": "Action: Replace with \"a candidate mechanism for X — priority to be determined in ASSESS phase.\""
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 479,
+        "text": "propagation_action: \"FLAG_STALE_ONLY\"    // flag stale; no rerun needed (minor revision)"
+      },
+      "entity": "action",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-071",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 253,
+        "text": "Gate: If CRITICAL issues found → route back to SCOUT for revision."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 117,
+        "text": "Evidence Gate: None. This requirement is unconditional."
+      },
+      "entity": "gate",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-072",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 253,
+        "text": "Gate: If CRITICAL issues found → route back to SCOUT for revision."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 251,
+        "text": "Evidence Gate: None. This requirement is primarily theoretical."
+      },
+      "entity": "gate",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-073",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/assumption-review.md",
+        "line": 253,
+        "text": "Gate: If CRITICAL issues found → route back to SCOUT for revision."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 440,
+        "text": "Evidence Gate: None blocking. This requirement is a design exercise."
+      },
+      "entity": "gate",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-074",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 16,
+        "text": "| REQ-CA-001 | Five CA Family Survey | 3 | 5 | Five profiles × ~half-day each; embodied family sparse (saves time); API-access qualifier classification adds half-day systematic review |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 293,
+        "text": "| REQ-CA-001 | Yes — 5 profiles, schema, API tags, CoALA fix | Embodied profile missing in prior staging; must be produced |"
+      },
+      "entity": "req-ca-001",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-075",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 17,
+        "text": "| REQ-CA-002 | Soar Mechanism Matrix | 2 | 3 | 12-row matrix is structured; CRITICAL-001 resolved; 42-agent coverage adds ~half-day footnotes |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 294,
+        "text": "| REQ-CA-002 | Yes — 12 rows, no LIDA/GWT, partial grades | None |"
+      },
+      "entity": "req-ca-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-076",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 19,
+        "text": "| REQ-CA-004 | Sun Metaphor Framing Paper | 2 | 3 | 1,500-word minimum on four defined sections; all sections grounded in prior SYNTHESIZER output; lowest retrieval dependency in the spec |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 296,
+        "text": "| REQ-CA-004 | Yes — word count, 4 sections, 4 breakdowns | None |"
+      },
+      "entity": "req-ca-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-077",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 20,
+        "text": "| REQ-CA-005 | Soar Goal Stack Design | 3 | 5 | Goal state JSON schema + operator preconditions + impasse trigger design; U-CA-016 resolution needed for impasse section; 42-agent pipeline complicates operator enumeration |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 297,
+        "text": "| REQ-CA-005 | Yes — 4 components, impasse named, net delta field | U-CA-016 resolution may constrain the design |"
+      },
+      "entity": "req-ca-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-078",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 21,
+        "text": "| REQ-CA-006 | ACT-R Typed Buffer Protocol | 3 | 4 | Four buffer definitions are tractable; activation formula at prompt level requires careful calibration against U-CA-014; measurement protocol needs a sample Echelon artifact |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 298,
+        "text": "| REQ-CA-006 | Yes — 4 buffers, formula, measurement protocol | U-CA-014 resolution affects novelty calibration |"
+      },
+      "entity": "req-ca-006",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-079",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 22,
+        "text": "| REQ-CA-007 | LIDA Codelet Routing Protocol | 4 | 6 | 42-agent coverage table is the most labor-intensive single component; \"always-on vs threshold-conditional\" classification requires per-agent analysis; token cost estimates need baseline data |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 299,
+        "text": "| REQ-CA-007 | Yes — codelet spec, 7-group coverage, token cost | Forward model rule coverage table is a large artifact |"
+      },
+      "entity": "req-ca-007",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-080",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 23,
+        "text": "| REQ-CA-008 | GWT Bounded Broadcast Protocol | 3 | 4 | Protocol design is tractable; worked example requires a real Echelon artifact; deviation from biological GWT must be argued with evidence |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 300,
+        "text": "| REQ-CA-008 | Yes — 4 protocol elements, deviation, 7-phase trace | None |"
+      },
+      "entity": "req-ca-008",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-081",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 24,
+        "text": "| REQ-CA-009 | Episodic Memory Design | 3 | 4 | RAG-based design is mature; snapshot schema + indexing key design is straightforward; archive directory compatibility requires Echelon filesystem knowledge |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 301,
+        "text": "| REQ-CA-009 | Yes — 4 design components, run #1, archive compat | U-CA-007 must be investigated before benefit claim |"
+      },
+      "entity": "req-ca-009",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-082",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 26,
+        "text": "| REQ-CA-011 | CA vs Expert Prompt Study Design | 2 | 3 | Study design (not execution) is the deliverable; three-condition design is well-scoped; \"expert prompt engineering\" operationalization requires careful drafting to avoid trivial condition B |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 303,
+        "text": "| REQ-CA-011 | Yes — 3 conditions, 3 metrics, stat plan, null hyp | Power analysis gap must be closed before Phase 6 |"
+      },
+      "entity": "req-ca-011",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-083",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 27,
+        "text": "| REQ-CA-012 | Literature Novelty Assessment | 5 | 7 | 8+ papers requires reading ~1 paper per half-day; ACPO status verification is fast; AAAI 2024 proceedings retrieval may fail (adds half-day workaround); N1/N2/N3 classification requires disciplinary rigor |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 304,
+        "text": "| REQ-CA-012 | Yes — 8+ papers, ACPO resolved, AAAI addressed | AAAI 2024 proceedings not yet retrieved (GAP-003) |"
+      },
+      "entity": "req-ca-012",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-084",
+      "type": "status_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 28,
+        "text": "| REQ-CA-013 | Missing 9 Mechanisms Roadmap | 2 | 3 | 9-10 rows at 2-4 sentence sketches; effort/dependency estimation is relative; ordering rationale requires systematic reasoning but no new research |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 305,
+        "text": "| REQ-CA-013 | Yes — 9-10 rows, ordering, U-CA-004 flags | Depends on REQ-CA-002 matrix (must be completed first) |"
+      },
+      "entity": "req-ca-013",
+      "confidence": 0.85
+    },
+    {
+      "id": "C-085",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 73,
+        "text": "| U-CA-013 (Echelon agent count reconciliation) | 0.5 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 23,
+        "text": "Count: Exactly 5 profiles produced — symbolic, connectionist, hybrid, emergent, embodied. Missing the embodied profile is a **FAIL** (no embodied profile was produced in prior staging; the spec requires it)."
+      },
+      "entity": "u-ca-013 echelon agent count reconciliation",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-086",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/feasibility.md",
+        "line": 12,
+        "text": "Overall confidence: HIGH (8/10) for producing useful decision-support output. MEDIUM (6/10) for producing a positive CA-superiority finding — this is determined by the empirical landscape, not researcher quality."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 41,
+        "text": "confidence: number;                // float in [0.0, 1.0]"
+      },
+      "entity": "overall confidence",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-087",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/feasibility.md",
+        "line": 12,
+        "text": "Overall confidence: HIGH (8/10) for producing useful decision-support output. MEDIUM (6/10) for producing a positive CA-superiority finding — this is determined by the empirical landscape, not researcher quality."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 82,
+        "text": "confidence: number;                // float in [0.0, 1.0]; source agent's self-reported confidence"
+      },
+      "entity": "overall confidence",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-088",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 12,
+        "text": "File: assumption-review.md (CRITICAL-001); contradictions-and-gaps.md (CONTRADICTION-002); unknowns.md (U-CA-013)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-089",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 22,
+        "text": "File: assumption-review.md (CRITICAL-002); assumptions.md (D-003); risks.md (RISK-C-001, RISK-D-002)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-090",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 27,
+        "text": "Resolution: Not a research re-run. The gap is correctly documented. The gate condition must be explicit in WHAT-phase architecture decisions."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 16,
+        "text": "| `ConflictResolution` | ACT-R CE | Central Executive decision record: which operator was selected and why |"
+      },
+      "entity": "resolution",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-091",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 27,
+        "text": "Resolution: Not a research re-run. The gap is correctly documented. The gate condition must be explicit in WHAT-phase architecture decisions."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 189,
+        "text": "resolution_status: \"PENDING\" | \"RESOLVED_KEEP_NEW\" | \"RESOLVED_KEEP_EXISTING\" | \"RESOLVED_MERGE\" | \"ESCALATED\";"
+      },
+      "entity": "resolution",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-092",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 27,
+        "text": "Resolution: Not a research re-run. The gap is correctly documented. The gate condition must be explicit in WHAT-phase architecture decisions."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 191,
+        "text": "resolution_node_id: string | null;  // ID of the BeliefNode that represents the resolution"
+      },
+      "entity": "resolution",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-093",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 34,
+        "text": "File: contradictions-and-gaps.md (CONTRADICTION-001); assumption-review.md (HIGH-001, EGV-001)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-094",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 42,
+        "text": "File: assumption-review.md (HIGH-002); contradictions-and-gaps.md (GAP-004); unknowns.md (U-CA-014)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-095",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 50,
+        "text": "File: assumption-review.md (HIGH-003); contradictions-and-gaps.md (CONTRADICTION-004)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-096",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 58,
+        "text": "File: assumption-review.md (HIGH-004, EGV-003); unknowns.md (U-CA-015)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-097",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/issues.md",
+        "line": 66,
+        "text": "File: assumption-review.md (HIGH-005); risks.md (RISK-C-002)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 602,
+        "text": "SCOUT staging files identify at minimum: CoALA (arxiv:2309.02427, TMLR 2024),"
+      },
+      "entity": "file",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-098",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 41,
+        "text": "confidence: number;                // float in [0.0, 1.0]"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 292,
+        "text": "confidence: 0.72"
+      },
+      "entity": "confidence",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-099",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 41,
+        "text": "confidence: number;                // float in [0.0, 1.0]"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 12,
+        "text": "Confidence: How likely is this requirement to produce useful output regardless of unknown resolution? (0.2-1.0)"
+      },
+      "entity": "confidence",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-100",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 82,
+        "text": "confidence: number;                // float in [0.0, 1.0]; source agent's self-reported confidence"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 292,
+        "text": "confidence: 0.72"
+      },
+      "entity": "confidence",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-101",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 82,
+        "text": "confidence: number;                // float in [0.0, 1.0]; source agent's self-reported confidence"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 12,
+        "text": "Confidence: How likely is this requirement to produce useful output regardless of unknown resolution? (0.2-1.0)"
+      },
+      "entity": "confidence",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-102",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 189,
+        "text": "resolution_status: \"PENDING\" | \"RESOLVED_KEEP_NEW\" | \"RESOLVED_KEEP_EXISTING\" | \"RESOLVED_MERGE\" | \"ESCALATED\";"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 3,
+        "text": "Status: Architecture design — not an implementation plan, not a production rollout strategy"
+      },
+      "entity": "resolutionstatus",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-103",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/data-model.md",
+        "line": 379,
+        "text": "ca_mechanisms_active: string[];    // empty for A; empty for B; e.g., [\"NS-003\", \"ACT-R-BUFFERS\", \"GOAL-STACK\"] for C"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 78,
+        "text": "Mechanism: A property graph stores all asserted facts as `BeliefNode` entities. Each node carries: content, source agent, version counter, confidence score, and a contradiction flag. When the Critic detects a `ConflictSignal` between a new assertion and an existing node, a belief revision operation "
+      },
+      "entity": "camechanismsactive",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-104",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 7,
+        "text": "Status: WHAT-phase — normative requirements"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 3,
+        "text": "Status: Architecture design — not an implementation plan, not a production rollout strategy"
+      },
+      "entity": "status",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-105",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 117,
+        "text": "Evidence Gate: None. This requirement is unconditional."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 431,
+        "text": "Gate: All conditions complete. Statistical analysis plan executed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-106",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 170,
+        "text": "Evidence Gate: None. The Soar mechanism list is Grade A (Laird 2012;"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-107",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 170,
+        "text": "Evidence Gate: None. The Soar mechanism list is Grade A (Laird 2012;"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-108",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 170,
+        "text": "Evidence Gate: None. The Soar mechanism list is Grade A (Laird 2012;"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-109",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 170,
+        "text": "Evidence Gate: None. The Soar mechanism list is Grade A (Laird 2012;"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-110",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 170,
+        "text": "Evidence Gate: None. The Soar mechanism list is Grade A (Laird 2012;"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-111",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 210,
+        "text": "Evidence Gate: Conditioned on U-CA-002. If U-CA-002 (measured token"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-112",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 210,
+        "text": "Evidence Gate: Conditioned on U-CA-002. If U-CA-002 (measured token"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-113",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 210,
+        "text": "Evidence Gate: Conditioned on U-CA-002. If U-CA-002 (measured token"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-114",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 210,
+        "text": "Evidence Gate: Conditioned on U-CA-002. If U-CA-002 (measured token"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-115",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 210,
+        "text": "Evidence Gate: Conditioned on U-CA-002. If U-CA-002 (measured token"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-116",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 251,
+        "text": "Evidence Gate: None. This requirement is primarily theoretical."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 431,
+        "text": "Gate: All conditions complete. Statistical analysis plan executed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-117",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 292,
+        "text": "Evidence Gate: Conditioned on U-CA-003 (does goal-stack reduce routing"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-118",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 292,
+        "text": "Evidence Gate: Conditioned on U-CA-003 (does goal-stack reduce routing"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-119",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 292,
+        "text": "Evidence Gate: Conditioned on U-CA-003 (does goal-stack reduce routing"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-120",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 292,
+        "text": "Evidence Gate: Conditioned on U-CA-003 (does goal-stack reduce routing"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-121",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 343,
+        "text": "Evidence Gate: Conditioned on U-CA-002 (measured token reduction) and"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-122",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 343,
+        "text": "Evidence Gate: Conditioned on U-CA-002 (measured token reduction) and"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-123",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 343,
+        "text": "Evidence Gate: Conditioned on U-CA-002 (measured token reduction) and"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-124",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 343,
+        "text": "Evidence Gate: Conditioned on U-CA-002 (measured token reduction) and"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-125",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 343,
+        "text": "Evidence Gate: Conditioned on U-CA-002 (measured token reduction) and"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-126",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 390,
+        "text": "Evidence Gate: Conditioned on U-CA-011 (codelet competition vs fixed"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-127",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 390,
+        "text": "Evidence Gate: Conditioned on U-CA-011 (codelet competition vs fixed"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-128",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 390,
+        "text": "Evidence Gate: Conditioned on U-CA-011 (codelet competition vs fixed"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-129",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 390,
+        "text": "Evidence Gate: Conditioned on U-CA-011 (codelet competition vs fixed"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-130",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 390,
+        "text": "Evidence Gate: Conditioned on U-CA-011 (codelet competition vs fixed"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-131",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 440,
+        "text": "Evidence Gate: None blocking. This requirement is a design exercise."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 431,
+        "text": "Gate: All conditions complete. Statistical analysis plan executed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-132",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 487,
+        "text": "Evidence Gate: Conditioned on U-CA-007 (cross-run learning measurability)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-133",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 487,
+        "text": "Evidence Gate: Conditioned on U-CA-007 (cross-run learning measurability)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-134",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 487,
+        "text": "Evidence Gate: Conditioned on U-CA-007 (cross-run learning measurability)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-135",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 487,
+        "text": "Evidence Gate: Conditioned on U-CA-007 (cross-run learning measurability)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-136",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 487,
+        "text": "Evidence Gate: Conditioned on U-CA-007 (cross-run learning measurability)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-137",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-138",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-139",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-140",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-141",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-142",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 579,
+        "text": "Evidence Gate: None blocking. This is the gate itself. U-CA-004 resolves"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-143",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 579,
+        "text": "Evidence Gate: None blocking. This is the gate itself. U-CA-004 resolves"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-144",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 579,
+        "text": "Evidence Gate: None blocking. This is the gate itself. U-CA-004 resolves"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-145",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 579,
+        "text": "Evidence Gate: None blocking. This is the gate itself. U-CA-004 resolves"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-146",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 579,
+        "text": "Evidence Gate: None blocking. This is the gate itself. U-CA-004 resolves"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-147",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 624,
+        "text": "Evidence Gate: Conditioned on U-CA-005 (novel mechanistic bridges in"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-148",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 624,
+        "text": "Evidence Gate: Conditioned on U-CA-005 (novel mechanistic bridges in"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-149",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 624,
+        "text": "Evidence Gate: Conditioned on U-CA-005 (novel mechanistic bridges in"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-150",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 624,
+        "text": "Evidence Gate: Conditioned on U-CA-005 (novel mechanistic bridges in"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-151",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 676,
+        "text": "Evidence Gate: Conditioned on U-CA-004 for implementation justification."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-152",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 676,
+        "text": "Evidence Gate: Conditioned on U-CA-004 for implementation justification."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 413,
+        "text": "Gate: Token reduction measurable; at least 10 archived artifacts processed."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-153",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 676,
+        "text": "Evidence Gate: Conditioned on U-CA-004 for implementation justification."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-154",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 676,
+        "text": "Evidence Gate: Conditioned on U-CA-004 for implementation justification."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-155",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 676,
+        "text": "Evidence Gate: Conditioned on U-CA-004 for implementation justification."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-156",
+      "type": "status_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 23,
+        "text": "Count: Exactly 5 profiles produced — symbolic, connectionist, hybrid, emergent, embodied. Missing the embodied profile is a **FAIL** (no embodied profile was produced in prior staging; the spec requires it)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 30,
+        "text": "| Token count introspection | Yes (post-call) | Research harness metrics |"
+      },
+      "entity": "count",
+      "confidence": 0.85
+    },
+    {
+      "id": "C-157",
+      "type": "boolean_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 100,
+        "text": "Impasse detector mechanism stated: The design explicitly names what the impasse detector is — schema validator, Critic LLM call, confidence threshold, or other. Leaving this open = FAIL."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 61,
+        "text": "Mechanism: An agent generates an artifact section (the Generator step). A Critic component immediately validates the output against: (a) a JSON Schema or typed TypeScript interface for that artifact section, (b) cross-artifact consistency rules (no assertion in the new output may contradict a fact a"
+      },
+      "entity": "impasse detector mechanism stated",
+      "confidence": 0.5
+    },
+    {
+      "id": "C-158",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 103,
+        "text": "`estimated_net_delta` field present: The design document includes this field (may be null, must exist per AC-SPEC-005 conditionality on U-CA-009)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 154,
+        "text": "estimated_net_delta: Placeholder `null` — to be populated by U-CA-009 investigation."
+      },
+      "entity": "estimatednetdelta field present",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-159",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 103,
+        "text": "`estimated_net_delta` field present: The design document includes this field (may be null, must exist per AC-SPEC-005 conditionality on U-CA-009)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 191,
+        "text": "estimated_net_delta: Placeholder `null` — to be populated by U-CA-002 and U-CA-009 investigations."
+      },
+      "entity": "estimatednetdelta field present",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-160",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 103,
+        "text": "`estimated_net_delta` field present: The design document includes this field (may be null, must exist per AC-SPEC-005 conditionality on U-CA-009)."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 260,
+        "text": "estimated_net_delta: Placeholder `null`. Benefit measurement requires running 10+ Echelon runs with and without episodic memory — this is a post-gate experiment."
+      },
+      "entity": "estimatednetdelta field present",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-161",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 293,
+        "text": "| REQ-CA-001 | Yes — 5 profiles, schema, API tags, CoALA fix | Embodied profile missing in prior staging; must be produced |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 56,
+        "text": "| REQ-CA-001 | Track 1 | Foundation for all mechanism designs and condition C definition |"
+      },
+      "entity": "req-ca-001",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-162",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 294,
+        "text": "| REQ-CA-002 | Yes — 12 rows, no LIDA/GWT, partial grades | None |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 59,
+        "text": "| REQ-CA-002 | Track 1 | Structural diagnosis; enables all downstream design requirements |"
+      },
+      "entity": "req-ca-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-163",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 294,
+        "text": "| REQ-CA-002 | Yes — 12 rows, no LIDA/GWT, partial grades | None |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 30,
+        "text": "| REQ-CA-002 | 4 | 3 | 0.95 | 2.5 | 4.56 | M | 4 |"
+      },
+      "entity": "req-ca-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-164",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 296,
+        "text": "| REQ-CA-004 | Yes — word count, 4 sections, 4 breakdowns | None |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 57,
+        "text": "| REQ-CA-004 | Track 1 | Conceptual anchor — defines what the research claims and doesn't claim |"
+      },
+      "entity": "req-ca-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-165",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 296,
+        "text": "| REQ-CA-004 | Yes — word count, 4 sections, 4 breakdowns | None |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 31,
+        "text": "| REQ-CA-004 | 3 | 4 | 1.0 | 2.5 | 4.8 | P | 5 |"
+      },
+      "entity": "req-ca-004",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-166",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 297,
+        "text": "| REQ-CA-005 | Yes — 4 components, impasse named, net delta field | U-CA-016 resolution may constrain the design |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 70,
+        "text": "| REQ-CA-005 | Design value is real but conditioned on U-CA-003 and U-CA-016; defers cleanly to Phase 2 |"
+      },
+      "entity": "req-ca-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-167",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 297,
+        "text": "| REQ-CA-005 | Yes — 4 components, impasse named, net delta field | U-CA-016 resolution may constrain the design |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 35,
+        "text": "| REQ-CA-005 | 3 | 3 | 0.80 | 4 | 1.8 | P | 9 |"
+      },
+      "entity": "req-ca-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-168",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 298,
+        "text": "| REQ-CA-006 | Yes — 4 buffers, formula, measurement protocol | U-CA-014 resolution affects novelty calibration |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 71,
+        "text": "| REQ-CA-006 | Useful but depends on U-CA-014 resolution; REQ-CA-003 establishes the foundation first |"
+      },
+      "entity": "req-ca-006",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-169",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 298,
+        "text": "| REQ-CA-006 | Yes — 4 buffers, formula, measurement protocol | U-CA-014 resolution affects novelty calibration |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 34,
+        "text": "| REQ-CA-006 | 3 | 3 | 0.85 | 3.5 | 2.19 | P | 8 |"
+      },
+      "entity": "req-ca-006",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-170",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 299,
+        "text": "| REQ-CA-007 | Yes — codelet spec, 7-group coverage, token cost | Forward model rule coverage table is a large artifact |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 72,
+        "text": "| REQ-CA-007 | Highest-effort requirement (5-6 days); conditioned on U-CA-011; defers to Phase 2 |"
+      },
+      "entity": "req-ca-007",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-171",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 299,
+        "text": "| REQ-CA-007 | Yes — codelet spec, 7-group coverage, token cost | Forward model rule coverage table is a large artifact |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 39,
+        "text": "| REQ-CA-007 | 2 | 3 | 0.75 | 5 | 0.9 | Q | 13 |"
+      },
+      "entity": "req-ca-007",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-172",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 300,
+        "text": "| REQ-CA-008 | Yes — 4 protocol elements, deviation, 7-phase trace | None |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 73,
+        "text": "| REQ-CA-008 | Design exercise with no blocking gate; value is incremental; defers to Phase 2 |"
+      },
+      "entity": "req-ca-008",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-173",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 300,
+        "text": "| REQ-CA-008 | Yes — 4 protocol elements, deviation, 7-phase trace | None |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 36,
+        "text": "| REQ-CA-008 | 2 | 3 | 0.90 | 3.5 | 1.54 | P | 10 |"
+      },
+      "entity": "req-ca-008",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-174",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 301,
+        "text": "| REQ-CA-009 | Yes — 4 design components, run #1, archive compat | U-CA-007 must be investigated before benefit claim |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 74,
+        "text": "| REQ-CA-009 | No validation path without Echelon runs; defers to Phase 2 |"
+      },
+      "entity": "req-ca-009",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-175",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 301,
+        "text": "| REQ-CA-009 | Yes — 4 design components, run #1, archive compat | U-CA-007 must be investigated before benefit claim |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 38,
+        "text": "| REQ-CA-009 | 2 | 3 | 0.80 | 3.5 | 1.37 | Q | 12 |"
+      },
+      "entity": "req-ca-009",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-176",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 302,
+        "text": "| REQ-CA-010 | Yes — 3 components, 2 citations, Self-Refine distinction | U-CA-008/U-CA-012 must resolve before rec |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 75,
+        "text": "| REQ-CA-010 | Highest novelty but requires deep read of unconfirmed 2026 paper; defer to Phase 3 |"
+      },
+      "entity": "req-ca-010",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-177",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 302,
+        "text": "| REQ-CA-010 | Yes — 3 components, 2 citations, Self-Refine distinction | U-CA-008/U-CA-012 must resolve before rec |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 33,
+        "text": "| REQ-CA-010 | 2 | 5 | 0.70 | 5 | 1.4 | D | 7 |"
+      },
+      "entity": "req-ca-010",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-178",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 303,
+        "text": "| REQ-CA-011 | Yes — 3 conditions, 3 metrics, stat plan, null hyp | Power analysis gap must be closed before Phase 6 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 27,
+        "text": "| REQ-CA-011 | 5 | 5 | 0.95 | 2.5 | 9.5 | M | 1 |"
+      },
+      "entity": "req-ca-011",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-179",
+      "type": "status_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 304,
+        "text": "| REQ-CA-012 | Yes — 8+ papers, ACPO resolved, AAAI addressed | AAAI 2024 proceedings not yet retrieved (GAP-003) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 76,
+        "text": "| REQ-CA-012 | Literature novelty assessment is important for academic positioning but not for go/no-go decision |"
+      },
+      "entity": "req-ca-012",
+      "confidence": 0.85
+    },
+    {
+      "id": "C-180",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 304,
+        "text": "| REQ-CA-012 | Yes — 8+ papers, ACPO resolved, AAAI addressed | AAAI 2024 proceedings not yet retrieved (GAP-003) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 29,
+        "text": "| REQ-CA-012 | 4 | 4 | 0.85 | 6 | 2.27 | M | 3 |"
+      },
+      "entity": "req-ca-012",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-181",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 305,
+        "text": "| REQ-CA-013 | Yes — 9-10 rows, ordering, U-CA-004 flags | Depends on REQ-CA-002 matrix (must be completed first) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/mvp-scope.md",
+        "line": 77,
+        "text": "| REQ-CA-013 | Roadmap depends on REQ-CA-002 output; produce after MVP matrix is validated |"
+      },
+      "entity": "req-ca-013",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-182",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 305,
+        "text": "| REQ-CA-013 | Yes — 9-10 rows, ordering, U-CA-004 flags | Depends on REQ-CA-002 matrix (must be completed first) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/prioritization.md",
+        "line": 37,
+        "text": "| REQ-CA-013 | 2 | 3 | 0.85 | 2.5 | 2.04 | P | 11 |"
+      },
+      "entity": "req-ca-013",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-183",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/estimates.md",
+        "line": 82,
+        "text": "| REQ-015-002 | Q — <1 hour | None | Can run in parallel with REQ-015-001 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 24,
+        "text": "| REQ-015-002 | ACC, CIT, REP | ACC for AC-002-001 through AC-002-005; REP for overall reproducibility of the search record; CIT to verify the search query is coherent with the cited combination |"
+      },
+      "entity": "req-015-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-184",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/estimates.md",
+        "line": 85,
+        "text": "| REQ-015-005 | M — 1-2 days | Detection method choice | Can run in parallel with REQ-015-004 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 27,
+        "text": "| REQ-015-005 | ACC | ACC on five ACs covering corpus coverage, detection method statement, output fields, 5-sample manual review, and bound declaration |"
+      },
+      "entity": "req-015-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-185",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/estimates.md",
+        "line": 86,
+        "text": "| REQ-015-006 | M — 1-2 days | Writing precision (AC-006-007) | After REQ-015-001; can run in parallel with REQ-015-004 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 28,
+        "text": "| REQ-015-006 | ACC, CIT, TPE | ACC on all seven ACs; TPE for the \"third party can execute\" criterion (AC-006-007); CIT on baseline papers cited in rationale sections |"
+      },
+      "entity": "req-015-006",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-186",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/estimates.md",
+        "line": 87,
+        "text": "| REQ-015-007 | M — 1-2 days | N pairs available; soft on REQ-015-003 | After REQ-015-003 starts; run symbolically if needed |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 29,
+        "text": "| REQ-015-007 | ACC, SLB | ACC on six ACs; SLB to verify SPECULATION label present on 40-70% claim (AC-007-005) regardless of calibration outcome |"
+      },
+      "entity": "req-015-007",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-187",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/estimates.md",
+        "line": 88,
+        "text": "| REQ-015-008 | M — 1-2 days | Rubric anchor precision (AC-008-005) | After REQ-015-001; can run in parallel with REQ-015-006 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 30,
+        "text": "| REQ-015-008 | ACC, GCE, TPE | ACC on all seven ACs; GCE to verify all five CA overlays remain gate-conditioned in the specification; TPE for \"third party can execute\" criterion (AC-008-007 via AC-SPEC-005) |"
+      },
+      "entity": "req-015-008",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-188",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/feasibility.md",
+        "line": 11,
+        "text": "| REQ-015-002 | NS-003 Novelty Confirmation | HIGH | Quick (complete) | Critical | 2 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 24,
+        "text": "| REQ-015-002 | ACC, CIT, REP | ACC for AC-002-001 through AC-002-005; REP for overall reproducibility of the search record; CIT to verify the search query is coherent with the cited combination |"
+      },
+      "entity": "req-015-002",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-189",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/feasibility.md",
+        "line": 12,
+        "text": "| REQ-015-006 | NS-003 Prototype Experiment Design | HIGH | Medium (1-2 days) | High | 3 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 28,
+        "text": "| REQ-015-006 | ACC, CIT, TPE | ACC on all seven ACs; TPE for the \"third party can execute\" criterion (AC-006-007); CIT on baseline papers cited in rationale sections |"
+      },
+      "entity": "req-015-006",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-190",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/feasibility.md",
+        "line": 13,
+        "text": "| REQ-015-008 | U-CA-004 Gate Experiment Specification | HIGH | Medium (1-2 days) | High | 4 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 30,
+        "text": "| REQ-015-008 | ACC, GCE, TPE | ACC on all seven ACs; GCE to verify all five CA overlays remain gate-conditioned in the specification; TPE for \"third party can execute\" criterion (AC-008-007 via AC-SPEC-005) |"
+      },
+      "entity": "req-015-008",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-191",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/feasibility.md",
+        "line": 15,
+        "text": "| REQ-015-005 | Contradiction Rate Baseline | HIGH | Medium (1-2 days) | High | 6 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 27,
+        "text": "| REQ-015-005 | ACC | ACC on five ACs covering corpus coverage, detection method statement, output fields, 5-sample manual review, and bound declaration |"
+      },
+      "entity": "req-015-005",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-192",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/feasibility.md",
+        "line": 16,
+        "text": "| REQ-015-007 | NOVEL-004 Prediction Accuracy Calibration | HIGH (soft dep on REQ-015-003) | Medium (1-2 days) | Medium | 7 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 29,
+        "text": "| REQ-015-007 | ACC, SLB | ACC on six ACs; SLB to verify SPECULATION label present on 40-70% claim (AC-007-005) regardless of calibration outcome |"
+      },
+      "entity": "req-015-007",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-193",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/spec.md",
+        "line": 8,
+        "text": "Depends on: Spec 014 (cognitive-architecture-llm-framing)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/tasks.md",
+        "line": 74,
+        "text": "Depends on: TASK-005 (shares the same artifact corpus; selection of the 3-5 run subset from TASK-005 determines which runs are available for the scan)"
+      },
+      "entity": "depends on",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-194",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/spec.md",
+        "line": 8,
+        "text": "Depends on: Spec 014 (cognitive-architecture-llm-framing)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/tasks.md",
+        "line": 84,
+        "text": "Depends on: TASK-006 (soft — for numeric break-even; proceeds with symbolic break-even if TASK-006 is incomplete)"
+      },
+      "entity": "depends on",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-195",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/spec.md",
+        "line": 8,
+        "text": "Depends on: Spec 014 (cognitive-architecture-llm-framing)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/tasks.md",
+        "line": 104,
+        "text": "Depends on: TASK-001"
+      },
+      "entity": "depends on",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-196",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/spec.md",
+        "line": 8,
+        "text": "Depends on: Spec 014 (cognitive-architecture-llm-framing)"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/tasks.md",
+        "line": 124,
+        "text": "Depends on: TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-010"
+      },
+      "entity": "depends on",
+      "confidence": 0.7
+    },
+    {
+      "id": "C-197",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/test-architecture.md",
+        "line": 67,
+        "text": "| BLOCKING | The deliverable cannot be accepted. The AC is a hard correctness requirement. | Row count ≠ 17 (AC-001-001); SPECULATION label absent (AC-001-003); arxiv ID does not resolve (AC-SPEC-001); CA overlay stated as proven before U-CA-004 (AC-SPEC-002) |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/015-ca-outcomes-validation/critical-path.md",
+        "line": 113,
+        "text": "TASK-009 is Quick and unblocking: Resolve ISS-001 architecture ambiguity early (Day 0 or Day 1) so that TASK-004's CA overlay testing order recommendation is grounded in the confirmed granularity."
+      },
+      "entity": "blocking",
+      "confidence": 0.7
+    }
+  ],
+  "manual_precision_sample": [
+    {
+      "id": "C-120",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 292,
+        "text": "Evidence Gate: Conditioned on U-CA-003 (does goal-stack reduce routing"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 427,
+        "text": "Gate: Forward model achieves >40% correct prediction on held-out archived artifacts (minimum break-even rate)."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7,
+      "verified": null
+    },
+    {
+      "id": "C-085",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/estimates.md",
+        "line": 73,
+        "text": "| U-CA-013 (Echelon agent count reconciliation) | 0.5 |"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/test-strategy.md",
+        "line": 23,
+        "text": "Count: Exactly 5 profiles produced — symbolic, connectionist, hybrid, emergent, embodied. Missing the embodied profile is a **FAIL** (no embodied profile was produced in prior staging; the spec requires it)."
+      },
+      "entity": "u-ca-013 echelon agent count reconciliation",
+      "confidence": 0.7,
+      "verified": null
+    },
+    {
+      "id": "C-137",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 408,
+        "text": "Gate: CriticReport schema is stable and produces deterministic output on 10 test artifacts."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7,
+      "verified": null
+    },
+    {
+      "id": "C-154",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 676,
+        "text": "Evidence Gate: Conditioned on U-CA-004 for implementation justification."
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 423,
+        "text": "Gate: Condition A runs end-to-end without errors on 3 test codebases."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7,
+      "verified": null
+    },
+    {
+      "id": "C-139",
+      "type": "count_mismatch",
+      "artifact_a": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/spec.md",
+        "line": 534,
+        "text": "Evidence Gate: Conditioned on U-CA-008 (Generator-Critic for output"
+      },
+      "artifact_b": {
+        "file": "/Users/ladislavbihari/myWork/competition/.specify/specs/014-cognitive-architecture-llm-framing/plan.md",
+        "line": 418,
+        "text": "Gate: Goal stack produces correct operator selections on 5 synthetic test scenarios."
+      },
+      "entity": "evidence gate",
+      "confidence": 0.7,
+      "verified": null
+    }
+  ]
+}
