@@ -211,7 +211,7 @@ Use the Skill tool to invoke Understanding validation:
 /speckit.understanding.validate <spec_directory>/spec.md
 ```
 
-**Do NOT call the `understanding` CLI binary directly via Bash.** Understanding is a spec-kit extension — invoke it through the Skill tool, the same way GOLDDIGGER invokes reverse-eng.
+**Do NOT call the `understanding` CLI binary directly via Bash.** Understanding is a spec-kit extension — invoke it through the Skill tool, the same way GOLDDIGGER invokes revenge extension.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 

@@ -65,7 +65,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - YAML knowledge base with patterns, estimates, pitfalls, calibration
 - Evidence quality grading system (A-E)
 - State machine with convergence detection and human escalation
-- Brownfield support via spec-kit-reverse-eng
+- Brownfield support via spec-kit-revenge
 - Greenfield support via domain research pipeline
 - Implementability check in ASSESS2 consensus phase
 
@@ -73,7 +73,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - Spec Kit: >=0.3.0
 - Optional: Understanding CLI >=3.4.0
-- Optional: spec-kit-reverse-eng >=1.0.0
+- Optional: spec-kit-revenge >=1.0.0
 
 [Unreleased]: https://github.com/Testimonial/echelon/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Testimonial/echelon/releases/tag/v0.1.0

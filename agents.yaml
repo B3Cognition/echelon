@@ -235,12 +235,12 @@ agents:
     file: agents/exploration/golddigger.md
     layer: exploration
     phase: understand
-    role: "Brownfield extraction driver — drives spec-kit-reverse-eng Phase 1 and normalizes output into brownfield-index.md"
-    when: "Brownfield runs only, when reverse-eng is listed as relevant in extension-capabilities.json. Dispatched before SCOUT."
+    role: "Brownfield extraction driver — drives spec-kit-revenge Phase 1 and normalizes output into brownfield-index.md"
+    when: "Brownfield runs only, when revenge extension is listed as relevant in extension-capabilities.json. Dispatched before SCOUT."
     inputs: ["target codebase path", ".specify/squad/extension-capabilities.json", ".specify/squad/state.json"]
     outputs: [".specify/squad/brownfield-index.md", ".specify/squad/golddigger-cache/survey.md", ".specify/squad/golddigger-cache/{domain}.md"]
     never:
-      - "NEVER pass raw reverse-eng domain specs to downstream agents"
+      - "NEVER pass raw revenge extension domain specs to downstream agents"
       - "NEVER run Mode 2 for a domain already in golddigger_completed_domains"
       - "NEVER omit golddigger_status from state.json"
 

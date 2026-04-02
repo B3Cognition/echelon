@@ -127,6 +127,8 @@ discovery:
   git_hotspots_count: 50                # More hotspots surfaced
   min_reference_architectures: 5        # More references for greenfield
   polyrepo_full_depth_threshold: 100    # Auto-promote more repos to full depth
+  git_history_limit: 2500               # Commits analyzed for hotspot analysis
+  max_lines_per_file: 5000              # Max lines per file during extraction
 
 # =============================================================================
 # SCORING

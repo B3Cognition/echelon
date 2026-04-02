@@ -33,8 +33,8 @@ You are dispatched as a subagent by COMMANDER. This prompt is your complete inst
 List all skills available to you that start with the `speckit.` prefix. These are visible in your conversation context — your AI coding assistant has already registered them.
 
 For each skill found, record:
-- The full skill name (e.g., `speckit.echelon.run`, `speckit.reverse-eng.extract`)
-- The extension it belongs to (the second segment: `squad`, `reverse-eng`, `understanding`, etc.)
+- The full skill name (e.g., `speckit.echelon.run`, `speckit.revenge.extract`)
+- The extension it belongs to (the second segment: `squad`, `revenge extension`, `understanding`, etc.)
 
 If no `speckit.*` skills are visible in your context, proceed directly to Step 3 with an empty extensions list.
 
@@ -44,7 +44,7 @@ Group skills by extension and determine relevance to this run:
 
 | Extension | Relevant when |
 |-----------|---------------|
-| `reverse-eng` | Brownfield mode — a codebase is being analyzed |
+| `revenge extension` | Brownfield mode — a codebase is being analyzed |
 | `squad` | Always relevant (this is the echelon extension itself) |
 | `understanding` | Always relevant (quality validation tooling) |
 | Any other | Default to `relevant: false` unless you have a clear signal |
@@ -62,8 +62,8 @@ Write `.specify/squad/extension-capabilities.json`:
   "spec_kit_available": true,
   "extensions": [
     {
-      "id": "reverse-eng",
-      "commands": ["speckit.reverse-eng.extract", "speckit.reverse-eng.analyze"],
+      "id": "revenge",
+      "commands": ["speckit.revenge.extract", "speckit.revenge.analyze"],
       "invocation": "skill",
       "relevant": true,
       "reason": "brownfield codebase detected at target path"

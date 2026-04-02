@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.5.0** — Brownfield extraction (PROSPECTOR + GOLDDIGGER), endocrine system, internalization loop, enhanced verification
+**Version 0.8.0** — 42-agent, 7-layer architecture with Understanding v3.6 Depth gate, BUILD/QA split workflow, brownfield extraction (PROSPECTOR + GOLDDIGGER), endocrine system, internalization loop, RADAR monitoring
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 uv tool install specify-cli --force --from "git+https://github.com/Testimonial/qag-spec-kit.git@35bc7c7"
 
 # 2. Clone echelon
-git clone https://github.com/Testimonial/echelon.git /tmp/echelon
+git clone https://github.com/B3Cognition/echelon.git /tmp/echelon
 
 # 3. Install as dev extension
 specify extension add --dev /tmp/echelon
@@ -139,7 +139,7 @@ File: agents/exploration/scout.md
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
-| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives reverse-eng for brownfield codebases (Mode 1: survey, Mode 2: deep dive) |
+| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives revenge extension for brownfield codebases (Mode 1: survey, Mode 2: deep dive) |
 | **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge base |
 | **CARTOGRAPHER** | WHAT | Writes testable requirements via spec-kit |
 | **SAGE** | WHY | Adversarial critic, quality gates via Understanding CLI |
@@ -200,11 +200,11 @@ File: agents/exploration/scout.md
 When analyzing an existing codebase, the squad uses a two-phase extraction pipeline:
 
 1. **PROSPECTOR** enumerates available `speckit.*` skills from the agent's conversation context (assistant-agnostic — no filesystem scanning)
-2. If `speckit.reverse-eng.*` skills are available:
-   - **GOLDDIGGER Mode 1 (Survey)** runs reverse-eng at signature level → produces `brownfield-index.md`
-   - **SCOUT** uses the brownfield index as a head-start for domain mapping
+2. If `speckit.revenge.*` skills are available:
+   - **GOLDDIGGER Mode 1 (Survey)** runs revenge extension at signature level → writes artifact paths to `state.json.golddigger_artifacts`
+   - **SCOUT** reads artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping
    - **GOLDDIGGER Mode 2 (Deep Dive)** runs on-demand when Phase 1 agents need deeper analysis of specific domains
-3. If reverse-eng is not available, SCOUT proceeds with manual structural analysis
+3. If revenge extension is not available, SCOUT proceeds with manual structural analysis
 
 Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives by writing to `state.json.golddigger_requests`. COMMANDER processes the queue between agent dispatches.
 
@@ -321,7 +321,7 @@ specify extension add echelon
 
 ### From source
 ```bash
-git clone https://github.com/Testimonial/echelon.git
+git clone https://github.com/B3Cognition/echelon.git
 specify extension add --dev /path/to/echelon
 ```
 
@@ -329,7 +329,7 @@ specify extension add --dev /path/to/echelon
 
 - **spec-kit** >= 0.4.2 (required)
 - **understanding** >= 3.6.0 (hard stop for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident; WHY1 does not require it)
-- **spec-kit-reverse-eng** >= 1.1.0 (optional — brownfield extraction via GOLDDIGGER)
+- **revenge** >= 3.0.0 (optional — brownfield extraction via GOLDDIGGER)
 
 ## Directory Structure
 

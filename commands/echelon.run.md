@@ -481,11 +481,11 @@ Block until PROSPECTOR completes.
 
 - Read `.specify/squad/extension-capabilities.json`
 - If file is absent, malformed, or empty: update `state.json.prospector_status` to `"failed"`, log a warning, treat as empty-extensions (no GOLDDIGGER dispatch). **PROSPECTOR failure never blocks the run.**
-- If valid: set `state.json.prospector_status` to `"complete"`. Extract the list of relevant extensions and store a brief summary in context — include this summary in every subsequent agent's context pack (e.g., `"Extensions available: reverse-eng 1.1.0 [relevant]"` or `"No extensions available"`).
+- If valid: set `state.json.prospector_status` to `"complete"`. Extract the list of relevant extensions and store a brief summary in context — include this summary in every subsequent agent's context pack (e.g., `"Extensions available: revenge extension 1.1.0 [relevant]"` or `"No extensions available"`).
 
 **GOLDDIGGER Mode 1 dispatch (brownfield path only):**
 
-If `detected_mode` is `brownfield` AND `extension-capabilities.json` lists an extension with `id: "reverse-eng"` and `relevant: true`:
+If `detected_mode` is `brownfield` AND `extension-capabilities.json` lists an extension with `id: "revenge"` and `relevant: true`:
 
 1. Dispatch GOLDDIGGER in Mode 1 (Survey) before DISCOVER:
    - Use the Agent tool
@@ -495,7 +495,7 @@ If `detected_mode` is `brownfield` AND `extension-capabilities.json` lists an ex
    - `complete`: proceed — SCOUT will read artifact paths from `state.json.golddigger_artifacts`
    - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual structural analysis)
 
-If `reverse-eng` is not listed or `extensions` is empty: skip GOLDDIGGER, proceed directly to DISCOVER.
+If `revenge extension` is not listed or `extensions` is empty: skip GOLDDIGGER, proceed directly to DISCOVER.
 
 **GOLDDIGGER Mode 2 Queue (Phase 1 agents):**
 
@@ -737,7 +737,7 @@ After `/speckit.constitution` completes:
 
 For brownfield projects where constitution doesn't exist:
 
-1. **Option A:** If GOLDDIGGER ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the reverse-eng artifacts.
+1. **Option A:** If GOLDDIGGER ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the revenge extension artifacts.
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `/speckit.constitution` is called with the derived context
 
@@ -761,7 +761,7 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 
 ### 4.2 Dispatch CARTOGRAPHER
 
-CARTOGRAPHER calls `/speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls reverse-eng and SAGE calls Understanding via Skill tool. COMMANDER does NOT call `/speckit.specify`.
+CARTOGRAPHER calls `/speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls revenge extension and SAGE calls Understanding via Skill tool. COMMANDER does NOT call `/speckit.specify`.
 
 Use the Agent tool to dispatch a subagent with:
 
@@ -1689,7 +1689,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 | Tool | Failure | Fallback |
 |------|---------|----------|
 | Understanding extension | Skill invocation fails or PROSPECTOR finds no `speckit.understanding.*` skills | **HARD STOP for WHY2/WHY3.** SAGE invokes `/speckit.understanding.validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
-| spec-kit-reverse-eng | PROSPECTOR fails or reverse-eng not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
+| spec-kit-revenge | PROSPECTOR fails or revenge extension not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
 | spec-kit skills | Skill invocation fails or PROSPECTOR finds no `speckit.*` skills | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are AI coding assistant skills, not CLI tools — availability is detected by PROSPECTOR from the agent's context, not by filesystem scanning. |
 
 ### Subagent Failures

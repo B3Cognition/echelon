@@ -5,9 +5,10 @@ extension:
   name: "Echelon"
   version: "0.8.0"
   description: "Multi-agent cognitive system: 7-layer, 42-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning with per-agent injection, full 34-metric Understanding integration, expert persona prompts, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
-  author: "Testimonial"
-  repository: "https://github.com/Testimonial/echelon"
+  author: "Ladislav Bihari"
+  repository: "https://github.com/B3Cognition/echelon"
   license: "MIT"
+  homepage: "https://github.com/B3Cognition/echelon"
 
 requires:
   speckit_version: ">=0.4.2"
@@ -17,11 +18,11 @@ requires:
       required_for: "WHY2, WHY3 (spec-validation)"
       hard_stop: true
       note: "System CLI at ~/.local/bin/understanding. HARD STOP if unavailable for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident (PAT-006). WHY1 (assumption-challenge) does not require it."
-    - name: "spec-kit-reverse-eng"
-      version: ">=1.1.0"
+    - name: "revenge"
+      version: ">=3.0.0"
       required: false
       # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
-      # PROSPECTOR discovers availability; GOLDDIGGER drives Phase 1 extraction.
+      # PROSPECTOR discovers availability; GOLDDIGGER drives extraction.
 
 provides:
   commands:
@@ -60,17 +61,17 @@ provides:
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
 
   config:
-    - name: "squad-config.yml"
+    - name: "echelon.yml"
       template: "config-template.yml"
-      description: "Squad configuration"
+      description: "Echelon configuration"
       required: false
 
 hooks:
   after_tasks:
     command: "speckit.echelon.run"
     optional: true
-    prompt: "Run cognitive squad analysis on generated tasks?"
-    description: "Automatically analyze tasks with the cognitive squad"
+    prompt: "Run echelon analysis on generated tasks?"
+    description: "Automatically analyze tasks with the echelon cognitive system for insights and improvements"
 
 tags:
   - "ai-agents"
