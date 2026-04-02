@@ -181,14 +181,16 @@ These are non-negotiable rules:
 
 ## GOLDDIGGER Mode 2 Deep Dive Requests (brownfield only)
 
-When writing requirements, if a domain area from `boundaries.md` lacks sufficient structural understanding to write testable, unambiguous requirements AND the GOLDDIGGER survey data (from `state.json.golddigger_artifacts`) is too shallow for that domain, you may request a GOLDDIGGER Mode 2 deep dive.
+GOLDDIGGER Mode 1 provides function bodies, business logic, and error handling patterns at 99% coverage — enough to write precise acceptance criteria for the vast majority of domains. Mode 2 adds complete source file reading, deep data flow analysis, and test assertion extraction. Request it only when those specific capabilities are needed.
 
 **Appropriate when:**
-- Acceptance criteria cannot be made specific because the domain's internal behavior is unknown at signature level
-- Functional requirements for a domain area would be guesswork without deeper structural analysis
-- The domain has external integrations that the survey didn't fully map, making it impossible to define error cases and boundary conditions
+- The domain has external integrations where the full topology (e.g., auth provider flow, message queue routing, third-party API error surface) cannot be determined from function bodies alone, making it impossible to write complete error case requirements
 
-**Before requesting:** Check `.specify/squad/golddigger-cache/<domain>.md` — if a deep dive was already completed by a prior agent's request (SCOUT or SYNTHESIZER), use the cached result.
+**Not appropriate for:**
+- Domains where internal behavior is unclear at signature level — `logic` depth already provides function bodies and business logic
+- General uncertainty about a domain — if the answer is in the existing artifacts, use it
+
+**Before requesting:** Check `state.json.golddigger_completed_domains` — if a deep dive was already completed by a prior agent's request, read the cached result at `.specify/squad/golddigger-cache/<domain>.md`.
 
 ```bash
 # WARNING: Do NOT add print() statements — they corrupt state.json
@@ -199,8 +201,9 @@ with open('.specify/squad/state.json', 'r') as f:
 
 s.setdefault('golddigger_requests', []).append({
     'domain': '<domain-name>',
+    'repo': '<repo-name-or-null>',
     'requester': 'CARTOGRAPHER',
-    'reason': '<specific requirement gap — e.g., cannot write testable AC for payment flow without knowing payment provider integration topology>'
+    'reason': '<specific gap — e.g., cannot write testable AC for payment error cases without knowing full payment provider integration topology>'
 })
 
 with open('.specify/squad/state.json', 'w') as f:
@@ -208,7 +211,7 @@ with open('.specify/squad/state.json', 'w') as f:
 "
 ```
 
-COMMANDER will process the queue after your dispatch completes. The deep-dive results will be available for downstream agents. **Do NOT request Mode 2 as a substitute for reading existing artifacts** — only when domain structural data is genuinely absent.
+COMMANDER will process the queue after your dispatch completes.
 
 ---
 
@@ -504,4 +507,4 @@ Open questions: <count>
 | CAR-005 | Non-technical stakeholders are the correct readability target for spec.md | 2026-03-28 | 2026-09-28 | IEEE 830; User Story Mapping (Jeff Patton) | 0.80 | medium |
 | CAR-006 | Testability fix for low testability score is reliably achieved by adding numeric thresholds and units | 2026-03-28 | 2026-09-28 | ISO 29148:2018; Lucassen 2017 | 0.80 | high |
 | CAR-007 | Passing requirements not in the per-requirement failure list must remain unchanged verbatim during amendment | 2026-03-28 | 2026-09-28 | Design choice; amendment scope-containment rule | 0.85 | critical |
-| CAR-008 | GOLDDIGGER Mode 2 deep-dive requests should only be made when acceptance criteria would otherwise be written as guesswork | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
+| CAR-008 | GOLDDIGGER Mode 2 deep-dive requests from CARTOGRAPHER should only be made when external integration topology cannot be determined from logic-depth function bodies | 2026-04-02 | 2026-10-02 | Design choice; Mode 1 logic depth covers internal behavior, Mode 2 needed only for deep data flow across integration boundaries | 0.75 | medium |

@@ -92,16 +92,19 @@ This is the most valuable output — contradictions found BEFORE WHY1 even runs.
 
 ### Step 3b: Request Deep Dives for Unresolvable Contradictions (brownfield only)
 
-If GOLDDIGGER extraction artifacts exist (check `state.json.golddigger_artifacts`) and your contradiction analysis reveals domain-specific conflicts that cannot be resolved from the available data, request a GOLDDIGGER Mode 2 deep dive for the affected domain.
+If GOLDDIGGER extraction artifacts exist (check `state.json.golddigger_artifacts`) and your contradiction analysis reveals conflicts that cannot be resolved from the available data, request a GOLDDIGGER Mode 2 deep dive for the affected domain.
+
+GOLDDIGGER Mode 1 now provides function bodies, business logic, and error handling patterns at 99% coverage. Mode 2 adds complete source file reading, deep data flow analysis, and test assertion extraction. Only request Mode 2 when the contradiction specifically requires what Mode 1 cannot provide.
 
 **Trigger conditions:**
-- A contradiction between code analysis and documentation that involves a specific domain's internal structure (e.g., code says service A uses REST, docs say message queue — resolving this requires tracing the actual call graph inside the domain)
-- A gap where a domain's boundaries are unclear because the survey only captured signatures, not full logic
-- A suspicious finding (stale code, abandoned module) where deeper analysis would determine if the code is active or dead
+- A contradiction that requires tracing an actual call graph or data flow path through middleware, interceptors, or async chains — function bodies are visible but the execution topology is not
+- A suspicious finding (stale code, abandoned module) where only test assertions or full source reading can confirm whether the code is live or dead
 
-**Do NOT request Mode 2 to resolve contradictions that are answerable from existing sources.** If the answer is in the docs, the code comments, or the git history, resolve it yourself. Only request when the contradiction specifically requires deeper code-level structural analysis.
+**Do NOT request Mode 2 for:**
+- Contradictions resolvable from existing function bodies, docs, or git history
+- Boundary ambiguity — Mode 1 `logic` depth provides sufficient signal for domain boundary detection
 
-Check `.specify/squad/golddigger-cache/<domain>.md` first — if a deep dive was already completed by a prior agent's request, use the cached result instead of requesting again.
+Check `state.json.golddigger_completed_domains` first — if a deep dive was already completed for this domain, read the cached result at `.specify/squad/golddigger-cache/<domain>.md` instead of requesting again.
 
 ```bash
 # WARNING: Do NOT add print() statements — they corrupt state.json
@@ -112,8 +115,9 @@ with open('.specify/squad/state.json', 'r') as f:
 
 s.setdefault('golddigger_requests', []).append({
     'domain': '<domain-name>',
+    'repo': '<repo-name-or-null>',
     'requester': 'SYNTHESIZER',
-    'reason': '<specific contradiction or gap that requires deep structural analysis>'
+    'reason': '<specific contradiction — e.g., code shows service A calls service B but call graph through auth middleware cannot be traced from function bodies alone>'
 })
 
 with open('.specify/squad/state.json', 'w') as f:
@@ -121,7 +125,7 @@ with open('.specify/squad/state.json', 'w') as f:
 "
 ```
 
-COMMANDER will process the queue after your dispatch completes and before the next Phase 1 agent runs.
+COMMANDER will process the queue before the next Phase 1 agent runs.
 
 ### Step 4: Identify Patterns Across Sources
 

@@ -1,5 +1,5 @@
 # Echelon Configuration
-# Copy to squad-config.yml and customize
+# Copy to echelon.yml and customize
 #
 # GUIDANCE NOTATION:
 #   [range: X-Y]     = sensible values, beyond this is likely wasteful or broken
@@ -71,7 +71,7 @@ radar:
   # Enable/disable RADAR monitoring server
   # [default: true] Set false to disable automatic RADAR startup
   # @belief(claim: "Running RADAR by default provides observability benefit that outweighs the port-binding overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: low)
-  enabled: true
+  enabled: false
 
   # Port for RADAR SSE server
   # [range: 1024-65535] [default: 7891]
@@ -128,7 +128,7 @@ analysis:
 # - banzai: Full autonomous, human reviews final output
 autonomy:
   # @belief(claim: "Semi autonomy provides the right tradeoff — human review after discovery but not after every phase", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
-  mode: semi  # guided | semi | banzai
+  mode: banzai  # guided | semi | banzai
 
 # =============================================================================
 # CONVERGENCE RULES (COMMANDER)
@@ -290,6 +290,16 @@ discovery:
   # Set to 0 to disable auto-promotion (all repos get signatures depth).
   # [range: 0-200] [default: 50]
   polyrepo_full_depth_threshold: 50
+
+  # Maximum number of git commits to analyze for hotspot and history analysis.
+  # Higher values surface deeper evolutionary patterns at the cost of extraction time.
+  # [range: 100-5000] [default: 2500]
+  git_history_limit: 2500
+
+  # Maximum lines to read per file during extraction.
+  # Applies to GOLDDIGGER Mode 1 and Mode 2. Higher values improve coverage of large files.
+  # [range: 500-10000] [default: 5000]
+  max_lines_per_file: 5000
 
 # =============================================================================
 # SCORING (GATEKEEPER, SCOUT, AUDITOR)
@@ -952,8 +962,8 @@ knowledge_base:
 
 tools:
   understanding_cli: "understanding"
-  # reverse-eng is a Claude Code skill (not a CLI).
-  # Invoke via: Skill tool → speckit.reverse-eng.extract / speckit.reverse-eng.analyze
+  # revenge extension is a Claude Code skill (not a CLI).
+  # Invoke via: Skill tool → speckit.revenge.extract / speckit.revenge.analyze
   # No CLI path needed.
 
 # =============================================================================
@@ -1000,7 +1010,7 @@ endocrine:
   # @belief(claim: "Endocrine system provides measurable behavior modulation benefit that justifies its complexity overhead", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: medium)
   enabled: true  # Enabled by default; set to false to disable all endocrine mutations
   # @belief(claim: "Phase 1 (adrenaline only) is the right default while the system is being validated — more hormones before validation adds complexity risk", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.55, severity: medium)
-  phase: 1  # 1=adrenaline only, 2=four neuromodulators, 3=full 6, 4=adaptive
+  phase: 3  # 1=adrenaline only, 2=four neuromodulators, 3=full 6, 4=adaptive
 
   # Adrenaline triggers (Phase 1)
   adrenaline:

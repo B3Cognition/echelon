@@ -186,9 +186,9 @@ Maintain `state.json` with:
 
 - `prospector_status`: `"complete"` | `"failed"` — set by COMMANDER after PROSPECTOR runs
 - `golddigger_status`: `"complete"` | `"partial"` | `"failed"` — set by GOLDDIGGER
-- `golddigger_mode`: `"survey"` | `"deep-dive"` — which mode last ran
+- `golddigger_mode`: `"survey"` | `"polyrepo-survey"` | `"deep-dive"` — which mode last ran
 - `golddigger_notes`: array of strings — any warnings or known issues from GOLDDIGGER
-- `golddigger_requests`: array of `{ domain, requester, reason }` — Mode 2 request queue
+- `golddigger_requests`: array of `{ domain, repo, requester, reason }` — Mode 2 request queue
 - `golddigger_completed_domains`: array of domain name strings — cache hit deduplication
 
 ---
@@ -357,7 +357,7 @@ Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path
   - Read `spec_kit_available` field:
     - `true`: spec-kit skills are available. Set `state.json.fallback_mode = false`.
     - `false`: no spec-kit skills found. Set `state.json.fallback_mode = true`, `state.json.execution_mode = manual_specification`. Append `reasoning-journal.json` entry: `{type: dependency_failure, dependency: spec-kit, phase: phase1-understand, fallback_mode: true}`.
-  - Extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: reverse-eng [relevant], understanding [relevant]" or "No spec-kit skills available — fallback mode")
+  - Extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: revenge extension [relevant], understanding [relevant]" or "No spec-kit skills available — fallback mode")
 
 **PROSPECTOR failure never blocks the run.** Continue to mode detection regardless. But PROSPECTOR must have been dispatched — a missing `dispatch_id` for PROSPECTOR in `token_ledger` is an invalid state.
 
@@ -368,13 +368,13 @@ Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path
 After brownfield mode is confirmed, before dispatching SCOUT:
 
 1. Read `extension-capabilities.json` (already loaded at init)
-2. If `reverse-eng` is listed with `relevant: true`:
-   - **Dispatch GOLDDIGGER in Mode 1 (Survey).** This dispatch is mandatory when `reverse-eng` is relevant. Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
+2. If `revenge extension` is listed with `relevant: true`:
+   - **Dispatch GOLDDIGGER in Mode 1 (Survey).** This dispatch is mandatory when `revenge extension` is relevant. Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
    - Block SCOUT dispatch until GOLDDIGGER returns
    - **ONLY after GOLDDIGGER returns**, read `golddigger_status` from `state.json`:
      - `complete`: proceed normally, SCOUT will read artifact paths from `state.json.golddigger_artifacts`
      - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual). The `golddigger_notes` field MUST contain a verbatim error from the Skill tool — if it instead contains "manual code analysis used" or references `execution_mode`, GOLDDIGGER has violated its NEVER rules. Re-dispatch GOLDDIGGER rather than accepting the invalid state.
-3. If `reverse-eng` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
+3. If `revenge extension` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
 
 ### 4. GOLDDIGGER Mode 2 Queue (Phase 1 agents)
 

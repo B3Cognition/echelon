@@ -66,9 +66,9 @@ Read the artifacts directly — no intermediate normalization layer.
 
 **Polyrepo mode** (if `golddigger_artifacts.manifest` exists):
 
-1. Read `.specify/reverse-eng/repos-manifest.json` for repo list
-2. Read `.specify/reverse-eng/cross-repo.json` for dependency links and shared tech
-3. For each repo: read `.specify/reverse-eng/{repo}/analysis.json` for structure, dependencies, git history, hotspots
+1. Read `.specify/revenge/repos-manifest.json` for repo list
+2. Read `.specify/revenge/cross-repo.json` for dependency links and shared tech
+3. For each repo: read `.specify/revenge/{repo}/analysis.json` for structure, dependencies, git history, hotspots
 4. If domain specs exist (from auto-promoted full-depth repos): read `specs/NNN-re-{repo}-{domain}/spec.md`
 
 Use the data to seed your output artifacts:
@@ -79,7 +79,7 @@ Use the data to seed your output artifacts:
 
 **Single-repo mode** (if `golddigger_artifacts.analysis` exists):
 
-1. Read `.specify/reverse-eng/analysis.json` for structure, dependencies, git history, hotspots
+1. Read `.specify/revenge/analysis.json` for structure, dependencies, git history, hotspots
 2. If domain specs exist: read `specs/NNN-re-{domain}/spec.md`
 
 Use the data to seed your output artifacts:
@@ -131,14 +131,19 @@ Synthesize all findings into the output artifacts (see Output Requirements below
 
 If GOLDDIGGER artifacts were present, evaluate whether any domain needs deeper structural analysis via GOLDDIGGER Mode 2.
 
-For each domain in the Domain Inventory, assess whether the survey-level signatures were sufficient for your outputs:
+GOLDDIGGER Mode 1 now provides function bodies, business logic, validation rules, and error handling patterns at 99% coverage. Mode 2 adds complete source file reading, deep data flow analysis, and test assertion extraction. The bar for requesting Mode 2 is higher than before — only request when Mode 1's `logic` depth is genuinely insufficient.
 
-- **Boundary ambiguity:** Are the domain's boundaries unclear — can you not tell where it ends and another begins from signatures alone?
-- **Unresolvable entry points:** Does the domain have entry points you couldn't trace because the survey captured only function signatures, not call graphs?
-- **Hotspot complexity:** Is this domain a hotspot (high churn in the Hotspots table) suggesting hidden complexity that signatures underrepresent?
-- **Integration opacity:** Does the domain have external integrations that the survey detected but couldn't fully map (e.g., auth provider topology, message queue routing)?
+For each domain, assess:
 
-If any domain needs deeper analysis, write a Mode 2 request to `state.json`:
+- **Unresolvable entry points:** Does the domain have execution flows you cannot trace from function bodies alone — e.g., async chains, middleware stacks, or interceptors where the actual runtime path is not visible in the logic layer?
+- **Integration opacity:** Does the domain have external integrations (auth provider, message queue, third-party API) where the full interaction topology cannot be determined from function bodies, making it impossible to map failure modes and boundary conditions?
+
+**Do NOT request Mode 2 for:**
+- Boundary ambiguity — `logic` depth provides sufficient signal for domain boundary detection
+- Hotspot complexity — function bodies and git history already expose complexity patterns
+- General uncertainty — if you can answer the question from existing artifacts, do so
+
+If a domain meets either trigger, write a Mode 2 request to `state.json`:
 
 ```bash
 # WARNING: Do NOT add print() statements — they corrupt state.json
@@ -151,7 +156,7 @@ s.setdefault('golddigger_requests', []).append({
     'domain': '<domain-name>',
     'repo': '<repo-name-or-null>',
     'requested_by': 'SCOUT',
-    'reason': '<specific reason — e.g., boundary ambiguity between auth and user-mgmt domains, cannot infer auth provider topology from signatures>'
+    'reason': '<specific reason — e.g., auth middleware execution path not traceable from function bodies; cannot map token validation flow>'
 })
 
 with open('.specify/squad/state.json', 'w') as f:
@@ -159,11 +164,9 @@ with open('.specify/squad/state.json', 'w') as f:
 "
 ```
 
-In polyrepo mode, always include the `repo` field so COMMANDER can dispatch GOLDDIGGER to the correct repo subdirectory. In single-repo mode, set `repo` to `null`.
+In polyrepo mode, always include the `repo` field. In single-repo mode, set `repo` to `null`.
 
-COMMANDER will process the queue after your dispatch completes and before the next Phase 1 agent runs. Deep-dive results will be available in `.specify/squad/golddigger-cache/{repo}--{domain}.md` (polyrepo) or `.specify/squad/golddigger-cache/{domain}.md` (single-repo).
-
-**Do NOT request Mode 2 for every domain.** Only request it when the survey-level data is genuinely insufficient for your outputs. Most domains can be adequately mapped from signatures alone. A good heuristic: if you had to write "unclear" or "insufficient data" in your artifacts for a specific domain, that domain is a candidate.
+COMMANDER will process the queue before the next Phase 1 agent runs. Results will be at `.specify/squad/golddigger-cache/{repo}--{domain}.md` (polyrepo) or `.specify/squad/golddigger-cache/{domain}.md` (single-repo).
 
 ---
 
@@ -438,8 +441,7 @@ Reasoning journal entries: <count> new entries
 | SCT-001 | Source code files (.ts, .js, .py, .go, .java, .rs, .cs) in the target path are a reliable signal for brownfield mode | 2026-03-28 | 2026-09-28 | Practical convention; edge cases exist (empty repos, build artifacts) | 0.80 | medium |
 | SCT-002 | Git history over 1 year is sufficient to identify hotspots and understand historical context | 2026-03-28 | 2026-09-28 | Design choice; older repos may need longer windows | 0.70 | medium |
 | SCT-003 | 3-5 reference architectures are sufficient for greenfield domain understanding | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCT-004 | GOLDDIGGER reverse-eng artifacts (via state.json.golddigger_artifacts) are a trustworthy head-start that does not need full re-validation | 2026-03-28 | 2026-09-28 | Architectural contract with GOLDDIGGER | 0.80 | high |
+| SCT-004 | GOLDDIGGER revenge extension artifacts (via state.json.golddigger_artifacts) are a trustworthy head-start that does not need full re-validation | 2026-03-28 | 2026-09-28 | Architectural contract with GOLDDIGGER | 0.80 | high |
 | SCT-005 | Potential unknown unknowns (2-3 minimum) is the right floor to prevent shallow discovery | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCT-006 | Boundary ambiguity, unresolvable entry points, hotspot complexity, and integration opacity are the right criteria for requesting GOLDDIGGER Mode 2 | 2026-03-28 | 2026-09-28 | Domain-Driven Design principles; Nonaka & Takeuchi tacit knowledge theory | 0.75 | medium |
-| SCT-007 | Most domains can be adequately mapped from function signatures alone without a Mode 2 deep dive | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
-| SCT-008 | Implicit business rules are best found by searching conditional logic, validation functions, and state machines | 2026-03-28 | 2026-09-28 | Domain-Driven Design (Evans) — bounded context mapping | 0.80 | medium |
+| SCT-006 | Unresolvable entry points and integration opacity are the remaining valid criteria for requesting GOLDDIGGER Mode 2 when Mode 1 runs at logic depth | 2026-04-02 | 2026-10-02 | Design choice; logic depth resolves boundary ambiguity and hotspot complexity, but deep data flow and integration topology still require full depth | 0.75 | medium |
+| SCT-007 | Implicit business rules are best found by searching conditional logic, validation functions, and state machines | 2026-03-28 | 2026-09-28 | Domain-Driven Design (Evans) — bounded context mapping | 0.80 | medium |
