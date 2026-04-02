@@ -2,13 +2,13 @@
 
 **Date:** 2026-04-02  
 **Status:** Draft  
-**Scope:** New spec-kit extension (`speckit.gauntlet.*`) providing an end-to-end test suite for the spec-kit ecosystem (echelon + revenge + understanding)
+**Scope:** New spec-kit extension (`speckit.gauntlet.*`) providing an end-to-end test suite for the full echelon orchestration pipeline (UNDERSTAND → DECIDE → SOLUTION → BUILD → LEARN) across all canonical usage patterns
 
 ---
 
 ## 1. Purpose
 
-Gauntlet is a spec-kit extension that runs structured test scenarios against the full echelon agent pipeline, capturing a custom JSON trace per run, evaluating layered assertions, and enabling structural diff against a golden baseline. It covers three canonical usage patterns:
+Gauntlet is a spec-kit extension that runs structured test scenarios against the full echelon agent pipeline (all 5 phases, 42 agents), capturing a custom JSON trace per run, evaluating layered assertions, and enabling structural diff against a golden baseline. It covers three canonical usage patterns:
 
 - **greenfield-python** — single repo, no existing source code, new Python project
 - **brownfield-ts** — single repo, existing TypeScript codebase
@@ -23,12 +23,12 @@ Gauntlet is a spec-kit extension that runs structured test scenarios against the
 │              speckit.gauntlet extension                     │
 │                                                             │
 │  commands/                                                  │
-│    run.md       → invokes harness run <scenario> [flags]   │
+│    run.md       → invokes harness run <scenario> [flags]    │
 │    record.md    → invokes harness record <scenario>         │
 │    diff.md      → invokes harness diff <run-id>             │
 │    report.md    → invokes harness report                    │
 │                                                             │
-│  extension.yml  → registers commands, declares deps        │
+│  extension.yml  → registers commands, declares deps         │
 └────────────────────────┬────────────────────────────────────┘
                          │ subprocess call
                          ▼
@@ -36,24 +36,24 @@ Gauntlet is a spec-kit extension that runs structured test scenarios against the
 │              Python Harness (gauntlet CLI)                  │
 │                                                             │
 │  scenarios/                                                 │
-│    greenfield-python/    ← single repo, new Python code    │
-│    brownfield-ts/        ← single repo, existing TypeScript│
-│    brownfield-polyrepo/  ← multi-repo, Python + TypeScript │
+│    greenfield-python/    ← single repo, new Python code     │
+│    brownfield-ts/        ← single repo, existing TypeScript │
+│    brownfield-polyrepo/  ← multi-repo, Python + TypeScript  │
 │                                                             │
 │  harness/                                                   │
-│    runner.py     ← workspace setup, echelon invocation     │
-│    tracer.py     ← watches .specify/squad/, emits trace    │
-│    asserter.py   ← layered assertions (4 levels)           │
-│    mocker.py     ← intercepts agent calls, replays stubs   │
-│    differ.py     ← structural diff of trace vs golden      │
-│    reporter.py   ← summary output (text + JSON)            │
+│    runner.py     ← workspace setup, echelon invocation      │
+│    tracer.py     ← watches .specify/squad/, emits trace     │
+│    asserter.py   ← layered assertions (6 levels)            │
+│    mocker.py     ← intercepts agent calls, replays stubs    │
+│    differ.py     ← structural diff of trace vs golden       │
+│    reporter.py   ← summary output (text + JSON)             │
 └─────────────────────────────────────────────────────────────┘
                          │ reads/writes
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
 │  Isolated workspace (tmp dir per run)                       │
 │    .specify/squad/agent-states-events.jsonl  ← echelon      │
-│    .specify/squad/state.json                               │
+│    .specify/squad/state.json                                │
 │    specs/                                                   │
 │    trace.jsonl          ← harness-generated trace           │
 │    assertion-report.json                                    │
@@ -126,10 +126,13 @@ requires:
 ```yaml
 mode: mock                  # mock | live
 scenarios: all              # all | [greenfield-python, brownfield-ts, ...]
+phases: all                 # all | [understand, decide, solution, build, learn]
 assertions:
   completion: true
   artifacts: true
   quality_gates: true       # requires understanding extension
+  build_integrity: true     # only active when phases includes build
+  learn_state: true         # only active when phases includes learn
   trace_diff: true
 trace:
   format: jsonl
@@ -161,11 +164,13 @@ scenarios/<name>/
 
 ### Scenario descriptions
 
-| Scenario | Type | Layout | Key agents exercised |
+Each scenario can be run with a `phases` parameter controlling how far through the echelon pipeline it runs. The default is `all` (full pipeline). Stopping earlier is useful for fast feedback or when BUILD fixtures are not yet seeded.
+
+| Scenario | Type | Layout | All-phases agents exercised |
 |---|---|---|---|
-| `greenfield-python` | greenfield | single repo | SCOUT, SAGE, CARTOGRAPHER, ARCHITECT, ORCHESTRATOR |
-| `brownfield-ts` | brownfield | single repo | PROSPECTOR, GOLDDIGGER→REVENGE, SCOUT, SAGE, CARTOGRAPHER |
-| `brownfield-polyrepo` | brownfield | polyrepo (flat) | PROSPECTOR, GOLDDIGGER→REVENGE (polyrepo mode), SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER |
+| `greenfield-python` | greenfield | single repo | SCOUT, SAGE, CARTOGRAPHER, GATEKEEPER, ARCHITECT, ORCHESTRATOR, SENTINEL, IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, MIRROR, AUDITOR |
+| `brownfield-ts` | brownfield | single repo | PROSPECTOR, GOLDDIGGER→REVENGE, SCOUT, SAGE, CARTOGRAPHER, GATEKEEPER, ARCHITECT, ORCHESTRATOR, SENTINEL, IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, MIRROR, AUDITOR |
+| `brownfield-polyrepo` | brownfield | polyrepo (flat) | PROSPECTOR, GOLDDIGGER→REVENGE (polyrepo), SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, GATEKEEPER, ARCHITECT, ORCHESTRATOR, SENTINEL, IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, MIRROR, AUDITOR |
 
 ### `scenario.yml` structure (brownfield-polyrepo example)
 
@@ -183,25 +188,50 @@ echelon:
   prompt: "Analyze and plan modernization of the payment service suite"
   config:
     autonomy: banzai
-    phases: [understand, decide]  # stop before build in mock mode
+    phases: all               # understand | decide | solution | build | learn | all
 
 expected_agents:
   - PROSPECTOR
   - GOLDDIGGER
   - SCOUT
+  - SYNTHESIZER
   - SAGE
   - CARTOGRAPHER
+  - GATEKEEPER
+  - ARCHITECT
+  - ORCHESTRATOR
+  - SENTINEL
+  - IMPLEMENTER
+  - SPEC_GUARD
+  - CODE_REVIEWER
+  - TEST_GUARDIAN
+  - MIRROR
+  - AUDITOR
 
 expected_artifacts:
+  # UNDERSTAND
+  - .specify/squad/brownfield-index.md
   - specs/000-re-overview/overview.md
   - specs/000-re-overview/coverage-report.md
-  - .specify/squad/brownfield-index.md
   - specs/*/spec.md
+  # DECIDE
+  - .specify/squad/feasibility.md
+  - .specify/squad/estimates.md
+  # SOLUTION
+  - specs/*/plan.md
+  - specs/*/tasks.md
+  # BUILD
+  - src/**/*                  # at least one source file produced
+  # LEARN
+  - .specify/knowledge-base/calibration-profile.yaml
+  - .specify/knowledge-base/estimates-log.yaml
 
 assertions:
   completion: true
   artifacts: true
   quality_gates: true
+  build_integrity: true       # only evaluated when phases includes build
+  learn_state: true           # only evaluated when phases includes learn
   trace_diff:
     enabled: true
     ignore_fields: [timestamp, duration_ms, run_id]
@@ -214,6 +244,7 @@ assertions:
 - Realistic enough to exercise revenge's polyrepo discovery and echelon's GOLDDIGGER path
 - `init.sh` seeds 3–5 git commits so revenge's `extract-git-history.sh` has data to analyze
 - When `--target=path` is passed, fixtures are bypassed entirely
+- BUILD phase stubs must produce minimal but syntactically valid source files (compilable Python / TypeScript) so `build_integrity` assertions can run
 
 ---
 
@@ -235,11 +266,17 @@ The trace is a newline-delimited JSON file (`trace.jsonl`) — one event per lin
 // Artifact events
 {"type": "artifact_written", "path": "specs/001-re-payments/spec.md", "agent": "CARTOGRAPHER", "size_bytes": 3210}
 
+// Phase transition events
+{"type": "phase_start", "phase": "build"}
+{"type": "phase_end",   "phase": "build", "status": "ok", "duration_ms": 18400}
+
 // Assertion events (emitted after run completes)
-{"type": "assertion", "level": "completion",    "status": "pass"}
-{"type": "assertion", "level": "artifacts",     "status": "pass", "found": [...], "missing": [...]}
-{"type": "assertion", "level": "quality_gates", "status": "pass", "scores": {"overall": 0.74, "testability": 0.81}}
-{"type": "assertion", "level": "trace_diff",    "status": "pass", "match_pct": 93, "diffs": [...]}
+{"type": "assertion", "level": "completion",      "status": "pass"}
+{"type": "assertion", "level": "artifacts",       "status": "pass", "found": [...], "missing": [...]}
+{"type": "assertion", "level": "quality_gates",   "status": "pass", "scores": {"overall": 0.74, "testability": 0.81}}
+{"type": "assertion", "level": "build_integrity", "status": "pass", "checks": {"compiles": true, "lint": "pass", "tests_runnable": true, "spec_guard_violations": 0}}
+{"type": "assertion", "level": "learn_state",     "status": "pass", "checks": {"calibration_updated": true, "estimates_appended": true}, "kb_diff": {...}}
+{"type": "assertion", "level": "trace_diff",      "status": "pass", "match_pct": 93, "diffs": [...]}
 
 // Mode indicator
 {"type": "mode", "mode": "mock", "stub_file": "scenarios/brownfield-ts/golden/trace.jsonl"}
@@ -269,13 +306,14 @@ The differ compares current `trace.jsonl` against `golden/trace.jsonl` structura
 
 ## 6. Assertion Layers
 
-Evaluated in order. Short-circuit on failure.
+Evaluated in order. Short-circuit on failure. Levels 4 and 5 are only evaluated when the corresponding phases were included in the run.
 
 ```
 Level 1: COMPLETION
   ✓ echelon run exited without error
   ✓ no agent emitted status=error
   ✓ all expected_agents from scenario.yml appeared in trace
+  ✓ all expected phases completed (phase_end status=ok)
 
 Level 2: ARTIFACTS
   ✓ all paths in expected_artifacts exist in workspace
@@ -287,8 +325,22 @@ Level 3: QUALITY GATES  (skipped if understanding not installed)
   ✓ overall >= 0.70, testability >= 0.70, semantic >= 0.60
   ✓ per-spec scores written to assertion-report.json
 
-Level 4: TRACE DIFF  (skipped if no golden baseline exists yet)
+Level 4: BUILD INTEGRITY  (only when phases includes build)
+  ✓ produced source files are syntactically valid (compile / parse without errors)
+  ✓ lint passes on produced code (ruff for Python, tsc --noEmit for TypeScript)
+  ✓ produced test files are runnable (pytest --collect-only / jest --listTests)
+  ✓ SPEC_GUARD reported zero violations in trace
+  ✓ ENGINEERING_MANAGER sign-off present in trace
+
+Level 5: LEARN STATE  (only when phases includes learn)
+  ✓ .specify/knowledge-base/calibration-profile.yaml was updated (mtime changed)
+  ✓ .specify/knowledge-base/estimates-log.yaml has new entries vs run start
+  ✓ AUDITOR and MIRROR agent_end events present in trace
+  ✓ knowledge-base state diff vs golden written to assertion-report.json
+
+Level 6: TRACE DIFF  (skipped if no golden baseline exists yet)
   ✓ agent sequence matches golden (excluding ignored_fields)
+  ✓ phase sequence matches golden
   ✓ structural match >= required_match_pct (default 80%)
   ✓ diff details written to trace with human-readable summary
 ```
@@ -337,7 +389,7 @@ speckit.gauntlet.record brownfield-ts
 
 ## 9. Out of Scope
 
-- Testing echelon's BUILD phase (IMPLEMENTER, CODE_REVIEWER, etc.) — scenarios stop at DECIDE/SOLUTION to keep fixture complexity manageable
 - Performance benchmarking or load testing
 - Testing spec-kit core (that is spec-kit's own test suite)
 - UI or RADAR integration
+- Full compilation of complex real-world codebases in BUILD fixtures — stubs produce minimal valid source only
