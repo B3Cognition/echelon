@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.0.0",
+  "run_id": "665a2c53-9438-4d01-b572-8fbe7c96ee04",
+  "mode": "post-hoc",
+  "artifact_dir": ".specify/specs/015-ca-outcomes-validation",
+  "belief_graph_path": "/Users/ladislavbihari/myWork/competition/echelon_proto/experiments/belief-graph-665a2c53-9438-4d01-b572-8fbe7c96ee04.json",
+  "processing_timestamp": "2026-04-03T05:33:36.395279+00:00",
+  "artifacts_processed": 19,
+  "assertions_extracted": 138,
+  "conflicts_detected": 4,
+  "contradiction_report": [
+    {
+      "field_identifier": "purpose",
+      "contradiction_type": "assertion_conflict",
+      "confidence": 0.8,
+      "existing_value": "Precise definitions for all technical terms appearing in the claimed spec 014 outcomes. Each entry states what the term is, what it is NOT, and how it is measurable for validation purposes.",
+      "existing_stage": "DISCOVER",
+      "existing_artifact": ".specify/specs/015-ca-outcomes-validation/glossary.md",
+      "new_value": "Expose the tacit assumptions embedded in each claimed outcome. For each assumption: state it precisely, classify it, and identify whether spec 014 research validated it.",
+      "new_stage": "DISCOVER",
+      "new_artifact": ".specify/specs/015-ca-outcomes-validation/assumptions.md",
+      "recommended_action": "escalate"
+    },
+    {
+      "field_identifier": "status",
+      "contradiction_type": "assertion_conflict",
+      "confidence": 0.8,
+      "existing_value": "PARTIALLY VALIDATED (by analogy). Instruction-following capabilities of Claude Opus 4.x on explicit negative constraints (\"do NOT include X\") are documented qualitatively but not measured in an Echelon-specific context. The mechanism is acknowledged as \"soft guidance\" in spec 014 alternatives.md (NOVEL-003 risk section).",
+      "existing_stage": "DISCOVER",
+      "existing_artifact": ".specify/specs/015-ca-outcomes-validation/assumptions.md",
+      "new_value": "Meaning",
+      "new_stage": "DISCOVER",
+      "new_artifact": ".specify/specs/015-ca-outcomes-validation/unknowns.md",
+      "recommended_action": "escalate"
+    },
+    {
+      "field_identifier": "what_it_is",
+      "contradiction_type": "assertion_conflict",
+      "confidence": 0.8,
+      "existing_value": "A communication architecture inspired by Rao & Ballard 1999 (\"Predictive coding in the visual cortex,\" Nature Neuroscience) in which upstream agents produce not only their findings but also a forward prediction of what the downstream agent will find. The downstream agent performs a prediction check: if its actual analysis matches the prediction within tolerance \u03b5, no LLM call is needed for that finding. If the check fails (prediction error > \u03b5), the LLM is invoked and the error signal is propagated back to update the forward model.",
+      "existing_stage": "DISCOVER",
+      "existing_artifact": ".specify/specs/015-ca-outcomes-validation/glossary.md",
+      "new_value": "The NS-003 novelty claim (\"this combination has no prior literature\") is based on a 13-source literature review in spec 014. This review may not be exhaustive.",
+      "new_stage": "DISCOVER",
+      "new_artifact": ".specify/specs/015-ca-outcomes-validation/unknowns.md",
+      "recommended_action": "escalate"
+    },
+    {
+      "field_identifier": "depends_on",
+      "contradiction_type": "assertion_conflict",
+      "confidence": 0.8,
+      "existing_value": "Spec 014 (cognitive-architecture-llm-framing)",
+      "existing_stage": "HOW",
+      "existing_artifact": ".specify/specs/015-ca-outcomes-validation/spec.md",
+      "new_value": "TASK-001, TASK-002, TASK-003, TASK-004, TASK-005, TASK-010",
+      "new_stage": "PLAN",
+      "new_artifact": ".specify/specs/015-ca-outcomes-validation/tasks.md",
+      "recommended_action": "escalate"
+    }
+  ]
+}

@@ -1,0 +1,2811 @@
+{
+  "schema_version": "1.0.0",
+  "experiment_id": "NS-003",
+  "spec_id": "017",
+  "experiment_date": "2026-04-03T05:25:59.092225+00:00",
+  "codebase_commit_hash": "efb6437aa8d214f2c862deeda9611fa97864cf16",
+  "model_identifier": "claude-sonnet-4-6",
+  "data_source": "live_invocations",
+  "deviation_note": null,
+  "n_total": 30,
+  "n_pass": 0,
+  "n_fail": 30,
+  "n_timeout": 0,
+  "n_skip": 0,
+  "fpcr": 0.0,
+  "fpcr_classification": "INCONCLUSIVE",
+  "contradiction_catch_rate": 1.0,
+  "ccr_verdict": "PASS",
+  "false_positive_rate": 0.0,
+  "fpr_verdict": "PASS",
+  "structured_to_prose_ratio": {
+    "DISCOVER": 0.2495,
+    "ASSESS": 0.5177,
+    "HOW": 0.5597,
+    "PLAN": 0.4412,
+    "BUILD": 0.0719,
+    "LEARN": 0.4333
+  },
+  "coverage_limitation_flag": true,
+  "per_invocation_verdicts": [
+    {
+      "invocation_index": 0,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/prioritization.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "PASS",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "PASS",
+          "confidence": 0.68,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "PASS",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "FAIL",
+          "confidence": 0.7,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.71,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.806
+    },
+    {
+      "invocation_index": 1,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/user-intent.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "PASS",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "PASS",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.7,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 11.015
+    },
+    {
+      "invocation_index": 2,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/test-architecture.md",
+      "artifact_category": "HOW",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "data_model_ref",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "data_model",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "api_contracts",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "integration_design",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.953
+    },
+    {
+      "invocation_index": 3,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/glossary.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.83,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.584
+    },
+    {
+      "invocation_index": 4,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/evolution-report.md",
+      "artifact_category": "LEARN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "learnings",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "pattern_updates",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "quality_delta",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "learnings",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "pattern_updates",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "quality_delta",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "retrospective",
+          "verdict": "FAIL",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "next_spec_recommendations",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 9.922
+    },
+    {
+      "invocation_index": 5,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/assumptions.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.83,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.266
+    },
+    {
+      "invocation_index": 6,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/test-strategy.md",
+      "artifact_category": "HOW",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "data_model_ref",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "data_model",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "api_contracts",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "integration_design",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 5.897
+    },
+    {
+      "invocation_index": 7,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/mvp-scope.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "FAIL",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "FAIL",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.83,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 15.99
+    },
+    {
+      "invocation_index": 8,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/tasks.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "PASS",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "PASS",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.326
+    },
+    {
+      "invocation_index": 9,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/boundaries.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.68,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.65,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.79,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 9.241
+    },
+    {
+      "invocation_index": 10,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/estimates.md",
+      "artifact_category": "ASSESS",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "technical_feasibility",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "kill_gate_decision",
+          "verdict": "FAIL",
+          "confidence": 0.83,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.84,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.346
+    },
+    {
+      "invocation_index": 11,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/mental-model.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.68,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "PASS",
+          "confidence": 0.62,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.7,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 5.963
+    },
+    {
+      "invocation_index": 12,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/unknowns.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.83,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.737
+    },
+    {
+      "invocation_index": 13,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/issues.md",
+      "artifact_category": "ASSESS",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "technical_feasibility",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "kill_gate_decision",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.083
+    },
+    {
+      "invocation_index": 14,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/critical-path.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "PASS",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "PASS",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "PASS",
+          "confidence": 0.84,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.617
+    },
+    {
+      "invocation_index": 15,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/spec.md",
+      "artifact_category": "HOW",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "PASS",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field present and non-empty"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "data_model_ref",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "data_model",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "api_contracts",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "integration_design",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.86
+    },
+    {
+      "invocation_index": 16,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/learnings.md",
+      "artifact_category": "LEARN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "learnings",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "pattern_updates",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "quality_delta",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "learnings",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "pattern_updates",
+          "verdict": "PASS",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "quality_delta",
+          "verdict": "PASS",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "retrospective",
+          "verdict": "PASS",
+          "confidence": 0.65,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "next_spec_recommendations",
+          "verdict": "PASS",
+          "confidence": 0.7,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "PASS",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.688
+    },
+    {
+      "invocation_index": 17,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/feasibility.md",
+      "artifact_category": "ASSESS",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "PASS",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "technical_feasibility",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "kill_gate_decision",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 18.038
+    },
+    {
+      "invocation_index": 18,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/ground-check.md",
+      "artifact_category": "BUILD",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "implementation_notes",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "test_results",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "implementation_notes",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "test_results",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "files_modified",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "acceptance_criteria_status",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 15.718
+    },
+    {
+      "invocation_index": 19,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/prioritization.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "PASS",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "PASS",
+          "confidence": 0.68,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "PASS",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.76,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.774
+    },
+    {
+      "invocation_index": 20,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/user-intent.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.75,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 5.646
+    },
+    {
+      "invocation_index": 21,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/test-architecture.md",
+      "artifact_category": "HOW",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "data_model_ref",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "data_model",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "api_contracts",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "integration_design",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 5.947
+    },
+    {
+      "invocation_index": 22,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/glossary.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.403
+    },
+    {
+      "invocation_index": 23,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/evolution-report.md",
+      "artifact_category": "LEARN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "learnings",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "pattern_updates",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "quality_delta",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "learnings",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "pattern_updates",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "quality_delta",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "retrospective",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "next_spec_recommendations",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 13.539
+    },
+    {
+      "invocation_index": 24,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/assumptions.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.83,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.234
+    },
+    {
+      "invocation_index": 25,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/test-strategy.md",
+      "artifact_category": "HOW",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "data_model_ref",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "adrs",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "technology_stack",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "data_model",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "api_contracts",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "integration_design",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.384
+    },
+    {
+      "invocation_index": 26,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/mvp-scope.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "PASS",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.512
+    },
+    {
+      "invocation_index": 27,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/tasks.md",
+      "artifact_category": "PLAN",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "tasks",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "critical_path",
+          "verdict": "FAIL",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "mvp_scope",
+          "verdict": "PASS",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "dependencies",
+          "verdict": "PASS",
+          "confidence": 0.82,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "phase_breakdown",
+          "verdict": "FAIL",
+          "confidence": 0.7,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 6.636
+    },
+    {
+      "invocation_index": 28,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/boundaries.md",
+      "artifact_category": "DISCOVER",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "scope_statement",
+          "verdict": "FAIL",
+          "confidence": 0.72,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "assumptions",
+          "verdict": "FAIL",
+          "confidence": 0.68,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "unknowns",
+          "verdict": "FAIL",
+          "confidence": 0.65,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "glossary",
+          "verdict": "FAIL",
+          "confidence": 0.78,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "boundaries",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.8,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.768
+    },
+    {
+      "invocation_index": 29,
+      "artifact_path": ".specify/specs/015-ca-outcomes-validation/estimates.md",
+      "artifact_category": "ASSESS",
+      "schema_verdict": "FAIL",
+      "per_field_verdicts": [
+        {
+          "field_name": "spec_id",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "agent",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "timestamp",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "FAIL",
+          "confidence": 0.95,
+          "component": "deterministic",
+          "reason": "Field absent"
+        },
+        {
+          "field_name": "verdict",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "risks",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "effort_estimate",
+          "verdict": "PASS",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section PRESENT"
+        },
+        {
+          "field_name": "technical_feasibility",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "kill_gate_decision",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Prose section ABSENT"
+        },
+        {
+          "field_name": "_overall_prose",
+          "verdict": "FAIL",
+          "confidence": 0.85,
+          "component": "prose_assessment",
+          "reason": "Overall prose structure assessment"
+        }
+      ],
+      "elapsed_seconds": 7.611
+    }
+  ],
+  "calibration_set_frr": 1.0,
+  "calibration_set_size": 19,
+  "calibration_set_source": "runs_015_016"
+}
