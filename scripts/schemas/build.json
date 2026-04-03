@@ -1,0 +1,16 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Echelon BUILD Artifact Schema",
+  "type": "object",
+  "required": ["spec_id", "agent", "timestamp", "implementation_notes", "test_results"],
+  "properties": {
+    "spec_id":               { "type": "string", "minLength": 1 },
+    "agent":                 { "type": "string", "minLength": 1 },
+    "timestamp":             { "type": "string", "minLength": 1 },
+    "implementation_notes":  { "type": ["string", "array"], "minLength": 1 },
+    "test_results":          { "type": ["string", "object"], "minLength": 1 }
+  },
+  "required_sections": [
+    "implementation_notes", "test_results", "files_modified", "acceptance_criteria_status"
+  ]
+}

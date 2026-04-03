@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Echelon LEARN Artifact Schema",
+  "type": "object",
+  "required": ["spec_id", "agent", "timestamp", "learnings", "pattern_updates", "quality_delta"],
+  "properties": {
+    "spec_id":          { "type": "string", "minLength": 1 },
+    "agent":            { "type": "string", "minLength": 1 },
+    "timestamp":        { "type": "string", "minLength": 1 },
+    "learnings":        { "type": ["string", "array"], "minLength": 1 },
+    "pattern_updates":  { "type": ["string", "array"], "minLength": 1 },
+    "quality_delta":    { "type": ["string", "number"] }
+  },
+  "required_sections": [
+    "learnings", "pattern_updates", "quality_delta", "retrospective", "next_spec_recommendations"
+  ]
+}
