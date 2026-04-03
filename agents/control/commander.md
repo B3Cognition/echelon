@@ -154,9 +154,51 @@ Before every routing decision, ask:
 2. Can INVESTIGATOR provide evidence that upgrades the confidence above 0.5? (dispatch INVESTIGATOR)
 3. Can MAVERICK propose an alternative that eliminates the risk entirely? (dispatch MAVERICK)
 
-Only after all three are exhausted → escalate to human with full data package.
+Only after all three are exhausted → route to Diagnostic Pipeline (if root cause is unknown) or escalate to human (if root cause is known but unresolvable).
 
-When escalating, produce `escalation-request.md` using `templates/escalation-request.md` format. Enter BLOCKED state in `state.json`. Wait for `/speckit.echelon.resume <answer>`.
+## Diagnostic Pipeline Routing
+
+Before escalating to human via `escalation-request.md`, route to the
+KT Diagnostic Pipeline when the failure is unclear (root cause unknown).
+
+Route when any of the following apply:
+
+| Situation | Signal |
+|-----------|--------|
+| Same BLOCKED task survives 2 re-dispatch cycles | IMPLEMENTER returns `BLOCKED` twice on the same task |
+| VERIFICATION finds gaps with no clear owner | `gap-report.md` has open gaps that cannot be traced to a missing task |
+| INTEGRATOR reports > 3 failures after 2 fix cycles | Phase checkpoint still failing after max rework |
+| COMMANDER's 3-issue escalation rule triggers | Same issue raised 3 times without resolution |
+| SAGE and another agent disagree and cannot converge | Conflict that Toulmin resolution cannot settle |
+| TRACKER signals intent drift persisting across agents | `user-intent.md` shows consistent misalignment with no clear owner |
+
+Do NOT route to diagnostic for:
+- Missing context (use NEEDS_CONTEXT flow)
+- Spec ambiguity (route to WHAT via clarification)
+- Disagreements about approach (use Toulmin resolution first)
+
+To route:
+1. **Check availability** — read `extension-capabilities.json` (already loaded at init). If `kt-diagnostic`
+   is not listed with `relevant: true`, skip diagnostic routing entirely and fall through to direct
+   escalation via `escalation-request.md`. Do NOT hard-stop the run.
+2. Collect:
+   - description: what IS failing and what is NOT (be specific, apply IS/IS-NOT framing)
+   - source: `COMMANDER` (or `TRACKER` if intent drift triggered this)
+   - severity: `P2_SEV2` (or `P1_SEV1` if the entire build is blocked)
+3. Invoke the `speckit.diagnostic.run` skill via the **Skill tool** with the concern description,
+   source, and severity. Do NOT invoke it as a raw slash command.
+4. Suspend the current squad run at its current phase. Write
+   `diagnostic_status: "IN_PROGRESS"` and `diagnostic_concern_id: "<CRN-...>"` to `state.json`.
+   Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
+5. Resume the squad run when the diagnostic pipeline returns one of:
+   - `VERIFICATION_PASS` — root cause confirmed and fix verified; apply the recommended fix
+     to the blocking task, clear `diagnostic_status` in `state.json`, and continue
+   - `MAX_CYCLES_EXCEEDED` — escalate to human with the full diagnostic record
+     (IS/IS-NOT matrix, hypotheses, fix attempts) instead of the generic `escalation-request.md`
+
+When escalating after `MAX_CYCLES_EXCEEDED`, produce `escalation-request.md` using `templates/escalation-request.md` format. Enter BLOCKED state in `state.json`. Wait for `/speckit.echelon.resume <answer>`.
+
+When escalating directly (root cause known but unresolvable without human, or `kt-diagnostic` not available), produce `escalation-request.md` and enter BLOCKED state as before.
 
 ---
 
@@ -190,6 +232,11 @@ Maintain `state.json` with:
 - `golddigger_notes`: array of strings — any warnings or known issues from GOLDDIGGER
 - `golddigger_requests`: array of `{ domain, repo, requester, reason }` — Mode 2 request queue
 - `golddigger_completed_domains`: array of domain name strings — cache hit deduplication
+
+### New state.json fields (KT Diagnostic Pipeline)
+
+- `diagnostic_status`: `"IN_PROGRESS"` | `"VERIFICATION_PASS"` | `"MAX_CYCLES_EXCEEDED"` | `null` — set by COMMANDER when routing to or receiving results from the diagnostic pipeline; `null` when no diagnostic is active
+- `diagnostic_concern_id`: string | `null` — the `CRN-*` identifier of the active diagnostic concern; `null` when no diagnostic is active
 
 ---
 

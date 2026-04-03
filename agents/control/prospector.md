@@ -34,7 +34,7 @@ List all skills available to you that start with the `speckit.` prefix. These ar
 
 For each skill found, record:
 - The full skill name (e.g., `speckit.echelon.run`, `speckit.revenge.extract`)
-- The extension it belongs to (the second segment: `squad`, `revenge extension`, `understanding`, etc.)
+- The extension it belongs to (the second segment: `squad`, `revenge`, `understanding`, etc.)
 
 If no `speckit.*` skills are visible in your context, proceed directly to Step 3 with an empty extensions list.
 
@@ -44,9 +44,10 @@ Group skills by extension and determine relevance to this run:
 
 | Extension | Relevant when |
 |-----------|---------------|
-| `revenge extension` | Brownfield mode — a codebase is being analyzed |
+| `revenge` | Brownfield mode — a codebase is being analyzed |
 | `squad` | Always relevant (this is the echelon extension itself) |
 | `understanding` | Always relevant (quality validation tooling) |
+| `kt-diagnostic` | Always relevant (diagnostic pipeline — any run can hit a reasoning failure) |
 | Any other | Default to `relevant: false` unless you have a clear signal |
 
 Set `relevant: true/false` and a one-sentence `reason` for each extension.
