@@ -34,7 +34,9 @@ import subprocess, json, os
 context_pack = goal_stack.enrich_context(context_pack, run_id)
 
 # 2. ACT-R Typed Buffer
-context_pack = actr_buffer.enrich_context(context_pack, run_id)
+# ISS-004-REG-001 fix: actr_buffer returns only {"actr_buffers": ...} (no original keys),
+# so use .update() to merge into context_pack instead of replacing it.
+context_pack.update(actr_buffer.enrich_context(context_pack, run_id))
 
 # 3. LIDA Broadcast — check for pending broadcast payload
 lida_payload_path = ".specify/squad/lida-payload.json"
@@ -49,6 +51,14 @@ context_pack = gwt_workspace.enrich_context(context_pack, run_id)
 
 # 5. Episodic Memory
 context_pack = episodic_memory.enrich_context(context_pack, run_id, agent_type=AGENT_CODENAME)
+
+# 6. SOAR Cognitive Architecture Overlay (position 6)
+try:
+    from scripts.ca import soar
+    context_pack = soar.enrich_context(context_pack, run_id)
+except Exception as _soar_exc:  # noqa: BLE001
+    # NFR-SOAR-004 / AC-6.1: exception does not block dispatch
+    _log(f"SOAR overlay exception (non-blocking): {_soar_exc}")
 ```
 
 ---
@@ -81,6 +91,14 @@ gwt_workspace.add_to_workspace(
 )
 
 # ACT-R Buffer and LIDA Broadcast: no post-dispatch action required.
+
+# 4. SOAR Cognitive Architecture Overlay — post-dispatch learning
+try:
+    from scripts.ca import soar as _soar_mod
+    _soar_mod.update_soar_memory(outcome, run_id)
+except Exception as _soar_exc:  # noqa: BLE001
+    # NFR-SOAR-004 / AC-6.2: exception does not corrupt dispatch outcome
+    _log(f"SOAR update_soar_memory exception (non-blocking): {_soar_exc}")
 ```
 
 ---
@@ -158,6 +176,20 @@ scripts/bash/lida_broadcast.sh cleanup "${run_id}"
 | Query | Most-recent artifact for the dispatched agent_type (max by stage_timestamp) |
 | Index policy | Append-only. No cross-run persistence (v1). |
 | Constraint | Read-only on COMMANDER routing. Index is the only write target. |
+
+### 6. SOAR Cognitive Architecture Overlay (`scripts/ca/soar.py`)
+
+| Property | Value |
+|----------|-------|
+| Interface | `soar.enrich_context(context_pack, run_id) -> dict` (pre-dispatch) |
+| Post-dispatch | `soar.update_soar_memory(outcome, run_id) -> None` (mandatory) |
+| Injected key | `soar_state` (dict, max 200 chars serialized) |
+| State files | `soar-procedural-{run_id}.json` (ProceduralMemoryStore, gitignored) |
+| | `soar-impasse-{run_id}.json` (impasse log, gitignored) |
+| Seed rules | 5 hand-coded rules (seed-001 through seed-005, confidence 0.70–0.90) |
+| Chunking | Disabled by default (`ca_overlays.soar.chunking_enabled: false`) |
+| Exception policy | Exceptions in both hooks are caught; dispatch is never blocked (NFR-SOAR-004) |
+| Write constraint | Does NOT modify `state.json` (FR-CAO-006) |
 
 ---
 

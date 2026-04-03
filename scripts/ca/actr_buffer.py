@@ -169,12 +169,13 @@ def enrich_context(context_pack: dict, run_id: str) -> dict:  # noqa: ARG001
         evicted = buffers["declarative"].pop(0)  # oldest first
         total_new_tokens -= _token_estimate(evicted)
 
-    enriched = dict(context_pack)
-    enriched["actr_buffers"] = {
-        "declarative": buffers["declarative"],
-        "procedural": buffers["procedural"],
-        "goal": buffers["goal"],
-        "imaginal": buffers["imaginal"],
-        "retrieval_buffer": retrieval_buffer,
+    # ISS-004 / FR-SOAR-011: return only actr_buffers (no original key duplication)
+    return {
+        "actr_buffers": {
+            "declarative": buffers["declarative"],
+            "procedural": buffers["procedural"],
+            "goal": buffers["goal"],
+            "imaginal": buffers["imaginal"],
+            "retrieval_buffer": retrieval_buffer,
+        }
     }
-    return enriched
