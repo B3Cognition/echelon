@@ -113,4 +113,21 @@ After WHY1 clears staging artifacts, the only permitted modifications are additi
 
 ---
 
-*Constitution version 1.0.0 — immutable except by human amendment.*
+---
+
+## IX. Cognitive Architecture Overlay Authorization (Amendment 1)
+
+**P-020 [HUMAN-DEFINED, AMENDMENT 2026-04-03]: U-CA-004 experiment is authorized to proceed.**
+The five CA overlays (Goal Stack, ACT-R Typed Buffer, LIDA Broadcast, GWT Bounded Workspace, Episodic Memory) blocked by P-006 may be implemented under the following conditions:
+(a) U-CA-004 experiment runs to completion (N≥20 invocations per condition, AQS scoring, Mann-Whitney U test);
+(b) Experiment resolves POSITIVE (p<0.05, effect size ≥ medium Cohen's d ≥ 0.5);
+(c) If NEGATIVE or INCONCLUSIVE, no overlay implementation code may be committed.
+This amendment authorizes execution of the experiment infrastructure and conditional implementation only. It does not pre-authorize the overlay code if the experiment fails.
+
+**P-021 [HUMAN-DEFINED, AMENDMENT 2026-04-03]: Automated AQS proxy is permitted for U-CA-004.**
+The AQS rubric (completeness, consistency, specificity, actionability, innovation) may be evaluated by an LLM judge (Claude) acting as an automated proxy scorer in lieu of human evaluators. The proxy must: use a fixed scoring prompt template, apply rubric dimensions independently, produce a numeric score per dimension (0-5), and log all scoring calls for audit. Proxy AQS scores are sufficient for statistical analysis under this amendment.
+
+**P-022 [HUMAN-DEFINED, AMENDMENT 2026-04-03]: NS-003 FPCR implementation target is ≥0.70.**
+The user-stated target for first-pass schema compliance rate is ≥0.70. The pre-registered patent-grade threshold (≥0.80 = PASS per ns003-experiment-design.md) remains the filing prerequisite. FPCR in [0.70, 0.80) is classified as PROTOTYPE_VIABLE — sufficient for implementation, insufficient for patent filing. No agent may use this distinction to block build-phase execution.
+
+*Constitution version 1.1.0 — amended 2026-04-03 by human instruction (spec 017 authorization message).*
