@@ -1,0 +1,1007 @@
+{
+  "entries": [
+    {
+      "id": "RJ-001",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:00Z",
+      "type": "evidence",
+      "artifact": "glossary.md",
+      "section": "WME (Working Memory Element)",
+      "reasoning": "WME definition drawn directly from Laird 2022 (arxiv:2205.03854) and corroborated by SoarGroup official documentation. The triple (identifier, attribute, value) structure is universally agreed across all SOAR references. The Python dict representation {id, attr, value} is a direct structural analog that requires no semantic compromise.",
+      "confidence": 0.95,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must define the Python dict schema for WMEs",
+        "SCIENTIST should verify the dict schema enables useful production rule conditions"
+      ]
+    },
+    {
+      "id": "RJ-002",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:01Z",
+      "type": "insight",
+      "artifact": "glossary.md",
+      "section": "Chunking (disambiguation from cognitive psychology)",
+      "reasoning": "The word 'chunking' is severely overloaded: SOAR chunking (procedural compilation from substate episodes), cognitive psychology chunking (Miller 1956, grouping in short-term memory), and ACT-R compilation (two-step procedural fusion). Spec 018 uses SOAR chunking. The glossary entry explicitly disambiguates all three to prevent HOW spec authors from conflating them.",
+      "confidence": 0.92,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must label its chunking mechanism as 'SOAR-inspired procedural compilation' to avoid confusion with other meanings",
+        "Any reference to chunking in the spec should link back to this glossary entry"
+      ]
+    },
+    {
+      "id": "RJ-003",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:02Z",
+      "type": "insight",
+      "artifact": "mental-model.md",
+      "section": "Echelon Dispatch Cycle Mapping",
+      "reasoning": "The match-select-apply cycle maps cleanly onto Echelon's dispatch cycle: Match = scan ProductionRules against context_pack WMEs; Select = argmax confidence; Apply = merge operator payload into context_pack. The impasse \u2192 substate mechanism maps to ImpasseEvent \u2192 DefaultOperator. This mapping is structurally valid but is a significant simplification: single-pass elaboration (vs quiescence iteration), argmax confidence (vs full preference calculus), no true substate creation. The simplifications are justified by the narrow use case (context enrichment, not general problem-solving).",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must explicitly state which SOAR mechanisms are approximated vs faithfully implemented",
+        "SCIENTIST should test whether single-pass elaboration is sufficient or whether a second pass materially changes enrichment quality"
+      ]
+    },
+    {
+      "id": "RJ-004",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:03Z",
+      "type": "evidence",
+      "artifact": "boundaries.md",
+      "section": "SOAR Overlay Module \u2014 What it does NOT do",
+      "reasoning": "The boundary between what the overlay implements and what it excludes was determined by: (1) ADR-005 stdlib-only constraint (eliminates official SOAR kernel, SML, pysoarlib, soar-sml); (2) FR-CAO-006 read-only constraint (eliminates any COMMANDER state modification); (3) v1 scope consistency with Episodic Memory overlay (eliminates cross-run persistence); (4) performance constraints (eliminates multi-cycle Rete-based elaboration for a function called on every dispatch). These four constraints together uniquely define the boundary.",
+      "confidence": 0.93,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must restate these four constraints in its out-of-scope section",
+        "PLAN must not include tasks for Rete implementation or SML integration"
+      ]
+    },
+    {
+      "id": "RJ-005",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:04Z",
+      "type": "assumption",
+      "artifact": "assumptions.md",
+      "section": "A-002: Python stdlib only",
+      "reasoning": "The stdlib-only constraint is inferred from ADR-005's treatment of the ACT-R overlay (TF-IDF implemented without sklearn). This is a design pattern, not an explicit rule in a constitution clause. It is codified as a critical assumption (A-002) because if it were wrong, the entire implementation approach changes. Validated by checking requirements.txt: no C-extension or SOAR-specific packages are listed.",
+      "confidence": 0.95,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must not specify soar-sml or pysoarlib as dependencies",
+        "BUILD agent must not add third-party SOAR packages to requirements.txt"
+      ]
+    },
+    {
+      "id": "RJ-006",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:05Z",
+      "type": "insight",
+      "artifact": "unknowns.md",
+      "section": "U-003: Chunking generalization strategy",
+      "reasoning": "The chunking generalization unknown is the highest-risk open question. In full SOAR, chunking correctness depends on dependency tracing \u2014 knowing which WMEs were causally involved in producing the substate result. Without dependency tracing, any generalization strategy is a heuristic. The three options (all WMEs, triggering-rule conditions only, minimal set) produce fundamentally different learning behavior. This must be resolved before the HOW spec defines the chunking algorithm, because it determines whether chunked rules are useful or noise.",
+      "confidence": 0.85,
+      "evidence_grade": "B",
+      "implications": [
+        "SCIENTIST must investigate chunking generalization options",
+        "HOW spec should be gated on SCIENTIST's recommendation for chunking strategy"
+      ]
+    },
+    {
+      "id": "RJ-007",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:06Z",
+      "type": "insight",
+      "artifact": "unknowns.md",
+      "section": "Potential Unknown Unknowns \u2014 U-CA-004 retroactive impact",
+      "reasoning": "The existing CA overlays were built after a NEGATIVE U-CA-004 result (Cohen's d = 0.40, commit e1976fc). Adding a sixth overlay changes the experimental context retroactively. If the combined 6-overlay stack is tested in a future U-CA-004 run, the SOAR overlay's contribution to AQS delta cannot be isolated from the five-overlay baseline. This is a measurement validity problem, not just an implementation concern. The user should be made aware that adding a sixth overlay without a controlled experiment leaves the AQS impact of the SOAR overlay unmeasured.",
+      "confidence": 0.8,
+      "evidence_grade": "B",
+      "implications": [
+        "User should decide whether a partial U-CA-004 rerun is needed",
+        "ASSESS agent should flag this as a risk in feasibility.md"
+      ]
+    },
+    {
+      "id": "RJ-008",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:07Z",
+      "type": "evidence",
+      "artifact": "reference-architectures.md",
+      "section": "Common Patterns Across References",
+      "reasoning": "Analyzed 5 reference architectures: SoarGroup/Soar (official C++ implementation), pysoarlib (Python SML wrapper), soar-sml (PyPI package), KRaizer minimum working example, and Taseer's Python educational implementation. Four invariants were found across all 5: (1) WME as atomic data unit, (2) parallel rule firing in elaboration, (3) match/select separation, (4) impasse as first-class event. These are domain invariants that the Echelon overlay must respect to legitimately call itself a 'SOAR overlay'.",
+      "confidence": 0.9,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must implement all four domain invariants",
+        "Impasse in particular must be a named event (not silently swallowed) for the overlay to be architecturally faithful"
+      ]
+    },
+    {
+      "id": "RJ-009",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:08Z",
+      "type": "insight",
+      "artifact": "boundaries.md",
+      "section": "External Boundary \u2014 Official SOAR Interpreter",
+      "reasoning": "The official SOAR C++ kernel is explicitly excluded. This is the most important boundary decision in the spec because it determines the entire implementation strategy. The exclusion is justified by: stdlib constraint (ADR-005), API-only constraint (ADR-003), and deployment complexity (platform-specific wheels, kernel binary installation). A pure Python approximation of SOAR concepts is the only viable path within these constraints.",
+      "confidence": 0.97,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must not list soar-sml as an optional or future dependency",
+        "Any comparison of the overlay to canonical SOAR behavior must acknowledge the kernel exclusion"
+      ]
+    },
+    {
+      "id": "RJ-010",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:09Z",
+      "type": "insight",
+      "artifact": "assumptions.md",
+      "section": "A-003: context_pack keys as stable WME attributes",
+      "reasoning": "This is the central empirical assumption of the overlay: that context_pack keys are stable enough across dispatch calls to write useful production rules against. The five existing overlays each inject named keys (active_goal, actr_buffers, lida_broadcast, gwt_workspace, episodic_prior_artifact) in a deterministic sequence. If the SOAR overlay runs last (position 6), it can assume all five prior keys are present. But COMMANDER may pass additional ad-hoc keys in different spec runs. The overlay's production rules should be written against the known stable keys only.",
+      "confidence": 0.75,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must list the 5 stable injected keys as the primary WME attributes to write rules against",
+        "SCIENTIST should validate key stability across 5+ runs before the seed rule set is finalized"
+      ]
+    },
+    {
+      "id": "RJ-011",
+      "agent": "DISCOVER",
+      "timestamp": "2026-04-03T00:00:10Z",
+      "type": "evidence",
+      "artifact": "glossary.md",
+      "section": "SML (Soar Markup Language)",
+      "reasoning": "SML is explicitly documented as not used in Echelon's overlay. Including it in the glossary prevents future developers from mistakenly assuming the overlay requires SML or SWIG bindings. The glossary entry serves as a negative definition: 'this is what we are NOT using and why.'",
+      "confidence": 0.99,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec should reference this glossary entry when explaining the stdlib-only implementation choice"
+      ]
+    },
+    {
+      "id": "RJ-012",
+      "agent": "SCIENTIST",
+      "timestamp": "2026-04-03T10:00:00Z",
+      "type": "evidence",
+      "artifact": "investigation/iss001-lida-wme.md",
+      "section": "ISS-001: LIDA Broadcast WME Reliability",
+      "reasoning": "Direct inspection of lida_broadcast.sh and COMMANDER.md Pre-Dispatch Sequence confirms that lida_broadcast is a consume-once, conditionally-injected key. Three independent mechanisms enforce this: (1) os.path.isfile guard means the key is only injected when the payload file exists; (2) os.remove immediately after read implements consume-once \u2014 no subsequent dispatch in the same cycle can see the payload; (3) the file is only written by an explicit external call to lida_broadcast.sh broadcast, not by any automatic mechanism. In a normal run with no explicit broadcast calls, the key is absent from context_pack on every dispatch. SOAR production rules must not use lida_broadcast as a reliable primary condition.",
+      "confidence": 0.97,
+      "evidence_grade": "B",
+      "implications": [
+        "SOAR seed rules in spec 018 must not condition on lida_broadcast as a primary LHS condition",
+        "Any rule using lida_broadcast must be marked opportunistic and degrade gracefully when the key is absent",
+        "ARCHITECT must not design rule chains that require lida_broadcast to be present"
+      ]
+    },
+    {
+      "id": "RJ-013",
+      "agent": "SCIENTIST",
+      "timestamp": "2026-04-03T10:01:00Z",
+      "type": "evidence",
+      "artifact": "investigation/iss002-context-pack-keys.md",
+      "section": "ISS-002: Pre-Overlay Context Pack Key Inventory",
+      "reasoning": "Inspection of all five CA overlay modules and COMMANDER.md produces a complete three-tier WME stability inventory. Tier 1 (safe anchors): active_goal \u2014 always present with meaningful value, injected unconditionally by goal_stack.py with sentinel fallback. Tier 2 (present but possibly empty/None): actr_buffers (always structurally present, sub-lists may be empty), gwt_workspace (always-present key, may be [] on first dispatch), episodic_prior_artifact (always-present key, may be None on first dispatch per agent type). Tier 3 (opportunistic): lida_broadcast (absent in most cycles, see RJ-012). active_goal is the only key that is both unconditionally present AND carries a semantically useful value on every dispatch \u2014 making it the sole reliable anchor for SOAR production rule conditions.",
+      "confidence": 0.95,
+      "evidence_grade": "B",
+      "implications": [
+        "SOAR seed rules must use active_goal as the primary condition anchor",
+        "Rules conditioning on gwt_workspace must handle the [] case (first dispatch)",
+        "Rules conditioning on episodic_prior_artifact must null-guard before sub-key access",
+        "actr_buffers is safe to reference as a structural key but sub-buffer emptiness must be guarded",
+        "Initial context_pack keys (caller-supplied, before overlay chain) require a separate investigation to inventory"
+      ]
+    },
+    {
+      "id": "RJ-014",
+      "agent": "SCIENTIST",
+      "timestamp": "2026-04-03T12:00:00Z",
+      "type": "experiment",
+      "artifact": "investigation/iss004-token-budget.md",
+      "section": "Step 5: EXPERIMENT \u2014 baseline measurement",
+      "reasoning": "Ran 4-overlay stack (goal_stack, actr_buffer, gwt_workspace, episodic_memory) against a representative 565-token context_pack. Measured tokens after each overlay using the 4-char/token heuristic. Result: baseline=565, after goal_stack=591 (+26), after actr_buffer=1163 (+572), after gwt_workspace=1164 (+1), after episodic_memory=1165 (+1). Total growth: 600 tokens (106.2%). FR-CAO-002 is violated at every step.",
+      "confidence": 0.95,
+      "evidence_grade": "B",
+      "implications": [
+        "FR-CAO-002 is violated by the current 4-overlay stack \u2014 the violation is not marginal, it is 2.06x baseline",
+        "The violation is dominated by actr_buffer (+572 tokens out of +600 total)",
+        "SOAR cannot be added without worsening an already-violated budget unless actr_buffer is fixed first"
+      ]
+    },
+    {
+      "id": "RJ-015",
+      "agent": "SCIENTIST",
+      "timestamp": "2026-04-03T12:01:00Z",
+      "type": "evidence",
+      "artifact": "investigation/iss004-token-budget.md",
+      "section": "Step 7: SYNTHESIZE \u2014 actr_buffer structural duplication bug",
+      "reasoning": "actr_buffer.enrich_context returns dict(context_pack) with actr_buffers key added. The actr_buffers structure duplicates all original key-value pairs as typed buffer entries. The internal enforcement (lines 161-170 of actr_buffer.py) ensures actr_buffers <= original_tokens, but since both original keys AND actr_buffers are present in the returned dict, the total is bounded at 2x original \u2014 not at 1x. This is a structural invariant: FR-CAO-002 is ALWAYS violated by actr_buffer regardless of content size. The enforcement code is correct for its stated purpose (managing internal buffer sizes) but does not achieve FR-CAO-002 compliance.",
+      "confidence": 0.95,
+      "evidence_grade": "B",
+      "implications": [
+        "actr_buffer must be redesigned: either remove original keys from the output (replacing them with actr_buffers), or accept that FR-CAO-002 cannot be met with a duplication approach",
+        "ARCHITECT must decide between fixing actr_buffer (Option A: remove originals) or amending FR-CAO-002 to allow a defined overhead percentage",
+        "This is not a SOAR-specific issue \u2014 it predates ISS-004 and affects all downstream overlays"
+      ]
+    },
+    {
+      "id": "RJ-016",
+      "agent": "SCIENTIST",
+      "timestamp": "2026-04-03T12:02:00Z",
+      "type": "evidence",
+      "artifact": "investigation/iss004-token-budget.md",
+      "section": "Step 8: RECOMMEND \u2014 SOAR soar_state size cap",
+      "reasoning": "Given that the 4-overlay stack already violates FR-CAO-002 at 2.06x, there is zero headroom for SOAR. A minimal soar_state (2 rules, 3 WMEs) adds ~125 tokens, pushing total to 2.28x. A large soar_state (10 rules, 15 WMEs) adds ~500 tokens, reaching 2.95x. Recommended cap: 50 tokens / 200 chars on json.dumps(soar_state). This keeps SOAR's marginal contribution comparable to goal_stack (+26 tokens). If actr_buffer is fixed first, the same 50-token cap leaves the total stack overhead at ~78 tokens (13.8% of 565-token baseline).",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "implications": [
+        "soar.py must enforce a 200-char hard cap on soar_state via json.dumps length check",
+        "The cap forces: operator (name+preference+conditions_matched), matched_rules (top-1 rule), wmes (top-3 WMEs), impasse (None or string)",
+        "ARCHITECT should prioritize fixing actr_buffer before or alongside SOAR implementation",
+        "FR-CAO-002 intent ambiguity (zero growth vs bounded growth) should be resolved \u2014 currently no overlay complies with strict zero-growth interpretation"
+      ]
+    },
+    {
+      "id": "RJ-017",
+      "agent": "SCIENTIST",
+      "timestamp": "2026-04-03T12:03:00Z",
+      "type": "gap",
+      "artifact": "investigation/iss004-token-budget.md",
+      "section": "Knowledge Gaps",
+      "reasoning": "Two knowledge gaps remain after this investigation. (1) gwt_workspace populated state: when workspace items exist, gwt_workspace injects up to 2000 tokens of items into context_pack uncapped relative to FR-CAO-002. Only the workspace's own internal bound (DEFAULT_MAX_TOKENS=2000) limits it. This was not tested with populated state. (2) FR-CAO-002 intent ambiguity: the FR says 'MUST NOT exceed' but all overlays add content by design. The actual intent may be 'bounded overhead' rather than 'zero overhead'. This ambiguity should be escalated to ARCHITECT before the FR is enforced as a hard gate.",
+      "confidence": 0.8,
+      "evidence_grade": "B",
+      "implications": [
+        "gwt_workspace behavior under populated state is a critical untested path \u2014 could add up to 2000 tokens on top of current violations",
+        "FR-CAO-002 may need an amendment before it can be used as a hard verification gate",
+        "VERIFY phase should not fail builds solely on FR-CAO-002 until the intent is clarified"
+      ]
+    },
+    {
+      "id": "RJ-018",
+      "agent": "WHAT",
+      "timestamp": "2026-04-03T08:00:00Z",
+      "type": "decision",
+      "artifact": "spec.md",
+      "section": "WME Stability Tiers (FR-SOAR-003)",
+      "reasoning": "ISS-002 resolution introduced a three-tier WME stability classification: Tier 1 (active_goal, always present), Tier 2 (actr_buffers, gwt_workspace, episodic_prior_artifact, guard required), Tier 3 (lida_broadcast, opportunistic). FR-SOAR-003 was written using this classification as the source-of-truth for which WMEs enter working memory. Tier 3 keys are excluded from the mandatory WME set because their absence (when LIDA has not broadcast) must not cause an impasse. ISS-001 resolution (SOAR seed rules MUST NOT use lida_broadcast as primary condition) is encoded directly in FR-SOAR-009 by requiring seed rules to cover Tier 1 and Tier 2 attributes only.",
+      "confidence": 0.92,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must define the WME extraction function to treat Tier 3 keys as optional \u2014 present if available, absent if not",
+        "BUILD agent must not write seed rules that require lida_broadcast as a primary match condition",
+        "VERIFY agent should test a dispatch with no lida_broadcast key and confirm no impasse fires"
+      ]
+    },
+    {
+      "id": "RJ-019",
+      "agent": "WHAT",
+      "timestamp": "2026-04-03T08:01:00Z",
+      "type": "decision",
+      "artifact": "spec.md",
+      "section": "First-Match Tie Resolution (FR-SOAR-006)",
+      "reasoning": "The SYNTHESIZER documented a behavioral contradiction (C-001) between the glossary (tie fires impasse) and the mental model (tie resolves to first-match). CARTOGRAPHER resolved this contradiction in favor of first-match (FR-SOAR-006) for three reasons: (1) the mental-model.md description is more contextually appropriate for a context-enrichment overlay where both tied operators are valid enrichments; (2) first-match avoids impasse log noise from ties, which would obscure genuine no-match impasses; (3) user-intent.md explicitly documents this as an intentional deviation from canonical SOAR, not an oversight. The deviation is documented in FR-SOAR-006 with an explicit note so downstream agents and stakeholders are not surprised.",
+      "confidence": 0.9,
+      "evidence_grade": "B",
+      "implications": [
+        "HOW spec must implement DecisionProcedure with first-match semantics for equal-confidence rules",
+        "VERIFY agent must test tie scenarios and confirm no ImpasseEvent is created",
+        "The Glossary entry for Impasse must be updated to reflect that tie-impasse is NOT implemented in this overlay"
+      ]
+    },
+    {
+      "id": "RJ-020",
+      "agent": "WHAT",
+      "timestamp": "2026-04-03T08:02:00Z",
+      "type": "decision",
+      "artifact": "spec.md",
+      "section": "Chunking Default-Disabled (FR-SOAR-007)",
+      "reasoning": "ISS-004 resolution and SYNTHESIZER recommendation (U-003 Option D) both support disabling chunking by default in v1. The TRACKER red flag RF-001 requires that chunking code is fully implemented even if disabled. FR-SOAR-007 encodes this: chunking is controlled by ca_overlays.soar.chunking_enabled (default false in v1), but the code must be functional when the flag is true. This satisfies user-intent.md intent (chunking must ship as implemented code) while managing the U-003 generalization strategy risk. The HOW spec must not defer chunking implementation to v2 \u2014 the code ships in v1, disabled by default.",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "implications": [
+        "BUILD agent must implement ChunkingEngine fully in v1; flag check is a guard, not an absence of implementation",
+        "HOW spec must resolve OQ-005 (generalization strategy) before BUILD begins chunking implementation",
+        "VERIFY agent must test chunking with flag=true in isolation before validating the full run"
+      ]
+    },
+    {
+      "id": "RJ-021",
+      "agent": "WHAT",
+      "timestamp": "2026-04-03T08:03:00Z",
+      "type": "decision",
+      "artifact": "spec.md",
+      "section": "soar_state Hard Cap (FR-SOAR-008)",
+      "reasoning": "ISS-004 resolution established the soar_state hard cap at len(json.dumps(soar_state)) <= 200 characters. FR-CAO-002 is reinterpreted for spec 018 as a 25% net-new token overhead constraint on the six-overlay stack. FR-SOAR-008 enforces the 200-char cap as a local constraint; NFR-SOAR-005 enforces the 25% stack-level constraint. The 200-char cap forces the soar_state payload to include only mandatory fields (operator_applied, impasse, cycle, wme_count) in the capped case, truncating optional fields. This is an observable, testable constraint: the acceptance criterion is a json.dumps length check.",
+      "confidence": 0.93,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must define a truncation algorithm that preserves mandatory fields when payload exceeds 200 chars",
+        "BUILD agent must implement the truncation as a guard in the apply phase, not as post-hoc string slicing",
+        "VERIFY agent must construct a test case where the operator payload exceeds 200 chars and confirm truncation fires correctly"
+      ]
+    },
+    {
+      "id": "RJ-022",
+      "agent": "WHAT",
+      "timestamp": "2026-04-03T08:04:00Z",
+      "type": "decision",
+      "artifact": "spec.md",
+      "section": "ISS-004 Fix Bundling (FR-SOAR-011)",
+      "reasoning": "The actr_buffer.py structural FR-CAO-002 violation (key duplication \u2014 2x duplication of original keys alongside actr_buffers) was identified by INVESTIGATOR and escalated as ISS-004. CARTOGRAPHER bundles the fix as FR-SOAR-011 within spec 018 rather than opening a separate spec because: (1) the fix is a single-function correction with no architectural implications beyond removing duplicate keys; (2) the fix is prerequisite to validating the six-overlay FR-CAO-002 compliance (NFR-SOAR-005); (3) bundling keeps the delivery atomic. The fix is low-risk: the only failure mode is that an existing agent reads duplicate keys, which is itself a bug, not a feature to preserve.",
+      "confidence": 0.87,
+      "evidence_grade": "B",
+      "implications": [
+        "BUILD agent must fix actr_buffer.py in the same delivery as soar_overlay.py \u2014 not deferred",
+        "VERIFY agent must run the six-overlay stack and confirm actr_buffers appears exactly once in the returned context pack",
+        "If any existing agent depends on the duplicate key behavior, that dependency is itself a bug and must be fixed"
+      ]
+    },
+    {
+      "id": "RJ-023",
+      "agent": "WHAT",
+      "timestamp": "2026-04-03T08:05:00Z",
+      "type": "decision",
+      "artifact": "spec.md",
+      "section": "Marketplace Search Result",
+      "reasoning": "CARTOGRAPHER checked knowledge-base/marketplace-index.yaml before writing the spec. The marketplace contains zero entries (schema_version: 1, entries: []). No reusable patterns were available for the SOAR overlay domain. The spec was written from first principles without marketplace cross-referencing. The production rule matching pattern (IF-THEN rules evaluated against a working memory state) is a common cognitive architecture pattern but no validated marketplace entry exists for it in this project context.",
+      "confidence": 0.99,
+      "evidence_grade": "A",
+      "implications": [
+        "The SOAR overlay spec and implementation become candidates for a marketplace entry after BUILD validates the pattern",
+        "ORCHESTRATOR should consider adding a marketplace entry for the production-rule CA overlay pattern after VERIFY completes"
+      ]
+    },
+    {
+      "id": "RJ-024",
+      "agent": "SECURITY",
+      "timestamp": "2026-04-03T00:00:23Z",
+      "type": "security-checklist-fail",
+      "artifact": "threat-model.md",
+      "section": "Minimum Security Checklist \u2014 Check 2: Input Validation at Boundaries",
+      "reasoning": "run_id is used directly in filesystem path construction for soar-procedural-{run_id}.json and soar-impasse-{run_id}.json without sanitization. No format constraint is specified in spec.md, boundaries.md, or any NFR. Path traversal characters (../, /, absolute path prefix) in run_id would resolve to paths outside .specify/squad/. The existing squad-directory naming convention (alphanumeric + hyphens, e.g. test-run-001) is an observed pattern, not an enforced contract. The fix is a _validate_run_id() function (regex ^[a-zA-Z0-9][a-zA-Z0-9\\-]{0,63}$) called at entry to both enrich_context and update_soar_memory.",
+      "confidence": 0.95,
+      "evidence_grade": "B",
+      "implications": [
+        "ARCHITECT must add run_id format constraint to FR-SOAR-002 or as a new NFR before BUILD phase",
+        "BUILD must implement _validate_run_id() as the first statement in both public functions",
+        "COMMANDER exception-handling wrapper already covers ValueError propagation \u2014 no COMMANDER changes required"
+      ]
+    },
+    {
+      "id": "RJ-025",
+      "agent": "SECURITY",
+      "timestamp": "2026-04-03T00:00:24Z",
+      "type": "insight",
+      "artifact": "threat-model.md",
+      "section": "RAR-001: Path Traversal via Unsanitized run_id",
+      "reasoning": "The path traversal risk is classified HIGH impact but LOW probability in the current deployment because COMMANDER is the sole caller and is trusted. The risk is structural: the spec defines no format constraint on run_id, meaning any future caller (test harness, CI script, parallel dispatch extension) inherits the vulnerability without awareness. The mitigation is a trivial regex guard costing approximately 5 lines of code. Residual risk after mitigation is LOW. Autonomous decision: ACCEPT_WITH_MITIGATIONS.",
+      "confidence": 0.92,
+      "evidence_grade": "B",
+      "implications": [
+        "This finding must be listed as a blocking pre-condition for BUILD task assignment",
+        "squad-config.yml should document the run_id format alongside max_wmes and chunking_enabled"
+      ]
+    },
+    {
+      "id": "RJ-026",
+      "agent": "SECURITY",
+      "timestamp": "2026-04-03T00:00:25Z",
+      "type": "insight",
+      "artifact": "threat-model.md",
+      "section": "RAR-002: soar_state and wme_snapshot Data Leakage",
+      "reasoning": "soar_state is injected into context_pack and forwarded to dispatched agents. This is by design (context enrichment), but OQ-006 in spec.md explicitly leaves unresolved whether soar_state[impasse] should be agent-visible. Two leakage vectors: (1) agents reading SOAR procedural memory state could adapt behavior based on impasse flag in potentially undesirable ways; (2) wme_snapshot in ImpasseEvent has no size cap \u2014 up to 50 keys x 200 chars = 10KB per impasse event written to the impasse log. In the current non-PII domain this is an observability concern, not a compliance risk. Residual risk: LOW after mitigation (OQ-006 resolution + 2KB wme_snapshot cap).",
+      "confidence": 0.82,
+      "evidence_grade": "B",
+      "implications": [
+        "SCIENTIST must investigate OQ-006 before HOW spec finalizes the soar_state schema",
+        "HOW spec must specify a wme_snapshot size cap in the ImpasseEvent schema",
+        "Future overlay authors must be warned: if context_pack ever carries sensitive data, wme_snapshot writes will capture it"
+      ]
+    },
+    {
+      "id": "RJ-027",
+      "agent": "SECURITY",
+      "timestamp": "2026-04-03T00:00:26Z",
+      "type": "insight",
+      "artifact": "threat-model.md",
+      "section": "RAR-003: ProceduralMemoryStore Integrity \u2014 No Schema Validation",
+      "reasoning": "soar-procedural-{run_id}.json has no integrity protection: no checksum, no signature, no schema validation on load. Malformed JSON causes a JSONDecodeError (caught by COMMANDER wrapper \u2014 dispatch continues but SOAR enrichment is lost). Schema-valid but adversarial rules (e.g., confidence: 1.0 with always-true conditions) would be silently accepted. AC-4.3 specifies that existing files are loaded without re-seeding, making a tampered seed-rule replacement undetectable. Mitigation: structural schema validation on load (required fields + confidence range check) costs ~30 lines. Cryptographic signing is not warranted for local deployment. Residual risk: LOW after mitigation.",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "implications": [
+        "BUILD must add a validate_procedural_store() function that checks required fields and confidence range before loading rules into the match engine",
+        "Invalid individual rules should be skipped with a logged warning rather than crashing the load",
+        "Post-MVP cross-run persistence feature will require a signing strategy \u2014 document this dependency now"
+      ]
+    },
+    {
+      "id": "RJ-028",
+      "agent": "SECURITY",
+      "timestamp": "2026-04-03T00:00:27Z",
+      "type": "insight",
+      "artifact": "threat-model.md",
+      "section": "RAR-004: Unbounded Rule Accumulation and Potential ReDoS",
+      "reasoning": "Two sub-risks: (1) No max_rules cap is defined for ProceduralMemoryStore. squad-config.yml specifies max_wmes but not max_rules. With chunking enabled and a high dispatch success rate, ChunkRecords accumulate without bound, degrading match performance past the 100ms NFR-SOAR-003 budget. This is a performance DoS, not an infinite loop (single-pass linear scan eliminates cycle risk). (2) OQ-001 is unresolved on condition schema \u2014 if regex matching is selected, crafted WME values could trigger ReDoS via catastrophic backtracking. Mitigation: (1) add max_rules config key with pruning by lowest-confidence ChunkRecord; (2) if OQ-001 resolves to regex, restrict to non-backtracking patterns or impose per-match timeout. Both risks are LOW probability in current deployment (chunking off by default; trusted callers).",
+      "confidence": 0.78,
+      "evidence_grade": "B",
+      "implications": [
+        "ARCHITECT must add max_rules to squad-config.yml before chunking is enabled by default (post-MVP)",
+        "SCIENTIST resolving OQ-001 must notify GUARDIAN if regex-based conditions are selected",
+        "HOW spec must document pruning policy: seed rules are never pruned; lowest-confidence ChunkRecords are pruned first when max_rules is reached"
+      ]
+    }
+  ],
+  "why1_entries": [
+    {
+      "id": "RJ-WHY1-001",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:00Z",
+      "type": "challenge",
+      "subject": "A-003 (context_pack key stability)",
+      "reasoning": "DISCOVER conflates two distinct stability questions: (1) static key stability of five overlay-injected keys (strong evidence \u2014 confirmed by COMMANDER.md code), and (2) dynamic key stability of non-overlay keys injected by COMMANDER pre-overlay-chain (zero evidence \u2014 never investigated). The second question directly determines whether seed rules can target anything beyond the five overlay keys and three base keys. Most critically, LIDA broadcast (`lida_broadcast`) is listed as a 'stable WME attribute' alongside unconditionally-injected keys. COMMANDER.md shows LIDA is a conditional inject (consume-once, bash script, only when lida-payload.json exists). This is a factual error in the DISCOVER artifacts that will propagate into incorrect seed rule design if not corrected.",
+      "confidence": 0.92,
+      "evidence_grade": "A",
+      "evidence_sources": [
+        "COMMANDER.md Pre-Dispatch Sequence (position 3 conditional inject)",
+        "scripts/ca/*.py (glob \u2014 no lida Python overlay found)",
+        "mental-model.md \u00a7WorkingMemory (incorrect 'stable' classification)"
+      ],
+      "verdict": "REFUTED (partially) \u2014 overlay keys 1,2,4,5 are stable; lida_broadcast is NOT stable; non-overlay keys are uninvestigated",
+      "implications": [
+        "ISS-001 raised (CRITICAL)",
+        "U-NEW-002 added to unknowns.md",
+        "SCIENTIST referral added for LIDA frequency measurement"
+      ],
+      "issues_raised": [
+        "ISS-001"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-002",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:01Z",
+      "type": "challenge",
+      "subject": "A-004 (5-10 seed rules sufficient)",
+      "reasoning": "The ACT-R analogy (4 buffer classifications \u2192 4 classification rules) is structurally invalid. ACT-R's 4 classifications are exhaustive \u2014 every key fits one of 4 buffers (declarative, procedural, goal, imaginal). This is a closed, universal classification with no impasse possible. SOAR's seed rules must match specific WME combinations \u2014 production rules with non-matching conditions produce impasse, not a classification. With 42 distinct agent_type values in the agents/ directory, agent_type-specific seed rules would require 42 rules just for agent_type discrimination alone. If rules are written as agent_type-general (matching on overlay key presence only), they add limited enrichment specificity. The 5-10 estimate appears to be an intuitive guess without any derivation from the actual WME combination space.",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "evidence_sources": [
+        "assumptions.md A-004 (analogy basis explicitly stated)",
+        "scripts/ca/actr_buffer.py (confirms 4 buffers are exhaustive classification)",
+        "agents/ directory (42 agent files by prior context)"
+      ],
+      "verdict": "REFUTED \u2014 the estimate is likely 2-4x too low; empirical enumeration required before WHAT",
+      "implications": [
+        "ISS-002 raised (CRITICAL)",
+        "U-NEW-001 added to unknowns.md",
+        "SCIENTIST referral added for WME-combination-space enumeration"
+      ],
+      "issues_raised": [
+        "ISS-002"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-003",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:02Z",
+      "type": "design-decision",
+      "subject": "C-001 (tie \u2192 first-match vs. tie \u2192 impasse)",
+      "reasoning": "First-match is unambiguously correct for this use case. The canonical SOAR tie-impasse mechanism exists to trigger substate creation, which allows higher-level deliberation to resolve the tie. Without substate creation (explicitly out of scope for spec 018), a tie-impasse produces a no-match result \u2014 DefaultOperator fires \u2014 which is strictly worse than first-match for context enrichment (one valid enrichment injected vs. no enrichment injected). The two tied operators both produce valid enrichments; arbitrarily picking the first one is not a degradation \u2014 it is a correct enrichment with arbitrary but bounded operator selection. The glossary's implication of tie \u2192 impasse appears to be inherited from canonical SOAR documentation without adaptation to the no-substate design. Resolution: first-match is correct; `'tie'` ImpasseEvent type should be removed from v1 design or retained as 'defined but never fired' with explicit documentation.",
+      "confidence": 0.9,
+      "evidence_grade": "B",
+      "evidence_sources": [
+        "glossary.md \u00a7Preference (canonical SOAR reference)",
+        "mental-model.md \u00a7DecisionProcedure (first-match behavior)",
+        "boundaries.md \u00a7Out-of-scope (substates not implemented)",
+        "contradictions-and-gaps.md C-001"
+      ],
+      "verdict": "RESOLVED \u2014 first-match is correct; must be documented as intentional deviation in WHAT",
+      "implications": [
+        "ISS-003 raised (HIGH \u2014 severity upgrade from R-009 LOW)",
+        "C-002 resolved as non-issue following C-001 resolution"
+      ],
+      "issues_raised": [
+        "ISS-003"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-004",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:03Z",
+      "type": "risk-reclassification",
+      "subject": "R-001 (retroactive U-CA-004 validity)",
+      "reasoning": "R-001 does NOT block spec 018 BUILD. The P-006 human override (2026-04-03) authorized overlay implementation despite a NEGATIVE U-CA-004 result (Cohen's d = 0.40). The same override implicitly covers spec 018 as the sixth overlay \u2014 the user consciously chose to build the overlay ecosystem without empirical AQS validation. R-001 is a DISCLOSURE obligation: spec 018 must prominently state that the SOAR overlay's AQS impact is unmeasured and the decision is based on architectural reasoning only. The more fundamental question is A-012 (value proposition) \u2014 if the user has no hypothesis for what SOAR's operator labels add to agent behavior, R-001's measurement would test an undefined improvement. A-012 must be answered before U-CA-004 measurement is even meaningful.",
+      "confidence": 0.85,
+      "evidence_grade": "B",
+      "evidence_sources": [
+        "COMMANDER.md (integration reference, P-006 override statement)",
+        "risks.md R-001",
+        "assumptions.md A-012"
+      ],
+      "verdict": "Does not block BUILD; is a DISCLOSURE requirement before COMPLETE; A-012 must be resolved first by user",
+      "implications": [
+        "ISS-005 raised (HIGH) for A-012 promotion to CRITICAL"
+      ],
+      "issues_raised": [
+        "ISS-005"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-005",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:04Z",
+      "type": "risk-reclassification",
+      "subject": "R-002 (6-overlay token budget) \u2014 CAN-DEFER misclassification",
+      "reasoning": "FR-CAO-002 is a hard architectural constraint, not a quality-of-life concern. The interaction between actr_buffer.py's position-2 eviction policy (which fires against the original pre-overlay context_pack token count) and the cumulative 6-overlay enrichment creates a system-level compliance question. Each overlay individually claims FR-CAO-002 compliance by measuring against its own input context_pack. But the DISPATCHED AGENT receives the fully-enriched 6-overlay context_pack. If this final pack exceeds the original pre-overlay token count, FR-CAO-002 is violated at system level regardless of each overlay's individual compliance. This is a new finding not present in any DISCOVER artifact. The HOW spec cannot set the soar_state payload size cap without knowing how much token headroom remains after the 5-overlay stack. SCIENTIST measurement is required before HOW.",
+      "confidence": 0.87,
+      "evidence_grade": "A",
+      "evidence_sources": [
+        "scripts/ca/actr_buffer.py (eviction policy implementation \u2014 position 2, measures against original_tokens)",
+        "COMMANDER.md Pre-Dispatch Sequence (all 5 overlays run before SOAR)",
+        "boundaries.md \u00a7FR-CAO-002 reference",
+        "risks.md R-002 (CAN-DEFER classification)"
+      ],
+      "verdict": "Misclassified \u2014 promote to SHOULD-RESOLVE-BEFORE-HOW; SCIENTIST measurement required",
+      "implications": [
+        "ISS-004 raised (HIGH)",
+        "U-008 reclassified in unknowns.md from Tier 3 to Tier 2"
+      ],
+      "issues_raised": [
+        "ISS-004"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-006",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:05Z",
+      "type": "validation",
+      "subject": "Chunking default-disabled recommendation",
+      "reasoning": "The SYNTHESIZER recommendation to disable chunking in v1 (unknowns.md U-003 \u00a7SYNTHESIZER recommendation) is correct. WHY1 adds three additional arguments beyond SYNTHESIZER's reasoning: (1) ChunkingEngine has a runtime soft-dependency on spec 017's episodic-index file; disabling chunking eliminates this cross-spec deployment dependency. (2) U-006 (success criterion) is unresolved; learning from dispatches that are not BLOCKED but produce low-quality output is worse than not learning at all; disabling chunking avoids learning-from-bad-examples risk. (3) The MSA cycle alone is a significant implementation surface; adding ChunkingEngine in v1 doubles the surface without validated value. Disabling in v1 follows incremental delivery principles. One contradiction: boundaries.md lists chunking_enabled: true as the default, which contradicts the recommendation. HOW spec must override this explicitly.",
+      "confidence": 0.9,
+      "evidence_grade": "B",
+      "evidence_sources": [
+        "unknowns.md U-003 \u00a7SYNTHESIZER recommendation",
+        "scripts/ca/episodic_memory.py (confirms episodic-index file format)",
+        "boundaries.md \u00a7squad-config.yml (chunking_enabled: true default)",
+        "risks.md R-004 (SOAR chunking generalization risk)"
+      ],
+      "verdict": "VALIDATED \u2014 chunking should be disabled by default in v1; boundaries.md default must be corrected in HOW spec",
+      "implications": [
+        "ISS-006 raised (MEDIUM \u2014 config default contradiction)"
+      ],
+      "issues_raised": [
+        "ISS-006"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-007",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:06Z",
+      "type": "domain-model-finding",
+      "subject": "DM-003/DM-006 \u2014 LIDA as unreliable WME attribute (structural finding)",
+      "reasoning": "The LIDA overlay is architecturally different from all other overlays: it is a bash script with consume-once file semantics, not a Python module with unconditional injection. No Python lida overlay file exists at scripts/ca/. The mental-model.md and boundaries.md list lida_broadcast alongside the four reliably-injected keys without acknowledging this fundamental difference. This is not a minor documentation defect \u2014 it is a structural misclassification that will cause seed rule design errors if WHAT does not know that lida_broadcast is conditionally present.",
+      "confidence": 0.95,
+      "evidence_grade": "A",
+      "evidence_sources": [
+        "COMMANDER.md Pre-Dispatch Sequence (position 3 conditional logic)",
+        "Glob search: scripts/ca/lida*.py \u2014 no files found",
+        "mental-model.md \u00a7WorkingMemory \u00a7Known stable WME attributes (incorrect classification)"
+      ],
+      "verdict": "CRITICAL structural finding \u2014 lida_broadcast is CONDITIONALLY-PRESENT, not STABLE",
+      "implications": [
+        "ISS-001 (CRITICAL) \u2014 confirms severity",
+        "DM-003 and DM-006 in assumption-review.md"
+      ],
+      "issues_raised": []
+    },
+    {
+      "id": "RJ-WHY1-008",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:07Z",
+      "type": "domain-model-finding",
+      "subject": "DM-004 \u2014 Single-root WME id model",
+      "reasoning": "The glossary defines all WMEs as having id: 'state-<run_id>'. This means all WMEs share the same object identifier. In canonical SOAR, different symbolic objects have different identifiers \u2014 the id field discriminates which object an attribute belongs to. In Echelon's flat-dict model (context_pack \u2192 WMEs), all attributes belong to one root object. This means conditions cannot use the id field as a discriminator; all conditions must rely on attr and value only. This constraint is architecturally implicit but nowhere stated as a requirement in DISCOVER artifacts. It must appear explicitly in the HOW spec condition schema definition.",
+      "confidence": 0.88,
+      "evidence_grade": "A",
+      "evidence_sources": [
+        "glossary.md \u00a7WME (id always 'state-<run_id>')",
+        "glossary.md \u00a7WME Extraction Rule (each context_pack key \u2192 one WME with same id)"
+      ],
+      "verdict": "MEDIUM finding \u2014 adds a constraint that must be explicit in HOW spec condition schema",
+      "implications": [
+        "ISS-008 raised (MEDIUM)"
+      ],
+      "issues_raised": [
+        "ISS-008"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-009",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:08Z",
+      "type": "domain-model-finding",
+      "subject": "DM-002 \u2014 episodic_memory.enrich_context 3-parameter variant",
+      "reasoning": "All four Python CA overlays confirm the 2-parameter enrich_context signature: goal_stack.py, actr_buffer.py, gwt_workspace.py each have enrich_context(context_pack, run_id). However, episodic_memory.py has enrich_context(context_pack, run_id, agent_type). This is an accepted v1 variance \u2014 COMMANDER.md's integration reference shows the 3-parameter call at position 5. SOAR will be at position 6 and does not need agent_type (WME extraction derives entirely from context_pack dict). The HOW spec must confirm the 2-parameter signature explicitly so COMMANDER's position-6 amendment is unambiguous.",
+      "confidence": 0.92,
+      "evidence_grade": "A",
+      "evidence_sources": [
+        "scripts/ca/goal_stack.py (2 params)",
+        "scripts/ca/actr_buffer.py (2 params)",
+        "scripts/ca/gwt_workspace.py (2 params)",
+        "scripts/ca/episodic_memory.py (3 params)",
+        "COMMANDER.md integration reference (position 5 shows 3-param call)"
+      ],
+      "verdict": "MEDIUM finding \u2014 HOW spec must confirm 2-parameter signature; no architectural issue with having 2 params",
+      "implications": [
+        "ISS-007 raised (MEDIUM)"
+      ],
+      "issues_raised": [
+        "ISS-007"
+      ]
+    },
+    {
+      "id": "RJ-WHY1-010",
+      "agent": "SAGE",
+      "mode": "assumption-challenge (WHY1)",
+      "timestamp": "2026-04-03T00:02:09Z",
+      "type": "summary",
+      "subject": "WHY1 overall verdict and pass/fail assessment",
+      "reasoning": "WHY1 overall verdict: FAIL. The core MSA cycle design (glossary.md, mental-model.md) is architecturally coherent and correctly models SOAR's domain invariants. FR-CAO-006 compliance is confirmed. ADR-005 interface is confirmed. The FAIL verdict is driven by: (1) ISS-001 (CRITICAL \u2014 LIDA misclassified as stable WME attribute), (2) ISS-002 (CRITICAL \u2014 agent-specific key variance not investigated), (3) ISS-003 (HIGH \u2014 tie behavior decision blocks HOW), (4) ISS-004 (HIGH \u2014 token budget misclassified), (5) ISS-005 (HIGH \u2014 value proposition assumption not answered by user). The FAIL does not invalidate the spec design \u2014 it identifies specific investigation requirements (SCIENTIST) and user decisions (A-012, C-001) that must be completed before WHAT can produce valid functional requirements. The spec 018 design is architecturally sound; the preparation artifacts are incomplete.",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "evidence_sources": [
+        "All staging artifacts",
+        "COMMANDER.md",
+        "scripts/ca/*.py"
+      ],
+      "verdict": "FAIL \u2014 2 CRITICAL issues, 3 HIGH issues require resolution before WHAT",
+      "pass_fail_analysis": {
+        "unvalidated_critical_assumptions_with_no_plan": true,
+        "logical_contradictions": true,
+        "ambiguous_glossary_terms": false,
+        "low_confidence_driving_high_impact": false,
+        "overall_verdict": "FAIL"
+      },
+      "issues_raised": [],
+      "next_actions": [
+        "SCIENTIST: enumerate pre-overlay context_pack keys for 3+ agent types (U-NEW-001, ISS-002)",
+        "SCIENTIST: measure LIDA broadcast injection frequency (U-NEW-002, ISS-001)",
+        "SCIENTIST: measure 6-overlay token delta on 3 representative context_packs (U-008, ISS-004)",
+        "User: state value hypothesis for spec 018 \u2014 what specific agent behavior improvement does soar_state provide? (A-012, ISS-005)",
+        "WHAT: document first-match as intentional tie deviation with rationale (C-001, ISS-003)",
+        "HOW: override chunking_enabled default to false in squad-config.yml (ISS-006)",
+        "HOW: confirm 2-parameter enrich_context signature (ISS-007)",
+        "HOW: add constraint 'conditions must not use id field as discriminator' (ISS-008)"
+      ]
+    }
+  ],
+  "synthesis_entries": [
+    {
+      "id": "RJ-S-001",
+      "agent": "SYNTHESIZER",
+      "timestamp": "2026-04-03T00:01:00Z",
+      "type": "synthesis",
+      "sources_merged": [
+        "glossary.md (SCOUT/DISCOVER)",
+        "mental-model.md (SCOUT/DISCOVER)",
+        "boundaries.md (SCOUT/DISCOVER)",
+        "assumptions.md (SCOUT/DISCOVER)",
+        "unknowns.md (SCOUT/DISCOVER)",
+        "reference-architectures.md (SCOUT/DISCOVER)",
+        "reasoning-journal.json (SCOUT/DISCOVER)"
+      ],
+      "contradictions_found": 3,
+      "gaps_found": 7,
+      "suspicious_findings": 3,
+      "patterns_found": 4,
+      "typos_found": 1,
+      "outputs_produced": [
+        "glossary.md (unified \u2014 overloaded term resolution for State/Chunk/Operator/Memory/Goal)",
+        "mental-model.md (unified \u2014 FR-CAO-006 compliance verification table added)",
+        "boundaries.md (unified \u2014 boundary gaps section added)",
+        "assumptions.md (unified \u2014 deduplicated; A-011, A-012 synthesizer-added)",
+        "unknowns.md (unified \u2014 prioritized; U-008, U-009, U-010 synthesizer-added; U-001/U-002/U-003 investigation questions synthesized)",
+        "contradictions-and-gaps.md (NEW)",
+        "risks.md (NEW)"
+      ],
+      "reasoning": "Seven DISCOVER documents were cross-referenced. Sources are internally consistent on the core design: stdlib-only Python-native SOAR approximation, ADR-005 uniform interface, FR-CAO-006 read-only constraint. Three contradictions were found: (C-001) tie-impasse behavior inconsistency between glossary and mental model; (C-002) ImpasseEvent type set incomplete in boundaries.md; (C-003) apparent contradiction resolved as non-contradiction (chunking timing is consistently post-dispatch across all sources). Seven gaps were found: missing WME pattern schema candidate (G-001), undefined chunk confidence increment formula (G-002), no COMMANDER.md amendment drafted (G-003), DefaultOperator payload undefined (G-004), EpisodicIndex schema not described (G-005), no seed rules provided (G-006), squad-config.yml soar section not drafted (G-007). The highest-priority synthesis finding is the U-001/U-002/U-003 dependency cluster: these three unknowns all derive from the absence of dependency tracing and must be resolved in order (U-002 first, then U-001, then U-003). The retroactive U-CA-004 validity concern (R-001) is the highest-severity risk and requires a user decision before spec 018 is marked COMPLETE.",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "key_findings": [
+        "FR-CAO-006 compliance CONFIRMED: Match-Select-Apply cycle writes only to context_pack['soar_state'] and SOAR-owned files \u2014 no COMMANDER state touched",
+        "Five overloaded terms (State/Chunk/Operator/Memory/Goal) resolved with explicit qualification rules \u2014 all downstream artifacts must apply these rules",
+        "U-001/U-002/U-003 form a dependency cluster rooted in the absence of dependency tracing \u2014 U-002 is the gateway unknown that must be resolved first",
+        "R-001 (retroactive U-CA-004) requires user decision \u2014 adding a 6th overlay without a controlled experiment leaves AQS impact unmeasured",
+        "R-002 (token budget for 6-overlay stack) requires SCIENTIST measurement before HOW \u2014 FR-CAO-002 compliance of full stack is unverified",
+        "Tie-impasse behavioral deviation (C-001) should be documented as intentional deviation from canonical SOAR in HOW spec",
+        "Chunking should default to DISABLED (chunking_enabled: false) in v1 to decouple chunking risk from MSA cycle delivery"
+      ]
+    }
+  ],
+  "intent_entries": [
+    {
+      "id": "RJ-INTENT-001",
+      "agent": "TRACKER",
+      "timestamp": "2026-04-03T00:02:00Z",
+      "type": "intent_check",
+      "artifact": "user-intent.md",
+      "section": "Explicit Statements capture",
+      "reasoning": "User's original request was: 'SOAR would be a natural 6th overlay (production rules, working memory, chunking). Want me to spec and build it as an addition? Yes specify with full new echelon.' Three explicit statements extracted: (1) SOAR is the 6th overlay, (2) the three mechanisms are production rules, working memory, chunking, (3) full echelon pipeline is requested. The word 'natural' signals the user expects the pattern to follow existing overlays without novel architectural decisions about the interface or integration approach.",
+      "confidence": 0.97,
+      "evidence_grade": "A",
+      "implications": [
+        "All three mechanisms (production rules, working memory, chunking) must ship as implemented code, not as stubs or v2 placeholders",
+        "ADR-005 uniform interface is non-negotiable \u2014 user's 'natural 6th overlay' framing implies the existing pattern",
+        "Full echelon pipeline run is required \u2014 no shortcutting WHAT or HOW phases"
+      ]
+    },
+    {
+      "id": "RJ-INTENT-002",
+      "agent": "TRACKER",
+      "timestamp": "2026-04-03T00:02:01Z",
+      "type": "intent_check",
+      "artifact": "user-intent.md",
+      "section": "RF-001 Red Flag \u2014 chunking implementation risk",
+      "reasoning": "The SYNTHESIZER recommends disabling chunking by default (chunking_enabled: false) as a risk mitigation for R-004 (noisy generalization). However, the user explicitly named 'chunking' as one of three required mechanisms. TRACKER ruling: the code implementing chunking MUST ship in v1. The default configuration may disable it as a safety valve, but the mechanism must be fully implemented. If the BUILD agent delivers chunking as an empty stub or 'future work' item, this is an intent violation that GATEKEEPER must block.",
+      "confidence": 0.95,
+      "evidence_grade": "A",
+      "implications": [
+        "WHAT spec must include chunking as a functional requirement with acceptance criteria",
+        "HOW spec may recommend chunking_enabled: false as default but must specify the full implementation",
+        "BUILD agent must implement ChunkingEngine and ChunkRecord \u2014 not stub them",
+        "GATEKEEPER must verify chunking code exists before marking spec 018 complete"
+      ]
+    },
+    {
+      "id": "RJ-INTENT-003",
+      "agent": "TRACKER",
+      "timestamp": "2026-04-03T00:02:02Z",
+      "type": "intent_check",
+      "artifact": "user-intent.md",
+      "section": "RF-002 Red Flag \u2014 COMMANDER.md integration gap",
+      "reasoning": "The user's intent 'add it as an addition' implies the overlay will be wired and callable, not just a standalone Python module. Position-6 in the COMMANDER pre-dispatch sequence is the integration point. Gap G-003 (no COMMANDER.md amendment drafted) is an intent risk: if the amendment is deferred, the overlay is built but never called. TRACKER ruling: COMMANDER.md amendment must be produced before BUILD is marked complete. SCIENTIST must confirm position-6 availability before HOW is finalized.",
+      "confidence": 0.92,
+      "evidence_grade": "B",
+      "implications": [
+        "SCIENTIST must read COMMANDER.md and confirm position-6 slot is available",
+        "HOW spec must include COMMANDER.md amendment as a required deliverable",
+        "BUILD agent must apply the COMMANDER.md amendment, not leave it as a gap",
+        "VERIFY must confirm the overlay is called by COMMANDER in at least one test dispatch"
+      ]
+    },
+    {
+      "id": "RJ-INTENT-004",
+      "agent": "TRACKER",
+      "timestamp": "2026-04-03T00:02:03Z",
+      "type": "intent_check",
+      "artifact": "user-intent.md",
+      "section": "RF-003 Red Flag \u2014 labeling deviation risk",
+      "reasoning": "U-010 raises whether 'SOAR overlay' is a semantically legitimate label given the absence of substates and full preference calculus. The squad may be tempted to rename it 'SOAR-inspired overlay' or add disclaimers. TRACKER ruling: the user said 'SOAR overlay.' That is the deliverable name. Internal documentation may note deviations from canonical SOAR; the public-facing capability name must not be changed without explicit user instruction. Renaming without asking is an intent violation.",
+      "confidence": 0.9,
+      "evidence_grade": "A",
+      "implications": [
+        "The module is named soar_overlay.py \u2014 not soar_inspired_overlay.py",
+        "Documentation may note canonical deviations internally; the capability label stays 'SOAR overlay'",
+        "If the squad believes renaming is warranted, it must escalate to the user before changing the name"
+      ]
+    },
+    {
+      "id": "RJ-INTENT-005",
+      "agent": "TRACKER",
+      "timestamp": "2026-04-03T00:02:04Z",
+      "type": "intent_check",
+      "artifact": "user-intent.md",
+      "section": "R-001 AQS experiment \u2014 intent scope ruling",
+      "reasoning": "R-001 (retroactive U-CA-004 validity concern) is flagged as requiring a user decision before spec 018 is marked COMPLETE. TRACKER ruling: R-001 is a legitimate risk that should be surfaced to the user, but it must NOT block BUILD or VERIFY. The user said 'specify with full new echelon' \u2014 that means execute the full pipeline. The AQS experiment is a post-build concern. Raise R-001 as a decision point at the end of the VERIFY phase; do not gate any prior phase on it.",
+      "confidence": 0.88,
+      "evidence_grade": "B",
+      "implications": [
+        "R-001 should be noted in the spec 018 constitution as an open decision",
+        "BUILD and VERIFY must not be gated on R-001 resolution",
+        "MANAGER should surface R-001 to the user after VERIFY completes"
+      ]
+    }
+  ],
+  "why2_entries": [
+    {
+      "id": "RJ-WHY2-001",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:00:00Z",
+      "type": "validation-run",
+      "artifact": "spec.md",
+      "section": "Understanding CLI validation — quality gates",
+      "reasoning": "Ran `understanding .specify/specs/018-soar-overlay/spec.md --validate` (34-metric enhanced mode). Overall: 64.41% (FAIL, threshold 70%). Structure: 46.69% (FAIL, threshold 70%). Testability: 59.89% (FAIL, threshold 70%). Semantic: 70.88% (PASS). Cognitive: 69.49% (PASS). Readability: 65.79% (PASS). Tool issued warning: 'No requirements found in spec.md. Looking for patterns like: - **FR-001**: Requirement text'. This confirms ISS-015: the table-format FRs are not parseable by Understanding's NLP parser. The Structure gate failure is primarily a format mismatch, not a substantive structural defect. The Testability gate failure reflects both format parsing gaps and genuinely untestable ACs (OQ-001, OQ-004, OQ-007 still open).",
+      "confidence": 0.95,
+      "evidence_grade": "A",
+      "tool": "understanding CLI (34-metric enhanced mode)",
+      "scores": {
+        "overall": 0.6441,
+        "structure": 0.4669,
+        "testability": 0.5989,
+        "semantic": 0.7088,
+        "cognitive": 0.6949,
+        "readability": 0.6579,
+        "behavioral": 0.6921,
+        "depth": 0.7258
+      },
+      "gate_results": {
+        "overall_pass": false,
+        "structure_pass": false,
+        "testability_pass": false,
+        "semantic_pass": true,
+        "cognitive_pass": true,
+        "readability_pass": true
+      },
+      "implications": [
+        "Spec 018 does NOT pass quality gates — HOW is blocked",
+        "Primary fix levers: resolve OQ-004 (testability), resolve OQ-001 (testability), fix FR format (structure)",
+        "ISS-009 through ISS-017 raised as WHY2 findings"
+      ],
+      "issues_raised": [
+        "ISS-009", "ISS-010", "ISS-011", "ISS-012", "ISS-013", "ISS-014", "ISS-015", "ISS-016", "ISS-017"
+      ]
+    },
+    {
+      "id": "RJ-WHY2-002",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:01:00Z",
+      "type": "finding",
+      "artifact": "spec.md",
+      "section": "FR-SOAR-003 — working memory construction testability",
+      "reasoning": "FR-SOAR-003 states working memory is constructed from Tier 1 + Tier 2 keys. The exact test for this requirement would be: inject a context_pack with Tier 1, Tier 2, and Tier 3 keys, call enrich_context, assert that the internal WME set contains exactly the Tier 1 + Tier 2 keys. However, this test cannot be written for three reasons: (1) the WME condition pattern schema (OQ-001) is unresolved — without knowing how conditions match WMEs, no test can verify the WME set was used correctly in matching; (2) there is no AC that directly tests working memory construction — ACs 1.1-1.5 test the enriched context_pack output, not the WME set; (3) the spec does not state whether Tier 3 keys are included when present or always excluded. This is ISS-009.",
+      "confidence": 0.93,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must add an AC that directly tests WME construction",
+        "HOW spec must state Tier 3 key handling (include-when-present or always-exclude)",
+        "OQ-001 must be resolved before any rule-matching AC can be executed"
+      ],
+      "issues_raised": ["ISS-009"]
+    },
+    {
+      "id": "RJ-WHY2-003",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:02:00Z",
+      "type": "finding",
+      "artifact": "spec.md",
+      "section": "FR-SOAR-007 — chunking_enabled key path and fallback behavior",
+      "reasoning": "FR-SOAR-007 states the key is `ca_overlays.soar.chunking_enabled` with default `false` in v1. boundaries.md listed `default: true` (now overridden). AC-3.4 correctly references the key path. The gap is not the key path but the fallback behavior: the spec does not state what happens when `squad-config.yml` has no `ca_overlays.soar` section. An implementer must choose between: (a) crash with KeyError, (b) warn and default to false, (c) silently default to false. The boundaries.md note that 'the overlay falls back to hardcoded defaults if section absent' implies option (c) but this is not in spec.md. ISS-010 captures this gap. Recommendation: option (c) — silent default to false — because it is the safest behavior for a non-critical enrichment overlay.",
+      "confidence": 0.90,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must state fallback behavior explicitly: silent default to false when key absent",
+        "BUILD must implement this as the first config-read in soar_overlay.py"
+      ],
+      "issues_raised": ["ISS-010"]
+    },
+    {
+      "id": "RJ-WHY2-004",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:03:00Z",
+      "type": "finding",
+      "artifact": "spec.md",
+      "section": "FR-SOAR-008 — soar_state 200-char cap truncation algorithm",
+      "reasoning": "FR-SOAR-008's 200-char cap is testable via AC-1.1 (len(json.dumps(soar_state)) <= 200). But the truncation algorithm has three gaps for the implementer: (1) 'mandatory fields only' does not specify per-field length limits — a long operator_applied name could itself exceed 200 chars even with only 4 fields; (2) the truncation trigger is not specified (before or after payload construction, before or after json.dumps check); (3) there is no AC for the truncation path specifically. The SCIENTIST investigation (RJ-016) specified the minimal soar_state as operator + matched_rules (top-1) + wmes (top-3) + impasse, but this is investigation output, not a spec requirement. ISS-011 captures all three gaps.",
+      "confidence": 0.91,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must define per-field length limits and truncation sequence",
+        "HOW spec must add an AC for the truncation code path",
+        "BUILD must not implement truncation as string slicing of json.dumps output — dict reconstruction is required"
+      ],
+      "issues_raised": ["ISS-011"]
+    },
+    {
+      "id": "RJ-WHY2-005",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:04:00Z",
+      "type": "finding",
+      "artifact": "spec.md",
+      "section": "FR-SOAR-011 — actr_buffer original keys not enumerated",
+      "reasoning": "FR-SOAR-011 states 'original pre-overlay keys that are subsumed by actr_buffers are removed.' AC-5.2 says the returned pack 'does NOT contain the original pre-overlay keys that have been replaced by actr_buffers.' Neither the FR nor the AC names a single specific key. A BUILD agent implementing this cannot know which keys to remove. The investigation (iss004-token-budget.md) showed that actr_buffer restructures ALL source keys into declarative, procedural, goal, and imaginal buffers — but 'all source keys' is still not enumerated. The question of whether run_id, spec_id, and agent_type are also removed (or retained as non-subsumed keys) is unanswered. This is ISS-012.",
+      "confidence": 0.94,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must enumerate the specific keys removed or state the rule (all keys that appear in any buffer sub-list are removed)",
+        "AC-5.2 must include concrete key examples in its Given clause",
+        "VERIFY agent must construct a specific key-set test fixture — cannot test with 'the original pre-overlay keys' as an abstract reference"
+      ],
+      "issues_raised": ["ISS-012"]
+    },
+    {
+      "id": "RJ-WHY2-006",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:05:00Z",
+      "type": "finding",
+      "artifact": "spec.md",
+      "section": "User story traceability — Scenario 5 to FR-SOAR-011",
+      "reasoning": "All six user stories were checked for FR traceability. Scenarios 1-4 and 6 have multi-FR coverage. Scenario 5 (ACT-R de-duplication) traces to FR-SOAR-011 only. The single FR covers the output contract (no duplicate keys) but not the implementation mechanism (remove original keys from actr_buffer.py's return). A VERIFY agent checking FR-SOAR-011 implementation completeness will verify the output contract but may not verify that the underlying actr_buffer.py code was changed — because the FR does not state 'modify actr_buffer.py enrich_context to not include original keys.' This is ISS-013. All other traceability paths are clear.",
+      "confidence": 0.88,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec should strengthen FR-SOAR-011 with an implementation mechanism statement",
+        "VERIFY plan must include explicit actr_buffer.py code review alongside output contract check"
+      ],
+      "issues_raised": ["ISS-013"]
+    },
+    {
+      "id": "RJ-WHY2-007",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:06:00Z",
+      "type": "finding",
+      "artifact": "spec.md",
+      "section": "Modal language scan — should vs must/shall",
+      "reasoning": "Scanned all FRs, NFRs, and ACs for weak modal language. Found: FR-SOAR-003 does not state the overlay's behavior when Tier 3 (lida_broadcast) IS present — a behavior gap, not just a modal issue. FR-SOAR-009's 'provided by COMMANDER' is a scope ambiguity — seed rules are developer-authored in soar_overlay.py, not COMMANDER-injected. MVP Success Criteria uses 'successfully matches' without definition. NFR-SOAR-004 is correctly worded ('must not propagate'). No bare 'should' was found in any FR or NFR — the spec correctly uses 'must' throughout. The modal issues are in the behavioral gaps and scope ambiguity (ISS-014), not in the modal verbs themselves.",
+      "confidence": 0.91,
+      "evidence_grade": "A",
+      "implications": [
+        "HOW spec must clarify FR-SOAR-003 Tier 3 key behavior when present",
+        "FR-SOAR-009 must clarify that seed rules are developer-authored, not COMMANDER-injected at runtime",
+        "MVP Success Criteria must define 'successfully matches' by reference to FR-SOAR-004"
+      ],
+      "issues_raised": ["ISS-014"]
+    },
+    {
+      "id": "RJ-WHY2-008",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:07:00Z",
+      "type": "quality-gate-analysis",
+      "artifact": "quality-gates.md",
+      "section": "Gate failure root causes and recommended fix sequence",
+      "reasoning": "Three gates failed: Overall (64.41%), Structure (46.69%), Testability (59.89%). Structure failure is primarily a tooling format mismatch (table FRs vs bold-label expected pattern) — estimated real structural quality 65-72% by manual review. Testability failure is both format-driven (parser sees no requirements to score) and genuine (6 of 22 ACs are untestable due to OQ-001, OQ-004, OQ-007, and undefined 'original keys'). If OQ-004 is resolved (low effort, user decision) and FRs are reformatted (medium effort), both gates would likely pass on re-validation. The Overall gate follows the Structure and Testability averages — fixing both failing gates is sufficient to raise Overall above 70%. Estimated post-fix scores: Structure ~68-72%, Testability ~72-75%, Overall ~68-70%.",
+      "confidence": 0.82,
+      "evidence_grade": "B",
+      "implications": [
+        "Minimum fix set for gate passage: resolve OQ-004 + reformat FRs to canonical format",
+        "Full fix set: resolve OQ-001, OQ-004, OQ-007, enumerate original keys in FR-SOAR-011, reformat FRs",
+        "Re-run `understanding .specify/specs/018-soar-overlay/spec.md --validate` after each fix to track gate progress"
+      ]
+    },
+    {
+      "id": "RJ-WHY2-009",
+      "agent": "SAGE",
+      "mode": "spec-validation (WHY2)",
+      "timestamp": "2026-04-03T14:08:00Z",
+      "type": "verdict",
+      "artifact": "spec.md",
+      "section": "WHY2 overall verdict",
+      "reasoning": "Spec 018 fails quality gates (3 of 6 failed). The spec is substantively well-developed: WHY1 investigations resolved the most critical blockers (ISS-001, ISS-002, ISS-004), FR-SOAR-006 documents the tie behavior deviation, FR-SOAR-008 encodes the 200-char cap, and the FR/NFR/AC organization is clear. The failures are: (1) seven open questions (OQ-001 through OQ-007) remain in the final spec, making six ACs untestable — this is the primary quality issue; (2) FR format does not match Understanding's parser expectations, inflating Structure gate failure; (3) three FRs have behavioral gaps that would produce implementation ambiguity (ISS-009, ISS-010, ISS-014). HOW is blocked by ISS-009, ISS-016, ISS-017 (OQ-001, OQ-004, OQ-007 unresolved). BUILD is blocked by ISS-010, ISS-011, ISS-012. VERIFY is blocked by ISS-013. ISS-005 (value proposition) remains the meta-question that should be answered before VERIFY declares the overlay complete.",
+      "confidence": 0.93,
+      "evidence_grade": "A",
+      "gate_verdict": "FAILED",
+      "blocking_issues": ["ISS-009", "ISS-010", "ISS-011", "ISS-012", "ISS-013", "ISS-016", "ISS-017"],
+      "non_blocking_issues": ["ISS-005", "ISS-007", "ISS-008", "ISS-014", "ISS-015"],
+      "implications": [
+        "COMMANDER must not route to HOW until OQ-001, OQ-004, OQ-007 are resolved",
+        "COMMANDER must route ISS-010, ISS-011, ISS-012 to HOW agent for resolution during HOW spec writing",
+        "COMMANDER must route ISS-013 to HOW agent to strengthen FR-SOAR-011",
+        "COMMANDER must route ISS-015 (FR format) to WHAT agent for reformatting",
+        "COMMANDER must surface ISS-005 to user before VERIFY"
+      ]
+    }
+  ]
+}
