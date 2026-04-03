@@ -131,3 +131,14 @@ The AQS rubric (completeness, consistency, specificity, actionability, innovatio
 The user-stated target for first-pass schema compliance rate is ≥0.70. The pre-registered patent-grade threshold (≥0.80 = PASS per ns003-experiment-design.md) remains the filing prerequisite. FPCR in [0.70, 0.80) is classified as PROTOTYPE_VIABLE — sufficient for implementation, insufficient for patent filing. No agent may use this distinction to block build-phase execution.
 
 *Constitution version 1.1.0 — amended 2026-04-03 by human instruction (spec 017 authorization message).*
+
+---
+
+## X. P-006 Override — Build Authorization (Amendment 2)
+
+**P-023 [HUMAN-DEFINED, AMENDMENT 2026-04-03]: The five CA overlays are authorized for implementation despite NEGATIVE U-CA-004 verdict.**
+The human explicitly instructed "build it anyway" on 2026-04-03 after reviewing the U-CA-004 results (p=0.032 passes α=0.05; Cohen's d=0.40 below threshold d≥0.50). This instruction constitutes a direct human override of P-006's POSITIVE-verdict prerequisite. The overlay implementation (commit d923940) is authorized and its artifacts are valid.
+
+This amendment supersedes P-006's condition "until U-CA-004 resolves POSITIVE" for spec 017 Phase 5 implementation. P-006 as written remains operative for any future overlay work in subsequent specs.
+
+*Constitution version 1.2.0 — amended 2026-04-03 by human instruction ("build it anyway" + "build it full autonomy").*
