@@ -57,7 +57,7 @@ DEFAULT_N = 30
 DEFAULT_SCHEMA_DIR = "scripts/schemas"
 DEFAULT_OUTPUT_DIR = "experiments"
 DEFAULT_MODEL = "claude-sonnet-4-6"
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 120
 
 # FPCR thresholds (P-022)
 PATENT_GRADE_THRESHOLD = 0.80
@@ -543,16 +543,8 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    # Check API key at startup (not for --dry-run)
-    if not args.dry_run:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            print(
-                "ERROR: ANTHROPIC_API_KEY environment variable is not set. "
-                "Set it or use --dry-run for calibration-only mode.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    # Auth handled by claude -p in ns003_critic.py (Claude Code manages key internally).
+    # No ANTHROPIC_API_KEY env var needed. Use --dry-run for calibration-only mode.
 
     # Phase 1: git commit hash (IS-006)
     commit_hash = get_git_commit_hash()

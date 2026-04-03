@@ -71,7 +71,7 @@ def _claude_p_call(prompt: str, timeout: int) -> str:
 
 VERSION = "1.0.0"
 MODEL_IDENTIFIER = "claude-sonnet-4-6"
-DEFAULT_TIMEOUT = 30
+DEFAULT_TIMEOUT = 120
 
 # Artifact category schemas (six files)
 SCHEMA_NAMES = ["discover", "assess", "how", "plan", "build", "learn"]
