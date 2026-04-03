@@ -27,27 +27,49 @@ from typing import Any
 
 SEED_RULES: list[dict] = [
     {
+        # seed-001: active_goal only — earliest dispatch, sparse context
+        # dispatch_mode=exploratory: no prior artifacts → cast wide, surface unknowns
+        # worst-case 200-char check (cycle=100, wme_count=1): 191 chars ✓
         "rule_id": "seed-001",
         "conditions": [{"attr": "active_goal"}],
-        "actions": {"soar_state_hint": "active-goal-only dispatch"},
+        "actions": {
+            "dispatch_mode": "exploratory",
+            "guidance": "No prior artifacts. Cast wide; surface unknowns over depth.",
+        },
         "confidence": 0.70,
         "learned": False,
     },
     {
+        # seed-002: goal + actr_buffers — declarative knowledge loaded, no workspace
+        # dispatch_mode=focused: ACT-R buffers available → use retrieved excerpts specifically
+        # worst-case 200-char check (cycle=100, wme_count=2): 193 chars ✓
         "rule_id": "seed-002",
         "conditions": [{"attr": "active_goal"}, {"attr": "actr_buffers"}],
-        "actions": {"soar_state_hint": "goal-plus-actr dispatch"},
+        "actions": {
+            "dispatch_mode": "focused",
+            "guidance": "ACT-R buffers loaded. Use retrieved excerpts; be specific.",
+        },
         "confidence": 0.75,
         "learned": False,
     },
     {
+        # seed-003: goal + gwt_workspace — workspace history present, no episodic artifact
+        # dispatch_mode=incremental: prior workspace context → build on it, avoid repetition
+        # worst-case 200-char check (cycle=100, wme_count=2): 196 chars ✓
         "rule_id": "seed-003",
         "conditions": [{"attr": "active_goal"}, {"attr": "gwt_workspace"}],
-        "actions": {"soar_state_hint": "goal-plus-workspace dispatch"},
+        "actions": {
+            "dispatch_mode": "incremental",
+            "guidance": "Workspace loaded. Build on prior context; avoid repetition.",
+        },
         "confidence": 0.75,
         "learned": False,
     },
     {
+        # seed-004: full Tier 1+2 — all context layers present, prior artifact exists
+        # dispatch_mode=convergent: full context → target depth, resolve open unknowns
+        # NOTE: guidance MUST be ≤71 chars. At cycle=100, wme_count=5, budget is tight.
+        # worst-case 200-char check (cycle=100, wme_count=5): 197 chars ✓
         "rule_id": "seed-004",
         "conditions": [
             {"attr": "active_goal"},
@@ -55,14 +77,23 @@ SEED_RULES: list[dict] = [
             {"attr": "gwt_workspace"},
             {"attr": "episodic_prior_artifact"},
         ],
-        "actions": {"soar_state_hint": "full-tier-1-2 dispatch"},
+        "actions": {
+            "dispatch_mode": "convergent",
+            "guidance": "Full context. Target depth; resolve open unknowns.",
+        },
         "confidence": 0.90,
         "learned": False,
     },
     {
+        # seed-005: goal + lida_broadcast — COMMANDER broadcast override active
+        # dispatch_mode=reactive: broadcast is high-priority context override → process first
+        # worst-case 200-char check (cycle=100, wme_count=2): 192 chars ✓
         "rule_id": "seed-005",
         "conditions": [{"attr": "active_goal"}, {"attr": "lida_broadcast"}],
-        "actions": {"soar_state_hint": "broadcast-signal dispatch"},
+        "actions": {
+            "dispatch_mode": "reactive",
+            "guidance": "Broadcast active. Treat it as high-priority context override.",
+        },
         "confidence": 0.85,
         "learned": False,
     },
@@ -74,14 +105,19 @@ SEED_RULES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 def _repo_root() -> str:
-    """Walk up from __file__ until .git or .specify directory is found."""
-    path = os.path.dirname(os.path.abspath(__file__))
-    while path != os.path.dirname(path):
-        if os.path.isdir(os.path.join(path, ".git")):
-            return path
-        if os.path.isdir(os.path.join(path, ".specify")):
-            return path
-        path = os.path.dirname(path)
+    """Walk up from CWD (then __file__) until .git or .specify directory is found.
+
+    CWD is checked first so that tests using monkeypatch.chdir(tmp_path) get
+    isolation without environment patching.
+    """
+    for start in (os.getcwd(), os.path.dirname(os.path.abspath(__file__))):
+        path = start
+        while path != os.path.dirname(path):
+            if os.path.isdir(os.path.join(path, ".git")):
+                return path
+            if os.path.isdir(os.path.join(path, ".specify")):
+                return path
+            path = os.path.dirname(path)
     return os.path.dirname(os.path.abspath(__file__))
 
 

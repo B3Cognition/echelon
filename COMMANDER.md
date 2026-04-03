@@ -59,6 +59,25 @@ try:
 except Exception as _soar_exc:  # noqa: BLE001
     # NFR-SOAR-004 / AC-6.1: exception does not block dispatch
     _log(f"SOAR overlay exception (non-blocking): {_soar_exc}")
+
+# 7. SOAR prompt injection (FR-019-001)
+# Serialize soar_state into the agent prompt text block — analogous to endocrine modifier.
+# This is the delivery mechanism that makes dispatch_mode + guidance reach the agent.
+# The block is omitted entirely when soar_state is absent (exception path above).
+_soar_state = context_pack.get("soar_state")
+_soar_prompt_block = ""
+if _soar_state and isinstance(_soar_state, dict) and not _soar_state.get("impasse"):
+    _dm = _soar_state.get("dispatch_mode", "")
+    _gd = _soar_state.get("guidance", "")
+    if _dm and _gd:
+        _soar_prompt_block = (
+            f"\n[SOAR DISPATCH GUIDANCE]\n"
+            f"dispatch_mode: {_dm}\n"
+            f"guidance: {_gd}\n"
+            f"cycle: {_soar_state.get('cycle', '?')}\n"
+        )
+# Prepend _soar_prompt_block to the agent's prompt string before dispatch.
+# Example: agent_prompt = _soar_prompt_block + agent_prompt
 ```
 
 ---
