@@ -23,10 +23,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Check API key
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "ERROR: ANTHROPIC_API_KEY is not set." >&2
-  echo "Run: export ANTHROPIC_API_KEY=sk-ant-..." >&2
+# Auth is handled via claude -p (Claude Code manages the key internally).
+# No ANTHROPIC_API_KEY export needed — just run this script from the claude-code session.
+if ! command -v claude &>/dev/null; then
+  echo "ERROR: 'claude' CLI not found in PATH. Run this script inside a Claude Code session." >&2
   exit 1
 fi
 

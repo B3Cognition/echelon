@@ -44,6 +44,28 @@ sys.path.insert(0, str(_SCRIPT_DIR))
 from md_parser import extract_kv_pairs, extract_section_headers, compute_prose_ratio
 
 # ---------------------------------------------------------------------------
+# claude -p wrapper (no ANTHROPIC_API_KEY env var needed in subprocess)
+# ---------------------------------------------------------------------------
+
+def _claude_p_call(prompt: str, timeout: int) -> str:
+    """
+    Call 'claude -p' as a subprocess. Returns raw response text.
+    Raises RuntimeError on timeout or non-zero exit.
+    Claude Code manages auth internally — no ANTHROPIC_API_KEY env var required.
+    """
+    import subprocess
+    result = subprocess.run(
+        ["claude", "-p", prompt],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        err = result.stderr.strip()[:200]
+        raise RuntimeError(f"claude -p exited {result.returncode}: {err}")
+    return result.stdout
+
+# ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
@@ -274,12 +296,6 @@ def run_prose_assessment(
     On timeout: returns a single TIMEOUT verdict record.
     On HTTP 401: raises an exception with 'HTTP 401' in message for caller to handle.
     """
-    try:
-        import anthropic
-    except ImportError:
-        print("ERROR: anthropic package not installed. Run: pip install -r scripts/requirements.txt", file=sys.stderr)
-        return []
-
     required_sections = schema.get("required_sections", [])
     required_sections_str = ", ".join(required_sections)
 
@@ -289,18 +305,10 @@ def run_prose_assessment(
         ARTIFACT_TEXT=artifact_text,
     )
 
-    client = anthropic.Anthropic()
     verdicts: list[dict[str, Any]] = []
 
     try:
-        response = client.messages.create(
-            model=MODEL_IDENTIFIER,
-            temperature=0,
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}],
-            timeout=timeout,
-        )
-        raw_text = response.content[0].text
+        raw_text = _claude_p_call(prompt, timeout)
 
         if verbose:
             print(f"  [prose] raw response:\n{raw_text}", file=sys.stderr)
@@ -616,16 +624,8 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    # Check API key (unless --dry-run)
-    if not args.dry_run:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            print(
-                "ERROR: ANTHROPIC_API_KEY environment variable is not set. "
-                "Set it or use --dry-run to skip prose assessment.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+    # Auth handled by claude -p (Claude Code manages key internally).
+    # No ANTHROPIC_API_KEY env var needed. Use --dry-run to skip prose assessment.
 
     # Load schemas (exit 2 on error)
     schema_dir = Path(args.schema_dir)

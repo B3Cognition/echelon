@@ -119,6 +119,27 @@ _SCORE_LINE_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------------
+# claude -p wrapper (no ANTHROPIC_API_KEY env var needed)
+# ---------------------------------------------------------------------------
+
+def _claude_p_call(prompt: str, timeout: int) -> str:
+    """
+    Call 'claude -p' as a subprocess. Returns raw response text.
+    Raises RuntimeError on timeout or non-zero exit.
+    Claude Code manages auth internally — no ANTHROPIC_API_KEY env var required.
+    """
+    result = subprocess.run(
+        ["claude", "-p", prompt],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        err = result.stderr.strip()[:200]
+        raise RuntimeError(f"claude -p exited {result.returncode}: {err}")
+    return result.stdout
+
+# ---------------------------------------------------------------------------
 # Git commit hash
 # ---------------------------------------------------------------------------
 
@@ -180,10 +201,7 @@ def aqs_proxy_score(
 
     FR-UCA-ERR-001: out-of-range/parse-failure → retry once; second failure → SCORING_FAILED.
     """
-    import anthropic
-
     prompt = _SCORING_PROMPT_TEMPLATE.format(ARTIFACT_TEXT=artifact_text)
-    client = anthropic.Anthropic()
 
     record: dict[str, Any] = {
         "run_id": run_id,
@@ -205,16 +223,9 @@ def aqs_proxy_score(
         request_ts = datetime.now(timezone.utc).isoformat()
         record["request_timestamp"] = request_ts
         try:
-            response = client.messages.create(
-                model=model,
-                temperature=0,
-                max_tokens=512,
-                messages=[{"role": "user", "content": prompt}],
-                timeout=timeout,
-            )
+            raw_text = _claude_p_call(prompt, timeout)
             response_ts = datetime.now(timezone.utc).isoformat()
             record["response_timestamp"] = response_ts
-            raw_text = response.content[0].text
             record["raw_response"] = raw_text
 
             scores = _parse_scores(raw_text)
@@ -279,10 +290,7 @@ def run_condition(
     is not available in the experiment runner scope.
     TIMEOUT invocations count against N (FR-UCA-ERR-003).
     """
-    import anthropic
-
     records: list[dict[str, Any]] = []
-    client = anthropic.Anthropic()
 
     for i in range(n):
         if verbose:
@@ -313,14 +321,7 @@ def run_condition(
         inv_status = "OK"
 
         try:
-            art_response = client.messages.create(
-                model=model,
-                temperature=0,
-                max_tokens=512,
-                messages=[{"role": "user", "content": artifact_prompt}],
-                timeout=timeout,
-            )
-            artifact_text = art_response.content[0].text
+            artifact_text = _claude_p_call(artifact_prompt, timeout)
         except Exception as e:
             err_str = str(e)
             if "timeout" in err_str.lower() or "timed out" in err_str.lower():
@@ -689,15 +690,8 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    # Check API key at startup (FR-DEP-003) — --help bypasses this via argparse
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print(
-            "ERROR: ANTHROPIC_API_KEY environment variable is not set. "
-            "Export it before running the experiment.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    # Auth is handled by claude -p (Claude Code manages key internally).
+    # No ANTHROPIC_API_KEY env var check needed (FR-DEP-003 satisfied via claude -p).
 
     # Phase 1: git commit hash (IS-006)
     commit_hash = get_git_commit_hash()
