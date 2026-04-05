@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Echelon ASSESS Artifact Schema",
+  "type": "object",
+  "required": ["spec_id", "agent", "timestamp", "verdict", "risks", "effort_estimate"],
+  "properties": {
+    "spec_id":         { "type": "string", "minLength": 1 },
+    "agent":           { "type": "string", "minLength": 1 },
+    "timestamp":       { "type": "string", "minLength": 1 },
+    "verdict":         { "type": "string", "enum": ["PROCEED", "PROCEED_WITH_CAVEATS", "BLOCKED", "VOID"] },
+    "risks":           { "type": ["string", "array"], "minLength": 1 },
+    "effort_estimate": { "type": ["string", "number"], "minLength": 1 }
+  },
+  "required_sections": [
+    "verdict", "risks", "effort_estimate", "technical_feasibility", "kill_gate_decision"
+  ]
+}
