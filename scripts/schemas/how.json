@@ -1,0 +1,17 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Echelon HOW Artifact Schema",
+  "type": "object",
+  "required": ["spec_id", "agent", "timestamp", "adrs", "technology_stack", "data_model_ref"],
+  "properties": {
+    "spec_id":          { "type": "string", "minLength": 1 },
+    "agent":            { "type": "string", "minLength": 1 },
+    "timestamp":        { "type": "string", "minLength": 1 },
+    "adrs":             { "type": ["string", "array"], "minLength": 1 },
+    "technology_stack": { "type": ["string", "object"], "minLength": 1 },
+    "data_model_ref":   { "type": "string", "minLength": 1 }
+  },
+  "required_sections": [
+    "adrs", "technology_stack", "data_model", "api_contracts", "integration_design"
+  ]
+}

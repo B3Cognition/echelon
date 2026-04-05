@@ -276,9 +276,30 @@ After each agent dispatch completes:
 
 1. **Apply decay**: Run `scripts/bash/endocrine.sh decay_hormones <agent>`. This exponentially decays the agent's adrenaline toward its archetype baseline, preventing sustained extreme states.
 
+2. **Gate event dispatch** *(Phase 3+ only — skip when `endocrine.phase < 3`)*:
+   Read the quality gate result from the just-completed agent dispatch (from agent return state, not re-evaluated).
+   - If gate **PASSED**: Run `scripts/bash/endocrine.sh on_gate_pass <agent>`. Log `ENDOCRINE_GATE_PASS` in `reasoning-journal.json`.
+   - If gate **FAILED**: Run `scripts/bash/endocrine.sh on_gate_fail <agent>`. Log `ENDOCRINE_GATE_FAIL` in `reasoning-journal.json`.
+
+3. **Quality improvement signal** *(Phase 3+ only — skip when `endocrine.phase < 3`)*:
+   Compare current dispatch quality score against previous dispatch quality score for same agent role.
+   - Improved by ≥ 0.05: Run `scripts/bash/endocrine.sh on_quality_improvement`. Log `ENDOCRINE_QUALITY_IMPROVEMENT`.
+   - Regressed by ≥ 0.05: Run `scripts/bash/endocrine.sh on_quality_regression`. Log `ENDOCRINE_QUALITY_REGRESSION`.
+   - No prior score for this agent role: skip.
+   - Note: `on_rework` is **NOT wired** in this amendment — deferred to future ADR (rework detection criterion not yet defined).
+
+**ADR-006 Phase 3 Activation Sequence** (mandatory — do not auto-activate):
+
+1. NS-003 experiment completes → `experiments/ns003-results.json` written.
+2. Human manually sets `endocrine_phase: 3` in `squad-config.yml`.
+3. COMMANDER reads updated phase on next run initialization.
+4. Phase 3 hooks activate from that run forward.
+
+**RSK-003 Mitigation**: NS-003 calibration and experiment runs execute with `endocrine_phase: 1`. Phase 3 activation requires explicit human action after reviewing `experiments/ns003-results.json`. This ensures experiment data is collected under baseline endocrine conditions, not Phase 3-modulated conditions.
+
 ### Phase 1 Limitations
 
-In Phase 1 (`endocrine.phase: 1`), only adrenaline is active. Dopamine, cortisol, serotonin, oxytocin, and norepinephrine baselines are stored but not used for prompt modifiers. Future phases will activate additional neuromodulators.
+In Phase 1 (`endocrine.phase: 1`), only adrenaline is active. Dopamine, cortisol, serotonin, oxytocin, and norepinephrine baselines are stored but not used for prompt modifiers. Phase 3 (activated by human after NS-003 experiment) wires gate-pass/fail and quality-improvement/regression signals.
 
 ---
 

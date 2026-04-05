@@ -10,7 +10,8 @@ Thumbs.db
 .env*
 .vscode/
 .idea/
-specs/
+/specs/
 .github/
-.specify/
+.specify/squad/
 config-belief-graph.json
+.specify/

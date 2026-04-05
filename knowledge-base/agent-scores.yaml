@@ -129,15 +129,172 @@ agents:
   MAVERICK: { lifetime_score: 0, badges: [], history: [] }
 
   # Layer: Build
-  IMPLEMENTER: { lifetime_score: 0, badges: [], history: [] }
-  SPEC_GUARD: { lifetime_score: 0, badges: [], history: [] }
-  CODE_REVIEWER: { lifetime_score: 0, badges: [], history: [] }
-  TEST_GUARDIAN: { lifetime_score: 0, badges: [], history: [] }
+  IMPLEMENTER:
+    lifetime_score: 23
+    current_run_score: 23
+    badges: []
+    token_metrics:
+      total_tokens: 0
+      dispatch_count: 12
+      avg_tokens_per_dispatch: 0
+      efficiency_rating: "unknown"
+    history:
+      - run_id: "build-1775154996"
+        spec_id: "015"
+        score: 23
+        badges_earned: []
+        peer_appreciation:
+          - from: "CODE_REVIEWER"
+            to: "IMPLEMENTER"
+            type: "caught_my_mistake"
+            points: 2
+            reason: "TASK-007 contradiction-scanner delivered at first-pass quality — zero reviewer changes required"
+            task: "TASK-007"
+        breakdown:
+          first_pass_approvals: 27
+          rework_penalties: -4
+        failure_modes:
+          - type: "missed_implicit_requirement"
+            count: 2
+            example: "TASK-006 AC-003-001: codebase_id field absent from per-record output and artifact root; spec_run_id present at artifact level only, not embedded per-record — both fields explicitly listed in AC-003-001 but not checked at per-record nesting depth"
+          - type: "incomplete_coverage"
+            count: 2
+            example: "TASK-001 and TASK-010 required one review cycle each — document/artifact tasks where structure did not pass SPEC GUARD on first submission"
+
+  SPEC_GUARD:
+    lifetime_score: 5
+    current_run_score: 5
+    badges:
+      - Guardian Angel
+    token_metrics:
+      total_tokens: 0
+      dispatch_count: 12
+      avg_tokens_per_dispatch: 0
+      efficiency_rating: "unknown"
+    history:
+      - run_id: "build-1775154996"
+        spec_id: "015"
+        score: 5
+        badges_earned:
+          - Guardian Angel
+        peer_appreciation:
+          - from: "VERIFICATION"
+            to: "SPEC_GUARD"
+            type: "unblocked_my_work"
+            points: 3
+            reason: "12/12 SPEC GUARD PASS meant VERIFICATION could proceed directly to gap analysis — zero spec compliance rework"
+            task: "all"
+        breakdown:
+          verification_zero_gaps_bonus: 5
+        failure_modes: []
+
+  CODE_REVIEWER:
+    lifetime_score: 3
+    current_run_score: 3
+    badges: []
+    token_metrics:
+      total_tokens: 0
+      dispatch_count: 2
+      avg_tokens_per_dispatch: 0
+      efficiency_rating: "unknown"
+    history:
+      - run_id: "build-1775154996"
+        spec_id: "015"
+        score: 3
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          high_bug_caught_task006: 3
+          task007_first_pass_correct: 0
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All review decisions were correct — TASK-006 CHANGES_REQUESTED appropriately, TASK-007 APPROVED correctly with no false positives"
+          - type: "none"
+            count: 0
+            example: "No false positives raised in either review pass"
+
+  TEST_GUARDIAN:
+    lifetime_score: 6
+    current_run_score: 6
+    badges: []
+    token_metrics:
+      total_tokens: 0
+      dispatch_count: 2
+      avg_tokens_per_dispatch: 0
+      efficiency_rating: "unknown"
+    history:
+      - run_id: "build-1775154996"
+        spec_id: "015"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          test_token_logger_9_9_pass: 3
+          test_contradiction_scanner_21_21_pass: 3
+        failure_modes:
+          - type: "ambiguous_output"
+            count: 1
+            example: "test-quality-report.md was empty at EM handoff — test evidence was not written to the expected output file, requiring VERIFICATION to re-run tests live to satisfy CONDITION-001"
+          - type: "none"
+            count: 0
+            example: "Both test suites passed live on first execution — test design and coverage were correct"
+
   DEBUGGER: { lifetime_score: 0, badges: [], history: [] }
   INTEGRATOR: { lifetime_score: 0, badges: [], history: [] }
   PROGRESS_TRACKER: { lifetime_score: 0, badges: [], history: [] }
   CHANGE_CONTROLLER: { lifetime_score: 0, badges: [], history: [] }
-  VERIFICATION: { lifetime_score: 0, badges: [], history: [] }
+
+  VERIFICATION:
+    lifetime_score: 7
+    current_run_score: 7
+    badges: []
+    token_metrics:
+      total_tokens: 0
+      dispatch_count: 1
+      avg_tokens_per_dispatch: 0
+      efficiency_rating: "unknown"
+    history:
+      - run_id: "build-1775162749"
+        spec_id: "015"
+        score: 7
+        badges_earned: []
+        peer_appreciation:
+          - from: "ENGINEERING_MANAGER"
+            to: "VERIFICATION"
+            type: "clear_and_actionable"
+            points: 2
+            reason: "Live test execution during verification pass resolved CONDITION-001 definitively — no ambiguity left in the test evidence chain"
+            task: "all"
+        breakdown:
+          zero_open_gaps_bonus: 5
+          peer_appreciation: 2
+        failure_modes: []
+
+  ENGINEERING_MANAGER:
+    lifetime_score: 3
+    current_run_score: 3
+    badges: []
+    token_metrics:
+      total_tokens: 0
+      dispatch_count: 1
+      avg_tokens_per_dispatch: 0
+      efficiency_rating: "unknown"
+    history:
+      - run_id: "build-1775154996"
+        spec_id: "015"
+        score: 3
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          ready_with_conditions_correct: 3
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "READY_WITH_CONDITIONS correctly issued; all 4 conditions correctly scoped as non-blocking; structural decision to hold at conditions (not READY) prompted VERIFICATION to run tests live"
+          - type: "none"
+            count: 0
+            example: "No conditions were mis-classified as blocking or non-blocking"
 
   # Layer: Learning
   MIRROR:
