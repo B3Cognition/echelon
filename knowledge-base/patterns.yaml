@@ -234,3 +234,55 @@ entries:
     status: active
     project_fingerprint: eafaa0807e7b
     scope: local_only
+
+  - id: PAT-017
+    name: Cognitive Profile as Structured SCOUT Input
+    domain: cognitive-enhancement
+    evidence_grade: D
+    source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-SYNTH-001 through RJ-SYNTH-009
+    validated_by_feedback: false
+    confidence: 0.81
+    description: Using a b3-psy cognitive profile report (engagement-report.md, mechanism-audit.md, profile-report.md) as the SCOUT/DISCOVER input for a cognitive enhancement project eliminates the need for a separate GOLDDIGGER dispatch. The 5-report set constitutes Grade B code-evidence throughout and provides structured per-agent and per-mechanism findings that map directly to spec FRs. Apply when the profiler has already been run and the 5 report files are present.
+    tags: ["cognitive-profiling", "b3-psy", "scout-input", "discover", "golddigger-bypass"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only
+
+  - id: PAT-018
+    name: SYNTHESIZER Score-Gap Detection Surfaces Mandatory Scope Additions
+    domain: squad-orchestration
+    evidence_grade: D
+    source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-SYNTH-006, RJ-WHAT-001
+    validated_by_feedback: false
+    confidence: 0.79
+    description: When SYNTHESIZER cross-references mechanism weights and score targets, it can identify scope items that must be included in the current phase rather than deferred. In this run, SYNTHESIZER found that S6 (ECC) was required in Phase 1 to reliably cross 75.0 — a finding that changed the scope from "defer ECC to Phase 2" to "ECC is mandatory." CARTOGRAPHER scope decisions that ignore SYNTHESIZER RED FLAGs on score projections produce a coin-flip probability of meeting the primary success criterion.
+    tags: ["synthesizer", "score-projection", "scope-decision", "red-flag", "mandatory-scope"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only
+
+  - id: PAT-019
+    name: COMMANDER Session-Start Write Avoids New Agent Mode Complexity
+    domain: architecture-governance
+    evidence_grade: D
+    source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-WHAT-010, RJ-SAGE-WHY2P2-001
+    validated_by_feedback: false
+    confidence: 0.77
+    description: When a session-start artifact generation requirement exists, implementing it as a COMMANDER native read-and-write step (step 0.5) avoids introducing a new operating mode in another agent. WHY2 identified that the original KB Bootstrap Protocol framing for confidence-thresholds.yaml was architecturally wrong (AUDITOR's bootstrap runs at FINALIZE, not session start). The COMMANDER-direct Option A cleanly resolved the timing constraint without adding AUDITOR session-start modes. When session-start artifact generation is needed, check whether COMMANDER can own the write directly before designing a new mode in a downstream agent.
+    tags: ["commander", "session-start", "artifact-generation", "mode-complexity-avoidance"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only
+
+  - id: PAT-020
+    name: FR Table-to-Bullet Format Conversion Unlocks NLP Parser but Exposes Hidden Sentence-Structure Issues
+    domain: understanding-integration
+    evidence_grade: C
+    source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-SAGE-WHY2-001, RJ-SAGE-WHY2P2-001
+    validated_by_feedback: false
+    confidence: 0.85
+    description: Converting FR tables to bullet format resolves parser-blindness (completeness_score 0.196 → 1.0 requirement volume) but simultaneously exposes compound clause and atomicity problems that were hidden inside table cells. After format conversion, expect 2+ additional WHY passes to fix sentence-level quality issues (GWT conditional form, missing direct objects, passive voice). Do not treat format conversion as a single-pass fix — treat it as the first of a multi-pass quality improvement cycle.
+    tags: ["understanding", "fr-format", "table-to-bullet", "parser-compatibility", "atomicity", "why2"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only

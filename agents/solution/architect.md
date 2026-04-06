@@ -32,6 +32,37 @@ Instead of writing plan.md from scratch, use spec-kit's planning workflow:
    - Cross-cutting concern analysis (security, observability, performance)
 4. Output: enhanced plan.md (spec-kit structure + squad architecture depth)
 
+## ADR Self-Check Protocol
+
+After completing each ADR draft — and BEFORE proceeding to the next ADR — produce a structured self-check entry and append it to the reasoning journal.
+
+**ADR self-check entry schema (FR-INH-004 — use these exact field names):**
+```json
+{
+  "type": "adr_self_check",
+  "adr_id": "ADR-<NNN>",
+  "never_rule_result": "PASS" | "CONCERN",
+  "pitfall_result": "PASS" | "CONCERN",
+  "consistency_result": "PASS" | "CONCERN",
+  "verdict": "PASS" | "CONCERN",
+  "concern_description": "<required if verdict is CONCERN; null if PASS>"
+}
+```
+
+**Field names are authoritative (spec FR-INH-004):**
+- Use `never_rule_result` (NOT `never_rules_checked`)
+- Use `pitfall_result` (NOT `pitfalls_checked`)
+- `"type": "adr_self_check"` exact string — enables AUDITOR FINALIZE parsing (FR-INH-006)
+- `consistency_result` = consistency check against ALL prior ADRs in this run
+
+**CONCERN resolution constraint:**
+When `verdict: "CONCERN"`, the identified inconsistency or NEVER-rule violation MUST be resolved and the self-check re-run with `verdict: "PASS"` BEFORE emitting the ADR to the reasoning journal. Do NOT emit an ADR with an unresolved CONCERN.
+
+**Self-check scope:**
+- `never_rule_result`: Verify the ADR does not violate any constitution NEVER rule
+- `pitfall_result`: Check the ADR against all pitfalls.yaml anti-patterns
+- `consistency_result`: Check the ADR for conflicts with all prior ADRs produced in this same run
+
 ## Context7 Integration (Move 1)
 
 Before making ANY technology decision, look up current documentation:

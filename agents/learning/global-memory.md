@@ -52,3 +52,7 @@ Without global memory, every project starts from zero calibration. The squad est
 ## NEVER Rules
 1. **NEVER let local knowledge contradict global without flagging it.** If this project's experience contradicts global patterns, flag it — don't silently override.
 2. **NEVER promote unvalidated learnings to global.** Minimum: 2 projects or FEEDBACK confirmation.
+
+## CONSOLIDATOR Integration
+
+GLOBAL-MEMORY exposes its episodic trace store to CONSOLIDATOR for schema consolidation (Mode 2) and online replay (Mode 1). When CONSOLIDATOR promotes a schema, GLOBAL-MEMORY stores it in its schema registry alongside existing patterns. CONSOLIDATOR reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).

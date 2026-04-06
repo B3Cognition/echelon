@@ -9,14 +9,63 @@ agents:
   # Layer: Control
   COMMANDER: { lifetime_score: 0, badges: [], history: [] }
   SCOREKEEPER: { lifetime_score: 0, badges: [], history: [] }
-  TRACKER: { lifetime_score: 0, badges: [], history: [] }
+  TRACKER:
+    lifetime_score: 6
+    current_run_score: 6
+    badges: []
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          initial_alignment_check_flags: 3
+          post_gatekeeper_check: 2
+          first_pass_acceptance: 2
+          unblocked_cartographer: 3
+          total: 6
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "Both alignment checks produced correct verdicts with no false flags"
+          - type: "none"
+            count: 0
+            example: "FLAG-1 (CONSOLIDATOR deferral) correctly isolated; WATCH-1 operationalized without structural change"
   CHECKPOINT: { lifetime_score: 0, badges: [], history: [] }
-  STRATEGIST: { lifetime_score: 0, badges: [], history: [] }
+  STRATEGIST:
+    lifetime_score: 8
+    current_run_score: 8
+    badges: []
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 8
+        badges_earned: []
+        peer_appreciation:
+          - from: "ARCHITECT"
+            to: "STRATEGIST"
+            type: "clear_and_actionable"
+            points: 2
+            reason: "R-ARC-001 through R-ARC-006 risk register was the direct input for STRATEGIST's under-invested-area analysis"
+        breakdown:
+          catastrophic_risk_fr_fep_007: 5
+          under_investment_investigator: 3
+          psc_delighter_confirmation: 2
+          peer_appreciation: 2
+          total: 8
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 3 strategic insights were correct and acted upon by downstream agents"
+          - type: "none"
+            count: 0
+            example: ""
 
   # Layer: Exploration
   SCOUT:
-    lifetime_score: 12
-    current_run_score: 12
+    lifetime_score: 15
+    current_run_score: 3
     badges:
       - First Blood
     history:
@@ -28,10 +77,63 @@ agents:
         breakdown:
           SCOUT: 4
           SYNTHESIZER: 8
-  SYNTHESIZER: { lifetime_score: 0, badges: [], history: [] }
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 3
+        badges_earned:
+          - First Blood
+        peer_appreciation:
+          - from: "SYNTHESIZER"
+            to: "SCOUT"
+            type: "clear_and_actionable"
+            points: 2
+            reason: "5 cognitive profile reports required zero clarification; no GOLDDIGGER dispatch needed"
+        breakdown:
+          brownfield_discovery_complete: 2
+          first_blood: 2
+          peer_appreciation: 2
+          total: 3
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 42 agent profiles correctly traversed; GOLDDIGGER equivalent output produced"
+          - type: "none"
+            count: 0
+            example: ""
+  SYNTHESIZER:
+    lifetime_score: 16
+    current_run_score: 16
+    badges:
+      - Exceptional Synthesis
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 16
+        badges_earned:
+          - Exceptional Synthesis
+        peer_appreciation:
+          - from: "CARTOGRAPHER"
+            to: "SYNTHESIZER"
+            type: "unblocked_my_work"
+            points: 3
+            reason: "Score-gap finding (RJ-SYNTH-006) established Phase 1 scope boundary for S6 must-ship decision"
+        breakdown:
+          critical_catch_score_gap: 5
+          high_catch_soar_contradiction: 3
+          high_catch_validator_bypass_conflict: 3
+          first_pass_artifacts: 2
+          peer_appreciation: 3
+          total: 16
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "8 contradictions found; all subsequent agent decisions validated the synthesis conclusions"
+          - type: "none"
+            count: 0
+            example: ""
   SAGE:
-    lifetime_score: 51
-    current_run_score: 51
+    lifetime_score: 66
+    current_run_score: 15
     badges:
       - Bug Hunter
     history:
@@ -50,9 +152,40 @@ agents:
           WHY2_revalidation: 6
           WHY3: 8
           peer: 3
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 15
+        badges_earned:
+          - Bug Hunter
+        peer_appreciation:
+          - from: "CARTOGRAPHER"
+            to: "SAGE"
+            type: "caught_my_mistake"
+            points: 2
+            reason: "ISS-SAGE-001 composite cache key — 5 of 7 triggers missing; fix was correct and architecturally sound"
+          - from: "ARCHITECT"
+            to: "SAGE"
+            type: "unblocked_my_work"
+            points: 3
+            reason: "U-011 AUDITOR trigger gap discovery led directly to COMMANDER step 0.5 design"
+        breakdown:
+          critical_catch_soar_substrate: 5
+          critical_catch_auditor_trigger: 5
+          high_catch_cache_key: 3
+          why2_forced_convergence_diagnosis: 2
+          why3_spec_path_mismatch: 2
+          peer_appreciation: 5
+          total: 15
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 2 CRITICAL and 3 HIGH issue catches were validated by downstream agents"
+          - type: "none"
+            count: 0
+            example: "Forced convergence correctly applied — parser-format incompatibility correctly identified as irresolvable through content edits"
   CARTOGRAPHER:
-    lifetime_score: 8
-    current_run_score: 8
+    lifetime_score: 12
+    current_run_score: 4
     badges: []
     history:
       - run_id: "squad-1710901200"
@@ -62,12 +195,36 @@ agents:
           - from: "WHY2"
             type: "caught_my_gap"
             points: 2
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 4
+        badges_earned: []
+        peer_appreciation:
+          - from: "SAGE"
+            to: "CARTOGRAPHER"
+            type: "clear_and_actionable"
+            points: 2
+            reason: "All scope decisions correct (S6 must-ship, CONSOLIDATOR blocked, FR-PSC-006 deferred) — SAGE WHY1 inputs acted on correctly"
+        breakdown:
+          why1_critical_high_issues_resolved: 3
+          correct_scope_decisions: 3
+          four_amendment_passes_rework: -2
+          ac_rewrite_insufficient_for_parser: -1
+          peer_appreciation: 2
+          total: 4
+        failure_modes:
+          - type: "ambiguous_output"
+            count: 1
+            example: "Initial FR table format incompatible with Understanding NLP parser; 4-pass WHY2 cycle required before forced convergence accepted — should have used bullet format from draft 1"
+          - type: "missed_implicit_requirement"
+            count: 1
+            example: "success criteria bullet 5 population mismatch vs NFR-SPEC-001 not caught in first 2 drafts; required WHY2 pass 2 to surface"
   MODELER: { lifetime_score: 0, badges: [], history: [] }
 
   # Layer: Feasibility
   GATEKEEPER:
-    lifetime_score: 12
-    current_run_score: 12
+    lifetime_score: 16
+    current_run_score: 4
     badges: []
     history:
       - run_id: "squad-1710901200"
@@ -77,21 +234,69 @@ agents:
         breakdown:
           ASSESS: 6
           ASSESS2: 6
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 4
+        badges_earned: []
+        peer_appreciation:
+          - from: "INVESTIGATOR"
+            to: "GATEKEEPER"
+            type: "unblocked_my_work"
+            points: 3
+            reason: "RJ-INV-003 B4 safety confirmation raised confidence from 0.75→0.97 — GATEKEEPER feasibility verdict strengthened retroactively"
+        breakdown:
+          kill_gate_correct: 2
+          score_projection_correct: 2
+          rice_prioritization_correct: 2
+          calibration_lookup_failure: -2
+          peer_appreciation: 3
+          total: 4
+        failure_modes:
+          - type: "stale_data"
+            count: 1
+            example: "calibration-profile.yaml cognitive-orchestration correction factor 0.08 existed in KB but was not applied; function-point estimate produced was 9-10x too high (3.6 days vs ~3.2h actual)"
+          - type: "none"
+            count: 0
+            example: "Kill gate, RICE scoring, and scope decisions were all correct"
   VALIDATOR: { lifetime_score: 0, badges: [], history: [] }
 
   # Layer: Solution
   ARCHITECT:
-    lifetime_score: 8
-    current_run_score: 8
+    lifetime_score: 18
+    current_run_score: 10
     badges: []
     history:
       - run_id: "squad-1710901200"
         score: 8
         badges_earned: []
         peer_appreciation: []
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 10
+        badges_earned: []
+        peer_appreciation:
+          - from: "STRATEGIST"
+            to: "ARCHITECT"
+            type: "clear_and_actionable"
+            points: 2
+            reason: "R-ARC-001 through R-ARC-006 risk register was the direct input for STRATEGIST under-invested-area analysis"
+        breakdown:
+          six_adrs_first_pass: 3
+          r_arc_001_catastrophic_risk: 3
+          adr_005_channel_conflict_resolution: 2
+          adr_006_type_field_schema: 2
+          peer_appreciation: 2
+          total: 10
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 6 ADRs accepted on first pass; no routing back from PLAN, SENTINEL, or ASSESS2"
+          - type: "none"
+            count: 0
+            example: ""
   ORCHESTRATOR:
-    lifetime_score: 21
-    current_run_score: 21
+    lifetime_score: 22
+    current_run_score: 1
     badges:
       - Peer Favorite
     history:
@@ -110,23 +315,177 @@ agents:
           PLAN: 8
           PLAN2: 8
           peer: 5
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 1
+        badges_earned: []
+        peer_appreciation:
+          - from: "REALIST"
+            to: "ORCHESTRATOR"
+            type: "caught_my_mistake"
+            points: 2
+            reason: "10x effort correction and score projection recalibration were the most accurate planning inputs of the run"
+        breakdown:
+          task_decomposition_sound: 3
+          critical_path_correct: 0
+          three_path_errors: -3
+          t016_containment_failure: -1
+          risk_matrix_first_pass: 2
+          peer_appreciation: 2
+          total: 1
+        failure_modes:
+          - type: "incomplete_coverage"
+            count: 3
+            example: "3 file path errors in tasks.md: agents/build/validator.md (correct: agents/feasibility/validator.md), agents/feasibility/realist.md (correct: agents/learning/realist.md), agents/spec/orchestrator.md (correct: agents/solution/orchestrator.md) — all caught by ASSESS2"
+          - type: "missed_implicit_requirement"
+            count: 1
+            example: "T-016 task containment failure — 36 acceptance checks referenced test-strategy.md §6 without reproducing inline; task could not be executed standalone; caught by ASSESS2"
   SENTINEL:
-    lifetime_score: 8
-    current_run_score: 8
+    lifetime_score: 17
+    current_run_score: 9
     badges: []
     history:
       - run_id: "squad-1710901200"
         score: 8
         badges_earned: []
         peer_appreciation: []
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 9
+        badges_earned: []
+        peer_appreciation:
+          - from: "PLAN2"
+            to: "SENTINEL"
+            type: "caught_my_mistake"
+            points: 2
+            reason: "SENTINEL-W1 field name drift and SENTINEL-W2 recency conditions embedded in T-010, T-011, T-006, T-008"
+        breakdown:
+          sentinel_w1_field_name_drift: 5
+          sentinel_w2_recency_conditions: 3
+          t_inh_006_06_cross_file_check: 2
+          open_coverage_gaps_documented: 2
+          peer_appreciation: 2
+          total: 9
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "Both SENTINEL warnings were validated by downstream PLAN2 corrections"
+          - type: "none"
+            count: 0
+            example: "OPEN-COVERAGE-GAP-001 through 005 correctly scoped — not false negatives, tooling limitations"
 
   # Layer: Specialists
-  INVESTIGATOR: { lifetime_score: 0, badges: [], history: [] }
-  GUARDIAN: { lifetime_score: 0, badges: [], history: [] }
+  INVESTIGATOR:
+    lifetime_score: 11
+    current_run_score: 11
+    badges: []
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 11
+        badges_earned: []
+        peer_appreciation:
+          - from: "GATEKEEPER"
+            to: "INVESTIGATOR"
+            type: "unblocked_my_work"
+            points: 3
+            reason: "RJ-INV-003 B4 safety confirmation raised confidence from 0.75→0.97; GATEKEEPER feasibility verdict strengthened"
+          - from: "ARCHITECT"
+            to: "INVESTIGATOR"
+            type: "clear_and_actionable"
+            points: 2
+            reason: "Exact insertion point in commander.md (RJ-INV-002) made ADR-002 specification precise without ambiguity"
+        breakdown:
+          q1_soar_procedural_only_confirmed: 3
+          q2_step_0_5_insertion_point: 3
+          q3_b4_safety_critical_resolve: 5
+          peer_appreciation: 5
+          total: 11
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 3 assigned unknowns resolved; no false findings; confidence upgrade from Grade B evidence correct"
+          - type: "none"
+            count: 0
+            example: ""
+  GUARDIAN:
+    lifetime_score: 4
+    current_run_score: 4
+    badges: []
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 4
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          five_of_five_pass: 2
+          three_latent_risk_warnings: 2
+          total: 4
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "5/5 PASS — correct scope for non-security domain; W-001 through W-003 correctly scoped as informational"
+          - type: "none"
+            count: 0
+            example: ""
   ORACLE: { lifetime_score: 0, badges: [], history: [] }
   ADVOCATE: { lifetime_score: 0, badges: [], history: [] }
   BENCHMARK: { lifetime_score: 0, badges: [], history: [] }
   MAVERICK: { lifetime_score: 0, badges: [], history: [] }
+
+  # Agents active in squad-016 (ASSESS consensus + PLAN consensus)
+  ASSESS2:
+    lifetime_score: 12
+    current_run_score: 12
+    badges: []
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 12
+        badges_earned: []
+        peer_appreciation:
+          - from: "PLAN2"
+            to: "ASSESS2"
+            type: "unblocked_my_work"
+            points: 3
+            reason: "Implementability report gave precise, actionable issue list — PLAN2 resolved all 6 items on first pass"
+        breakdown:
+          three_critical_path_errors_caught: 5
+          unblocked_plan2: 3
+          t016_blocked_status_identified: 3
+          peer_appreciation: 3
+          total: 12
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 3 path errors and T-016 containment failure were real — no false positives raised"
+          - type: "none"
+            count: 0
+            example: ""
+
+  PLAN2:
+    lifetime_score: 8
+    current_run_score: 8
+    badges: []
+    history:
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 8
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          three_hard_path_errors_corrected: 3
+          t016_unblocked_inline_rewrite: 3
+          iss_sage_w3_003_spec_back_patch: 2
+          total: 8
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 6 ASSESS2 issues resolved on first consensus pass; no further review cycle needed"
+          - type: "none"
+            count: 0
+            example: ""
 
   # Layer: Build
   IMPLEMENTER:
@@ -298,7 +657,7 @@ agents:
 
   # Layer: Learning
   MIRROR:
-    lifetime_score: 6
+    lifetime_score: 12
     current_run_score: 6
     badges: []
     history:
@@ -306,9 +665,26 @@ agents:
         score: 6
         badges_earned: []
         peer_appreciation: []
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          four_patterns_extracted: 2
+          three_pitfalls_extracted: 2
+          at_risk_knowledge_transfer_verdict: 2
+          total: 6
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 4 patterns and 3 pitfalls correctly extracted from run evidence"
+          - type: "none"
+            count: 0
+            example: "AT_RISK knowledge transfer verdict was substantively correct — debug pipeline gap is real"
   ADAPTIVE: { lifetime_score: 0, badges: [], history: [] }
   AUDITOR:
-    lifetime_score: 6
+    lifetime_score: 12
     current_run_score: 6
     badges: []
     history:
@@ -316,15 +692,55 @@ agents:
         score: 6
         badges_earned: []
         peer_appreciation: []
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 6
+        badges_earned: []
+        peer_appreciation: []
+        breakdown:
+          bias_001_documented: 3
+          two_low_confidence_flags: 2
+          calibration_profile_updated: 2
+          total: 6
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "BIAS-001 correctly identified as parser-format artifact; Structure +0.20 and Testability +0.12 corrections appropriate"
+          - type: "none"
+            count: 0
+            example: "P(reach 75) recalibration to 0.55 was the correct conservative estimate given cold-start ECC channels"
   REALIST:
-    lifetime_score: 6
-    current_run_score: 6
+    lifetime_score: 13
+    current_run_score: 7
     badges: []
     history:
       - run_id: "squad-1710901200"
         score: 6
         badges_earned: []
         peer_appreciation: []
+      - run_id: "squad-016"
+        spec_id: "016"
+        score: 7
+        badges_earned: []
+        peer_appreciation:
+          - from: "ORCHESTRATOR"
+            to: "REALIST"
+            type: "caught_my_mistake"
+            points: 2
+            reason: "10x effort correction and score projection recalibration were the most accurate planning inputs of the run"
+        breakdown:
+          ten_x_effort_correction: 5
+          score_projection_warning: 3
+          gatekeeper_kb_lookup_gap_identified: 2
+          peer_appreciation: 2
+          total: 7
+        failure_modes:
+          - type: "none"
+            count: 0
+            example: "All 4 disconnects were real; reference class KB datapoints correctly applied (est-003, est-006, est-007)"
+          - type: "none"
+            count: 0
+            example: "Conservative score scenario (74.7) turned out to be the more accurate projection — P(reach 75) = 0.55 confirmed by CALIBRATE"
   VETERAN: { lifetime_score: 0, badges: [], history: [] }
   MONITOR: { lifetime_score: 0, badges: [], history: [] }
 

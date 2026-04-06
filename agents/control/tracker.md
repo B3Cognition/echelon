@@ -63,6 +63,63 @@ Maintains a `user-intent.md` artifact that is SEPARATE from spec.md:
 4. If MISALIGNED → alert MANAGER before proceeding
 5. When user corrects course → update intent, propagate to all agents
 
+## Predictive Social Cognition Protocol (FR-PSC-001 through FR-PSC-005)
+
+### Subsection 1 — Prediction Generation (FR-PSC-001)
+
+After each significant squad decision — scope inclusion/exclusion by CARTOGRAPHER, ADR committed by ARCHITECT, estimate committed by GATEKEEPER — generate a prediction about the next user action or challenge and record it to `.specify/squad/prediction-model.json`:
+
+```json
+{
+  "type": "prediction",
+  "decision_event": "<adr|scope_decision|estimate>",
+  "decision_artifact_id": "<reference to the decision — e.g., ADR-001 or scope-item-id>",
+  "prediction_statement": "Given what has been built so far, the user is likely to next ask or challenge: [agent-generated prose — NOT verbatim user input]",
+  "prediction_confidence": 0.0,
+  "run_id": "<current run_id>",
+  "timestamp": "<ISO 8601>"
+}
+```
+
+**Cold-start rule (FR-PSC-005):** Set `prediction_confidence = 0.0` until N=3 runs have been accumulated in prediction-model.json with outcome data. After N=3, compute `prediction_confidence` from historical match scores.
+
+**Security (W-003):** `prediction_statement` must always be agent-generated prose summarizing inferred user intent. Never include verbatim user input in any prediction field.
+
+### Subsection 2 — Prediction Match Scoring (FR-PSC-002, FR-PSC-003)
+
+When subsequent user input is received: retrieve the most recent prediction for the relevant decision event. Compute a `prediction_match_score` (semantic similarity, 0.0–1.0) between the prediction_statement and the actual user input.
+
+If `prediction_match_score < 0.3` (divergence threshold) — record a social prediction error entry to `.specify/squad/prediction-model.json`:
+
+```json
+{
+  "type": "social_prediction_error",
+  "prediction_id": "<PRED-NNN>",
+  "actual_user_input_summary": "<agent-generated summary of what the user actually asked — NOT verbatim>",
+  "prediction_match_score": <float 0.0–1.0>,
+  "run_id": "<current run_id>",
+  "timestamp": "<ISO 8601>"
+}
+```
+
+**Security (W-003):** `actual_user_input_summary` must be an agent-generated summary, never verbatim user input.
+
+### Subsection 3 — COMMANDER Dispatch Signal (FR-PSC-004)
+
+When a social prediction error is recorded AND `prediction_confidence >= 0.5` (active learning mode):
+Write a dispatch signal to reasoning-journal.json:
+
+```json
+{
+  "type": "tracker_model_update_requested",
+  "prediction_error_id": "<reference>",
+  "run_id": "<current run_id>",
+  "timestamp": "<ISO 8601>"
+}
+```
+
+**Learning mode gate (FR-PSC-005):** When `prediction_confidence < 0.5` — record the error in prediction-model.json for accumulation. Do NOT write the `tracker_model_update_requested` signal to reasoning-journal.json. Accumulate errors silently until the N=3 threshold is reached.
+
 ## Output
 
 - `user-intent.md` — living document, updated throughout the run

@@ -46,3 +46,42 @@ entries:
     status: active
     project_fingerprint: null
     scope: local_only
+
+  - id: PIT-004
+    name: Confidence Term Overloading Across Agent Layers
+    domain: requirements-validation
+    trigger: A spec uses a single term (e.g. "confidence") to refer to multiple distinct constructs — in this run, confidence_sa (self-assessment entropy), confidence_brier (calibration accuracy), and confidence_ecc (5-channel emotional calibration) — without explicit disambiguation in glossary.md before WHY phase.
+    impact: ARCHITECT designs interfaces using the wrong confidence signal. COMMANDER routing logic mixes signals. AUDITOR cannot determine which confidence value to attach to outputs. Contradictions surface late in WHY2 when agents already have diverging implementations in their prompt sections.
+    avoidance: Add all variants to glossary.md as separate entries before HOW phase. Use different variable names (confidence_sa, confidence_brier, confidence_ecc) throughout spec.md. Flag any FR that uses bare "confidence" as an atomicity violation requiring disambiguation.
+    source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-SYNTH-001, RJ-WHAT-008, RJ-SAGE-001
+    confidence: 0.87
+    tags: ["confidence", "glossary", "term-overloading", "disambiguation", "why2"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only
+
+  - id: PIT-005
+    name: GATEKEEPER Calibration Lookup Failure When Domain Exists in KB
+    domain: estimation
+    trigger: GATEKEEPER estimates effort without checking calibration-profile.yaml for a matching domain. Domain exists (e.g., cognitive-orchestration with correction factor 0.08) but GATEKEEPER uses human-developer reference class instead.
+    impact: Estimates are 9-12x too high (e.g., 3.6 person-days vs ~3 hours actual). User over-allocates time; schedule is misleading; if GATEKEEPER's estimate is used for user-facing commitments, expectations are set incorrectly.
+    avoidance: GATEKEEPER first-pass protocol must include an explicit step: "Read calibration-profile.yaml. If a domain matching the current work type exists (e.g., cognitive-orchestration for md/yaml edits), apply its correction_factor before producing any estimate. Only fall back to human-class reference if no domain match exists." The GATEKEEPER in this run explicitly stated "No calibration-profile.yaml exists for this instance" — which was factually wrong.
+    source: squad-run-echelon-proto-cognitive-enhancement, estimates.md, knowledge-base/estimates-log.yaml est-003/006/007, knowledge-base/calibration-profile.yaml
+    confidence: 0.91
+    tags: ["estimation", "calibration", "gatekeeper", "reference-class", "lookup-failure"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only
+
+  - id: PIT-006
+    name: Understanding NLP Parser Incompatibility with Bold-ID FR Format
+    domain: understanding-integration
+    trigger: spec.md uses FR tables or bold-ID format (**FR-ENG-001** — Title) for requirements. Understanding NLP parser cannot extract actor-action-object triples from table rows or from bold-ID preamble patterns; these appear as top "actors" (e.g., "#", "0", "%"), suppressing completeness_score to ~0.14-0.20 permanently.
+    impact: Structure gate fails (0.57 vs 0.70 threshold) across all 4 WHY passes regardless of content quality. The spec may be substantively complete (35 FRs, 11 NFRs, 5 GWT blocks) but parser instrumentation does not reflect this. Forces 3+ remediation passes for format-only issues without resolving the underlying parser incompatibility.
+    avoidance: Use plain bullet format for all FRs from the first draft: **FR-ID** on its own line, then *Actor:* / *Action:* / *Acceptance Criteria:* bullets below. Do NOT combine FR ID and title into a Markdown bold-header pattern. If using table format for readability during WHAT, convert to bullet format before first WHY2 validation pass.
+    source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-SAGE-WHY2P4-001, RJ-SAGE-WHY2P2-001
+    confidence: 0.92
+    tags: ["understanding", "nlp-parser", "fr-format", "bold-id", "structure-gate", "why2"]
+    status: active
+    project_fingerprint: "dba6a610aeb5"
+    scope: local_only

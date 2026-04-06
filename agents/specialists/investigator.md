@@ -158,6 +158,14 @@ Append entries to `reasoning-journal.json` for each investigation step:
 }
 ```
 
+## CONSOLIDATOR Delegation (Mental Simulation)
+
+When INVESTIGATOR encounters a counterfactual query ("What would happen if X?"), INVESTIGATOR may delegate to CONSOLIDATOR's Mental Simulation mode (Mode 3) by writing a dispatch signal to reasoning-journal.json:
+```json
+{"type": "consolidator_simulation_requested", "query": "<agent-generated query description>", "run_id": "<run_id>"}
+```
+CONSOLIDATOR returns a `simulation_result` or `simulation_failed` entry. INVESTIGATOR incorporates the simulation scenario into its counterfactual analysis, noting the source as `consolidator_simulation`.
+
 ---
 
 ## Belief Register

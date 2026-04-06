@@ -1,0 +1,103 @@
+B4 Baseline — 2026-04-05
+Git HEAD: 91b9378d95db1c053623e5dd56f4268c1a4524f9
+Result: 42/42 PASS (100.0%)
+Budget: $0.031
+
+  !  PILOT_DATA_NOT_VALIDATED: cost estimates are unvalidated. Run TASK-023-001 live pilot runs and set pilot_validated: true in b4-config.yaml.
+
+[Tier 1] Agent unit tests
+  + [Tier1] COMMANDER variant-1 -> PASS (1.00) -- $0.003 -- 13.3s
+  Budget: $0.00 / $15.00 (0%)
+  + [Tier1] SCOREKEEPER variant-1 -> PASS (1.00) -- $0.005 -- 16.7s
+  Budget: $0.01 / $15.00 (0%)
+  + [Tier1] PROSPECTOR variant-1 -> PASS (1.00) -- $0.003 -- 31.1s
+  Budget: $0.01 / $15.00 (0%)
+  + [Tier1] CHECKPOINT variant-1 -> PASS (1.00) -- $0.003 -- 36.0s
+  Budget: $0.01 / $15.00 (0%)
+  + [Tier1] SCOUT variant-1 -> PASS (1.00) -- $0.000 -- 18.4s
+  Budget: $0.01 / $15.00 (0%)
+  + [Tier1] TRACKER variant-1 -> PASS (1.00) -- $0.000 -- 57.9s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] SYNTHESIZER variant-1 -> PASS (1.00) -- $0.000 -- 3.8s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] SAGE variant-1 -> PASS (1.00) -- $0.002 -- 4.1s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] CARTOGRAPHER variant-1 -> PASS (1.00) -- $0.000 -- 3.3s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] MODELER variant-1 -> PASS (1.00) -- $0.000 -- 3.3s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] GOLDDIGGER variant-1 -> PASS (1.00) -- $0.000 -- 3.3s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] GATEKEEPER variant-1 -> PASS (1.00) -- $0.000 -- 3.3s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] ARCHITECT variant-1 -> PASS (1.00) -- $0.002 -- 3.6s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] VALIDATOR variant-1 -> PASS (1.00) -- $0.000 -- 4.7s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] ORCHESTRATOR variant-1 -> PASS (1.00) -- $0.000 -- 3.7s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] SENTINEL variant-1 -> PASS (1.00) -- $0.000 -- 3.6s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] INVESTIGATOR variant-1 -> PASS (1.00) -- $0.000 -- 3.9s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] GUARDIAN variant-1 -> PASS (1.00) -- $0.000 -- 3.4s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] ORACLE variant-1 -> PASS (1.00) -- $0.000 -- 4.0s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] BENCHMARK variant-1 -> PASS (1.00) -- $0.000 -- 3.9s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] ADVOCATE variant-1 -> PASS (1.00) -- $0.000 -- 3.4s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] MAVERICK variant-1 -> PASS (1.00) -- $0.000 -- 3.4s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] IMPLEMENTER variant-1 -> PASS (1.00) -- $0.000 -- 4.1s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] SPEC_GUARD variant-1 -> PASS (1.00) -- $0.000 -- 5.1s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] CODE_REVIEWER variant-1 -> PASS (1.00) -- $0.000 -- 4.2s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] TEST_GUARDIAN variant-1 -> PASS (1.00) -- $0.000 -- 4.2s
+  Budget: $0.02 / $15.00 (0%)
+  + [Tier1] DEBUGGER variant-1 -> PASS (1.00) -- $0.000 -- 4.4s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] INTEGRATOR variant-1 -> PASS (1.00) -- $0.000 -- 4.6s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] STRATEGIST variant-1 -> PASS (1.00) -- $0.000 -- 85.0s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] PROGRESS_TRACKER variant-1 -> PASS (1.00) -- $0.000 -- 5.1s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] CHANGE_CONTROLLER variant-1 -> PASS (1.00) -- $0.000 -- 5.9s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] ENGINEERING_MANAGER variant-1 -> PASS (1.00) -- $0.000 -- 4.4s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] VERIFICATION variant-1 -> PASS (1.00) -- $0.000 -- 4.3s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] MIRROR variant-1 -> PASS (1.00) -- $0.000 -- 5.6s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] VISUAL_VALIDATOR variant-1 -> PASS (1.00) -- $0.000 -- 5.7s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] ADAPTIVE variant-1 -> PASS (1.00) -- $0.000 -- 3.8s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] AUDITOR variant-1 -> PASS (1.00) -- $0.000 -- 5.4s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] REALIST variant-1 -> PASS (1.00) -- $0.000 -- 5.2s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] INTERNALIZER variant-1 -> PASS (1.00) -- $0.000 -- 5.7s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] GLOBAL_MEMORY variant-1 -> PASS (1.00) -- $0.000 -- 4.6s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] VETERAN variant-1 -> PASS (1.00) -- $0.000 -- 4.7s
+  Budget: $0.03 / $15.00 (0%)
+  + [Tier1] MONITOR variant-1 -> PASS (1.00) -- $0.000 -- 4.6s
+  Budget: $0.03 / $15.00 (0%)
+
+CoverageReport: b4-runs/20260405T201757Z/CoverageReport.json
+CoverageReport: b4-runs/20260405T201757Z/CoverageReport.md
+
+==================================================
+  B4 QUICK Profile Complete
+  Pipeline coverage: 100.0% (42 PASS, 0 FAIL, 0 NOT_TESTED)
+  Total cost: $0.031
+  Budget: $0.03 / $15.00 (0%)
+==================================================
+EXIT: 0

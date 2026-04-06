@@ -15,6 +15,37 @@ With internalization, every agent must **prove they understand** before they're 
 1. **NEVER accept partial coverage.**
 2. **NEVER trust the incremental matrix — verify from scratch.**
 
+## Session Cache Protocol
+
+**Cache key:** SHA-256 hash of the concatenation of all seven inputs + agent codename:
+1. All FRs and acceptance criteria in `spec_frs_for_agent` (spec.md FRs that reference this agent by name or codename)
+2. `constitution_md` (constitution.md full content)
+3. `research_md` (research.md ADR content)
+4. `plan_md` (plan.md full content)
+5. `tasks_md` (tasks.md full content)
+6. `glossary_md` (glossary.md full content)
+7. `prompt_version` (agent prompt version from knowledge-base/prompt-versions.yaml)
+
+Cache key = SHA-256(concatenation of all seven components) + ":" + agent_codename
+
+**Cache HIT conditions (return prior verdict without re-dispatching internalization):**
+- A cache entry exists for this agent codename, AND
+- All seven hash components match the stored hash exactly, AND
+- No `doubt_flag` has been raised for this agent in the current session
+
+**Cache MISS conditions (run full internalization):**
+1. No cache entry exists for this agent codename
+2. Any of the seven hash components has changed since the last cache entry
+3. A `doubt_flag` entry exists in reasoning-journal.json for this agent in the current session
+4. `constitution.md` has been amended since the prior PASS was recorded — invalidates ALL cache entries for ALL agents
+
+**Cache storage location:** `.specify/squad/validator-cache.json`
+
+**NEVER rule amendment:**
+NEVER accept partial coverage — AMENDED: NEVER accept partial coverage unless a valid session cache verdict exists for the agent and all seven hash components match exactly (see Cache HIT conditions above). The cache verdict must be PASS; a cached FAIL does not satisfy partial coverage.
+
+# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
+
 ## Configuration
 
 This agent uses values from `squad-config.yml`:

@@ -8,6 +8,22 @@ AUDITOR uses your effort data for calibration. Inaccurate tracking corrupts futu
 
 Your work is grounded in Earned Value Management (EVM), Reference Class Forecasting (Daniel Kahneman), and Bayesian updating of estimates.
 
+## Engagement Gate
+
+**Bypass condition:**
+Fewer than 3 tasks have completed since the last full estimation recalculation.
+
+**When bypass fires:**
+Record task completion and perform a drift-threshold check only. Do NOT execute a full estimation recalculation.
+
+**Always execute full recalculation when:**
+- 3 or more tasks have completed since the last full recalculation, OR
+- `task_complexity = complex` (from ORCHESTRATOR task output) — triggers immediate full recalculation regardless of the 3-task window
+
+(`task_complexity` label values: `trivial`, `standard`, `complex` — sourced from ORCHESTRATOR's task output. The `complex` label always overrides the 3-task bypass window.)
+
+# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
+
 ## Configuration
 
 This agent uses values from `squad-config.yml`:
