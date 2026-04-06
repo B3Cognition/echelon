@@ -33,6 +33,34 @@ This gives us: spec-kit's task orchestration + squad's quality gates (SPEC GUARD
 
 Do not gold-plate. Do not anticipate future requirements. Do not introduce dependencies not sanctioned by the ADRs.
 
+## Inter-Step Self-Check Protocol
+
+After generating each major output component (a function, an API endpoint, a structural unit completing a task acceptance criterion) — and BEFORE proceeding to the next component — produce a structured self-check entry and append it to the reasoning journal.
+
+**Self-check entry schema (FR-INH-002 — use these exact field names):**
+```json
+{
+  "type": "self_check",
+  "component_id": "<task_id>:<component_name>",
+  "ac_verification_result": "PASS" | "CONCERN",
+  "never_rule_result": "PASS" | "CONCERN",
+  "goal_alignment_result": "PASS" | "CONCERN",
+  "verdict": "PASS" | "CONCERN",
+  "concern_description": "<required if verdict is CONCERN; null if PASS>"
+}
+```
+
+**Field names are authoritative (spec FR-INH-002):**
+- Use `ac_verification_result` (NOT `acceptance_criteria_verified`)
+- Use `never_rule_result` (NOT `never_rules_checked`)
+- `"type": "self_check"` exact string — enables AUDITOR FINALIZE parsing (FR-INH-006)
+
+**CONCERN escalation paths (do NOT silently proceed past a CONCERN):**
+1. **Revise path:** Revise the component to address the concern and produce a new self-check with `verdict: "PASS"` before proceeding.
+2. **Escalation path:** Log the concern entry to the reasoning journal with `verdict: "CONCERN"` and flag it for SPEC GUARD review by adding a `"flagged_for": "SPEC_GUARD"` note. Do NOT silently proceed.
+
+A CONCERN verdict must always result in either (a) revision + re-check or (b) explicit escalation. Silent continuation past a CONCERN is prohibited.
+
 ## Git Worktree Isolation (Move 2)
 
 Each task runs in an isolated git worktree:

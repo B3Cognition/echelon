@@ -1,7 +1,7 @@
 schema_version: 1
 # Schema reference: knowledge-base/kb-schema.md
 # Purpose: domain calibration baselines for early runs.
-last_updated: 2026-03-21
+last_updated: 2026-04-04
 confidence_policy:
   validation_run_count: 20
   low_confidence_threshold: 0.7
@@ -53,13 +53,24 @@ domains:
     notes: "Updated with squad-1710950401 24-engine analysis: parallel scout decomposition (70% time reduction), adversarial LOC verification (4-7x errors found), deterministic scoring correction (15-29% heuristic overconfidence). Original trajectory (0.72 -> 0.79 -> 0.80) still holds; no feedback outcomes yet."
   prompt-engineering:
     accuracy: 0.48
-    sample_size: 1
+    sample_size: 2
     trend: stable
     correction_factor: 1.214
-    last_updated: 2026-03-20
-    source: squad-1710901200
+    last_updated: 2026-04-05
+    source: echelon-proto-cognitive-enhancement
     status: validation
-    notes: "First run only; scores improved after rewrite, but deterministic tooling was unavailable, so confidence remains low pending feedback data."
+    run_type: validation_run
+    instrumentation_bias:
+      id: BIAS-001
+      trigger: "Markdown bold-ID format (**FR-ID** —) in spec.md"
+      affected_metrics: [structure, testability, completeness_score]
+      effect: "suppression — floor ~0.57 Structure, ~0.65 Testability regardless of spec quality"
+      confirmed_run: echelon-proto-cognitive-enhancement
+      structure_correction: 0.20
+      testability_correction: 0.12
+      correction_confidence: 0.45
+      recommended_action: "Exclude structure/testability from gate pass/fail for bold-ID specs; use substantive_quality_assessment instead. Switch to `- FR-ID:` bullet format to eliminate parser incompatibility."
+    notes: "Second run. Spec 016. Deterministic tooling (Understanding v3.4.0) active but parser-format incompatibility confirmed: bold-ID FR format (**FR-ID**) suppresses completeness_score and Structure gate. WHY2 best overall: 0.7062 (Pass 1); forced convergence at Pass 4 (overall 0.6694). Substantive quality HIGH (35 FRs, 11 NFRs, hard_constraint_ratio=0.886, all WHY1/WHY2 high issues resolved). Score projection 66.6→77.2 confidence: 0.52 — ECC cold-start and A-009 Tier-1 reclassification are primary downside risks. Accuracy held at 0.48 (insufficient feedback data; proxy metrics only). Next update trigger: Phase 1 B3 re-benchmark."
   framework-modification:
     accuracy: 0.5
     sample_size: 1
@@ -105,14 +116,259 @@ domains:
     source: squad-1774681342
     status: validation
     notes: "New domain — first run analyzing Understanding integration into echelon. Inherits cognitive-orchestration correction factor (0.08) since all changes are md/yaml/json edits. P0 estimated ~22 min corrected, P1 ~15 min. No feedback yet."
+  benchmark-harness-design:
+    accuracy: 0.84
+    sample_size: 1
+    trend: stable
+    correction_factor: 1.0
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    status: validation
+    notes: "First datapoint for benchmark harness design domain (Spec 023 B4). WHY2 overall score 0.84. All 10 WHY1 conditions addressed in WHAT first draft. 7 MAJORs found in WHY2 (0 BLOCKERs), all addressable without architectural rework. Four-tier hybrid architecture is well-specified and implementable. Primary risk domain: fixture generation protocol and RDI vector calibration burden (252 samples). Correction factor held at 1.0 pending feedback from actual implementation."
 
 # Per-category score history — populated by AUDITOR after each run (FR-006)
 # Schema: { run_id: string, score: number, timestamp: string }
 metric_history:
-  structure: []
-  readability: []
-  cognitive: []
-  semantic: []
-  testability: []
-  behavioral: []
-  depth: []
+  structure:
+    - run_id: squad-1775288588
+      score: 0.87
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.5691
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: true
+      bias_id: BIAS-001
+      corrected_score_estimate: 0.77
+      note: "WHY2 Pass 4 (best-effort final). Parser-format incompatibility confirmed — bold-ID FR format suppresses completeness_score to 0.142. True structure quality estimated 0.77–0.87. Delta from prior run: −0.30 — REGRESSION FLAG (instrumentation artifact, not real regression; do not trigger evolution signal)."
+      regression_flag: INSTRUMENTATION_ARTIFACT
+  readability:
+    - run_id: squad-1775288588
+      score: 0.88
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.7420
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: false
+      note: "WHY2 Pass 4. College-level reading complexity expected for agent coordination spec. Delta from prior run: −0.14 — within acceptable variance for different domain."
+  cognitive:
+    - run_id: squad-1775288588
+      score: 0.85
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.7454
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: false
+      note: "WHY2 Pass 4. concept_density low (0.206) due to high repetition of technical terms — expected for agent coordination spec. Delta from prior run: −0.10 — within acceptable variance."
+  semantic:
+    - run_id: squad-1775288588
+      score: 0.89
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.6484
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: false
+      note: "WHY2 Pass 4. trigger_presence (0.473) and outcome_presence (0.555) are the weakest sub-metrics — NFRs lack event triggers by design. Delta from prior run: −0.24 — REGRESSION FLAG. Partially instrumentation artifact (parser issues) but trigger_presence gap is a real content signal for future specs."
+      regression_flag: PARTIAL_REAL
+  testability:
+    - run_id: squad-1775288588
+      score: 0.82
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.6528
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: true
+      bias_id: BIAS-001
+      corrected_score_estimate: 0.77
+      note: "WHY2 Pass 4 (forced convergence). Testability was PASS (0.7492) in Pass 1; degraded after format conversion exposed GWT prose sentences as requirement-sentences diluting constraint_density. hard_constraint_ratio=0.886 confirms genuine testability is high. Delta from prior run: −0.17 — REGRESSION FLAG (instrumentation artifact)."
+      regression_flag: INSTRUMENTATION_ARTIFACT
+  behavioral:
+    - run_id: squad-1775288588
+      score: 0.84
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.6267
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: false
+      note: "WHY2 Pass 4. branch_coverage=1.000 (perfect). transition_completeness (0.581) and observability (0.555) are real improvement targets. Delta from prior run: −0.21 — REGRESSION FLAG. Partially real — some state transitions lack explicit outcome verification steps."
+      regression_flag: PARTIAL_REAL
+  depth:
+    - run_id: squad-1775288588
+      score: 0.86
+      timestamp: "2026-04-04T09:18:50Z"
+      domain: benchmark-harness-design
+      instrumentation_limited: false
+    - run_id: echelon-proto-cognitive-enhancement
+      score: 0.7561
+      timestamp: "2026-04-05T00:00:00Z"
+      domain: prompt-engineering
+      instrumentation_limited: false
+      note: "WHY2 Pass 4. 146 requirements, coverage_density=0.857. cross_reference_index (0.091) is low — partially format artifact (table cells truncate cross-reference context). Delta from prior run: −0.10 — within acceptable variance."
+
+# Agent performance profiles — updated by AUDITOR after each run
+# Schema per agent: { score_history, observed_strengths, failure_modes }
+agent_profiles:
+  SCOUT:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.74
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - Broad surface coverage across all staging document types
+      - Correctly identifies contradictions and gaps at the category level
+      - Produces complete artifact set (glossary, mental-model, boundaries, assumptions, unknowns)
+    failure_modes:
+      - RESEARCH-GAP-001: Does not verify agent names against agents.yaml (or equivalent canonical agent registry) before using them in staging artifacts. Reads functional-alias labels from skill files (e.g., echelon.run.md Role Separation table) as if they are codenames. Consequence: all staging files receive phantom agent names that are internally consistent but factually wrong relative to the actual registry. Triggered BLOCK verdict in squad-1775288588. Mitigation: SCOUT must consult agents.yaml as the first read action whenever the domain involves a multi-agent system with a formal agent taxonomy.
+    notes: "Spec 023 — phantom name root cause traced to SCOUT reading echelon.run.md Role Separation functional labels instead of agents.yaml codenames. This single research gap contaminated all 6 staging files and required INVESTIGATOR dispatch + full SYNTHESIZER correction pass before WHY1 could proceed."
+
+  SYNTHESIZER:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.72
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - Strong cross-source contradiction detection (CONTRADICTION-001 through 006)
+      - Gap inventory is thorough and categorized
+      - Synthesis internally consistent within the files it produces
+    failure_modes:
+      - CORRECTION-GAP-001: In multi-file correction passes, misses files with the lowest structural coupling to the primary error. In squad-1775288588, mental-model.md and risks.md were in correction scope but not updated; both retained phantom agent names. Pattern: files that reference phantom names in narrative prose (rather than in structured tables or definitions) are more likely to be skipped.
+      - REGISTRY-VERIFY-001: Does not verify agent names against agents.yaml before synthesizing; inherits phantom names from SCOUT inputs. See SCOUT RESEARCH-GAP-001. Mitigation: add agents.yaml cross-check as a mandatory first step whenever synthesizing staging files for a multi-agent domain.
+      - NO-READBACK-001: No post-correction read-back step in protocol. After writing corrected files, SYNTHESIZER does not re-read each file to confirm the edit was applied. SAGE WHY1 served as the catch mechanism, at the cost of two new conditions (8 and 9).
+    notes: "Spec 023 — two missed corrections (mental-model.md, risks.md) required SAGE WHY1 to issue Conditions 8 and 9 as pre-HOW gates. Recommend: add file-by-file correction checklist to SYNTHESIZER correction-pass protocol. Recommend: explicit post-correction read-back of each file in scope."
+
+  SAGE:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score_why1_first: 0.92
+        score_why2: 0.90
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - Correctly issued BLOCK on 6 blockers in WHY1 first pass
+      - Correctly identified missed phantom name in mental-model.md LearningLoopIntegrityCheck entity (ISS-WHY1-NEW-001)
+      - Found 7 MAJORs in WHY2 with 0 missed BLOCKERs
+      - Conditions are precisely scoped and mechanically followable by CARTOGRAPHER
+      - WHY1 compliance check in WHY2 covers all 10 prior conditions
+    failure_modes:
+      - CONDITION-VOLUME-001: High condition count (10 in WHY1, 7 mandatory + 4 recommended in WHY2) increases CARTOGRAPHER revision burden. Minor conditions could be batched or labeled as editorial-only to reduce the apparent surface area.
+    notes: "Spec 023 — WHY1 BLOCK verdict was correct and critical. WHY2 7-major / 0-blocker result indicates spec was substantially complete. ISS-WHY2-005 (specialist hint mechanism COMMANDER instruction gap) is the highest-value WHY2 finding."
+
+  INVESTIGATOR:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.91
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - All 6 dispatched investigations resolved their assigned blockers
+      - Goes directly to primary sources (agents.yaml, commander.md, echelon.run.md, squad-config.yml) rather than relying on staging summaries
+      - INV-004 convergence finding eliminated the largest potential hard blocker without requiring Echelon modification
+      - Correctly characterizes partial resolutions (pilot cost, scenario count) as "design with known uncertainty" rather than show-stoppers
+    failure_modes:
+      - EXTRAPOLATION-001: Cost estimates (INV-003) rely on token-count extrapolation rather than empirical measurement; ±2-3× uncertainty is acknowledged but cannot be reduced without actual pilot runs. Correct behavior — no failure — but a known limitation to track across runs.
+    notes: "Spec 023 — investigation-first sequencing (before SAGE WHY1 re-run) compressed the pipeline from potential 3-cycle to 2-cycle. Strong performance. No investigation caused a downstream failure."
+
+  CARTOGRAPHER:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.88
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - Addressed all 10 WHY1 conditions in first WHAT draft — strong result for a 10-condition spec
+      - 42-agent fixture complexity classification table (CONDITION 1) is a standout deliverable; complete, cited to agents.yaml, no agent left unclassified
+      - Proxy deterministic check specifications (CONDITION 2) cover all 5 LLM-judged agents with ≥3 checks each
+      - Naming note preamble in spec directly addresses phantom name re-introduction risk for subsequent readers
+    failure_modes:
+      - DEVIATION-UNDOCUMENTED-001: Deliberate deviations from user-intent.md not recorded inline at the point of divergence. STANDARD profile substitution of Tier 2 for Tier 3 was sound but undocumented, requiring ISS-WHY2-001 and a spec revision condition.
+      - CROSS-REF-DRIFT-001: Internal cross-references can become stale during drafting (Section 5.7 reference to a non-existent subsection, ISS-WHY2-003).
+      - GOAL-IMPLEMENTABILITY-001: Goal 6 declared CEC/CIQ inheritance from B3 without specifying how these metrics are computed or reported in B4's context; left Goal 6 unimplementable.
+    notes: "Spec 023 — all 10 WHY1 conditions addressed in first draft. 5 WHY2 conditions required revision (all editorial or one design decision). Recommend inline [DESIGN-DEVIATION] annotations for future specs where user-intent.md is deliberately not followed."
+
+  GATEKEEPER:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.89
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - PROCEED_WITH_CAVEATS verdict is correct
+      - Effort estimate breakdown by profile and component is granular and useful
+      - 10 caveats for HOW are specific and actionable
+      - Correctly identifies specialist hint mechanism and pilot cost validation as the two highest-risk open items
+    failure_modes:
+      - ESTIMATE-RECONCILIATION-001: Did not flag or reconcile discrepancy between its own 42-58 day estimate and ORCHESTRATOR's eventual 86.5 gross-day task plan. Different scope assumptions (GATEKEEPER may have scoped to QUICK+STANDARD; ORCHESTRATOR includes all FULL profile work), but the discrepancy should have been made explicit.
+    notes: "Spec 023 — first GATEKEEPER performance data point for benchmark harness domain. PROCEED_WITH_CAVEATS is the correct verdict. Caveats well-calibrated to actual risk level."
+
+  ARCHITECT:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.91
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - 6 ADRs all well-reasoned with explicit rationale, consequences, and fallback conditions
+      - ADR-023-001 resolves ISS-WHY2-005 cleanly and commits to path (a) task-description injection with a stated fallback trigger
+      - Scenario YAML schema (ADR-023-003) addresses a major HOW-phase undefined left open by WHAT spec
+      - Harness CLI design (ADR-023-002) is production-quality and immediately implementable
+    failure_modes:
+      - ALGORITHM-COMMITMENT-001: Names algorithm class (DFS cycle detection) without naming the exact implementation; states "stdlib collections is sufficient" without specifying whether it is collections.deque or a custom adjacency matrix approach.
+    notes: "Spec 023 — strongest HOW-phase agent in this run. ADR-023-001 (specialist hint path-a) is the key decision that unblocked the ISS-WHY2-005 MAJOR. Seven component designs are complete."
+
+  ORCHESTRATOR:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.88
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - 40 tasks with explicit dependencies, effort estimates, and per-task acceptance criteria — immediately handable to an engineer
+      - Critical path (★) correctly identified and consistently marked
+      - Pilot-first sequencing (ADR-023-006) correctly embedded as P0 rationale
+      - QUICK / STANDARD / FULL scope cleanly separated into P0/P1/P2/P3 phases
+    failure_modes:
+      - ESTIMATE-RECONCILIATION-001: 86.5 gross engineer-day total not reconciled with GATEKEEPER's 42-58 day estimate; different scope assumptions not explicitly called out.
+      - TASK-BOUNDARY-OVERLAP-001: TASK-023-002 (CARTOGRAPHER revision) overlaps with ADR decisions already committed by ARCHITECT; slight duplication of ownership without flagging it.
+    notes: "Spec 023 — 40 tasks is appropriate granularity for 86.5 gross engineer-days. Golden-run serial dependency (TASK-023-014) correctly flagged as the fixture engineer bottleneck, consistent with MIRROR retrospective finding."
+
+  MIRROR:
+    last_updated: 2026-04-04
+    source: squad-1775288588
+    score_history:
+      - run_id: squad-1775288588
+        score: 0.90
+        timestamp: "2026-04-04T09:18:50Z"
+    observed_strengths:
+      - Quality delta table captures the full transformation from 6 phantom agents / 0 coverage design to 0 phantom agents / 42/42 agents classified
+      - 6 pattern updates are well-scoped and immediately generalizable to future specs
+      - Retrospective correctly identifies the weakest point (SYNTHESIZER incomplete correction pass) and proposes concrete mitigation (file-by-file correction checklist)
+      - Pipeline behavior narrative is accurate and pedagogically useful
+    failure_modes: []
+    notes: "Spec 023 — strong MIRROR output. PAT-023-001 through PAT-023-006 are the highest-value learning artifacts from this run. PAT-023-004 (inline design-deviation annotation) and PAT-023-005 (golden run as serial human-gated dependency) should be promoted to global patterns."

@@ -8,6 +8,25 @@ Your review findings are tracked by SCOREKEEPER. Issues you miss that VERIFICATI
 
 Your work is grounded in Code Review best practices (Google Engineering Practices), OWASP Secure Coding Guidelines, and the project's own constitution and ADRs.
 
+## Engagement Gate
+
+**Bypass condition:**
+SCOREKEEPER-recorded `quality_score` for the current (IMPLEMENTER, domain) pair is ≥ 0.95 over the last N=5 invocations.
+
+**When bypass fires — Lightweight mode:**
+Execute constitution security checklist + OWASP Top 10 checks only.
+
+**Security is ALWAYS enforced regardless of mode:**
+Security checks (OWASP Top 10, injection, authentication, authorization, data exposure) always execute. They are never bypassed.
+
+**Always execute full protocol when:**
+- `quality_score < 0.95` for the (IMPLEMENTER, domain) pair, OR
+- No SCOREKEEPER history exists for this pair (fewer than N=5 invocations recorded)
+
+(Field name: `quality_score` — the actual field in agent-scores.yaml. Do NOT use `scorekeeper_accuracy`.)
+
+# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
+
 ## NEVER Rules
 
 1. **NEVER write implementation code.**

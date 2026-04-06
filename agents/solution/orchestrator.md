@@ -157,6 +157,17 @@ Each task follows this structure:
 
 The `[P]` marker indicates the task can be executed in parallel with other `[P]` tasks in the same phase. Tasks WITHOUT `[P]` are sequential blockers.
 
+**Required field — `complexity` label:**
+Every task in tasks.md MUST carry a `complexity` label. Omitting this field is a protocol violation.
+- `trivial`: single-file change, no logic change, no test update required
+- `standard`: multi-file change, additive logic, test update required
+- `complex`: architectural change, ADR impact, significant test suite update required
+
+Usage by downstream agents:
+- IMPLEMENTER uses `complexity` for self-check depth calibration (FR-INH-001)
+- PROGRESS TRACKER uses `complexity` for recalculation bypass (FR-ENG-007): `complex` overrides the 3-task bypass window
+- SPEC GUARD uses `complexity` for engagement mode selection (FR-ENG-001)
+
 #### 3. Critical Path Analysis
 
 Identify the longest dependency chain through the task graph:

@@ -125,6 +125,26 @@ For any domain with accuracy < 0.5:
 - Flag for SCIENTIST investigation or human input
 - Recommend MANAGER increase WHY scrutiny for this domain
 
+### Self-Check Entry Parsing (FR-INH-006)
+
+During FINALIZE mode, filter reasoning-journal.json entries by type:
+- `"type": "self_check"` — IMPLEMENTER inter-step self-checks
+- `"type": "adr_self_check"` — ARCHITECT ADR self-checks
+
+**For each entry with `verdict: "CONCERN"`:** Verify that either:
+- (a) A subsequent self-check entry exists for the same `component_id` with `verdict: "PASS"`, OR
+- (b) A reasoning journal entry exists flagging the concern for SPEC GUARD review (`"flagged_for": "SPEC_GUARD"`)
+
+If neither condition is met: the concern is unresolved — flag in calibration report.
+
+**Self-check summary (include in FINALIZE calibration report):**
+- Total self-check entries (both types)
+- PASS count
+- CONCERN count
+- Unresolved CONCERN count
+
+**ECC integration (FR-ECC-001d):** Any IMPLEMENTER self-check entry with `verdict: "CONCERN"` qualifies the associated output as a high-stakes output for ECC five-channel evaluation (see ECC Protocol section).
+
 ### Mode 2: Post-Feedback Calibration (after FEEDBACK intake)
 
 #### Step 1: Load New Feedback
@@ -460,3 +480,113 @@ Write a human-readable summary to `specs/{feature}/feedback-report.md` with:
 - `knowledge-base/feedback/{spec-id}-{project-name}.yaml` — structured auto-feedback
 - `specs/{feature}/feedback-report.md` — human-readable report
 - Both files produced via KB Bootstrap Protocol (lock, write, validate, release)
+
+### Mode 5: Post-Feedback Confidence Threshold Refresh (FR-FEP-006)
+
+**Trigger:** When a FEEDBACK event is processed (after FINALIZE completes and feedback intake is performed).
+
+**Action sequence:**
+1. Read updated `knowledge-base/calibration-profile.yaml` (post-feedback Brier scores reflecting the most recent run outcomes)
+2. Recompute per-domain confidence floors: `confidence_floor = accuracy` for each domain in calibration-profile.yaml
+3. Write refreshed `knowledge-base/confidence-thresholds.yaml` with `generated_at` = current ISO-8601 timestamp
+4. Append log entry to reasoning-journal.json:
+```json
+{
+  "type": "confidence_thresholds_refreshed",
+  "path": "knowledge-base/confidence-thresholds.yaml",
+  "domains_refreshed": <count>,
+  "timestamp": "<ISO-8601>"
+}
+```
+
+**Purpose:** Ensures next session's COMMANDER step 0.5 reads calibration data that includes the most recent feedback outcome. This closes the FEP-RLIF learning loop: feedback → calibration update → threshold refresh → next session routes with updated domain confidence floors.
+
+**File path:** `knowledge-base/confidence-thresholds.yaml` (same path as written by COMMANDER step 0.5 — this is a refresh of the same artifact).
+
+---
+
+## ECC Protocol — Emotionally Calibrated Confidence
+
+### High-Stakes Output Classifier (FR-ECC-001)
+
+Evaluate the following output types using the ECC five-channel protocol:
+- `adr` — ARCHITECT ADR committed to reasoning journal
+- `tech_recommendation` — ARCHITECT or STRATEGIST technical recommendation
+- `effort_estimate` — GATEKEEPER estimate committed to artifact
+- `implementer_concern` — IMPLEMENTER self-check with `verdict: "CONCERN"` (requires FR-INH-006 self-check parsing)
+
+### Five-Channel Computation (FR-ECC-002)
+
+For each qualifying high-stakes output, compute five channels (each 0.0–1.0):
+
+- `coherence`: internal consistency with AUDITOR's mental model, constitution NEVER rules, and prior ADRs in this run
+- `surprise`: divergence from ORACLE/GLOBAL-MEMORY domain schema predictions
+- `relevance`: degree to which the output addresses acceptance criteria for the triggering task
+- `familiarity`: match to GLOBAL-MEMORY domain and pattern history (default 0.5 during cold-start)
+- `consistency`: consistency with other outputs in the same project run
+
+### confidence_ecc Object (FR-ECC-003)
+
+Attach to the existing reasoning journal entry for the high-stakes output as a new field. Schema:
+
+```json
+{
+  "confidence_ecc": {
+    "schema_version": 1,
+    "evaluated_by": "AUDITOR",
+    "evaluated_at": "<ISO-8601>",
+    "artifact_id": "<reference to the evaluated artifact>",
+    "trigger_type": "<adr|tech_recommendation|effort_estimate|implementer_concern>",
+    "channels": {
+      "coherence": "<float 0.0–1.0>",
+      "surprise": "<float 0.0–1.0>",
+      "relevance": "<float 0.0–1.0>",
+      "familiarity": "<float 0.0–1.0>",
+      "consistency": "<float 0.0–1.0>"
+    },
+    "cold_start_channels": ["familiarity", "surprise"],
+    "hallucination_risk": "<boolean>",
+    "hallucination_risk_reason": "<string or null>"
+  }
+}
+```
+
+**IMPORTANT:** Attach `confidence_ecc` as a new field. PRESERVE `confidence_sa` scalar — do NOT remove or rename it. `confidence_ecc` coexists with `confidence_sa`.
+
+### Signal-Disagreement Hallucination Detection (FR-ECC-004)
+
+Two detection patterns:
+
+**Pattern A:** `coherence > 0.7` AND `familiarity < 0.3` → `hallucination_risk: true`
+- Exception: suppressed when `"familiarity"` is in `cold_start_channels` (cold-start neutral, not a genuine signal)
+
+**Pattern B:** `familiarity > 0.7` AND `consistency < 0.3` → `hallucination_risk: true`
+- Exception: suppressed when `"consistency"` is in `cold_start_channels`
+
+Do NOT raise the flag based solely on cold-start neutral values (0.5). The threshold values 0.7 and 0.3 apply to computed values only.
+
+### Hallucination Flag Routing (FR-ECC-005)
+
+When `hallucination_risk: true`: write a `hallucination_risk_flag` entry to reasoning-journal.json BEFORE SPEC GUARD begins its pre-acceptance review:
+
+```json
+{
+  "type": "hallucination_risk_flag",
+  "flagged_artifact_id": "<artifact reference>",
+  "disagreement_pattern": "A | B",
+  "coherence": "<float>",
+  "familiarity": "<float>",
+  "consistency": "<float>",
+  "timestamp": "<ISO-8601>"
+}
+```
+
+### Cold-Start Channel Management (FR-ECC-007)
+
+When `prior_runs_with_global_memory_domain_data < 3`:
+- Set `familiarity = 0.5` (neutral cold-start default)
+- Set `surprise = 0.5` (neutral cold-start default)
+- Add both to `cold_start_channels`
+- Transition to computed values when `prior_runs_with_global_memory_domain_data >= 3`
+
+If GLOBAL-MEMORY is inaccessible: use 0.5 defaults for both `familiarity` and `surprise`, log the access failure, do NOT block or error.
