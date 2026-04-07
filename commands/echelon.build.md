@@ -1,5 +1,12 @@
 ---
-description: "Execute the building phase — implement tasks with role-based agents and quality gates"
+name: speckit.echelon.build
+description: "Execute building phase — implement tasks with role-based agents and quality gates. Run after speckit.echelon.run completes Phase A."
+model: opus
+effort: max
+context: fork
+disable-model-invocation: true
+argument-hint: "...you will be assimilated"
+allowed-tools: Read Write Edit Bash Glob Grep Agent WebSearch WebFetch
 scripts:
   sh: ../../scripts/bash/startup-banner.sh
 ---
