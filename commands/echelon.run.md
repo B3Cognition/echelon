@@ -1,5 +1,12 @@
 ---
-description: "Full autonomous cognitive squad run with 4-phase model. Set autonomy mode in squad-config.yml (guided/semi/banzai)."
+name: speckit.echelon.run
+description: "Full autonomous cognitive squad run — DISCOVER through FINALIZE. 21-phase state machine. Set autonomy mode in echelon-config.yml (guided/semi/banzai)."
+model: opus
+effort: max
+context: fork
+disable-model-invocation: true
+argument-hint: "Resistance is futile..."
+allowed-tools: Read Write Edit Bash Glob Grep Agent WebSearch WebFetch
 scripts:
   sh: ../../scripts/bash/startup-banner.sh
 ---
