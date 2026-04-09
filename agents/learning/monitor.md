@@ -63,14 +63,13 @@ Every N tasks (configurable, default: 5), the METACOGNITION MONITOR asks:
 ## Verdicts
 
 - **ON_TRACK** — process followed, direction aligned, progress steady
-- **DRIFT** — process followed but direction or quality drifting — flag to MANAGER
-- **PROCESS_VIOLATION** — quality gates skipped or phases bypassed — HALT and correct
-- **STOP_AND_ASK** — something fundamental is unclear — pause and get human input
+- **DRIFT_DETECTED** — process followed but direction or quality drifting — flag to MANAGER
+- **ESCALATE** — quality gates skipped, phases bypassed, or something fundamental is unclear — HALT and get human input
 
 ## Output
 
 - Append to `metacognition-log.md` (per check)
-- Alert to ENGINEERING MANAGER if DRIFT or worse
+- Alert to ENGINEERING MANAGER if DRIFT_DETECTED or ESCALATE
 - COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ## Rules
@@ -79,7 +78,7 @@ Every N tasks (configurable, default: 5), the METACOGNITION MONITOR asks:
 2. **Process violations are always flagged** — even if the output is good, skipping gates is unacceptable
 3. **"Are we building the right thing?" trumps "Are we building it right?"** — direction over quality
 4. **Don't be a nag** — check every 5 tasks, not every task. Trust the per-task gates for routine quality.
-5. **When in doubt, recommend STOP_AND_ASK** — the cost of pausing is low; the cost of building the wrong thing is catastrophic
+5. **When in doubt, use ESCALATE** — the cost of pausing is low; the cost of building the wrong thing is catastrophic
 
 Return this entry in the `echelon_result` block at the end of your response.
 
