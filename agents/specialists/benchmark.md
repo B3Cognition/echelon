@@ -160,19 +160,31 @@ Define what should be benchmarked and how:
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json`:
+Return this entry in the `echelon_result` block at the end of your response.
 
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "PERFORMANCE",
-  "timestamp": "<ISO 8601>",
-  "type": "decision",
-  "artifact": "<output file>",
-  "section": "<section name>",
-  "reasoning": "<what performance concern was identified, what data supports the recommendation>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<impact on architecture, infrastructure, cost, plan>"]
-}
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per significant performance finding or capacity conclusion.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../performance-model.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: BENCHMARK
+    timestamp: null
+    data:
+      artifact: "performance-model.md"
+      section: "<load scenario or capacity area>"
+      reasoning: "<capacity finding and supporting measurement or calculation>"
+      rationale: "performance modeling and load analysis"
+      alternatives_considered: []
 ```

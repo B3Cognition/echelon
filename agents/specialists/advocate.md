@@ -135,19 +135,32 @@ Flag each violation with severity: CRITICAL (blocks users), MAJOR (degrades expe
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json`:
+Return this entry in the `echelon_result` block at the end of your response.
 
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "UX_A11Y",
-  "timestamp": "<ISO 8601>",
-  "type": "insight",
-  "artifact": "<output file>",
-  "section": "<heuristic or WCAG criterion>",
-  "reasoning": "<what UX/accessibility issue was found, why it matters, how to fix it>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<impact on spec, plan, UI component design>"]
-}
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per significant accessibility or UX finding. Use `severity` in the data field to indicate CRITICAL/HIGH/MEDIUM/LOW concerns.
+
+```echelon_result
+verdict: <COMPLETE | CONCERNS>
+output_files:
+  - .specify/.../ux-report.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: ADVOCATE
+    timestamp: null
+    data:
+      artifact: "ux-report.md"
+      section: "<accessibility area or user flow>"
+      reasoning: "<accessibility or UX finding and its impact>"
+      rationale: "WCAG 2.1 AA compliance and user experience analysis"
+      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+      alternatives_considered: []
 ```

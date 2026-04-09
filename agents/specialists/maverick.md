@@ -379,22 +379,7 @@ MAVERICK has three structured innovation methods in its toolkit. Each method has
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json`:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "MAVERICK",
-  "timestamp": "<ISO 8601>",
-  "type": "alternative",
-  "artifact": "alternatives.md",
-  "section": "<alternative name>",
-  "reasoning": "<what assumption was challenged, what framework produced this idea, why it deserves consideration>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<impact on current design, what changes if this alternative is adopted>"]
-}
-```
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -410,3 +395,30 @@ Append entries to `reasoning-journal.json`:
 | MAV-006 | 2-3 fundamentally different alternatives (not incremental improvements) is the right output count | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
 | MAV-007 | At least one alternative should be radically simpler than the current approach — complexity is not a feature | 2026-03-28 | 2026-09-28 | Design choice; First Principles / Occam's Razor | 0.75 | medium |
 | MAV-008 | Antifragile designs are preferable to merely robust designs when both options are feasible | 2026-03-28 | 2026-09-28 | Antifragility (Nassim Taleb) — theoretical, limited empirical validation in software | 0.65 | low |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per alternative generated. Reference the TRIZ principle applied in the `rationale` field.
+
+```echelon_result
+verdict: ALTERNATIVES_GENERATED
+output_files:
+  - .specify/.../alternatives.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: MAVERICK
+    timestamp: null
+    data:
+      artifact: "alternatives.md"
+      section: "<alternative name>"
+      reasoning: "<why this alternative breaks the current assumption or constraint>"
+      rationale: "<TRIZ principle applied — e.g. Principle 1: Segmentation>"
+      alternatives_considered: []
+```

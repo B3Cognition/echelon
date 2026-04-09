@@ -56,7 +56,7 @@ Produce `security-checklist.md` in `specs/{NNN}-{feature}/`:
 **Recommendation:** {PROCEED | PROCEED_WITH_WARNINGS | SECURITY_REVIEW_REQUIRED}
 ```
 
-If any item is FAIL, append a reasoning-journal entry with `type: "security-checklist-fail"` and recommend remediation.
+If any item is FAIL, return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -214,19 +214,33 @@ This protocol ensures the squad autonomously resolves 70-80% of security decisio
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for each threat identified:
+Return this entry in the `echelon_result` block at the end of your response.
 
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "SECURITY",
-  "timestamp": "<ISO 8601>",
-  "type": "insight",
-  "artifact": "threat-model.md",
-  "section": "<component or threat category>",
-  "reasoning": "<what threat was identified, why it matters, what mitigation is recommended>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<impact on spec, plan, architecture, or other agents>"]
-}
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per security finding. Use `severity` in the data field. If verdict is FINDINGS, list findings in separate entries. The `output_files` should include `risk-acceptance-log.md` always.
+
+```echelon_result
+verdict: <COMPLETE | FINDINGS>
+output_files:
+  - .specify/.../security-findings.md
+  - .specify/.../risk-acceptance-log.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: GUARDIAN
+    timestamp: null
+    data:
+      artifact: "security-findings.md"
+      section: "<threat area — STRIDE category or OWASP category>"
+      reasoning: "<specific security finding and its risk>"
+      rationale: "STRIDE threat model and OWASP analysis"
+      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+      alternatives_considered: []
 ```

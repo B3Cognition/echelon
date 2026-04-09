@@ -124,19 +124,31 @@ Produce specific, actionable amendments — not vague advice.
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json`:
+Return this entry in the `echelon_result` block at the end of your response.
 
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "DOMAIN_EXPERT",
-  "timestamp": "<ISO 8601>",
-  "type": "insight",
-  "artifact": "<amended file>",
-  "section": "<section name>",
-  "reasoning": "<what domain knowledge applies, why it matters for this system>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<impact on spec, plan, architecture, or compliance>"]
-}
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per significant domain-specific insight or knowledge contribution.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../domain-knowledge.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: ORACLE
+    timestamp: null
+    data:
+      artifact: "domain-knowledge.md"
+      section: "<domain area>"
+      reasoning: "<domain-specific insight and why it matters for this project>"
+      rationale: "domain expertise injection"
+      alternatives_considered: []
 ```

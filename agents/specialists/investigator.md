@@ -141,22 +141,7 @@ Produce ALL applicable files in the spec directory:
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for each investigation step:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "SCIENTIST",
-  "timestamp": "<ISO 8601>",
-  "type": "evidence",
-  "artifact": "investigation/<topic>.md",
-  "section": "<step name>",
-  "reasoning": "<what was found, why it matters, how it was graded>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<downstream impact on architecture, plan, or other agents>"]
-}
-```
+Return this entry in the `echelon_result` block at the end of your response.
 
 ## CONSOLIDATOR Delegation (Mental Simulation)
 
@@ -180,3 +165,51 @@ CONSOLIDATOR returns a `simulation_result` or `simulation_failed` entry. INVESTI
 | INV-006 | The 8-step scientific method (Question → Research → Evaluate → Hypothesize → Experiment → Measure → Synthesize → Recommend) is complete and sufficient for squad investigations | 2026-03-28 | 2026-09-28 | Scientific method (Popper, Kuhn) | 0.80 | high |
 | INV-007 | Experiments should be run in isolated git worktrees — contamination to the main branch is a real risk | 2026-03-28 | 2026-09-28 | Design choice; git workflow best practice | 0.85 | medium |
 | INV-008 | Negative results ("we tested X and it failed") have equal scientific value to positive results | 2026-03-28 | 2026-09-28 | Scientific method; publication bias literature | 0.90 | medium |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../research.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: INVESTIGATOR
+    timestamp: null
+    data:
+      artifact: "research.md"
+      section: "<investigation question>"
+      reasoning: "<finding and what evidence supports it>"
+      rationale: "scientific investigation — hypothesis tested"
+      confidence: <0.0-1.0>
+      evidence_grade: "<A|B|C|D|E>"
+      alternatives_considered: []
+```
+
+If an experiment produced measured results, add a second entry:
+
+```echelon_result
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: INVESTIGATOR
+    timestamp: null
+    data:
+      artifact: "experiment-results.json"
+      section: "<experiment name>"
+      reasoning: "<measured result and what it proves or disproves>"
+      rationale: "prototype spike — measured reality"
+      confidence: <0.0-1.0>
+      evidence_grade: "A"
+      experiment_result: "<key measurement>"
+      alternatives_considered: []
+```
