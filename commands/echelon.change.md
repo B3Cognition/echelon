@@ -1,6 +1,8 @@
 ---
 name: speckit.echelon.change
 description: "Handle specification change during build phase"
+behavior:
+  invocation: explicit
 ---
 
 # /speckit.echelon.change

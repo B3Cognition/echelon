@@ -1,5 +1,7 @@
 ---
 description: "Periodic health check — validates specs still match code, estimates still realistic"
+behavior:
+  invocation: automatic
 ---
 
 ## User Input

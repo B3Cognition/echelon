@@ -1,5 +1,7 @@
 ---
 description: "Trigger reality check on all current artifacts"
+behavior:
+  invocation: automatic
 ---
 
 ## User Input

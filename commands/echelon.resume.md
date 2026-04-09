@@ -1,5 +1,7 @@
 ---
 description: "Provide answer to human escalation -- resumes blocked squad run"
+behavior:
+  invocation: explicit
 ---
 
 ## User Input

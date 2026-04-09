@@ -1,5 +1,7 @@
 ---
 description: "Trigger SCIENTIST to investigate a specific question"
+behavior:
+  invocation: automatic
 ---
 
 ## User Input

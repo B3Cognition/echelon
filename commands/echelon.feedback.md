@@ -1,5 +1,7 @@
 ---
 description: "Post-implementation feedback intake -- closes the learning loop. Auto-feedback runs after every build; manual feedback adds human ground truth."
+behavior:
+  invocation: explicit
 ---
 
 ## User Input

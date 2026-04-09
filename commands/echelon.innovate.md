@@ -1,5 +1,7 @@
 ---
 description: "Manually trigger INNOVATE specialist for fresh alternatives"
+behavior:
+  invocation: automatic
 ---
 
 ## User Input

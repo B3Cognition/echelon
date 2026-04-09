@@ -1,5 +1,7 @@
 ---
 description: "Run full backpropagation verification — checks ALL requirements against ALL code"
+behavior:
+  invocation: automatic
 ---
 
 ## User Input

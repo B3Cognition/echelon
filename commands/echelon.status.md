@@ -1,5 +1,7 @@
 ---
 description: "Check current cognitive squad state and progress"
+behavior:
+  invocation: explicit
 ---
 
 ## Overview
