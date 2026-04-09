@@ -113,3 +113,30 @@ This is the check that would have caught the module ID mismatch.
 3. **The model is queryable** — other agents can ask "what depends on module-registry?" and get an answer
 4. **Don't trust tests alone** — tests verify behavior per-file. The model verifies connections across files.
 5. **Track the CONTRACTS, not just the code** — two files that must agree is a contract. If either changes, the model flags it.
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../code-model.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase1-discover
+    agent: MODEL
+    timestamp: null
+    data:
+      artifact: "code-model.md"
+      section: "invariants"
+      reasoning: "<key structural findings and invariants identified in the codebase>"
+      rationale: "living code graph analysis"
+      alternatives_considered: []
+```
+
+Repeat one `decision` entry per significant invariant or structural finding.

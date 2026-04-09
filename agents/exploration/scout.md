@@ -374,36 +374,8 @@ You MUST produce ALL of the following files in the spec directory provided by th
 
 ## Reasoning Journal
 
-After producing all artifacts, append structured entries to `reasoning-journal.json`. Create the file if it does not exist.
-
-For each significant insight, assumption, or boundary decision, append an entry:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "DISCOVER",
-  "timestamp": "<ISO 8601>",
-  "type": "insight",
-  "artifact": "<filename this relates to>",
-  "section": "<specific section>",
-  "reasoning": "<why you made this decision or drew this conclusion>",
-  "confidence": <0.0-1.0>,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<downstream impact for other agents>"]
-}
-```
-
-Entry types you should use:
-- `insight` — a discovery or analysis finding
-- `assumption` — something taken as true without proof
-- `evidence` — a finding backed by code, documentation, or research
-
-Evidence grades:
-- **A:** Peer-reviewed research, ISO/IEEE standard
-- **B:** Official documentation, proven benchmark, code evidence
-- **C:** Well-regarded blog, conference talk, case study
-- **D:** Stack Overflow, forum post, anecdotal
-- **E:** AI training data (unverified, possibly stale)
+COMMANDER writes your journal entries. Return them in the `echelon_result` block below.
+Do NOT write to `reasoning-journal.jsonl` directly.
 
 ---
 
@@ -416,20 +388,19 @@ Before declaring your work complete, verify:
 - [ ] Boundaries include BOTH internal and external boundaries
 - [ ] Every critical assumption has a validation method
 - [ ] Unknowns include at least 2-3 "potential unknown unknowns"
-- [ ] Reasoning journal has entries for every major decision
+- [ ] `echelon_result` block has entries for every major decision
 - [ ] No implementation details leaked into artifacts (no languages, frameworks, databases)
 - [ ] Brownfield: git history was consulted for historical context
 - [ ] Greenfield: at least 3 reference architectures were analyzed
 
 ## Completion Signal
 
-When all artifacts are written and the reasoning journal is updated, output:
+When all artifacts are written, output:
 
 ```
 DISCOVER COMPLETE — artifacts written to <spec_directory>
 Mode: <greenfield|brownfield>
 Artifacts: glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md [, reference-architectures.md]
-Reasoning journal entries: <count> new entries
 ```
 
 ---
@@ -445,3 +416,39 @@ Reasoning journal entries: <count> new entries
 | SCT-005 | Potential unknown unknowns (2-3 minimum) is the right floor to prevent shallow discovery | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
 | SCT-006 | Unresolvable entry points and integration opacity are the remaining valid criteria for requesting GOLDDIGGER Mode 2 when Mode 1 runs at logic depth | 2026-04-02 | 2026-10-02 | Design choice; logic depth resolves boundary ambiguity and hotspot complexity, but deep data flow and integration topology still require full depth | 0.75 | medium |
 | SCT-007 | Implicit business rules are best found by searching conditional logic, validation functions, and state machines | 2026-03-28 | 2026-09-28 | Domain-Driven Design (Evans) — bounded context mapping | 0.80 | medium |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../glossary.md
+  - .specify/.../mental-model.md
+  - .specify/.../boundaries.md
+  - .specify/.../assumptions.md
+  - .specify/.../unknowns.md
+journal_entries:
+  - id: null
+    type: insight
+    phase: phase1-discover
+    agent: DISCOVER
+    timestamp: null
+    data:
+      artifact: "<filename this relates to>"
+      section: "<specific section>"
+      reasoning: "<why you drew this conclusion — interpretive inference from analyzed evidence>"
+      confidence: <0.0-1.0>
+      evidence_grade: "<A|B|C|D|E>"
+      implications: ["<downstream impact for other agents>"]
+```
+
+Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.
+
+For greenfield projects, also include:
+  - .specify/.../reference-architectures.md
+in `output_files` if that artifact was produced.

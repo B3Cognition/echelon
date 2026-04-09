@@ -417,3 +417,31 @@ Repo: <repo or "N/A">
 Status: <complete|partial|failed>
 Cached at: .specify/squad/golddigger-cache/<cache-key>.md
 ```
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: <COMPLETE | PARTIAL | FAILED>
+output_files:
+  - .specify/squad/golddigger-cache/<domain>.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase1-discover
+    agent: EXTRACT
+    timestamp: null
+    data:
+      artifact: "golddigger-cache/<domain>.md"
+      section: "extraction"
+      reasoning: "<what was extracted and any issues encountered>"
+      rationale: "brownfield domain extraction"
+      domain: "<domain name>"
+      mode: "<1 | 2>"
+      artifacts_extracted: <N>
+      warnings: ["<warning if any>"]
+```

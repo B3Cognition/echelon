@@ -451,7 +451,7 @@ No contradictions detected across [N] artifacts ([list artifact filenames]).
 Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict.
 ```
 
-**Logging requirement:** Always log that the contradiction check was performed, including the number of artifacts scanned and the number of contradictions found (including zero). This entry goes into both `issues.md` (as a section) and `reasoning-journal.json`.
+**Logging requirement:** Always log that the contradiction check was performed, including the number of artifacts scanned and the number of contradictions found (including zero). This entry goes into `issues.md` (as a section). Return this entry in the `echelon_result` block at the end of your response.
 
 #### 9. Pre-Mortem on the Spec
 
@@ -566,23 +566,7 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for each challenge and finding:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "WHY",
-  "timestamp": "<ISO 8601>",
-  "type": "challenge",
-  "references": "<RJ-ID of the entry being challenged, if applicable>",
-  "artifact": "<filename>",
-  "section": "<section>",
-  "reasoning": "<why this is a problem, what evidence supports the finding>",
-  "confidence": <0.0-1.0>,
-  "severity": "<CRITICAL | HIGH | MEDIUM | LOW>",
-  "action_required": "<specific action: fix wording, investigate, re-analyze, etc.>"
-}
-```
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -686,18 +670,7 @@ Before running validation, SAGE reads per-agent internalization scores from `kno
    - `declining` trend: Escalate scrutiny one level (e.g., Normal → Elevated)
    - `improving` trend: No change (trust must be earned through sustained improvement)
 
-5. **Log scrutiny decisions**: Record in `reasoning-journal.json`:
-   ```json
-   {
-     "type": "scrutiny-calibration",
-     "agent": "WHY",
-     "target_agent": "{agent under review}",
-     "composite_score": 0.62,
-     "scrutiny_level": "elevated",
-     "category_flags": ["accuracy_below_0.50"],
-     "trend_adjustment": "none"
-   }
-   ```
+5. **Log scrutiny decisions**: Return this entry in the `echelon_result` block at the end of your response.
 
 ### Constraints
 
@@ -766,3 +739,59 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 | SAG-007 | sage-decisions.yaml max_entries cap of 100 is sufficient to preserve a meaningful calibration history | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
 | SAG-008 | LOC claims citing a single file (not a full directory + cloc command) are reliably misleading and warrant HIGH severity | 2026-03-28 | 2026-09-28 | Design choice based on observed misuse patterns | 0.75 | medium |
 | SAG-009 | A resolution that names technologies only (without integration protocol, code example, or failure mode analysis) is not a real resolution and warrants CRITICAL severity | 2026-03-28 | 2026-09-28 | Design choice based on observed failure patterns | 0.75 | high |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: <PASS | FAIL>
+output_files:
+  - .specify/.../assumptions.md
+state_updates:
+  quality_scores:
+    - pass: <true | false>
+      overall: <0.0-1.0>
+      structure: <0.0-1.0>
+      testability: <0.0-1.0>
+      readability: <0.0-1.0>
+      cognitive: <0.0-1.0>
+      semantic: <0.0-1.0>
+      behavioral: <0.0-1.0>
+      depth: <0.0-1.0>
+journal_entries:
+  - id: null
+    type: quality_check
+    phase: <phase1-why1 | phase1-why2 | phase3-consensus>
+    agent: WHY
+    timestamp: null
+    data:
+      pass: <true | false>
+      scores:
+        overall: <0.0-1.0>
+        structure: <0.0-1.0>
+        testability: <0.0-1.0>
+        readability: <0.0-1.0>
+        cognitive: <0.0-1.0>
+        semantic: <0.0-1.0>
+        behavioral: <0.0-1.0>
+        depth: <0.0-1.0>
+      issues: []
+  - id: null
+    type: challenge
+    phase: <phase1-why1 | phase1-why2 | phase3-consensus>
+    agent: WHY
+    timestamp: null
+    data:
+      artifact: "<filename>"
+      section: "<section>"
+      reasoning: "<why this is a problem, what evidence supports the finding>"
+      confidence: <0.0-1.0>
+      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+      action_required: "<specific action: fix wording, investigate, re-analyze, etc.>"
+```
+
+Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).

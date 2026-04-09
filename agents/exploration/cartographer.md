@@ -440,29 +440,7 @@ The primary output. Must follow this structure exactly:
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for each major decision:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "WHAT",
-  "timestamp": "<ISO 8601>",
-  "type": "decision",
-  "artifact": "spec.md",
-  "section": "<section name>",
-  "reasoning": "<why this requirement was written this way, why this scope decision was made>",
-  "confidence": <0.0-1.0>,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<downstream impact for HOW, PLAN, TEST ARCHITECT>"]
-}
-```
-
-Key decisions to journal:
-
-- MVP vs deferred scope choices (why was something included or excluded?)
-- Requirements that depend on unvalidated assumptions
-- Non-functional requirement targets (why these numbers?)
-- Any glossary additions or term refinements
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -508,3 +486,31 @@ Open questions: <count>
 | CAR-006 | Testability fix for low testability score is reliably achieved by adding numeric thresholds and units | 2026-03-28 | 2026-09-28 | ISO 29148:2018; Lucassen 2017 | 0.80 | high |
 | CAR-007 | Passing requirements not in the per-requirement failure list must remain unchanged verbatim during amendment | 2026-03-28 | 2026-09-28 | Design choice; amendment scope-containment rule | 0.85 | critical |
 | CAR-008 | GOLDDIGGER Mode 2 deep-dive requests from CARTOGRAPHER should only be made when external integration topology cannot be determined from logic-depth function bodies | 2026-04-02 | 2026-10-02 | Design choice; Mode 1 logic depth covers internal behavior, Mode 2 needed only for deep data flow across integration boundaries | 0.75 | medium |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../spec.md
+  - .specify/.../00-overview.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase1-what
+    agent: WHAT
+    timestamp: null
+    data:
+      artifact: "spec.md"
+      section: "<section name where this decision appears>"
+      reasoning: "<why you made this requirement decision>"
+      rationale: "<principle or constraint that drove the choice>"
+      alternatives_considered: ["<alternative 1>", "<alternative 2>"]
+```
+
+Repeat one `decision` entry per major requirement or scope decision.

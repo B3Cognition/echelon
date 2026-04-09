@@ -244,3 +244,30 @@ Append entries with:
 | WHAT writes requirements from fragments | WHAT writes from unified understanding |
 | Gaps only found when code doesn't work | Gaps found before anyone writes code |
 | "The docs say X" (is that still true?) | "Code says X, docs say Y — which is current?" |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../synthesis.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase1-discover
+    agent: DISCOVER
+    timestamp: null
+    data:
+      artifact: "synthesis.md"
+      section: "contradictions"
+      reasoning: "<what contradictions were found and how they were resolved>"
+      rationale: "<synthesis approach — what evidence hierarchy or principle governed resolution>"
+      alternatives_considered: []
+```
+
+Repeat one `decision` entry per significant synthesis decision or contradiction resolution.
