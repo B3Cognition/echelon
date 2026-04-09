@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EchelonResult",
+  "description": "Structured output block appended by every Echelon agent. COMMANDER reads this after each dispatch.",
+  "type": "object",
+  "required": ["verdict", "output_files"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "description": "Agent-specific verdict. Common values: PASS, FAIL, APPROVED, CHANGES_REQUESTED, DONE, BLOCKED, NEEDS_CONTEXT, KILL, DEFER, INTERNALIZED, PARTIAL"
+    },
+    "output_files": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths of artifact files written to disk by this agent"
+    },
+    "state_updates": {
+      "type": "object",
+      "description": "Fields COMMANDER writes to state.json. Agent never writes state.json directly.",
+      "properties": {
+        "phase": { "type": "string" },
+        "workflow_state": { "type": "string" },
+        "quality_scores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "pass": { "type": "integer" },
+              "overall": { "type": "number" },
+              "structure": { "type": "number" },
+              "testability": { "type": "number" },
+              "readability": { "type": "number" },
+              "cognitive": { "type": "number" },
+              "semantic": { "type": "number" },
+              "behavioral": { "type": "number" },
+              "depth": { "type": "number" }
+            }
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "journal_entries": {
+      "type": "array",
+      "description": "Journal entries COMMANDER will append to reasoning-journal.jsonl and index.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "phase", "agent", "timestamp", "data"],
+        "properties": {
+          "id": {
+            "type": "null",
+            "description": "Always null from agent. COMMANDER assigns RJ-NNN sequential id."
+          },
+          "type": {
+            "type": "string",
+            "description": "Must be a type from workflow/journal-entry-types.yaml"
+          },
+          "phase": { "type": "string" },
+          "agent": { "type": "string" },
+          "timestamp": {
+            "type": "null",
+            "description": "Always null from agent. COMMANDER fills with ISO-8601 UTC at write time."
+          },
+          "data": {
+            "type": "object",
+            "description": "Entry payload. Fields depend on type — see workflow/journal-entry-types.yaml"
+          }
+        }
+      }
+    }
+  }
+}
