@@ -107,18 +107,11 @@ If `prediction_match_score < 0.3` (divergence threshold) — record a social pre
 ### Subsection 3 — COMMANDER Dispatch Signal (FR-PSC-004)
 
 When a social prediction error is recorded AND `prediction_confidence >= 0.5` (active learning mode):
-Write a dispatch signal to reasoning-journal.json:
 
-```json
-{
-  "type": "tracker_model_update_requested",
-  "prediction_error_id": "<reference>",
-  "run_id": "<current run_id>",
-  "timestamp": "<ISO 8601>"
-}
-```
+COMMANDER writes your journal entries. Return them in the `echelon_result` block below.
+Do NOT write to `reasoning-journal.jsonl` directly.
 
-**Learning mode gate (FR-PSC-005):** When `prediction_confidence < 0.5` — record the error in prediction-model.json for accumulation. Do NOT write the `tracker_model_update_requested` signal to reasoning-journal.json. Accumulate errors silently until the N=3 threshold is reached.
+**Learning mode gate (FR-PSC-005):** When `prediction_confidence < 0.5` — record the error in prediction-model.json for accumulation. Do NOT include the `tracker_model_update_requested` signal in your `echelon_result` journal entries. Accumulate errors silently until the N=3 threshold is reached.
 
 ## Output
 
@@ -163,3 +156,28 @@ When ASSESS or HOW makes a tradeoff, log it against the stakeholder model:
 ```
 
 Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders are detectable from the project description or constitution.
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly. Fill in all fields.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: <ALIGNED | DRIFTING | ESCALATE>
+output_files:
+  - .specify/.../user-intent.md
+journal_entries:
+  - id: null
+    type: prediction
+    phase: <current phase>
+    agent: INTENT
+    timestamp: null
+    data:
+      predicted_intent: "<summary of predicted user intent>"
+      confidence: <0.0-1.0>
+      evidence: "<what signals led to this prediction>"
+```
+
+Repeat one entry per intent prediction. If signalling a social prediction error, use type `social_prediction_error` with fields `expected`, `observed`, `error_magnitude`.

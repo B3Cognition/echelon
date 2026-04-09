@@ -473,3 +473,30 @@ Add to the per-run Agent Scorecard output:
 | SCR-010 | Marketplace Community Contributor badge threshold of 5 reuses is the right bar for recognising community value | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
 | SCR-011 | Internalization composite score >= 0.90 warrants +1 point and < 0.50 warrants -1 point | 2026-03-28 | 2026-09-28 | Design choice; aligned with quality gate conventions | 0.70 | medium |
 | SCR-012 | Deep Learner badge requires composite score >= 0.85 for 5 consecutive runs — both the threshold and streak length are correct | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: SCORED
+output_files:
+  - .specify/.../squad-scorecard.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: <current phase>
+    agent: SCORE
+    timestamp: null
+    data:
+      artifact: "squad-scorecard.md"
+      section: "summary"
+      reasoning: "<overall scoring rationale>"
+      rationale: "post-run performance tracking"
+      agents_scored: <N>
+      top_performers: ["<agent codename>"]
+      improvement_candidates: ["<agent codename>"]
+```

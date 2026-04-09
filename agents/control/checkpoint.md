@@ -236,3 +236,26 @@ Doubts resolved: {count}
 Gaps found: {count}
 Gate decision: {PROCEED | RESOLVE | ROUTE BACK}
 ```
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: <INTERNALIZED | PARTIAL | FAILED>
+output_files: []
+journal_entries:
+  - id: null
+    type: decision
+    phase: <current phase>
+    agent: CHECKPOINT
+    timestamp: null
+    data:
+      check_type: "internalization_gate"
+      result: "<INTERNALIZED | PARTIAL | FAILED>"
+      doubts_count: <N>
+      doubts: ["<doubt 1 if PARTIAL or FAILED>"]
+```

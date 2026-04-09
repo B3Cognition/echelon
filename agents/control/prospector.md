@@ -133,3 +133,29 @@ Extensions found: <count>
 Relevant: <list of relevant extension IDs, or "none">
 Manifest written to: .specify/squad/extension-capabilities.json
 ```
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: <COMPLETE | FAILED>
+output_files:
+  - .specify/squad/extension-capabilities.json
+journal_entries:
+  - id: null
+    type: decision
+    phase: init
+    agent: SURVEY
+    timestamp: null
+    data:
+      artifact: "extension-capabilities.json"
+      section: "extensions"
+      reasoning: "<what extensions were found and their relevance>"
+      rationale: "PROSPECTOR discovery run"
+      spec_kit_available: <true | false>
+      relevant_extensions: ["<extension name>"]
+```

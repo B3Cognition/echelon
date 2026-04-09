@@ -190,3 +190,29 @@ Over-invested: {count}
 High-blast-radius decisions: {count}
 Top recommendation: {one-line summary}
 ```
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../strategic-overview.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: <current phase>
+    agent: OVERVIEW
+    timestamp: null
+    data:
+      artifact: "strategic-overview.md"
+      section: "risk_areas"
+      reasoning: "<strategic assessment rationale>"
+      rationale: "risk-weighted alignment analysis"
+      risk_areas: ["<area>"]
+      focus_recommendation: "<where to focus intelligence>"
+```
