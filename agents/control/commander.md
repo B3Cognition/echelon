@@ -62,27 +62,55 @@ If the index is absent, rebuild it by scanning `reasoning-journal.jsonl` and log
 ### 5. Execute current node
 Assemble context pack as defined in the phase node.
 Dispatch the agent.
-Read the agent's `echelon_result` block from the end of its response.
 
 ### 6. Write outputs — in this exact order, never skip a step
-a. Append `journal_entries[]` from `echelon_result` to `reasoning-journal.jsonl`.
-   Assign sequential `id` (RJ-NNN) and current UTC `timestamp` to each entry.
-b. Update `reasoning-journal-index.json` with new entry IDs across all 8 dimensions:
-   `by_phase`, `by_type`, `by_agent`, `by_task`, `by_severity`, `by_iteration`, `by_verdict`, `timeline`.
-c. Apply `state_updates[]` from `echelon_result` to `state.json`.
-d. Run `scripts/bash/state-backup.sh` before any major phase transition.
-
-**Fallback for old-format agents (transition period only):**
-If an agent's response contains no `echelon_result` block, fall back to reading
-`reasoning-journal.jsonl` for that agent's new entries (entries after the last known `last_entry_id`
-in the index). Log a warning entry of type `routing_decision` noting the missing block.
-Remove this fallback once all agents have been updated.
+After the agent returns — **before evaluating transitions or dispatching the next agent** — execute the Post-Dispatch Protocol below. This is not optional.
 
 ### 7. Evaluate transitions
 Read `transitions[]` for the current phase node from `definition.yaml`.
 First matching condition wins. Write new `state.phase` to `state.json`.
 
 ### 8. Repeat from step 1.
+
+---
+
+## Post-Dispatch Protocol
+
+**NEVER rule: execute this after EVERY agent dispatch, before any other action.**
+
+This protocol is the mechanism that keeps the journal complete. Skipping it — even once, even for a "simple" dispatch — violates the sole-writer contract and corrupts the index.
+
+### Step A — Extract echelon_result block
+
+Scan the agent's response text for a fenced block that begins with ` ```echelon_result `.
+
+- If found: parse the YAML inside the block. Extract `verdict`, `output_files[]`, `journal_entries[]`, `state_updates[]`.
+- If not found (old-format agent): log a warning entry of type `routing_decision` with `data.warning: "echelon_result block missing"` and the agent name. Continue to Step C.
+
+### Step B — Write journal entries
+
+For **each** entry in `journal_entries[]`:
+
+1. Read current `last_entry_id` from `reasoning-journal-index.json` (e.g., `RJ-047`). Increment → new id (`RJ-048`).
+2. Set `entry.id = "RJ-048"` and `entry.timestamp = <current UTC ISO-8601>`.
+3. Append the complete entry as a **single JSON line** to `.specify/squad/reasoning-journal.jsonl`.
+4. Update all relevant index dimensions in `reasoning-journal-index.json`:
+   - `by_phase`, `by_type`, `by_agent`, `by_iteration` — always
+   - `by_task`, `by_severity`, `by_verdict` — when present in entry data
+   - `timeline` — always (append entry id)
+5. Update `last_entry_id` and `last_updated` in the index root.
+6. Write the updated index to `reasoning-journal-index.json`.
+
+If `reasoning-journal-index.json` does not yet exist, create it now using the schema in `templates/echelon-result-schema.json` with all dimension arrays empty and `last_entry_id: null`.
+
+### Step C — Apply state updates
+
+Apply each field in `state_updates[]` to `.specify/squad/state.json`.
+Run `scripts/bash/state-backup.sh` if the update includes a phase transition.
+
+### Step D — Confirm and proceed
+
+Only after Steps A–C are complete: evaluate phase transitions (Bootstrap step 7) and dispatch the next agent.
 
 ## Index Writer Protocol
 
