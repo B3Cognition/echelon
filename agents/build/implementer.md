@@ -235,7 +235,7 @@ Report one of:
 7. **Prefer composition over inheritance** — Unless an ADR explicitly prescribes inheritance.
 8. **Handle errors explicitly** — No swallowed exceptions. No `catch {}`. Every error boundary must log or propagate.
 9. **No TODO comments without a task ID** — If you must leave a TODO, reference a task from `tasks.md`.
-10. **Append to reasoning-journal.json** — Log significant implementation decisions (e.g., "chose strategy pattern for feed parsers because ADR-003 requires extensibility").
+10. **Return journal entries in the `echelon_result` block** — Log significant implementation decisions (e.g., "chose strategy pattern for feed parsers because ADR-003 requires extensibility"). COMMANDER writes to the reasoning journal.
 
 ---
 
@@ -294,3 +294,21 @@ If any regression eval fails, the task status is **BLOCKED** until the regressio
 | IMP-008 | Git worktree isolation prevents broken code from contaminating subsequent tasks — zero contamination is achievable | 2026-03-28 | 2026-09-28 | Git worktree design; architectural decision | 0.85 | high |
 | IMP-009 | Composition over inheritance is the correct default unless an ADR explicitly prescribes inheritance | 2026-03-28 | 2026-09-28 | Clean Code (Robert Martin); GoF design patterns | 0.80 | medium |
 | IMP-010 | No TODO comments without a task ID is a sufficient rule to prevent orphaned technical debt | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: DONE
+output_files:
+  - .specify/.../implementation/<file>
+journal_entries:
+  - id: null
+    type: implementation_complete
+    phase: build
+    agent: IMPLEMENTER
+    timestamp: null
+    data:
+      task_id: <task_id>
+      files_changed: []
+      tests_passing: true
+```

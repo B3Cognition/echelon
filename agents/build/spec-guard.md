@@ -166,7 +166,7 @@ Append to `.specify/specs/{feature}/spec-compliance-report.md`:
 
 ### Reasoning Journal
 
-Append entries to `reasoning-journal.json` for every FAIL or significant WARN, including the evidence (requirement text vs code behavior).
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -240,3 +240,21 @@ After each task, scan all source files changed during the build phase. Any file 
 - **Dead code** (functions not imported or called anywhere) — Flag as FAIL. These must be removed or justified.
 
 Record all orphans in the reverse trace table with requirement column set to `— (orphan: {reason})`.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: COMPLIANT
+output_files:
+  - .specify/.../spec-compliance-report.md
+journal_entries:
+  - id: null
+    type: quality_check
+    phase: build
+    agent: SPEC_GUARD
+    timestamp: null
+    data:
+      task_id: <task_id>
+      pass: true
+      violations: []
+```

@@ -53,7 +53,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 - WHY does this fail? (not WHAT fails, but WHY)
 - Is it a logic error, a data flow error, a timing issue, a missing dependency?
 - Trace the data flow from input to failure point
-- Check the reasoning-journal.json: was there a design decision that caused this?
+- Check the reasoning-journal.jsonl: was there a design decision that caused this?
 
 ### Step 4: Fix
 
@@ -97,7 +97,7 @@ Append per investigation:
 
 ### Root Cause
 {WHY it fails — the actual cause, not the symptom}
-{Was there a design decision that caused this? Reference reasoning-journal.json if so}
+{Was there a design decision that caused this? Reference reasoning-journal.jsonl if so}
 
 ### Fix Applied
 {What was changed to fix the root cause}
@@ -114,21 +114,7 @@ Append per investigation:
 
 ### Reasoning Journal
 
-Append entries with type "debug":
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "DEBUGGER",
-  "timestamp": "<ISO 8601>",
-  "type": "debug",
-  "artifact": "debug-report.md",
-  "section": "<task_id>",
-  "reasoning": "<investigation path: what was tried, what was ruled out, what led to root cause>",
-  "confidence": 0.0-1.0,
-  "implications": ["<systemic issues revealed, patterns to watch for>"]
-}
-```
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -149,4 +135,22 @@ DEBUG COMPLETE — {task_id}
 Root cause: {one-line summary}
 Fix: {applied | escalated to COMMANDER}
 Verification: {PASS | FAIL}
+```
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: RESOLVED
+output_files:
+  - .specify/.../debug-report.md
+journal_entries:
+  - id: null
+    type: debug_finding
+    phase: build
+    agent: DEBUGGER
+    timestamp: null
+    data:
+      task_id: <task_id>
+      root_cause: <root_cause_summary>
+      fix_applied: <fix_description>
 ```

@@ -278,7 +278,7 @@ Append to `.specify/specs/{feature}/code-review-report.md`:
 
 ### Reasoning Journal
 
-Append entries to `reasoning-journal.json` for every CHANGES_REQUESTED or BLOCKED verdict, documenting the specific evidence.
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -291,3 +291,21 @@ Append entries to `reasoning-journal.json` for every CHANGES_REQUESTED or BLOCKE
 5. **ADR violations are always CHANGES_REQUESTED** — Unless the ADR itself is ambiguous, in which case flag as a concern for MANAGER.
 6. **Performance issues need evidence** — Do not flag theoretical performance problems. Flag measurable ones (unbounded loops, missing cleanup, N+1 patterns).
 7. **Acknowledge good work** — The Commendations section exists for a reason. Positive reinforcement improves output quality over time.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: APPROVED
+output_files:
+  - .specify/.../code-review-report.md
+journal_entries:
+  - id: null
+    type: review_complete
+    phase: build
+    agent: CODE_REVIEWER
+    timestamp: null
+    data:
+      task_id: <task_id>
+      issues: []
+      strengths: []
+```

@@ -124,3 +124,20 @@ This connects the **spec visualization** (what SHOULD happen) with the **runtime
 4. **Check the REAL page, not mocks** — use the dev page with actual component tags
 5. **Report what you SEE, not what you expect** — if the visualization looks wrong, say so, even if all tests pass
 6. **Include the spec diagram** — if Understanding generated one, show it alongside screenshots for comparison
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: VISUAL_PASS
+output_files:
+  - .specify/.../visual-validation-report.md
+journal_entries:
+  - id: null
+    type: visual_check
+    phase: build
+    agent: VISUAL_VALIDATOR
+    timestamp: null
+    data:
+      components_checked: []
+      failures: []
+```

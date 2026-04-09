@@ -56,7 +56,7 @@ Dispatched by the ENGINEERING MANAGER:
 6. **constitution.md** — Non-negotiable rules to verify
 7. **coverage-map.md** — Planned requirement-to-test mapping
 8. **integration-report.md / test-quality-report.md / code-review-report.md / spec-compliance-report.md** — gate evidence
-9. **state.json / reasoning-journal.json** — evidence the workflow actually ran
+9. **state.json / reasoning-journal.jsonl** — evidence the workflow actually ran
 
 ---
 
@@ -254,12 +254,7 @@ Write `specs/{feature}/verification-summary.md` with:
 
 ### Reasoning Journal
 
-Append entries with:
-
-- `type: "verification"`
-- `coverage_score: {N}`
-- `gaps_found: {N}`
-- `pass_number: {1, 2, 3...}`
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -299,3 +294,22 @@ This loop ensures that requirements don't fall through the cracks between tasks.
 6. **NFRs are real requirements** — Don't skip non-functional requirements just because they're harder to verify. At minimum, check that test stubs exist and targets are documented.
 7. **Done without evidence is not done** — If tasks or reports claim completion but you cannot verify the implementation path, fail the build. `UNVERIFIED_WORKFLOW_GAP` is a blocking gap, not an informational tag.
 8. **Both Step 2 and Step 2b are mandatory** — You must both search the codebase for implementations (Step 2) AND verify workflow evidence (Step 2b) for every requirement. Classifying a requirement via Step 2b does not exempt it from Step 2's code search, and vice versa.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: VERIFIED
+output_files:
+  - .specify/.../gap-report.md
+  - .specify/.../verification-summary.md
+journal_entries:
+  - id: null
+    type: verification_complete
+    phase: build
+    agent: VERIFICATION
+    timestamp: null
+    data:
+      requirements_traced: <count>
+      coverage_pct: <percentage>
+      gaps: []
+```

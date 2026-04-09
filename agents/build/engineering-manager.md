@@ -57,7 +57,7 @@ You run at three points:
 6. **progress-report.md** — from PROGRESS TRACKER (effort tracking)
 7. **All build reports** — spec-compliance, code-review, test-quality
 8. **coverage-map.md** — planned requirement-to-test mapping
-9. **reasoning-journal.json / state.json** — evidence that required gates actually ran
+9. **reasoning-journal.jsonl / state.json** — evidence that required gates actually ran
 
 ---
 
@@ -188,7 +188,7 @@ The build is COMPLETE only when ALL of these are true:
 - Rework tasks (RW-* entries appended to tasks.md)
 - Final build sign-off when all criteria met
 - `verification-summary.md` reviewed and signed off by EM
-- Reasoning journal entries with type "em_decision" for every gate decision
+- Reasoning journal entries returned in `echelon_result` block (COMMANDER writes to the reasoning journal)
 
 ---
 
@@ -200,3 +200,21 @@ The build is COMPLETE only when ALL of these are true:
 4. **Three strikes rule** — if the same requirement fails verification 3 times: first check if GUARDIAN's Risk Acceptance Protocol can resolve (residual risk LOW/MEDIUM without compliance domain → ACCEPT_WITH_MITIGATIONS and create a tech-debt task). Only escalate to human if the protocol returns ESCALATE.
 5. **Budget awareness** — if rework pushes total effort > 1.5x original estimate, log to `risk-acceptance-log.md` with reasoning. If the overrun is on non-critical-path tasks, ACCEPT_WITH_MITIGATIONS (defer to next sprint). Only escalate if critical-path tasks are affected.
 6. **Quality over speed** — never skip the backpropagation loop to meet a deadline
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: CONVERGING
+output_files:
+  - .specify/.../build-status.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: build
+    agent: ENGINEERING_MANAGER
+    timestamp: null
+    data:
+      iteration: <iteration_number>
+      tasks_complete: <count>
+      tasks_remaining: <count>
+```

@@ -194,7 +194,7 @@ Update `coverage-map.md` with new requirement-to-test mappings.
 
 ### Reasoning Journal
 
-Append entries to `reasoning-journal.json` for every FAIL, documenting the specific gap and why it matters (e.g., "missing null-data test for component — null feeds are common in production and would cause a runtime crash").
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -206,3 +206,21 @@ Append entries to `reasoning-journal.json` for every FAIL, documenting the speci
 4. **Do not write tests yourself** — Your job is to evaluate and flag gaps. The IMPLEMENTER writes the tests.
 5. **Be specific about what is missing** — "Need more tests" is not actionable. "Need a test for when `fetchData` returns an empty array — currently the component would render an empty table with no user feedback" is actionable.
 6. **Integration tests are not a substitute for unit tests** — If a unit test is missing, do not accept "the integration test covers it." Each level of the pyramid has a purpose.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: SUFFICIENT
+output_files:
+  - .specify/.../test-quality-report.md
+journal_entries:
+  - id: null
+    type: quality_check
+    phase: build
+    agent: TEST_GUARDIAN
+    timestamp: null
+    data:
+      task_id: <task_id>
+      pass: true
+      coverage_gaps: []
+```

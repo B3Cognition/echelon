@@ -170,13 +170,7 @@ Write to `.specify/specs/{feature}/change-impact-report.md`:
 
 ### Reasoning Journal
 
-Append entries to `reasoning-journal.json`:
-
-- `type: "change_request"`
-- `agent: "CHANGE_CONTROLLER"`
-- `change_id: "CR-{NNN}"`
-- `impact_summary`: brief description of blast radius
-- `cost_delta`: total additional effort
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -188,3 +182,21 @@ Append entries to `reasoning-journal.json`:
 4. **Preserve traceability** — Every task touched by a change must reference the CR-* ID. This creates an audit trail for why work was redone.
 5. **Recommend, do not decide** — Present the impact analysis and propagation plan. The MANAGER (or human) decides whether to accept the change, defer it, or reject it.
 6. **NEVER accept a change that violates the constitution** — If a change request contradicts a constitution principle, reject it immediately. The constitution is immutable. Only the human can amend it via `/speckit.constitution`.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: APPROVED
+output_files:
+  - .specify/.../change-impact-report.md
+journal_entries:
+  - id: null
+    type: change_assessment
+    phase: build
+    agent: CHANGE_CONTROLLER
+    timestamp: null
+    data:
+      change_id: <CR-NNN>
+      blast_radius: <summary>
+      affected_components: []
+```

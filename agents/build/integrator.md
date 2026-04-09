@@ -170,7 +170,7 @@ Write to `.specify/specs/{feature}/integration-report.md` (one per phase checkpo
 
 ### Reasoning Journal
 
-Append entries to `reasoning-journal.json` for every FAIL, documenting the integration incompatibility and its root cause.
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -182,3 +182,20 @@ Append entries to `reasoning-journal.json` for every FAIL, documenting the integ
 4. **Prior phase issues are not your problem** — If a failure existed before this phase, note it as KNOWN but do not count it as a new failure.
 5. **Bundle size matters** — Even if everything works, an oversized bundle is a FAIL if NFR limits are specified.
 6. **Circular dependencies are always a FAIL** — No exceptions. They cause initialization order bugs that are nearly impossible to debug in production.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: INTEGRATED
+output_files:
+  - .specify/.../integration-report.md
+journal_entries:
+  - id: null
+    type: integration_check
+    phase: build
+    agent: INTEGRATOR
+    timestamp: null
+    data:
+      components_checked: []
+      failures: []
+```
