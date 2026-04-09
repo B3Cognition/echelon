@@ -219,22 +219,7 @@ ASSESS2 can flag issues but has restricted blocking power:
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for each significant assessment:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "ASSESS",
-  "timestamp": "<ISO 8601>",
-  "type": "decision",
-  "artifact": "<output filename>",
-  "section": "<section>",
-  "reasoning": "<why this decision was made, what evidence supports it>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<downstream effects on HOW, PLAN, specialists>"]
-}
-```
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -278,3 +263,30 @@ Implementability: <READY>/<NEEDS_CLARIFICATION>/<BLOCKED> tasks (consensus only)
 | GTK-007 | KILL requires UNFEASIBLE on at least one dimension — FEASIBLE_WITH_RISKS is insufficient to kill | 2026-03-28 | 2026-09-28 | NEVER rule: NEVER kill without evidence | 0.80 | critical |
 | GTK-008 | assess.defer_loop_limit (default 2) is the right cap on scope-reduction cycles before human escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
 | GTK-009 | Constitution-mandated capabilities must never be dropped during scope reduction — any such drop is an escalation trigger | 2026-03-28 | 2026-09-28 | Constitution immutability principle | 0.90 | critical |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `assessment` entry per feasibility or implementability assessment. If verdict is KILL, `output_files` should include the kill-report path.
+
+```echelon_result
+verdict: <PASS | KILL | DEFER>
+output_files:
+  - .specify/.../kill-report.md
+journal_entries:
+  - id: null
+    type: assessment
+    phase: <phase2-decide | phase3-consensus>
+    agent: ASSESS
+    timestamp: null
+    data:
+      verdict: "<PASS | KILL | DEFER>"
+      rationale: "<why this verdict — specific evidence and reasoning>"
+      scope_notes: "<any scope adjustments if DEFER>"
+      risk_flags: ["<risk 1>"]
+      deferred_items: ["<deferred item if DEFER>"]
+```

@@ -186,22 +186,7 @@ Review quarantined tests weekly — fix or remove. Tests quarantined for more th
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for each test strategy decision:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "TEST_ARCHITECT",
-  "timestamp": "<ISO 8601>",
-  "type": "decision",
-  "artifact": "test-strategy.md",
-  "section": "<section name>",
-  "reasoning": "<why this test approach was chosen, what tradeoffs were considered>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<impact on PLAN task generation, CI/CD pipeline, developer workflow>"]
-}
-```
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -218,3 +203,31 @@ Append entries to `reasoning-journal.json` for each test strategy decision:
 | SNT-007 | hard_constraint_ratio, constraint_density, and negative_space_coverage below 0.50 are the right testability deficiency signals | 2026-03-28 | 2026-09-28 | FR-005 spec; Understanding tooling definitions | 0.75 | high |
 | SNT-008 | Pre-commit unit tests should complete in < 30s — this is a reasonable developer-experience target | 2026-03-28 | 2026-09-28 | Industry convention; no empirical validation for this codebase | 0.70 | medium |
 | SNT-009 | PR/Merge full test suite should complete in < 5 minutes — this is a reasonable CI target | 2026-03-28 | 2026-09-28 | Industry convention; no empirical validation for this codebase | 0.70 | medium |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per significant test strategy decision (test layer choice, coverage mapping rationale, CI pipeline decision).
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../test-strategy.md
+  - .specify/.../coverage-map.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: phase3-sentinel
+    agent: SENTINEL
+    timestamp: null
+    data:
+      artifact: "test-strategy.md"
+      section: "<test layer — unit/integration/e2e/contract>"
+      reasoning: "<why this test approach for this layer>"
+      rationale: "<risk or coverage principle that drove the decision>"
+      alternatives_considered: []
+```

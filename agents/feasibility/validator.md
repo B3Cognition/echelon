@@ -231,3 +231,29 @@ Understanding produces spec → Agent internalizes → "Wait, ADR-013 says diffe
 ```
 
 The internalization check costs ~5 minutes per agent. It saves hours of rework.
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `validator_dispatch` entry. If verdict is PARTIAL, list all doubts in the `doubts` array.
+
+```echelon_result
+verdict: <INTERNALIZED | PARTIAL | FAILED>
+output_files: []
+state_updates:
+  phase: build_init
+journal_entries:
+  - id: null
+    type: validator_dispatch
+    phase: build_init
+    agent: INTERNALIZATION_GATE
+    timestamp: null
+    data:
+      verdict: "<INTERNALIZED | PARTIAL | FAILED>"
+      doubts: ["<doubt 1 if PARTIAL or FAILED — specific artifact, section, and what was unclear>"]
+      agents_assessed: ["ARCHITECT", "SCOUT", "CARTOGRAPHER"]
+```

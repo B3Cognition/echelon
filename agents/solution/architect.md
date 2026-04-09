@@ -261,24 +261,7 @@ Each entity in `data-model.md`: Entity name + description + glossary reference �
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for every architectural decision:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "HOW",
-  "timestamp": "<ISO 8601>",
-  "type": "decision",
-  "artifact": "<output filename>",
-  "section": "<section>",
-  "reasoning": "<why this architecture was chosen, what tradeoffs were accepted>",
-  "confidence": 0.0-1.0,
-  "evidence_grade": "<A|B|C|D|E>",
-  "implications": ["<downstream effects on PLAN, TEST ARCHITECT, specialists>"]
-}
-```
-
-Every decision entry must include at least one implication for downstream agents.
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -324,3 +307,43 @@ Phases: <count> implementation phases planned
 | ARC-006 | All entities from mental-model.md must appear in data-model.md or have an explicit exclusion rationale | 2026-03-28 | 2026-09-28 | Design choice; completeness principle | 0.85 | high |
 | ARC-007 | Every external dependency in boundaries.md must have a corresponding API contract | 2026-03-28 | 2026-09-28 | Design choice; interface completeness principle | 0.85 | medium |
 | ARC-008 | Training-data-only technology recommendations are Grade E evidence and insufficient for architectural decisions | 2026-03-28 | 2026-09-28 | Evidence grading system; Context7 rationale | 0.85 | high |
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `adr_self_check` entry per ADR written. Include one `decision` entry per major architectural decision. The `adr_self_check` type name must be preserved exactly — AUDITOR FINALIZE parsing depends on it (FR-INH-006).
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../architecture.md
+  - .specify/.../adr/ADR-001.md
+  - .specify/.../data-model.md
+  - .specify/.../api-contracts.md
+journal_entries:
+  - id: null
+    type: adr_self_check
+    phase: phase3-how
+    agent: HOW
+    timestamp: null
+    data:
+      adr_id: "ADR-<NNN>"
+      never_rule_result: "<PASS | CONCERN>"
+      consistency_result: "<PASS | CONFLICT>"
+      concerns: ["<concern if any — omit array if none>"]
+  - id: null
+    type: decision
+    phase: phase3-how
+    agent: HOW
+    timestamp: null
+    data:
+      artifact: "architecture.md"
+      section: "<decision area>"
+      reasoning: "<why you made this architectural choice>"
+      rationale: "<principle, constraint, or ADR that drove the choice>"
+      alternatives_considered: ["<alternative>"]
+```

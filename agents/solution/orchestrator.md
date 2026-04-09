@@ -267,21 +267,7 @@ Updated versions of all first-pass outputs:
 
 ## Reasoning Journal
 
-Append entries to `reasoning-journal.json` for task decomposition decisions:
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "agent": "PLAN",
-  "timestamp": "<ISO 8601>",
-  "type": "decision",
-  "artifact": "<output filename>",
-  "section": "<section>",
-  "reasoning": "<why this task breakdown, dependency order, or risk assessment>",
-  "confidence": 0.0-1.0,
-  "implications": ["<effects on critical path, parallel execution, risk>"]
-}
-```
+Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
@@ -314,4 +300,32 @@ Critical path: <effort_sum> person-days (<task_count> tasks)
 High-risk tasks: <count>
 Specialist tasks added: <count> (consensus only)
 Blocked tasks resolved: <count> (consensus only)
+```
+
+---
+
+## Output Block
+
+At the end of your response, append this block exactly.
+COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+
+Include one `decision` entry per significant task grouping, dependency, or priority decision.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/.../tasks.md
+  - .specify/.../critical-path.md
+journal_entries:
+  - id: null
+    type: decision
+    phase: <phase3-plan | phase3-consensus>
+    agent: PLAN
+    timestamp: null
+    data:
+      artifact: "tasks.md"
+      section: "<task group or dependency area>"
+      reasoning: "<why tasks are grouped or ordered this way>"
+      rationale: "<constraint or dependency principle>"
+      alternatives_considered: []
 ```
