@@ -632,13 +632,13 @@ Before every agent dispatch, COMMANDER must:
 2. Compare against the configured budget (`analysis.token_budget_k` in `squad-config.yml`, value in thousands of tokens)
 3. If `total_estimated_tokens + next_dispatch_estimate > analysis.token_budget_k * 1000`:
    - Check if reserve budget (5%) is available and the dispatch is critical
-   - If no budget remains: force finalize with quality report (see Convergence Rules)
+   - If no budget remains: force finalize with quality report (see `workflow/definition.yaml convergence:`)
    - Log a `BUDGET_EXHAUSTED` entry in `reasoning-journal.json`
 4. If within budget: proceed with dispatch and log the entry after completion
 
 ### Per-Tier Budget Enforcement
 
-Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, apply the borrowing rules from that section before proceeding.
+Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, read `workflow/definition.yaml budget:` for borrowing rules before proceeding.
 
 ---
 
