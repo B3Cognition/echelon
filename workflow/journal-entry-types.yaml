@@ -46,7 +46,7 @@ types:
 
   # --- Architecture ---
   adr_self_check:
-    description: "ARCHITECT ADR consistency self-check result"
+    description: "ARCHITECT ADR consistency self-check result — AUDITOR FINALIZE parsing depends on this type name (FR-INH-006)"
     agents: [HOW]
     required_data_fields: [adr_id, never_rule_result, consistency_result]
     optional_data_fields: [concerns]
