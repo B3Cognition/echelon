@@ -747,6 +747,8 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 At the end of your response, append this block exactly. Fill in all fields.
 COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
+Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).
+
 ```echelon_result
 verdict: <PASS | FAIL>
 output_files:
@@ -793,5 +795,3 @@ journal_entries:
       severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
       action_required: "<specific action: fix wording, investigate, re-analyze, etc.>"
 ```
-
-Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).

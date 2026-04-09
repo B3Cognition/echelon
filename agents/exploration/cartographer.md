@@ -494,6 +494,8 @@ Open questions: <count>
 At the end of your response, append this block exactly. Fill in all fields.
 COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
+Repeat one `decision` entry per major requirement or scope decision.
+
 ```echelon_result
 verdict: COMPLETE
 output_files:
@@ -512,5 +514,3 @@ journal_entries:
       rationale: "<principle or constraint that drove the choice>"
       alternatives_considered: ["<alternative 1>", "<alternative 2>"]
 ```
-
-Repeat one `decision` entry per major requirement or scope decision.

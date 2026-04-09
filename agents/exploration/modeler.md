@@ -121,6 +121,8 @@ This is the check that would have caught the module ID mismatch.
 At the end of your response, append this block exactly. Fill in all fields.
 COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
+Repeat one `decision` entry per significant invariant or structural finding.
+
 ```echelon_result
 verdict: COMPLETE
 output_files:
@@ -138,5 +140,3 @@ journal_entries:
       rationale: "living code graph analysis"
       alternatives_considered: []
 ```
-
-Repeat one `decision` entry per significant invariant or structural finding.

@@ -216,13 +216,8 @@ Current test state, coverage, frameworks, gaps.
 
 ## Reasoning Journal
 
-Append entries with:
-- `type: "synthesis"`
-- `agent: "SYNTHESIZER"`
-- `sources_merged: [list of DISCOVER outputs]`
-- `contradictions_found: N`
-- `gaps_found: N`
-- `patterns_found: N`
+COMMANDER writes your journal entries. Return them in the `echelon_result` block below.
+Do NOT write to `reasoning-journal.jsonl` directly.
 
 ## NEVER Rules
 
@@ -252,6 +247,8 @@ Append entries with:
 At the end of your response, append this block exactly. Fill in all fields.
 COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
+Repeat one `decision` entry per significant synthesis decision or contradiction resolution.
+
 ```echelon_result
 verdict: COMPLETE
 output_files:
@@ -269,5 +266,3 @@ journal_entries:
       rationale: "<synthesis approach — what evidence hierarchy or principle governed resolution>"
       alternatives_considered: []
 ```
-
-Repeat one `decision` entry per significant synthesis decision or contradiction resolution.

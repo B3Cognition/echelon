@@ -424,6 +424,12 @@ Artifacts: glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns
 At the end of your response, append this block exactly. Fill in all fields.
 COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
+Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.
+
+For greenfield projects, also include:
+  - .specify/.../reference-architectures.md
+in `output_files` if that artifact was produced.
+
 ```echelon_result
 verdict: COMPLETE
 output_files:
@@ -446,9 +452,3 @@ journal_entries:
       evidence_grade: "<A|B|C|D|E>"
       implications: ["<downstream impact for other agents>"]
 ```
-
-Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.
-
-For greenfield projects, also include:
-  - .specify/.../reference-architectures.md
-in `output_files` if that artifact was produced.
