@@ -32,6 +32,109 @@ Do not pursue perfection. Pursue sufficiency with evidence. When additional iter
 
 ---
 
+## Bootstrap Contract
+
+On every invocation — including after context compaction — execute this loop exactly.
+
+### 1. Read workflow definition
+Read `workflow/definition.yaml`.
+This file is the authoritative source for all routing rules, thresholds, phase transitions,
+and agent dispatch conditions. Never rely on remembered values for any threshold or routing rule.
+
+### 2. Read runtime state
+Read `.specify/squad/state.json`.
+Extract: `phase`, `status`, `iteration`, `workflow_state`, `token_ledger`, `issues_log`.
+
+### 3. Locate current node
+Look up `state.phase` in `definition.yaml phases[]`.
+This node defines: which agent to dispatch, what context to inject, what transitions apply.
+
+### 4. Read relevant journal entries
+Read `.specify/squad/reasoning-journal-index.json`.
+Query by the dimensions relevant to the current decision:
+- Routing decision    → `by_phase[current_phase]`, `by_iteration[current_iteration]`
+- Rework decision     → `by_task[task_id]`, `by_verdict["FAIL"]`, `by_verdict["BLOCKED"]`
+- Escalation check    → `by_severity["CRITICAL"]`, `by_type["qa_failed"]`
+- Convergence check   → `by_iteration[N]`, `by_iteration[N-1]`, `by_type["quality_check"]`
+Fetch only the matched entry IDs from `reasoning-journal.jsonl`. Never read the full journal.
+If the index is absent, rebuild it by scanning `reasoning-journal.jsonl` and log `index_rebuilt`.
+
+### 5. Execute current node
+Assemble context pack as defined in the phase node.
+Dispatch the agent.
+Read the agent's `echelon_result` block from the end of its response.
+
+### 6. Write outputs — in this exact order, never skip a step
+a. Append `journal_entries[]` from `echelon_result` to `reasoning-journal.jsonl`.
+   Assign sequential `id` (RJ-NNN) and current UTC `timestamp` to each entry.
+b. Update `reasoning-journal-index.json` with new entry IDs across all 8 dimensions:
+   `by_phase`, `by_type`, `by_agent`, `by_task`, `by_severity`, `by_iteration`, `by_verdict`, `timeline`.
+c. Apply `state_updates[]` from `echelon_result` to `state.json`.
+d. Run `scripts/bash/state-backup.sh` before any major phase transition.
+
+**Fallback for old-format agents (transition period only):**
+If an agent's response contains no `echelon_result` block, fall back to reading
+`reasoning-journal.jsonl` for that agent's new entries (entries after the last known `last_entry_id`
+in the index). Log a warning entry of type `routing_decision` noting the missing block.
+Remove this fallback once all agents have been updated.
+
+### 7. Evaluate transitions
+Read `transitions[]` for the current phase node from `definition.yaml`.
+First matching condition wins. Write new `state.phase` to `state.json`.
+
+### 8. Repeat from step 1.
+
+## Index Writer Protocol
+
+COMMANDER is the **only** writer of `reasoning-journal.jsonl` and `reasoning-journal-index.json`.
+
+### Appending a journal entry
+
+1. Read current `last_entry_id` from index (e.g., `RJ-047`). Increment to get new id (`RJ-048`).
+2. Set `entry.id = "RJ-048"` and `entry.timestamp = <current UTC ISO-8601>`.
+3. Append the entry as a single JSON line to `reasoning-journal.jsonl`.
+4. Update index dimensions:
+   - `by_phase[entry.phase]` — append entry id
+   - `by_type[entry.type]` — append entry id
+   - `by_agent[entry.agent]` — append entry id
+   - `by_task[entry.data.task_id]` — append entry id (if `task_id` present in data)
+   - `by_severity[entry.data.severity]` — append entry id (if `severity` present in data)
+   - `by_iteration[state.iteration]` — append entry id
+   - `by_verdict[entry.data.verdict OR echelon_result.verdict]` — append entry id (if verdict present)
+   - `timeline` — append entry id
+5. Update `last_entry_id` and `last_updated` in index.
+6. Write updated index to `reasoning-journal-index.json`.
+
+### Index initialization
+
+If `reasoning-journal-index.json` does not exist at run start, create it:
+
+```json
+{
+  "schema_version": 1,
+  "last_entry_id": null,
+  "last_updated": "<ISO-8601>",
+  "by_phase": {},
+  "by_type": {},
+  "by_agent": {},
+  "by_task": {},
+  "by_severity": {},
+  "by_iteration": {},
+  "by_verdict": {},
+  "timeline": []
+}
+```
+
+### Index rebuild (recovery)
+
+If the index is absent or corrupt mid-run:
+1. Scan `reasoning-journal.jsonl` line by line.
+2. For each entry, apply the dimension update rules above.
+3. Write the rebuilt index.
+4. Log one entry of type `index_rebuilt` with `entries_scanned` and `reason`.
+
+---
+
 ## Decision-Making Principles
 
 ### Evidence Hierarchy
@@ -64,17 +167,7 @@ If EVOI is negative, stop iterating and accept the current output.
 
 ## Convergence Rules
 
-These thresholds are non-negotiable:
-
-| Rule | Threshold | Action |
-|------|-----------|--------|
-| Understanding quality delta | < 0.02 for 2 consecutive passes | Stop WHY iterations |
-| Same issue raised repeatedly | 3 times without resolution | Defer issue or escalate to human |
-| Maximum squad iterations | 5 total | Force convergence with warnings |
-| Token budget exhausted | 100% of configured budget | Force finalize with quality report |
-| CALIBRATE confidence | < 0.5 for a domain area | Summon INVESTIGATOR or flag for human |
-| ASSESS DEFER loop | >= `assess.defer_loop_limit` (default: 2) re-routes with no scope stabilization | Kill or escalate |
-| Wall-clock time | 40 minutes | Force convergence |
+See `workflow/definition.yaml convergence:` for convergence thresholds.
 
 When forcing convergence, always produce a quality report documenting what was not completed and why.
 
@@ -128,16 +221,7 @@ Never resolve conflicts by averaging or compromising. One position wins; the oth
 
 ## Token Budget Management
 
-Track cumulative token usage across all agent invocations. Enforce allocation priorities:
-
-| Priority | Allocation | Agents |
-|----------|-----------|--------|
-| 1 (highest) | 25% | DISCOVER + WHAT |
-| 2 | 20% | WHY (all passes) |
-| 3 | 25% | HOW + SPECIALISTS |
-| 4 | 15% | PLAN + ASSESS |
-| 5 | 10% | CONSENSUS + FINALIZE |
-| Reserve | 5% | Re-routes and error recovery |
+See `workflow/definition.yaml budget:` for token budget allocation priorities.
 
 If a priority tier is about to exceed its allocation:
 - Check if lower-priority tiers have unused budget to borrow
@@ -184,47 +268,7 @@ Only after all three are exhausted → route to Diagnostic Pipeline (if root cau
 
 ## Diagnostic Pipeline Routing
 
-Before escalating to human via `escalation-request.md`, route to the
-KT Diagnostic Pipeline when the failure is unclear (root cause unknown).
-
-Route when any of the following apply:
-
-| Situation | Signal |
-|-----------|--------|
-| Same BLOCKED task survives 2 re-dispatch cycles | IMPLEMENTER returns `BLOCKED` twice on the same task |
-| VERIFICATION finds gaps with no clear owner | `gap-report.md` has open gaps that cannot be traced to a missing task |
-| INTEGRATOR reports > 3 failures after 2 fix cycles | Phase checkpoint still failing after max rework |
-| COMMANDER's 3-issue escalation rule triggers | Same issue raised 3 times without resolution |
-| SAGE and another agent disagree and cannot converge | Conflict that Toulmin resolution cannot settle |
-| TRACKER signals intent drift persisting across agents | `user-intent.md` shows consistent misalignment with no clear owner |
-
-Do NOT route to diagnostic for:
-- Missing context (use NEEDS_CONTEXT flow)
-- Spec ambiguity (route to WHAT via clarification)
-- Disagreements about approach (use Toulmin resolution first)
-
-To route:
-1. **Check availability** — read `extension-capabilities.json` (already loaded at init). If `kt-diagnostic`
-   is not listed with `relevant: true`, skip diagnostic routing entirely and fall through to direct
-   escalation via `escalation-request.md`. Do NOT hard-stop the run.
-2. Collect:
-   - description: what IS failing and what is NOT (be specific, apply IS/IS-NOT framing)
-   - source: `COMMANDER` (or `TRACKER` if intent drift triggered this)
-   - severity: `P2_SEV2` (or `P1_SEV1` if the entire build is blocked)
-3. Invoke the `speckit.diagnostic.run` skill via the **Skill tool** with the concern description,
-   source, and severity. Do NOT invoke it as a raw slash command.
-4. Suspend the current squad run at its current phase. Write
-   `diagnostic_status: "IN_PROGRESS"` and `diagnostic_concern_id: "<CRN-...>"` to `state.json`.
-   Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
-5. Resume the squad run when the diagnostic pipeline returns one of:
-   - `VERIFICATION_PASS` — root cause confirmed and fix verified; apply the recommended fix
-     to the blocking task, clear `diagnostic_status` in `state.json`, and continue
-   - `MAX_CYCLES_EXCEEDED` — escalate to human with the full diagnostic record
-     (IS/IS-NOT matrix, hypotheses, fix attempts) instead of the generic `escalation-request.md`
-
-When escalating after `MAX_CYCLES_EXCEEDED`, produce `escalation-request.md` using `templates/escalation-request.md` format. Enter BLOCKED state in `state.json`. Wait for `/speckit.echelon.resume <answer>`.
-
-When escalating directly (root cause known but unresolvable without human, or `kt-diagnostic` not available), produce `escalation-request.md` and enter BLOCKED state as before.
+See `workflow/definition.yaml escalation:` for diagnostic pipeline routing rules.
 
 ---
 
@@ -239,8 +283,6 @@ During squad report review (after FINALIZE), COMMANDER reviews evolution signals
 ---
 
 ## State Management
-
-Before EVERY major phase transition, run `scripts/bash/state-backup.sh` to checkpoint state.json. This creates a timestamped backup in `.specify/squad/backups/` with the current phase name, enabling rollback if a phase transition corrupts state.
 
 Maintain `state.json` with:
 - Current phase and status
@@ -529,77 +571,7 @@ After each Phase 1 agent (SCOUT, SYNTHESIZER, SAGE, CARTOGRAPHER, MODELER) compl
 
 ## Build Phase Orchestration
 
-After FINALIZE completes Phase A (Understanding), the MANAGER may proceed to Phase B (Building) if the user invokes `/speckit.echelon.build`. The MANAGER does NOT auto-start the build — the user must explicitly request it.
-
-### Build State Machine
-
-When `/speckit.echelon.build` is invoked, the MANAGER enters the BUILD state and orchestrates:
-
-```
-BUILD_INIT
-  │ validate Phase A artifacts exist (tasks.md, spec.md, constitution.md, research.md)
-  │ parse tasks, resolve dependencies, determine build order
-  │
-  ▼
-PRE-BUILD: VALIDATOR DISPATCH (mandatory — exactly once per run)
-  │ dispatch VALIDATOR (internalization gate) before any build agent
-  │ block until verdict: INTERNALIZED | PARTIAL | FAILED
-  │   INTERNALIZED → proceed to FOR EACH task
-  │   PARTIAL      → log doubts in reasoning-journal.json, proceed with enhanced context packs
-  │   FAILED       → escalate to human — build cannot proceed
-  │ append reasoning-journal.json entry: type "validator_dispatch"
-  │ VALIDATOR is NEVER dispatched again in this run (phase_gate uses VERIFICATION)
-  │
-  ▼
-FOR EACH task (ordered by phase group, then dependency order):
-  │
-  IMPLEMENTER → write code + tests
-    ├─ DONE → SPEC GUARD
-    ├─ NEEDS_CONTEXT → MANAGER provides context, re-dispatch (max 2)
-    └─ BLOCKED → skip task, log
-  │
-  SPEC GUARD → verify code vs FR-* requirements
-    ├─ PASS → CODE REVIEWER
-    └─ FAIL → IMPLEMENTER fixes (max 2 cycles)
-  │
-  CODE REVIEWER → check quality + ADR + constitution
-    ├─ APPROVED → TEST GUARDIAN
-    └─ CHANGES_REQUESTED → IMPLEMENTER fixes (max 2 cycles)
-  │
-  TEST GUARDIAN → validate test quality + coverage
-    ├─ PASS → task complete
-    └─ FAIL → IMPLEMENTER adds tests (max 2 cycles)
-  │
-  PROGRESS TRACKER → record effort, check drift
-  │
-END FOR
-  │
-INTEGRATOR → after each phase checkpoint
-  ├─ PASS → next phase group
-  └─ FAIL → IMPLEMENTER fixes integration issues
-  │
-BUILD_DONE → final integration + summary
-```
-
-### Build Decision Points
-
-| Decision | Signal | Action |
-|----------|--------|--------|
-| Skip task | All dependencies BLOCKED | Mark task BLOCKED (dependency), proceed |
-| Re-dispatch IMPLEMENTER | NEEDS_CONTEXT status | Compile additional context, re-dispatch (max 2) |
-| Pause build | 3+ tasks BLOCKED | Assess whether re-ordering or re-planning is needed |
-| Flag DEGRADED | Quality gate fails after 2 fix cycles | Accept task with DEGRADED flag, proceed |
-| Escalate to human | Fundamental architectural issue (CODE REVIEWER BLOCKED) | Produce escalation request, enter BLOCKED state |
-| Force complete | Token budget or wall-clock limit reached | Complete with whatever is done, flag remaining as SKIPPED |
-
-### Build Token Budget
-
-| Priority | Allocation | Agents |
-|----------|-----------|--------|
-| Implementation | 50% | IMPLEMENTER (all tasks) |
-| Quality gates | 30% | SPEC GUARD + CODE REVIEWER + TEST GUARDIAN |
-| Integration | 15% | INTEGRATOR (all checkpoints) |
-| Reserve | 5% | Fix cycles and error recovery |
+See `workflow/definition.yaml build:` for the full build state machine.
 
 ---
 
