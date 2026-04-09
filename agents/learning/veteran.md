@@ -90,29 +90,7 @@ If a previously `global` entry is contradicted by a new run (MIRROR flags it):
 
 ### Promotion Report
 
-Append to reasoning journal:
-
-```json
-{
-  "type": "veteran_promotion_scan",
-  "agent": "VETERAN",
-  "timestamp": "<ISO-8601>",
-  "current_fingerprint": "<12-char hex>",
-  "patterns_scanned": <count>,
-  "pitfalls_scanned": <count>,
-  "promotions": [
-    {
-      "id": "<PAT-NNN or PIT-NNN>",
-      "name": "<entry name>",
-      "distinct_fingerprints": ["<fp1>", "<fp2>", "<fp3>"],
-      "previous_scope": "local_only",
-      "new_scope": "global",
-      "confidence": <highest confidence value>
-    }
-  ],
-  "no_promotion_reason": "<why no promotions if list is empty>"
-}
-```
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block. Include `veteran_promotion_scan` data (current_fingerprint, patterns_scanned, pitfalls_scanned, promotions list, no_promotion_reason) in the `echelon_result` block's journal entry data.
 
 ### Knowledge Base Updates
 
@@ -169,18 +147,7 @@ For each qualifying pattern:
 
 ### Marketplace Report
 
-Append to reasoning journal:
-
-```json
-{
-  "type": "veteran_marketplace_scan",
-  "agent": "VETERAN",
-  "timestamp": "<ISO-8601>",
-  "marketplace_candidates": <count>,
-  "marketplace_indexed": <count>,
-  "marketplace_skipped_reason": "<capacity or none>"
-}
-```
+COMMANDER writes to the reasoning journal. Include `veteran_marketplace_scan` data (marketplace_candidates, marketplace_indexed, marketplace_skipped_reason) in the `echelon_result` block's journal entry data.
 
 ---
 
@@ -192,3 +159,23 @@ Append to reasoning journal:
 - Do NOT promote entries that reference project-specific infrastructure, tools, or configurations unless the underlying principle is generalizable.
 - Maximum 10 promotions per run. If more qualify, prioritize by confidence descending.
 - Log every promotion decision (including rejections with reasons) to the reasoning journal.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: PATTERNS_APPLIED
+output_files:
+  - knowledge-base/patterns.yaml
+  - knowledge-base/pitfalls.yaml
+  - knowledge-base/marketplace-index.yaml
+journal_entries:
+  - id: null
+    type: pattern_identified
+    phase: finalize
+    agent: VETERAN
+    timestamp: null
+    data:
+      patterns_matched: []
+      pitfalls_flagged: []
+      confidence: 0.0
+```

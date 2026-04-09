@@ -31,7 +31,7 @@ Uses values from `squad-config.yml`:
 
 - **Read** — read files from the filesystem
 - **Write** — write to GLOBAL-MEMORY schemas and prediction-model.json
-- **Grep** — search episodic traces in reasoning-journal.json
+- **Grep** — search episodic traces in reasoning-journal.jsonl
 - **Glob** — find prior run artifacts
 
 ---
@@ -43,13 +43,13 @@ Uses values from `squad-config.yml`:
 **Purpose:** Surface relevant prior episodic traces to build agents on demand — augmenting GLOBAL-MEMORY retrieval with temporal context and salience weighting.
 
 **Process:**
-1. Read reasoning-journal.json entries from prior runs (via GLOBAL-MEMORY episodic store)
+1. Read reasoning-journal.jsonl entries from prior runs (via GLOBAL-MEMORY episodic store)
 2. Filter by domain relevance to current task
 3. Compute salience weight: `salience = recency_weight × outcome_signal` (outcome_signal: 1.0 = success, 0.5 = partial, 0.0 = failure)
 4. Surface top-N (default: 3) highest-salience traces as context for the requesting agent
 5. Log retrieval: `{"type": "consolidator_replay", "traces_surfaced": <N>, "domain": "<domain>", "run_id": "<run_id>", "timestamp": "<ISO-8601>"}`
 
-**Output:** List of episodic trace summaries with salience scores, written to reasoning-journal.json as a `consolidator_replay` entry.
+**Output:** List of episodic trace summaries with salience scores. COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -60,13 +60,13 @@ Uses values from `squad-config.yml`:
 **Purpose:** Extract recurring causal and relational patterns from recent episodic traces and promote them to GLOBAL-MEMORY as generalized schemas. Apply adaptive forgetting to consolidated traces.
 
 **Process:**
-1. Read all reasoning-journal.json entries tagged with outcome signals from the current run
+1. Read all reasoning-journal.jsonl entries tagged with outcome signals from the current run
 2. Cluster by structural similarity (domain + decision type + outcome pattern)
 3. For each cluster with `count >= consolidator.min_traces_for_schema` (default: 2):
    a. Extract the recurring pattern as a schema candidate
    b. Check: does a matching schema already exist in GLOBAL-MEMORY? If yes: reinforce (increment support count). If no: promote as new schema.
    c. Write schema to GLOBAL-MEMORY with: `schema_id`, `domain`, `pattern_description`, `supporting_trace_count`, `first_seen`, `last_reinforced`, `outcome_signal_avg`
-4. Notify VETERAN of newly promoted schemas via reasoning-journal.json entry: `{"type": "schema_promoted", "schema_id": "<id>", "domain": "<domain>"}`
+4. Notify VETERAN of newly promoted schemas by including a `schema_promoted` entry in the `echelon_result` block. COMMANDER writes to the reasoning journal.
 5. Mark consolidated episodic traces as `consolidated: true` (adaptive forgetting signal — reduces salience weight in future online replay)
 6. Log: `{"type": "consolidator_offline_complete", "schemas_promoted": <N>, "schemas_reinforced": <N>, "traces_consolidated": <N>, "run_id": "<run_id>", "timestamp": "<ISO-8601>"}`
 
@@ -82,7 +82,7 @@ Uses values from `squad-config.yml`:
 
 **Process:**
 1. Decompose the query into elements: preconditions, action, domain context
-2. Retrieve episodic fragments from reasoning-journal.json and GLOBAL-MEMORY schemas matching each element
+2. Retrieve episodic fragments from reasoning-journal.jsonl and GLOBAL-MEMORY schemas matching each element
 3. Construct a candidate scenario via constrained recombination (simulation depth ≤ `consolidator.simulation_depth`, default 3)
 4. Evaluate the scenario for causal coherence: does the simulated chain of events follow from the preconditions without logical contradiction?
 5. If coherent: return scenario to INVESTIGATOR as a `simulation_result` entry
@@ -118,3 +118,21 @@ Uses values from `squad-config.yml`:
 CONSOLIDATOR is a new agent (Tier 3A). B4 benchmark Tier 1 tests agent file presence and role-section completeness for registered agents. CONSOLIDATOR is not yet registered in `b4-config.yaml`. To activate B4 coverage for CONSOLIDATOR, add it to `b4-config.yaml` in a follow-up task.
 
 # B4-INVISIBLE (until registered in b4-config.yaml): new agent not yet covered by B4 Tier 1 scoring pipeline.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: CONSOLIDATED
+output_files:
+  - .specify/specs/<feature>/patterns/
+journal_entries:
+  - id: null
+    type: pattern_identified
+    phase: finalize
+    agent: CONSOLIDATOR
+    timestamp: null
+    data:
+      schema_name: ""
+      pattern_type: ""
+      confidence: 0.0
+```

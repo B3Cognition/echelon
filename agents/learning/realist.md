@@ -136,13 +136,7 @@ Assess production readiness:
 
 ## Reasoning Journal
 
-Append entries with:
-- `type: "evidence"`
-- `agent: "GROUND"`
-- `content`: Summary of grounding findings
-- `disconnects_found`: count of WARNING + CRITICAL findings
-- `cost_estimate`: total monthly cost identified
-- `estimate_adjustment`: correction factor applied
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -154,3 +148,23 @@ Append entries with:
 - Use the most recent pricing data available. Cloud pricing changes frequently.
 - If you cannot find real data for a claim, say "no external data found" — do not fabricate benchmarks.
 - Prefer conservative estimates. When ranges exist, report the range and use the higher end for planning.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: GROUNDED
+output_files:
+  - reality-check.md
+  - cost-analysis.md
+  - benchmark-data.md
+journal_entries:
+  - id: null
+    type: assessment
+    phase: finalize
+    agent: GROUND
+    timestamp: null
+    data:
+      historical_comparables: []
+      bias_detected: false
+      confidence: 0.0
+```

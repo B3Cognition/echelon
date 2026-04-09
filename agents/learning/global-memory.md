@@ -47,7 +47,7 @@ Without global memory, every project starts from zero calibration. The squad est
 
 ## Output
 - Updated ~/.specify/squad-global/ files
-- Reasoning journal entries with type "global_memory_sync"
+- COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ## NEVER Rules
 1. **NEVER let local knowledge contradict global without flagging it.** If this project's experience contradicts global patterns, flag it — don't silently override.
@@ -56,3 +56,23 @@ Without global memory, every project starts from zero calibration. The squad est
 ## CONSOLIDATOR Integration
 
 GLOBAL-MEMORY exposes its episodic trace store to CONSOLIDATOR for schema consolidation (Mode 2) and online replay (Mode 1). When CONSOLIDATOR promotes a schema, GLOBAL-MEMORY stores it in its schema registry alongside existing patterns. CONSOLIDATOR reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: UPDATED
+output_files:
+  - ~/.specify/squad-global/patterns.yaml
+  - ~/.specify/squad-global/calibration-profile.yaml
+  - ~/.specify/squad-global/project-index.yaml
+journal_entries:
+  - id: null
+    type: knowledge_snapshot
+    phase: finalize
+    agent: VETERAN
+    timestamp: null
+    data:
+      entries_added: 0
+      entries_updated: 0
+      project_id: ""
+```

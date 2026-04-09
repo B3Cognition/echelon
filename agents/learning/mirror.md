@@ -21,7 +21,7 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 ## Inputs
 
 - All artifacts from the current run (`.specify/specs/{feature}/`)
-- `reasoning-journal.json` (full run history)
+- `reasoning-journal.jsonl` (full run history)
 - `knowledge-base/patterns.yaml` (existing patterns to compare against)
 - `knowledge-base/pitfalls.yaml` (existing pitfalls)
 - Quality gate scores from WHY passes
@@ -52,7 +52,7 @@ Every new pattern or pitfall entry MUST include:
 
 ### Step 1: Chronological Review
 
-Read `reasoning-journal.json` from first entry to last. Build a mental timeline:
+Read `reasoning-journal.jsonl` from first entry to last. Build a mental timeline:
 - What was the initial understanding?
 - Where did the squad change direction?
 - What was the final output?
@@ -149,13 +149,7 @@ New patterns from REFLECT start at grade C or D. They reach A only after FEEDBAC
 
 ## Reasoning Journal
 
-Append entries with:
-- `type: "insight"`
-- `agent: "REFLECT"`
-- `content`: Summary of learnings extracted
-- `patterns_added`: list of new pattern IDs
-- `pitfalls_added`: list of new pitfall IDs
-- `agent_performance_notes`: any flags about agent behavior
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -230,6 +224,26 @@ Produce `.specify/specs/{feature}/knowledge-transfer-assessment.md`:
 
 ### Integration with Learning Cycle
 
-- If overall verdict is AT_RISK or NOT_READY, append an entry to `reasoning-journal.json` with `type: "knowledge_transfer_risk"` and flag for human review.
+- If overall verdict is AT_RISK or NOT_READY, include a `knowledge_transfer_risk` entry in the `echelon_result` block and flag for human review. COMMANDER writes to the reasoning journal.
 - Knowledge transfer gaps are candidate pitfall entries (e.g., "PIT-XXX: No debug guide for payment subsystem — single-agent knowledge concentration").
 - On subsequent runs, REFLECT should check whether previously flagged gaps have been closed.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: COMPLETE
+output_files:
+  - .specify/specs/<feature>/retrospective/knowledge-transfer-assessment.md
+  - knowledge-base/patterns.yaml
+  - knowledge-base/pitfalls.yaml
+journal_entries:
+  - id: null
+    type: retrospective
+    phase: finalize
+    agent: REFLECT
+    timestamp: null
+    data:
+      patterns_found: []
+      recommendations: []
+      agent_performance_notes: ""
+```

@@ -44,7 +44,7 @@ This agent uses values from `squad-config.yml`:
 - `knowledge-base/evolution-signals.yaml` (prior evolution signals)
 - `knowledge-base/prompt-versions.yaml` (active versions)
 - `knowledge-base/agent-scores.yaml` (existing scores for history)
-- `reasoning-journal.json` (current run entries)
+- `reasoning-journal.jsonl` (current run entries)
 
 ## Outputs
 
@@ -255,7 +255,7 @@ Before computing deferred metrics for an agent:
 4. If 0 high-confidence claims: null with "empty-denominator"
 
 **I-12 escalation_precision** [FR-018]
-1. From escalation records in reasoning-journal.json, extract agent escalations
+1. From escalation records in reasoning-journal.jsonl, extract agent escalations
 2. For each, check: was the escalation justified by a downstream FAIL outcome or human intervention?
 3. Compute: `justified_escalations / total_escalations`
 4. Require >= `cold_start.escalation_min_count` (default 3) escalation records
@@ -478,11 +478,24 @@ INTERNALIZER contributes the following section to the calibration dashboard (wri
 
 ## Reasoning Journal
 
-Append entries with:
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
-- `type: "insight"`
-- `agent: "INTERNALIZE_METRICS"`
-- `content`: Summary of internalization measurement findings
-- `agents_measured`: list of agents scored
-- `gate_results`: map of agent → verdict
-- `evolution_signals_created`: list of signal IDs created
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: INTERNALIZED
+output_files:
+  - knowledge-base/internalization-log.yaml
+  - knowledge-base/agent-scores.yaml
+  - internalization-metrics.md
+journal_entries:
+  - id: null
+    type: internalization_score
+    phase: finalize
+    agent: INTERNALIZE_METRICS
+    timestamp: null
+    data:
+      overall_score: 0.0
+      metrics: []
+      gaps: []
+```

@@ -71,7 +71,7 @@ Every N tasks (configurable, default: 5), the METACOGNITION MONITOR asks:
 
 - Append to `metacognition-log.md` (per check)
 - Alert to ENGINEERING MANAGER if DRIFT or worse
-- Reasoning journal entries with type "metacognition_check"
+- COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ## Rules
 
@@ -80,3 +80,21 @@ Every N tasks (configurable, default: 5), the METACOGNITION MONITOR asks:
 3. **"Are we building the right thing?" trumps "Are we building it right?"** — direction over quality
 4. **Don't be a nag** — check every 5 tasks, not every task. Trust the per-task gates for routine quality.
 5. **When in doubt, recommend STOP_AND_ASK** — the cost of pausing is low; the cost of building the wrong thing is catastrophic
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: ON_TRACK
+output_files:
+  - metacognition-log.md
+journal_entries:
+  - id: null
+    type: quality_check
+    phase: build
+    agent: METACOGNITION-MONITOR
+    timestamp: null
+    data:
+      pass: true
+      drift_signals: []
+      recommendation: ""
+```

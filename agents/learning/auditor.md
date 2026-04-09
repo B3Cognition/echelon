@@ -38,7 +38,7 @@ This agent uses values from `squad-config.yml`:
 
 ## Inputs
 
-- `reasoning-journal.json` (decisions made with confidence scores)
+- `reasoning-journal.jsonl` (decisions made with confidence scores)
 - `knowledge-base/calibration-profile.yaml` (existing accuracy profile)
 - `knowledge-base/feedback/` (all past project outcomes)
 - `knowledge-base/estimates-log.yaml` (predicted vs actual effort)
@@ -71,7 +71,7 @@ This protocol applies to `calibration-profile.yaml`, `estimates-log.yaml`, `patt
 
 #### Step 1: Extract Confidence Data
 
-Read `reasoning-journal.json`. Extract every entry that includes a confidence score:
+Read `reasoning-journal.jsonl`. Extract every entry that includes a confidence score:
 
 - Agent decisions with stated confidence
 - ASSESS estimates with confidence ranges
@@ -127,7 +127,7 @@ For any domain with accuracy < 0.5:
 
 ### Self-Check Entry Parsing (FR-INH-006)
 
-During FINALIZE mode, filter reasoning-journal.json entries by type:
+During FINALIZE mode, filter reasoning-journal.jsonl entries by type:
 - `"type": "self_check"` — IMPLEMENTER inter-step self-checks
 - `"type": "adr_self_check"` — ARCHITECT ADR self-checks
 
@@ -308,13 +308,7 @@ For each major artifact, report:
 
 ## Reasoning Journal
 
-Append entries with:
-
-- `type: "insight"`
-- `agent: "CALIBRATE"`
-- `content`: Summary of calibration findings
-- `domains_updated`: list of domains with changed accuracy
-- `low_confidence_flags`: list of domains flagged as unreliable
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -376,7 +370,7 @@ Dispatched by COMMANDER after build completes. Uses build artifacts as ground tr
 
 1. Read `plan.md` / `research.md` — extract each ADR and tech decision
 2. Read the actual implemented code structure (use Glob/Grep to check if planned patterns exist in code)
-3. Read `reasoning-journal.json` — search for entries with `type: "decision"` or `type: "pivot"` during build
+3. Read `reasoning-journal.jsonl` — search for entries with `type: "decision"` or `type: "pivot"` during build
 4. For each planned decision: classify as `held` (code matches plan), `partially` (code diverges but intent preserved), or `no` (decision abandoned)
 5. Any `no` classification is severity HIGH; `partially` is MEDIUM
 
@@ -384,14 +378,14 @@ Dispatched by COMMANDER after build completes. Uses build artifacts as ground tr
 
 1. Read `spec.md` — count total FR-*, AC-*, NFR-*
 2. Read `verification-summary.md` and `gap-report.md` — extract coverage data
-3. Read `reasoning-journal.json` — search for NEEDS_CONTEXT dispatches (indicate missing requirements)
+3. Read `reasoning-journal.jsonl` — search for NEEDS_CONTEXT dispatches (indicate missing requirements)
 4. Compute: implemented as-written, needed clarification (NEEDS_CONTEXT count), missing (gap-report gaps), unnecessary (excess-report items)
 5. Severity: CRITICAL if missing > 3, HIGH if missing 1-3, MEDIUM if clarification needed > 30%, INFO otherwise
 
 ### Step 4: Risk Assessment
 
 1. Read `risk-matrix.md` — extract all predicted risks
-2. Read `reasoning-journal.json` — search for BLOCKED, DEGRADED, rework, and escalation entries during build
+2. Read `reasoning-journal.jsonl` — search for BLOCKED, DEGRADED, rework, and escalation entries during build
 3. Cross-reference: which predicted risks materialized (BLOCKED/DEGRADED entries matching risk descriptions)?
 4. What unpredicted blockers appeared? (BLOCKED entries with no matching risk-matrix entry)
 5. Severity: CRITICAL if unpredicted blockers > 2, HIGH if any predicted HIGH risk materialized, MEDIUM otherwise
@@ -489,15 +483,7 @@ Write a human-readable summary to `specs/{feature}/feedback-report.md` with:
 1. Read updated `knowledge-base/calibration-profile.yaml` (post-feedback Brier scores reflecting the most recent run outcomes)
 2. Recompute per-domain confidence floors: `confidence_floor = accuracy` for each domain in calibration-profile.yaml
 3. Write refreshed `knowledge-base/confidence-thresholds.yaml` with `generated_at` = current ISO-8601 timestamp
-4. Append log entry to reasoning-journal.json:
-```json
-{
-  "type": "confidence_thresholds_refreshed",
-  "path": "knowledge-base/confidence-thresholds.yaml",
-  "domains_refreshed": <count>,
-  "timestamp": "<ISO-8601>"
-}
-```
+4. Include a `confidence_thresholds_refreshed` entry in the `echelon_result` block. COMMANDER writes to the reasoning journal.
 
 **Purpose:** Ensures next session's COMMANDER step 0.5 reads calibration data that includes the most recent feedback outcome. This closes the FEP-RLIF learning loop: feedback → calibration update → threshold refresh → next session routes with updated domain confidence floors.
 
@@ -567,19 +553,7 @@ Do NOT raise the flag based solely on cold-start neutral values (0.5). The thres
 
 ### Hallucination Flag Routing (FR-ECC-005)
 
-When `hallucination_risk: true`: write a `hallucination_risk_flag` entry to reasoning-journal.json BEFORE SPEC GUARD begins its pre-acceptance review:
-
-```json
-{
-  "type": "hallucination_risk_flag",
-  "flagged_artifact_id": "<artifact reference>",
-  "disagreement_pattern": "A | B",
-  "coherence": "<float>",
-  "familiarity": "<float>",
-  "consistency": "<float>",
-  "timestamp": "<ISO-8601>"
-}
-```
+When `hallucination_risk: true`: include a `hallucination_risk_flag` entry in the `echelon_result` block. COMMANDER writes to the reasoning journal. This must be returned BEFORE SPEC GUARD begins its pre-acceptance review.
 
 ### Cold-Start Channel Management (FR-ECC-007)
 
@@ -590,3 +564,25 @@ When `prior_runs_with_global_memory_domain_data < 3`:
 - Transition to computed values when `prior_runs_with_global_memory_domain_data >= 3`
 
 If GLOBAL-MEMORY is inaccessible: use 0.5 defaults for both `familiarity` and `surprise`, log the access failure, do NOT block or error.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: CALIBRATED
+output_files:
+  - knowledge-base/calibration-profile.yaml
+  - .specify/specs/<feature>/calibration-dashboard.md
+  - confidence-flags.md
+journal_entries:
+  - id: null
+    type: calibration_update
+    phase: finalize
+    agent: CALIBRATE
+    timestamp: null
+    data:
+      # AUDITOR FINALIZE parses adr_self_check and self_check type entries to validate unresolved concerns (FR-INH-006).
+      # Do NOT rename those entry types — AUDITOR FINALIZE depends on the exact type strings.
+      confidence_delta: 0.0
+      agents_reviewed: []
+      adr_self_check_count: 0
+```

@@ -26,7 +26,7 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 - Current run artifacts (`.specify/specs/{feature}/`)
 - Prior run artifacts (if re-run — loaded from `.specify/squad/prior-runs/`)
 - `knowledge-base/calibration-profile.yaml`
-- `reasoning-journal.json` (current + prior if available)
+- `reasoning-journal.jsonl` (current + prior if available)
 - Quality gate scores from WHY passes
 - `knowledge-base/evolution-signals.yaml` (evolution signals from AUDITOR)
 - `knowledge-base/internalization-log.yaml` (internalization results with downstream outcomes)
@@ -145,13 +145,7 @@ If STAGNATION detected:
 
 ## Reasoning Journal
 
-Append entries with:
-- `type: "insight"`
-- `agent: "EVOLVE"`
-- `content`: Trajectory summary and any flags raised
-- `trajectory`: one of `improving`, `flat`, `regressing`, `oscillating`
-- `flags`: list of flags raised (STAGNATION, REGRESSION, CONFIRMATION_BIAS, STALE_PATTERN, PROMPT_RECOMMENDATION)
-- `recommendations_count`: number of prompt recommendations produced (0 if none)
+COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 
@@ -162,3 +156,22 @@ Append entries with:
 - Do NOT suppress bad news. If quality is declining, report it clearly.
 - Keep evolution-report.md factual. Diffs, not opinions.
 - On first run, produce only the baseline snapshot — do not fabricate comparisons.
+
+Return this entry in the `echelon_result` block at the end of your response.
+
+```echelon_result
+verdict: STABLE
+output_files:
+  - evolution-report.md
+  - improvement-metrics.md
+journal_entries:
+  - id: null
+    type: adaptation_triggered
+    phase: finalize
+    agent: EVOLVE
+    timestamp: null
+    data:
+      trajectory: improving
+      iteration_delta: 0.0
+      action_recommended: ""
+```
