@@ -1,0 +1,811 @@
+# Echelon Workflow Definition
+# =============================================================================
+# COMMANDER reads this file at step 0 before every routing decision.
+# Routing logic lives here — not in COMMANDER's prompt.
+#
+# Structure:
+#   convergence   — all threshold values
+#   budget        — token allocation per phase group
+#   evidence      — conflict resolution rules
+#   quality_gates — minimum scores per artifact type
+#   phases        — ordered phase graph (nodes + transitions)
+#   build         — per-task inner loop state machine
+#   escalation    — pre-escalation checks and diagnostic pipeline routing
+#
+# COMMANDER contract:
+#   1. Read this file at init (before any dispatch)
+#   2. Read .specify/squad/state.json for current phase + runtime state
+#   3. Look up current phase node in phases[]
+#   4. Execute the node (dispatch agents, run steps)
+#   5. Evaluate transitions[] — first matching condition wins
+#   6. Write new state to state.json
+#   7. Repeat from step 2
+#
+# Schema version: 1
+# =============================================================================
+
+schema_version: 1
+
+# =============================================================================
+# CONVERGENCE THRESHOLDS
+# All convergence decisions reference these values — never hardcode in prompts.
+# Runtime overrides sourced from squad-config.yml take precedence.
+# =============================================================================
+
+convergence:
+  quality_delta_threshold: 0.02        # Stop WHY iterations when delta < this
+  consecutive_passes_required: 2       # Consecutive passes below threshold to declare convergence
+  max_iterations: 5                    # Absolute maximum across all phases
+  issue_repetition_limit: 3            # Same issue raised N times → escalate
+  wall_clock_timeout_minutes: 40       # Force finalize if elapsed time exceeds this
+  calibrate_confidence_floor: 0.5      # Below this → summon INVESTIGATOR or flag for human
+  assess_defer_loop_limit: 2           # GATEKEEPER DEFER N times with no scope stabilization → kill or escalate
+  evoi_marginal_range: [0.3, 0.7]      # Dispatch when EVOI in this range (see FEP-RLIF rules)
+  evoi_confidence_floor: 0.6           # Bias toward dispatch when domain confidence_floor < this
+
+# =============================================================================
+# TOKEN BUDGET ALLOCATION
+# Phase-group percentages of total analysis.token_budget_k from squad-config.yml
+# =============================================================================
+
+budget:
+  analysis:
+    discover_what: 0.25     # DISCOVER + WHAT — highest priority
+    why_passes: 0.20        # All WHY passes (WHY1, WHY2, WHY3)
+    how_specialists: 0.25   # HOW + all specialist agents
+    plan_assess: 0.15       # PLAN + ASSESS
+    consensus_finalize: 0.10
+    reserve: 0.05           # Re-routes, error recovery
+    max_single_agent: 0.40  # No single agent may consume more than this fraction
+  build:
+    implementation: 0.50    # IMPLEMENTER (all tasks)
+    quality_gates: 0.30     # SPEC_GUARD + CODE_REVIEWER + TEST_GUARDIAN
+    integration: 0.15       # INTEGRATOR (all checkpoints)
+    reserve: 0.05           # Fix cycles, error recovery
+
+# =============================================================================
+# EVIDENCE HIERARCHY
+# Conflict resolution: lower rank NEVER overrides higher rank.
+# =============================================================================
+
+evidence_hierarchy:
+  - rank: 1
+    type: investigator_experiment
+    description: "Measured results from INVESTIGATOR prototype spikes"
+    example: "Latency measured at 340ms under load"
+  - rank: 2
+    type: understanding_metrics
+    description: "Deterministic, reproducible quality scores"
+    example: "Testability score: 0.42 (below 0.70 gate)"
+  - rank: 3
+    type: investigator_research
+    description: "INVESTIGATOR graded sources (A through E)"
+    example: "Grade B: official Kafka docs confirm this limit"
+  - rank: 4
+    type: code_evidence
+    description: "Reverse-engineering or codebase analysis"
+    example: "Existing codebase uses event sourcing for audit"
+  - rank: 5
+    type: agent_reasoning
+    description: "Agent reasoning — lowest weight, never overrides measured evidence"
+    example: "Microservices better because of team structure"
+
+conflict_resolution:
+  tiebreakers:
+    - "Higher rank wins"
+    - "Same rank: more recent evidence wins"
+    - "Same recency: agent whose domain is most relevant wins"
+    - "Still tied: conservative option (lower risk) wins"
+  never: "Average or compromise. One position wins; the other is recorded as a rejected alternative."
+
+# =============================================================================
+# QUALITY GATES
+# Minimum threshold per dimension for WHY-validated artifacts.
+# SAGE applies these; COMMANDER checks results.
+# =============================================================================
+
+quality_gates:
+  spec:
+    overall: 0.70
+    structure: 0.65
+    testability: 0.70
+    readability: 0.65
+    cognitive: 0.65
+    semantic: 0.65
+    behavioral: 0.70
+    depth: 0.65
+
+# =============================================================================
+# PHASE GRAPH
+#
+# Each phase has:
+#   type:          commander_internal | agent | parallel | human_gate | terminal
+#   agent(s):      which agent(s) to invoke (omitted for commander_internal)
+#   tier:          model-tier selection key from squad-config.yml execution.models
+#   context_pack:  artifacts injected into the agent's dispatch prompt
+#   pre_dispatch:  checks/actions COMMANDER takes before invoking the agent
+#   outputs:       artifacts the agent is expected to produce
+#   transitions:   ordered list — first matching condition wins
+#
+# Condition language (evaluated against state.json + current outputs):
+#   always                               — unconditional
+#   quality_gates.pass                   — latest quality_scores entry meets all thresholds
+#   quality_gates.fail                   — latest quality_scores entry fails any threshold
+#   convergence_detected                 — delta < threshold for consecutive_passes_required passes
+#   CRITICAL_issues                      — any issue in issues_log with severity=CRITICAL and resolved=false
+#   no_CRITICAL_issues                   — no unresolved CRITICAL issues
+#   iteration < max_iterations           — not yet at iteration cap
+#   iteration >= max_iterations          — at or beyond iteration cap
+#   verdict = <value>                    — named agent returned this verdict
+#   defer_count >= assess_defer_loop_limit
+#   autonomy in [guided, semi, banzai]   — matches autonomy_mode from squad-config.yml
+#   human_approved                       — human responded to checkpoint with approval
+# =============================================================================
+
+phases:
+
+  # --------------------------------------------------------------------------
+  - id: init
+    label: "Initialization"
+    type: commander_internal
+    description: >
+      COMMANDER executes directly — no agent dispatch.
+      Read knowledge base, materialize confidence thresholds, run belief freshness check.
+    steps:
+
+      - id: read_knowledge_base
+        label: "Read KB learning outputs (Step 0)"
+        files:
+          - knowledge-base/calibration-profile.yaml
+          - knowledge-base/patterns.yaml
+          - knowledge-base/pitfalls.yaml
+          - knowledge-base/agent-scores.yaml
+        missing_files: skip_gracefully
+        on_cold_start: log_cold_start_warning_to_journal
+        post: >
+          Build calibration_map in memory from agent-scores.yaml.
+          Set state.json init_reads.completed = true.
+          Log init_knowledge_read entry to reasoning-journal.json.
+
+      - id: materialize_confidence_thresholds
+        label: "Write confidence-thresholds.yaml (Step 0.5)"
+        output: knowledge-base/confidence-thresholds.yaml
+        source: calibration_map (built in read_knowledge_base)
+        precondition: init_reads.completed = true
+        on_empty_calibration_map: log_warning_skip_gracefully
+
+      - id: belief_freshness_check
+        label: "Belief freshness gate"
+        script: scripts/bash/belief-freshness-check.sh
+        exit_codes:
+          0: proceed_normally
+          1:
+            action: defer_affected_dispatches
+            apply: conservative_fallback_for_affected_config_keys
+            log: belief_fallback_applied
+          2:
+            action: queue_investigator_for_critical_beliefs
+            timing: after_prospector_before_discover
+            log: belief_gate_triggered
+
+    transitions:
+      - to: phase1-discover
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-discover
+    label: "Discovery (SCOUT)"
+    type: agent
+    agent: SCOUT
+    tier: exploration
+    context_pack:
+      - user_request
+      - extension-capabilities.json
+      - knowledge-base/patterns.yaml       # if exists
+      - knowledge-base/pitfalls.yaml       # if exists
+      - calibration_map entry for SCOUT    # from init
+    pre_dispatch:
+      - id: dispatch_prospector
+        label: "Dispatch PROSPECTOR (mandatory)"
+        agent: PROSPECTOR
+        timing: before_first_phase1_dispatch
+        block_until: complete
+        on_failure: log_prospector_failed_continue
+        writes: extension-capabilities.json
+      - id: golddigger_mode1
+        label: "Dispatch GOLDDIGGER Mode 1 (brownfield + revenge extension)"
+        condition: "mode = brownfield AND extension-capabilities.json.revenge_extension.relevant = true"
+        agent: GOLDDIGGER
+        mode: 1
+        block_until: complete
+        on_partial_or_failed: log_degraded_brownfield_continue
+      - id: guardian_init
+        label: "Dispatch GUARDIAN (always_on default)"
+        condition: "guardian_mode = always_on"
+        timing: after_assess_completes
+        # GUARDIAN is dispatched during phase3-specialists, not here —
+        # this entry documents the trigger so COMMANDER doesn't need to remember it.
+    outputs:
+      - .specify/.../glossary.md
+      - .specify/.../mental-model.md
+      - .specify/.../boundaries.md
+      - .specify/.../assumptions.md
+      - .specify/.../unknowns.md
+      - .specify/.../reference-architectures.md   # greenfield only
+    transitions:
+      - to: phase1-why1
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-why1
+    label: "Assumption Challenge (SAGE WHY1)"
+    type: agent
+    agent: SAGE
+    mode: WHY1
+    tier: exploration
+    context_pack:
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+      - unknowns.md
+      - reasoning-journal.json [type=routing_decision, phase=phase1-discover]
+      - calibration_map entry for SAGE
+    outputs:
+      - updated assumptions.md
+      - quality_scores[pass=N] → state.json
+    transitions:
+      - to: phase1-constitution
+        condition: "quality_gates.pass OR convergence_detected"
+      - to: phase1-discover
+        condition: "quality_gates.fail AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-constitution
+        condition: "iteration >= max_iterations"
+        action: force_convergence_warning
+
+  # --------------------------------------------------------------------------
+  - id: phase1-constitution
+    label: "Constitution Creation"
+    type: commander_internal
+    description: >
+      COMMANDER synthesizes constitution.md from SCOUT + SAGE artifacts.
+      No agent dispatch.
+    outputs:
+      - constitution.md
+    transitions:
+      - to: phase1-what
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-what
+    label: "Requirements (CARTOGRAPHER)"
+    type: agent
+    agent: CARTOGRAPHER
+    tier: exploration
+    context_pack:
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+      - unknowns.md
+      - reference-architectures.md    # greenfield only, if exists
+      - reasoning-journal.json [type=routing_decision, phase=phase1-why1]
+      - calibration_map entry for CARTOGRAPHER
+    pre_dispatch:
+      - id: golddigger_mode2_queue
+        label: "Process GOLDDIGGER Mode 2 queue"
+        action: >
+          For each pending entry in state.json.golddigger_requests:
+          check golddigger_completed_domains cache (verify file exists),
+          dispatch GOLDDIGGER Mode 2 if cache miss,
+          append domain to golddigger_completed_domains,
+          include cached domain file in context pack.
+    outputs:
+      - spec.md
+      - 00-overview.md
+    transitions:
+      - to: phase1-why2
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-why2
+    label: "Spec Validation (SAGE WHY2)"
+    type: agent
+    agent: SAGE
+    mode: WHY2
+    tier: exploration
+    context_pack:
+      - spec.md
+      - constitution.md
+      - assumptions.md
+      - reasoning-journal.json [type=routing_decision, phase=phase1-what]
+      - calibration_map entry for SAGE
+    outputs:
+      - quality_scores[pass=N] → state.json
+      - issues → state.json.issues_log (severity-tagged)
+    transitions:
+      - to: checkpoint-assess
+        condition: "no_CRITICAL_issues AND quality_gates.pass"
+      - to: phase1-what
+        condition: "CRITICAL_issues AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "quality_gates.fail AND iteration < max_iterations"
+        action: increment_iteration
+      - to: checkpoint-assess
+        condition: "iteration >= max_iterations"
+        action: force_convergence_warning
+
+  # --------------------------------------------------------------------------
+  - id: checkpoint-assess
+    label: "Phase 1 Checkpoint"
+    type: human_gate
+    autonomy:
+      guided: pause_for_human
+      semi: pause_for_human
+      banzai: auto_proceed
+    transitions:
+      - to: phase2-decide
+        condition: "autonomy = banzai OR human_approved"
+
+  # --------------------------------------------------------------------------
+  - id: phase2-decide
+    label: "Feasibility Gate (GATEKEEPER)"
+    type: agent
+    agent: GATEKEEPER
+    tier: feasibility
+    context_pack:
+      - spec.md
+      - constitution.md
+      - 00-overview.md
+      - assumptions.md
+      - knowledge-base/calibration-profile.yaml
+      - reasoning-journal.json [phase=phase1-* summary]
+      - calibration_map entry for GATEKEEPER
+    outputs:
+      - gatekeeper_verdict: PASS | KILL | DEFER
+      - kill-report.md    # if KILL
+      - scope adjustments # if DEFER
+    transitions:
+      - to: phase3-how
+        condition: "verdict = PASS"
+      - to: done
+        condition: "verdict = KILL"
+        action: write_kill_report
+      - to: phase1-what
+        condition: "verdict = DEFER AND defer_count < assess_defer_loop_limit"
+        action: increment_defer_count
+      - to: escalate
+        condition: "verdict = DEFER AND defer_count >= assess_defer_loop_limit"
+
+  # --------------------------------------------------------------------------
+  - id: phase3-how
+    label: "Architecture (ARCHITECT)"
+    type: agent
+    agent: ARCHITECT
+    tier: solution
+    context_pack:
+      - spec.md
+      - constitution.md
+      - 00-overview.md
+      - gatekeeper output (constraints, scope)
+      - reasoning-journal.json [phase=phase2-decide]
+      - calibration_map entry for ARCHITECT
+    outputs:
+      - architecture.md
+      - adr/ADR-*.md
+      - data-model.md
+      - api-contracts.md
+    transitions:
+      - to: phase3-specialists
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-specialists
+    label: "Specialist Consultation"
+    type: conditional_parallel
+    description: >
+      GUARDIAN always runs (always_on default).
+      Others summoned based on conditions below.
+      Dispatch in parallel up to max_parallel_agents from squad-config.yml.
+    agents:
+      - id: GUARDIAN
+        tier: specialists
+        condition: "guardian_mode = always_on OR domain_security_relevant"
+        exempt_from_max_active_specialists: true
+        context_pack:
+          - spec.md
+          - architecture.md
+          - adr/ADR-*.md
+          - constitution.md
+        outputs:
+          - security-findings.md
+          - risk-acceptance-log.md
+
+      - id: INVESTIGATOR
+        tier: specialists
+        condition: "unknown_territory OR calibrate_confidence < calibrate_confidence_floor"
+        context_pack:
+          - spec.md
+          - architecture.md
+          - unknowns.md
+          - reasoning-journal.json [type=belief_gate_triggered]   # if any
+        outputs:
+          - research.md
+          - experiment-results.json  # if prototype spike run
+
+      - id: ORACLE
+        tier: specialists
+        condition: domain_specific_knowledge_needed
+        outputs:
+          - domain-knowledge.md
+
+      - id: BENCHMARK
+        tier: specialists
+        condition: performance_requirements_present
+        outputs:
+          - performance-model.md
+
+      - id: ADVOCATE
+        tier: specialists
+        condition: user_facing_ui_present
+        outputs:
+          - ux-report.md
+
+      - id: MAVERICK
+        tier: specialists
+        condition: "stagnation_detected OR same_issue_count >= issue_repetition_limit"
+        outputs:
+          - alternatives.md
+
+    limits:
+      max_active_specialists: 3   # Excludes GUARDIAN
+
+    transitions:
+      - to: phase3-sentinel
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-sentinel
+    label: "Test Strategy (SENTINEL)"
+    type: agent
+    agent: SENTINEL
+    tier: solution
+    context_pack:
+      - spec.md
+      - architecture.md
+      - adr/ADR-*.md
+      - security-findings.md    # if exists
+      - research.md             # if exists
+      - calibration_map entry for SENTINEL
+    outputs:
+      - test-strategy.md
+      - coverage-map.md
+    transitions:
+      - to: phase3-plan
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-plan
+    label: "Implementation Planning (ORCHESTRATOR)"
+    type: agent
+    agent: ORCHESTRATOR
+    tier: solution
+    context_pack:
+      - spec.md
+      - architecture.md
+      - adr/ADR-*.md
+      - test-strategy.md
+      - gatekeeper constraints
+      - calibration_map entry for ORCHESTRATOR
+    outputs:
+      - tasks.md
+      - critical-path.md
+      - dependency-graph.md
+    transitions:
+      - to: phase3-consensus
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-consensus
+    label: "Consensus Gate (WHY3 + ASSESS2 + PLAN2)"
+    type: parallel
+    description: >
+      Dispatch all three agents in parallel. COMMANDER then reads all three
+      outputs before making the next routing decision.
+    agents:
+      - id: SAGE
+        mode: WHY3
+        tier: exploration
+        context_pack:
+          - spec.md
+          - architecture.md
+          - tasks.md
+          - test-strategy.md
+        outputs:
+          - why3-verdict: PASS | FAIL
+          - issues (CRITICAL | HIGH | MEDIUM)
+
+      - id: GATEKEEPER
+        mode: ASSESS2
+        tier: feasibility
+        context_pack:
+          - architecture.md
+          - tasks.md
+          - test-strategy.md
+        outputs:
+          - assess2-verdict: PASS | REJECTED
+
+      - id: ORCHESTRATOR
+        mode: PLAN2
+        tier: solution
+        context_pack:
+          - tasks.md
+          - why3-issues       # from SAGE WHY3 output
+          - assess2-concerns  # from GATEKEEPER ASSESS2 output
+        outputs:
+          - revised tasks.md  # if changes needed
+
+    transitions:
+      - to: checkpoint-plan
+        condition: "why3-verdict = PASS AND assess2-verdict = PASS"
+      - to: phase3-how
+        condition: "why3-verdict = FAIL OR assess2-verdict = REJECTED"
+        action: increment_iteration
+        guard: "iteration < max_iterations"
+      - to: checkpoint-plan
+        condition: "iteration >= max_iterations"
+        action: force_convergence_warning
+
+  # --------------------------------------------------------------------------
+  - id: checkpoint-plan
+    label: "Phase 3 Checkpoint"
+    type: human_gate
+    autonomy:
+      guided: pause_for_human
+      semi: auto_proceed
+      banzai: auto_proceed
+    transitions:
+      - to: phase4-document
+        condition: "autonomy in [semi, banzai] OR human_approved"
+
+  # --------------------------------------------------------------------------
+  - id: phase4-document
+    label: "Finalization"
+    type: commander_internal
+    description: >
+      Collate all artifacts. Produce squad report.
+      Run evolution signal review protocol.
+      User must explicitly invoke /speckit.echelon.build to start build phase.
+    steps:
+      - collate_artifacts
+      - write_squad_report
+      - review_evolution_signals
+      - update_state_done
+    outputs:
+      - squad-report.md
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: done
+    label: "Run Complete"
+    type: terminal
+
+  # --------------------------------------------------------------------------
+  - id: escalate
+    label: "Human Escalation"
+    type: terminal
+    description: >
+      Write escalation-request.md using templates/escalation-request.md.
+      Set state.json status = blocked.
+      Resume with /speckit.echelon.resume <answer>.
+
+# =============================================================================
+# BUILD WORKFLOW
+# Invoked separately via /speckit.echelon.build
+# COMMANDER reads this section when build phase is active.
+# =============================================================================
+
+build:
+
+  entry_guard:
+    required_artifacts:
+      - tasks.md
+      - spec.md
+      - constitution.md
+    optional_artifacts:
+      - research.md
+
+  pre_build:
+    - id: dispatch_validator
+      agent: VALIDATOR
+      tier: verification
+      block_until: verdict
+      verdicts:
+        INTERNALIZED:
+          action: proceed
+        PARTIAL:
+          action: log_doubts_to_journal_proceed_with_enhanced_context_packs
+        FAILED:
+          action: escalate_to_human
+      note: "VALIDATOR dispatched exactly once per build run. Never again — phase_gate uses VERIFICATION."
+
+  task_loop:
+    ordering: phase_group_then_dependency_order
+    state_field: workflow_state   # Written to state.json per task
+
+    per_task:
+
+      - agent: IMPLEMENTER
+        tier: build
+        workflow_state: BUILD_IN_PROGRESS
+        context_pack:
+          - task definition from tasks.md
+          - spec.md (relevant FRs only)
+          - architecture.md
+          - adr/ADR-*.md
+          - constitution.md
+          - test-strategy.md (relevant sections)
+          - validator doubts    # if PARTIAL verdict — inject as enhanced context
+        verdicts:
+          DONE:
+            next: SPEC_GUARD
+          NEEDS_CONTEXT:
+            action: provide_context_redispatch
+            max_retries: 2
+            on_max_exceeded: skip_task_blocked
+          BLOCKED:
+            action: skip_task_log
+
+      - agent: SPEC_GUARD
+        tier: build
+        context_pack:
+          - task definition
+          - code produced by IMPLEMENTER
+          - spec.md FRs for this task
+        verdicts:
+          PASS:
+            next: CODE_REVIEWER
+          FAIL:
+            action: dispatch_implementer_fix
+            max_cycles: 2
+            on_max_exceeded:
+              action: accept_DEGRADED
+              next: CODE_REVIEWER
+
+      - agent: CODE_REVIEWER
+        tier: build
+        context_pack:
+          - code produced
+          - spec.md
+          - adr/ADR-*.md
+          - constitution.md
+        verdicts:
+          APPROVED:
+            next: TEST_GUARDIAN
+          CHANGES_REQUESTED:
+            action: dispatch_implementer_fix
+            max_cycles: 2
+            on_BLOCKED: escalate_to_human
+            on_max_exceeded:
+              action: accept_DEGRADED
+              next: TEST_GUARDIAN
+
+      - agent: TEST_GUARDIAN
+        tier: build
+        context_pack:
+          - code produced
+          - test-strategy.md (relevant sections)
+          - coverage-map.md
+        verdicts:
+          PASS:
+            action: task_complete
+            workflow_state: BUILD_COMPLETE
+          FAIL:
+            action: dispatch_implementer_add_tests
+            max_cycles: 2
+            on_max_exceeded:
+              action: accept_DEGRADED
+              workflow_state: BUILD_COMPLETE
+
+      - agent: PROGRESS_TRACKER
+        tier: build
+        action: record_effort_check_drift
+
+    pause_conditions:
+      - condition: "blocked_task_count >= 3"
+        action: assess_reorder_or_replan
+
+    force_complete_conditions:
+      - condition: token_budget_exhausted
+        action: mark_remaining_tasks_SKIPPED
+      - condition: wall_clock_exceeded
+        action: mark_remaining_tasks_SKIPPED
+
+  phase_checkpoint:
+    trigger: end_of_each_phase_group
+    agent: INTEGRATOR
+    tier: build
+    workflow_state_during: QA_IN_PROGRESS
+    verdicts:
+      PASS:
+        workflow_state: QA_COMPLETE
+        action: proceed_to_next_phase_group
+      FAIL:
+        workflow_state: QA_FAILED
+        action: dispatch_implementer_fix_integration
+        max_cycles: 2
+        on_max_exceeded:
+          action: escalate_to_human
+          workflow_state: ESCALATED
+
+  post_build:
+    sequential:
+      - agent: REALIST
+        tier: learning
+      - agent: MIRROR
+        tier: learning
+      - agent: AUDITOR
+        tier: learning
+      - agent: SCOREKEEPER
+        tier: learning
+    then: write_completion_signal
+
+# =============================================================================
+# ESCALATION PATHS
+# Before escalating to human, COMMANDER must exhaust these in order.
+# =============================================================================
+
+escalation:
+
+  pre_escalation_sequence:
+    description: >
+      Before producing escalation-request.md, COMMANDER MUST try these three in order.
+      Only after all three are exhausted → diagnostic pipeline or direct human escalation.
+    steps:
+      - dispatch: GUARDIAN
+        question: "Can the Risk Acceptance Protocol resolve this autonomously?"
+        accept_resolution: "risk-acceptance-log.md verdict = ACCEPT or ACCEPT_WITH_MITIGATIONS"
+      - dispatch: INVESTIGATOR
+        question: "Can new evidence upgrade confidence above calibrate_confidence_floor?"
+        accept_resolution: "confidence >= calibrate_confidence_floor"
+      - dispatch: MAVERICK
+        question: "Can an alternative approach eliminate the risk entirely?"
+        accept_resolution: "viable alternative identified"
+
+  diagnostic_pipeline:
+    description: >
+      Route here when root cause is UNKNOWN (before escalating to human).
+      Skip if root cause is known — escalate directly.
+    trigger_conditions:
+      - "IMPLEMENTER returns BLOCKED twice on the same task"
+      - "gap-report.md has open gaps with no clear owner"
+      - "INTEGRATOR reports > 3 failures after 2 fix cycles"
+      - "Same issue raised >= issue_repetition_limit times without resolution"
+      - "SAGE and another agent disagree and Toulmin resolution cannot settle"
+      - "TRACKER signals intent drift persisting across multiple agents"
+    skip_for:
+      - missing_context         # Use NEEDS_CONTEXT flow instead
+      - spec_ambiguity          # Route to CARTOGRAPHER via clarification
+      - approach_disagreements  # Use Toulmin conflict resolution first
+    skill: speckit.diagnostic.run
+    availability_check: extension-capabilities.json  # If kt-diagnostic not listed, skip to direct escalation
+    state_fields:
+      in_progress:
+        diagnostic_status: IN_PROGRESS
+        diagnostic_concern_id: "<CRN-...>"
+      resolved:
+        diagnostic_status: VERIFICATION_PASS
+      failed:
+        diagnostic_status: MAX_CYCLES_EXCEEDED
+    on_VERIFICATION_PASS: apply_fix_clear_diagnostic_status_continue
+    on_MAX_CYCLES_EXCEEDED: escalate_to_human_with_full_diagnostic_record
+
+  direct_escalation:
+    description: "Root cause known but unresolvable without human."
+    template: templates/escalation-request.md
+    state: blocked
+    resume_command: /speckit.echelon.resume <answer>
