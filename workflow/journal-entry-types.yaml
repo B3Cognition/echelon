@@ -12,7 +12,7 @@ types:
 
   # --- Discovery / Exploration ---
   insight:
-    description: "A discovery or analysis finding"
+    description: "An interpretive conclusion derived from analyzed evidence — use when the finding is an inference or synthesis, not a directly verifiable external fact"
     agents: [DISCOVER]
     required_data_fields: [artifact, section, reasoning, confidence, evidence_grade]
     optional_data_fields: [implications]
@@ -23,7 +23,7 @@ types:
     required_data_fields: [artifact, section, reasoning, validation_method]
 
   evidence:
-    description: "A finding backed by code, documentation, or research"
+    description: "A finding with an externally verifiable source (code, official docs, measured benchmark) — use when the finding can be confirmed independently of the agent's reasoning"
     agents: [DISCOVER]
     required_data_fields: [artifact, section, reasoning, confidence, evidence_grade]
 
@@ -139,7 +139,7 @@ types:
     required_data_fields: [belief_id, config_key, fallback_value]
 
   belief_invalidated:
-    description: "INVESTIGATOR invalidated a belief"
+    description: "COMMANDER recorded that INVESTIGATOR invalidated a previously held belief"
     agents: [COMMANDER]
     required_data_fields: [belief_id, claim, reason]
 

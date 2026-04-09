@@ -2,8 +2,9 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "EchelonResult",
   "description": "Structured output block appended by every Echelon agent. COMMANDER reads this after each dispatch.",
+  "x-write-schema-note": "This schema validates agent OUTPUT only (before COMMANDER processes it). id and timestamp are null in agent output; COMMANDER assigns real values before writing to journal. Do not use this schema to validate stored journal entries.",
   "type": "object",
-  "required": ["verdict", "output_files"],
+  "required": ["verdict", "output_files", "journal_entries"],
   "properties": {
     "verdict": {
       "type": "string",
@@ -25,7 +26,7 @@
           "items": {
             "type": "object",
             "properties": {
-              "pass": { "type": "integer" },
+              "pass": { "type": "boolean", "description": "true = quality gate passed, false = failed" },
               "overall": { "type": "number" },
               "structure": { "type": "number" },
               "testability": { "type": "number" },
@@ -34,7 +35,8 @@
               "semantic": { "type": "number" },
               "behavioral": { "type": "number" },
               "depth": { "type": "number" }
-            }
+            },
+            "required": ["pass", "overall"]
           }
         }
       },
@@ -42,7 +44,7 @@
     },
     "journal_entries": {
       "type": "array",
-      "description": "Journal entries COMMANDER will append to reasoning-journal.jsonl and index.",
+      "description": "Journal entries COMMANDER will append to reasoning-journal.jsonl and index. Always present; use empty array [] when agent has no entries to log.",
       "items": {
         "type": "object",
         "required": ["id", "type", "phase", "agent", "timestamp", "data"],
