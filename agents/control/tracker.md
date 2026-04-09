@@ -180,4 +180,39 @@ journal_entries:
       evidence: "<what signals led to this prediction>"
 ```
 
-Repeat one entry per intent prediction. If signalling a social prediction error, use type `social_prediction_error` with fields `expected`, `observed`, `error_magnitude`.
+The block above shows the base case. Use additional entry types as needed:
+
+**When the active-learning threshold is met** (prediction_confidence >= 0.5 in Learning mode), add a second journal entry to the array:
+```echelon_result
+journal_entries:
+  - id: null
+    type: prediction
+    phase: <current phase>
+    agent: INTENT
+    timestamp: null
+    data:
+      predicted_intent: "<summary>"
+      confidence: <0.0-1.0>
+      evidence: "<signals>"
+  - id: null
+    type: tracker_model_update_requested
+    phase: <current phase>
+    agent: INTENT
+    timestamp: null
+    data:
+      reason: "<why a model update is needed — what pattern or drift triggered this>"
+```
+
+**When signalling a social prediction error** (observed intent diverges from predicted), replace the `prediction` entry with:
+```echelon_result
+journal_entries:
+  - id: null
+    type: social_prediction_error
+    phase: <current phase>
+    agent: INTENT
+    timestamp: null
+    data:
+      expected: "<what you predicted the user would do>"
+      observed: "<what the user actually did>"
+      error_magnitude: <0.0-1.0>
+```
