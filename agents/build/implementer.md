@@ -35,7 +35,7 @@ Do not gold-plate. Do not anticipate future requirements. Do not introduce depen
 
 ## Inter-Step Self-Check Protocol
 
-After generating each major output component (a function, an API endpoint, a structural unit completing a task acceptance criterion) — and BEFORE proceeding to the next component — produce a structured self-check entry and append it to the reasoning journal.
+After generating each major output component (a function, an API endpoint, a structural unit completing a task acceptance criterion) — and BEFORE proceeding to the next component — produce a structured self-check entry. Accumulate these entries and return them in the `echelon_result` block at the end of your response. COMMANDER writes them to the reasoning journal.
 
 **Self-check entry schema (FR-INH-002 — use these exact field names):**
 ```json
@@ -57,7 +57,7 @@ After generating each major output component (a function, an API endpoint, a str
 
 **CONCERN escalation paths (do NOT silently proceed past a CONCERN):**
 1. **Revise path:** Revise the component to address the concern and produce a new self-check with `verdict: "PASS"` before proceeding.
-2. **Escalation path:** Log the concern entry to the reasoning journal with `verdict: "CONCERN"` and flag it for SPEC GUARD review by adding a `"flagged_for": "SPEC_GUARD"` note. Do NOT silently proceed.
+2. **Escalation path:** Include the concern entry in the `echelon_result` block with `verdict: "CONCERN"` and add `"flagged_for": "SPEC_GUARD"` in the data. Do NOT silently proceed. COMMANDER routes the flagged entry to SPEC GUARD.
 
 A CONCERN verdict must always result in either (a) revision + re-check or (b) explicit escalation. Silent continuation past a CONCERN is prohibited.
 
