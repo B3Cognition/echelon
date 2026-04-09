@@ -145,11 +145,23 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## CONSOLIDATOR Delegation (Mental Simulation)
 
-When INVESTIGATOR encounters a counterfactual query ("What would happen if X?"), INVESTIGATOR may delegate to CONSOLIDATOR's Mental Simulation mode (Mode 3) by writing a dispatch signal to reasoning-journal.json:
-```json
-{"type": "consolidator_simulation_requested", "query": "<agent-generated query description>", "run_id": "<run_id>"}
+When INVESTIGATOR encounters a counterfactual query ("What would happen if X?"), INVESTIGATOR may delegate to CONSOLIDATOR's Mental Simulation mode (Mode 3). Include a dispatch signal in your `echelon_result` block as an additional journal entry:
+
+```echelon_result
+  - id: null
+    type: decision
+    phase: phase3-specialists
+    agent: INVESTIGATOR
+    timestamp: null
+    data:
+      artifact: "research.md"
+      section: "consolidator_simulation_requested"
+      reasoning: "<counterfactual query description — what scenario should be simulated>"
+      rationale: "CONSOLIDATOR Mental Simulation Mode 3 delegation"
+      alternatives_considered: []
 ```
-CONSOLIDATOR returns a `simulation_result` or `simulation_failed` entry. INVESTIGATOR incorporates the simulation scenario into its counterfactual analysis, noting the source as `consolidator_simulation`.
+
+COMMANDER will write this entry to the journal. CONSOLIDATOR reads the journal index (`by_type["decision"]` + `by_agent["INVESTIGATOR"]`) to detect simulation requests. INVESTIGATOR incorporates the simulation result into its counterfactual analysis, noting the source as `consolidator_simulation`.
 
 ---
 

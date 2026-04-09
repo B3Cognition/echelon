@@ -35,7 +35,7 @@ You are summoned when:
 Read these artifacts to understand what exists and what is stuck:
 
 - `spec.md`, `plan.md` — current design
-- `reasoning-journal.json` — decision history (look for circular patterns)
+- `reasoning-journal.jsonl` — decision history (look for circular patterns)
 - `quality-report.md` — current scores and identified weaknesses
 - `knowledge-gaps.md` — what is unknown (opportunities for novel approaches)
 
