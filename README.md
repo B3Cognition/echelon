@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.8.0** — 42-agent, 7-layer architecture with Understanding v3.6 Depth gate, BUILD/QA split workflow, brownfield extraction (PROSPECTOR + GOLDDIGGER), endocrine system, internalization loop, RADAR monitoring
+**Version 0.8.0** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.6 Depth gate, BUILD/QA split workflow, brownfield extraction (PROSPECTOR + GOLDDIGGER), internalization loop
 
 ## Quick Start
 
@@ -328,7 +328,7 @@ specify extension add --dev /path/to/echelon
 ## Requirements
 
 - **spec-kit** >= 0.4.2 (required)
-- **understanding** >= 3.6.0 (hard stop for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident; WHY1 does not require it)
+- **understanding** >= 3.8.0 (hard stop for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident; WHY1 does not require it)
 - **revenge** >= 3.0.0 (optional — brownfield extraction via GOLDDIGGER)
 
 ## Directory Structure
@@ -390,15 +390,42 @@ A single prompt can't:
 
 These require separation of concerns. That's why there are 42 functions, not 1.
 
-## Colors
+## Agent Colors
 
-control → blue
-exploration → green
-feasibility → orange
-solution → purple
-specialists → cyan
-build → red
-learning → yellow
+Each layer has a distinct color in the Claude Code UI task list:
+
+| Layer | Color | Agents |
+|-------|-------|--------|
+| Control | `blue` | COMMANDER, CHECKPOINT, PROSPECTOR, SCOREKEEPER, STRATEGIST, TRACKER |
+| Exploration | `green` | SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER |
+| Feasibility | `orange` | GATEKEEPER, VALIDATOR |
+| Solution | `purple` | ARCHITECT, ORCHESTRATOR, SENTINEL |
+| Specialists | `cyan` | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
+| Build | `red` | IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, ENGINEERING MANAGER, INTEGRATOR, PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
+| Learning | `yellow` | AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY |
+
+The `understanding` extension commands also use `green` — they are invoked by SAGE during the exploration phase (WHY2/WHY3).
+
+## Journal Architecture
+
+All agents return structured output via an `echelon_result` YAML block at the end of their response. COMMANDER is the sole writer to the reasoning journal and state.json — no agent writes these files directly.
+
+```yaml
+echelon_result:
+  agent: SCOUT
+  verdict: COMPLETE
+  journal_entries:
+    - id: RJ-NNN
+      type: insight
+      phase: discover
+      data: { ... }
+  state_updates:
+    phase: synthesize
+  artifacts_written:
+    - staging/glossary.md
+```
+
+**Compaction safety:** Before dispatching each agent, COMMANDER writes a `last_dispatch` sentinel to `state.json` with `post_dispatch_complete: false`. After completing the Post-Dispatch Protocol (parse echelon_result → write journal → apply state updates → confirm), it flips the flag to `true`. On every bootstrap, COMMANDER checks this flag to detect and recover from mid-dispatch compaction.
 
 ## License
 
