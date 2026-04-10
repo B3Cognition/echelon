@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "0.8.0"
+  version: "0.9.0"
   description: "Multi-agent cognitive system: 7-layer, 42-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning with per-agent injection, full 34-metric Understanding integration, expert persona prompts, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
   author: "Ladislav Bihari"
   repository: "https://github.com/B3Cognition/echelon"
