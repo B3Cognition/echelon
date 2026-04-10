@@ -46,6 +46,13 @@ If `reasoning-journal-index.json` does not yet exist, create it with all dimensi
 ### Step C — Apply state updates
 
 Apply each field in `state_updates[]` to `.specify/squad/state.json`.
+Also update `last_dispatch` in the same write:
+```json
+"last_dispatch": {
+  "post_dispatch_complete": true,
+  "journal_entries_written": ["RJ-NNN", ...]
+}
+```
 Run `scripts/bash/state-backup.sh` if the update includes a phase transition.
 
 ### Step D — Then and only then proceed
@@ -81,7 +88,13 @@ and agent dispatch conditions. Never rely on remembered values for any threshold
 
 ### 2. Read runtime state
 Read `.specify/squad/state.json`.
-Extract: `phase`, `status`, `iteration`, `workflow_state`, `token_ledger`, `issues_log`.
+Extract: `phase`, `status`, `iteration`, `workflow_state`, `token_ledger`, `issues_log`, `last_dispatch`.
+
+**Compaction recovery check:** If `last_dispatch` is not null AND `last_dispatch.post_dispatch_complete` is `false`, the previous dispatch was interrupted mid-flight (likely by context compaction). Before proceeding:
+1. Check whether journal entries exist in `reasoning-journal.jsonl` for the agent named in `last_dispatch.agent` since `last_dispatch.dispatched_at`.
+2. If entries are missing: re-run the Post-Dispatch Protocol for that dispatch using whatever `echelon_result` data is recoverable from the agent's artifact files on disk.
+3. Set `last_dispatch.post_dispatch_complete = true` and continue.
+This check costs one file read and prevents silent journal gaps from compaction mid-dispatch.
 
 ### 3. Locate current node
 Look up `state.phase` in `definition.yaml phases[]`.
@@ -99,7 +112,16 @@ If the index is absent, rebuild it by scanning `reasoning-journal.jsonl` and log
 
 ### 5. Execute current node
 Assemble context pack as defined in the phase node.
-Dispatch the agent.
+Before dispatching, write to `state.json`:
+```json
+"last_dispatch": {
+  "agent": "<agent name>",
+  "dispatched_at": "<current UTC ISO-8601>",
+  "post_dispatch_complete": false,
+  "journal_entries_written": []
+}
+```
+Then dispatch the agent.
 
 ### 6. Write outputs
 Execute the Post-Dispatch Protocol (see top of this prompt — NEVER Rules section).

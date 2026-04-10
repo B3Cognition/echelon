@@ -387,6 +387,32 @@
         "qa_coverage": { "type": "number", "default": 0.0 },
         "rework_count": { "type": "integer", "default": 0 }
       }
+    },
+    "last_dispatch": {
+      "type": ["object", "null"],
+      "description": "Written by COMMANDER immediately before dispatching an agent and updated after Post-Dispatch Protocol completes. Used for compaction recovery — if post_dispatch_complete is false after compaction, the dispatch interrupted and journal writes must be verified.",
+      "default": null,
+      "properties": {
+        "agent": {
+          "type": "string",
+          "description": "Agent name dispatched (e.g. SYNTHESIZER)"
+        },
+        "dispatched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "UTC timestamp when the dispatch was issued"
+        },
+        "post_dispatch_complete": {
+          "type": "boolean",
+          "description": "Set to true only after Post-Dispatch Protocol Steps A-C all complete successfully. If false after compaction, the last dispatch was interrupted."
+        },
+        "journal_entries_written": {
+          "type": "array",
+          "description": "IDs of journal entries written during Post-Dispatch Protocol (e.g. [\"RJ-012\", \"RJ-013\"]). Empty if post_dispatch_complete is false.",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["agent", "dispatched_at", "post_dispatch_complete", "journal_entries_written"]
     }
   }
 }
