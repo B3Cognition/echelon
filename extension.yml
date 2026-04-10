@@ -69,6 +69,7 @@ provides:
         execution: agent
         capability: strong
         tools: full          # needs Bash (state-backup.sh) + Write (journal, state.json)
+        color: blue
     - name: "speckit.echelon.checkpoint"
       file: "agents/control/checkpoint.md"
       description: "CHECKPOINT — internalization quality assessor"
@@ -76,6 +77,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes internalization-report.md
+        color: blue
     - name: "speckit.echelon.prospector"
       file: "agents/control/prospector.md"
       description: "PROSPECTOR — capability scanner for available spec-kit skills"
@@ -83,6 +85,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes extension-capabilities.json
+        color: blue
     - name: "speckit.echelon.scorekeeper"
       file: "agents/control/scorekeeper.md"
       description: "SCOREKEEPER — tracks and scores agent performance"
@@ -90,6 +93,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes agent-scorecard.md, agent-scores.yaml
+        color: blue
     - name: "speckit.echelon.strategist"
       file: "agents/control/strategist.md"
       description: "STRATEGIST — risk-weighted alignment advisor for COMMANDER"
@@ -97,6 +101,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes strategic-overview.md
+        color: blue
     - name: "speckit.echelon.tracker"
       file: "agents/control/tracker.md"
       description: "TRACKER — intent analyst detecting scope drift"
@@ -104,6 +109,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes user-intent.md
+        color: blue
     # Exploration layer
     - name: "speckit.echelon.scout"
       file: "agents/exploration/scout.md"
@@ -112,6 +118,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md
+        color: green
     - name: "speckit.echelon.golddigger"
       file: "agents/exploration/golddigger.md"
       description: "GOLDDIGGER — brownfield extraction driver via revenge extension"
@@ -119,6 +126,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes brownfield-index.md, golddigger-cache/
+        color: green
     - name: "speckit.echelon.synthesizer"
       file: "agents/exploration/synthesizer.md"
       description: "SYNTHESIZER — fuses raw discovery outputs into unified knowledge base"
@@ -126,6 +134,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes contradictions-and-gaps.md, risks.md, unified outputs
+        color: green
     - name: "speckit.echelon.cartographer"
       file: "agents/exploration/cartographer.md"
       description: "CARTOGRAPHER — transforms domain understanding into testable specifications"
@@ -133,6 +142,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes spec.md, 00-overview.md (via Skill + direct)
+        color: green
     - name: "speckit.echelon.sage"
       file: "agents/exploration/sage.md"
       description: "SAGE — adversarial critic and requirements quality gatekeeper"
@@ -140,6 +150,7 @@ provides:
         execution: agent
         capability: strong
         tools: full          # needs Bash to run `understanding` CLI in WHY2/WHY3
+        color: green
     - name: "speckit.echelon.modeler"
       file: "agents/exploration/modeler.md"
       description: "MODELER — maintains living queryable map of the codebase"
@@ -147,6 +158,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes mental-model-code.md, invariant alerts
+        color: green
     # Feasibility layer
     - name: "speckit.echelon.gatekeeper"
       file: "agents/feasibility/gatekeeper.md"
@@ -155,6 +167,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes feasibility.md, prioritization.md, estimates.md, mvp-scope.md
+        color: orange
     - name: "speckit.echelon.validator"
       file: "agents/feasibility/validator.md"
       description: "VALIDATOR — internalization gate ensuring comprehension before work"
@@ -162,6 +175,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes internalization-report.md
+        color: orange
     # Solution layer
     - name: "speckit.echelon.architect"
       file: "agents/solution/architect.md"
@@ -170,6 +184,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes plan.md, research.md, data-model.md, contracts/
+        color: purple
     - name: "speckit.echelon.orchestrator"
       file: "agents/solution/orchestrator.md"
       description: "ORCHESTRATOR — decomposes projects into executable task sequences"
@@ -177,6 +192,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes tasks.md, critical-path.md, risk-matrix.md, dependencies.md
+        color: purple
     - name: "speckit.echelon.sentinel"
       file: "agents/solution/sentinel.md"
       description: "SENTINEL — test architecture lead designing test strategies"
@@ -184,6 +200,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes test-strategy.md, test-architecture.md, coverage-map.md
+        color: purple
     # Specialists layer
     - name: "speckit.echelon.investigator"
       file: "agents/specialists/investigator.md"
@@ -192,6 +209,7 @@ provides:
         execution: agent
         capability: strong
         tools: full          # needs Bash to run experiments in worktrees
+        color: cyan
     - name: "speckit.echelon.guardian"
       file: "agents/specialists/guardian.md"
       description: "GUARDIAN — security architect conducting threat models"
@@ -199,6 +217,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes threat-model.md, compliance-requirements.md, risk-acceptance-log.md
+        color: cyan
     - name: "speckit.echelon.benchmark"
       file: "agents/specialists/benchmark.md"
       description: "BENCHMARK — performance engineer modeling capacity and scalability"
@@ -206,6 +225,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes performance-requirements.md, capacity-model.md
+        color: cyan
     - name: "speckit.echelon.advocate"
       file: "agents/specialists/advocate.md"
       description: "ADVOCATE — accessibility specialist ensuring WCAG compliance"
@@ -213,6 +233,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes accessibility-requirements.md, user-flow.md
+        color: cyan
     - name: "speckit.echelon.oracle"
       file: "agents/specialists/oracle.md"
       description: "ORACLE — domain-specific knowledge specialist"
@@ -220,6 +241,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes domain amendments to spec, plan, glossary
+        color: cyan
     - name: "speckit.echelon.maverick"
       file: "agents/specialists/maverick.md"
       description: "MAVERICK — innovation consultant breaking assumptions via AutoTRIZ"
@@ -227,6 +249,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes alternatives.md, risk-opportunities.md
+        color: cyan
     # Learning layer
     - name: "speckit.echelon.auditor"
       file: "agents/learning/auditor.md"
@@ -235,6 +258,7 @@ provides:
         execution: agent
         capability: balanced
         tools: full          # needs Bash to run `understanding` CLI in Mode 4 post-build self-assessment
+        color: yellow
     - name: "speckit.echelon.internalizer"
       file: "agents/learning/internalizer.md"
       description: "INTERNALIZER — computes 16 internalization metrics for comprehension measurement"
@@ -242,6 +266,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes internalization-metrics.md, internalization-log.yaml
+        color: yellow
     - name: "speckit.echelon.adaptive"
       file: "agents/learning/adaptive.md"
       description: "ADAPTIVE — quality trajectory analyst detecting stagnation and regression"
@@ -249,6 +274,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes evolution-report.md, stagnation-flags.md
+        color: yellow
     - name: "speckit.echelon.realist"
       file: "agents/learning/realist.md"
       description: "REALIST — connects squad artifacts to real-world data and historical outcomes"
@@ -256,6 +282,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes reality-check.md, cost-analysis.md, benchmark-data.md
+        color: yellow
     - name: "speckit.echelon.mirror"
       file: "agents/learning/mirror.md"
       description: "MIRROR — post-mortem facilitator extracting patterns from retrospectives"
@@ -263,6 +290,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes patterns.yaml, pitfalls.yaml, knowledge-transfer-assessment.md
+        color: yellow
     - name: "speckit.echelon.monitor"
       file: "agents/learning/monitor.md"
       description: "MONITOR — metacognition watchdog asking if the squad is still on track"
@@ -270,6 +298,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes metacognition-log.md
+        color: yellow
     - name: "speckit.echelon.veteran"
       file: "agents/learning/veteran.md"
       description: "VETERAN — cross-project knowledge curator managing patterns and pitfalls"
@@ -277,6 +306,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes updated scope fields in patterns.yaml
+        color: yellow
     - name: "speckit.echelon.consolidator"
       file: "agents/learning/consolidator.md"
       description: "CONSOLIDATOR — transforms raw episodic experience into generalized schemas"
@@ -284,6 +314,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes pattern schemas
+        color: yellow
     - name: "speckit.echelon.global-memory"
       file: "agents/learning/global-memory.md"
       description: "GLOBAL-MEMORY — manages cross-project knowledge base across all runs"
@@ -291,6 +322,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes ~/.specify/squad-global/ knowledge files
+        color: yellow
     # Build layer
     - name: "speckit.echelon.implementer"
       file: "agents/build/implementer.md"
@@ -299,6 +331,7 @@ provides:
         execution: agent
         capability: strong
         tools: full          # needs Bash (run tests, git worktree) + Write (source + test files)
+        color: red
     - name: "speckit.echelon.spec-guard"
       file: "agents/build/spec-guard.md"
       description: "SPEC GUARD — verifies implemented code matches specification requirements"
@@ -306,6 +339,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes spec-compliance-report.md, traceability-matrix.md
+        color: red
     - name: "speckit.echelon.code-reviewer"
       file: "agents/build/code-reviewer.md"
       description: "CODE REVIEWER — reviews code quality, patterns, security, and architecture"
@@ -313,6 +347,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes code-review-report.md
+        color: red
     - name: "speckit.echelon.test-guardian"
       file: "agents/build/test-guardian.md"
       description: "TEST GUARDIAN — audits test sufficiency and edge case coverage"
@@ -320,6 +355,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes test-quality-report.md, updated coverage-map.md
+        color: red
     - name: "speckit.echelon.engineering-manager"
       file: "agents/build/engineering-manager.md"
       description: "ENGINEERING MANAGER — orchestrates build phase convergence toward spec coverage"
@@ -327,6 +363,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes workflow-compliance-report.md
+        color: red
     - name: "speckit.echelon.integrator"
       file: "agents/build/integrator.md"
       description: "INTEGRATOR — verifies system integration after each build phase"
@@ -334,6 +371,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes integration-report.md
+        color: red
     - name: "speckit.echelon.progress-tracker"
       file: "agents/build/progress-tracker.md"
       description: "PROGRESS TRACKER — tracks effort vs estimates and warns on schedule drift"
@@ -341,6 +379,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes progress-report.md, process-metrics.md
+        color: red
     - name: "speckit.echelon.change-controller"
       file: "agents/build/change-controller.md"
       description: "CHANGE CONTROLLER — assesses blast radius of spec changes and plans propagation"
@@ -348,6 +387,7 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes change-impact-report.md, updated tasks.md
+        color: red
     - name: "speckit.echelon.debugger"
       file: "agents/build/debugger.md"
       description: "DEBUGGER — systematic root cause analyst for build failures"
@@ -355,6 +395,7 @@ provides:
         execution: agent
         capability: strong
         tools: full          # needs Bash (reproduce failures, run tests) + Write (fixes)
+        color: red
     - name: "speckit.echelon.verification"
       file: "agents/build/verification.md"
       description: "VERIFICATION — backpropagation specialist tracing requirements to 100% coverage"
@@ -362,6 +403,7 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes gap-report.md, traceability-matrix.md, verification-summary.md
+        color: red
     - name: "speckit.echelon.visual-validator"
       file: "agents/build/visual-validator.md"
       description: "VISUAL VALIDATOR — UI verification specialist using Playwright for visual checks"
@@ -369,6 +411,7 @@ provides:
         execution: agent
         capability: balanced
         tools: full          # needs Bash (Playwright) + Write (screenshots, visual-validation-report.md)
+        color: red
 
   config:
     - name: "echelon.yml"

@@ -390,6 +390,16 @@ A single prompt can't:
 
 These require separation of concerns. That's why there are 42 functions, not 1.
 
+## Colors
+
+control → blue
+exploration → green
+feasibility → orange
+solution → purple
+specialists → cyan
+build → red
+learning → yellow
+
 ## License
 
 MIT
