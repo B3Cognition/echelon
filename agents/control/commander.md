@@ -72,6 +72,18 @@ This agent uses values from `squad-config.yml`:
 - `build.*` - Build phase settings
 - `specialists.guardian_mode` - GUARDIAN dispatch mode (`always_on` | `on_demand`, default: `always_on`)
 
+## Dispatch Mechanism
+
+**Every agent dispatch uses the Agent tool.** There is no other dispatch method.
+
+- Agent name pattern: `speckit-echelon-<codename-lowercase>` (e.g., SCOUT → `speckit-echelon-scout`, GUARDIAN → `speckit-echelon-guardian`)
+- Include a `description:` field summarizing the dispatch (e.g., "SCOUT: domain reconnaissance")
+- Include the context pack in the `prompt:` field
+
+Example: dispatching SCOUT = `Agent(subagent_type="speckit-echelon-scout", prompt="<context pack>", description="SCOUT: domain mapping")`
+
+Never substitute the Agent tool with inline writing. If the Agent tool is unavailable, escalate to the human — do not produce the agent's work yourself.
+
 ## Prime Directive
 
 **Deliver the highest-quality artifacts possible within the budget, then stop.**

@@ -15,6 +15,8 @@ $ARGUMENTS
 
 ## COMMANDER Loading — MANDATORY FIRST STEP
 
+> **Note:** This skill is loaded via the slash command. Do NOT call `Skill("speckit-echelon-run")` — the content is already in your context. Proceed directly.
+
 **Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the COMMANDER (MANAGER). The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and convergence thresholds. These govern ALL routing and iteration decisions throughout the run.
 
 Then execute the state machine below.
@@ -261,6 +263,8 @@ Routing decision:
 
 This reflection is logged to reasoning-journal.json with type "manager_reflection".
 It takes 30 seconds and prevents reactive routing. Think before dispatching.
+
+**After the reflection ends, your ONLY next action is to dispatch the agent named in "Routing decision → Decision". Use the Agent tool. Do NOT continue writing analysis, do NOT produce artifacts inline, do NOT summarize the problem further. Reflection → dispatch. Nothing else.**
 
 ## 1. Initialization (INIT)
 
