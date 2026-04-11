@@ -184,7 +184,7 @@ EOF
 Use the Skill tool to invoke the revenge extension extract command. The Mode 1 config is already active via `local-config.yml`:
 
 ```
-/speckit.revenge.extract
+speckit.revenge.extract
 ```
 
 When the command prompt loads, provide the target path from COMMANDER's context pack. revenge extension will automatically read the local-config.yml overrides. In polyrepo mode, revenge extension reads `repos-manifest.json` and handles the per-repo extraction loop internally.
@@ -319,7 +319,7 @@ EOF
 **MANDATORY — This step is NOT optional.** The same enforcement as Mode 1 Step 2b applies here. You MUST invoke the Skill tool and receive a response before proceeding.
 
 ```
-/speckit.revenge.extract
+speckit.revenge.extract
 ```
 
 Scope the extraction to the specific domain. In polyrepo mode, provide the repo subdirectory path: `{target_path}/{repo}`. revenge extension will automatically read the local-config.yml overrides.

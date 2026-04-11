@@ -185,7 +185,7 @@ phases:
             log: belief_fallback_applied
           2:
             action: queue_investigator_for_critical_beliefs
-            timing: after_prospector_before_discover
+            timing: before_discover
             log: belief_gate_triggered
 
     transitions:
@@ -200,21 +200,13 @@ phases:
     tier: exploration
     context_pack:
       - user_request
-      - extension-capabilities.json
       - knowledge-base/patterns.yaml       # if exists
       - knowledge-base/pitfalls.yaml       # if exists
       - calibration_map entry for SCOUT    # from init
     pre_dispatch:
-      - id: dispatch_prospector
-        label: "Dispatch PROSPECTOR (mandatory)"
-        agent: PROSPECTOR
-        timing: before_first_phase1_dispatch
-        block_until: complete
-        on_failure: log_prospector_failed_continue
-        writes: extension-capabilities.json
       - id: golddigger_mode1
-        label: "Dispatch GOLDDIGGER Mode 1 (brownfield + revenge extension)"
-        condition: "mode = brownfield AND extension-capabilities.json.revenge_extension.relevant = true"
+        label: "Dispatch GOLDDIGGER Mode 1 (brownfield only)"
+        condition: "mode = brownfield"
         agent: GOLDDIGGER
         mode: 1
         block_until: complete
@@ -577,7 +569,7 @@ phases:
     description: >
       Collate all artifacts. Produce squad report.
       Run evolution signal review protocol.
-      User must explicitly invoke /speckit.echelon.build to start build phase.
+      User must explicitly invoke speckit.echelon.build to start build phase.
     steps:
       - collate_artifacts
       - write_squad_report
@@ -601,11 +593,11 @@ phases:
     description: >
       Write escalation-request.md using templates/escalation-request.md.
       Set state.json status = blocked.
-      Resume with /speckit.echelon.resume <answer>.
+      Resume with speckit.echelon.resume <answer>.
 
 # =============================================================================
 # BUILD WORKFLOW
-# Invoked separately via /speckit.echelon.build
+# Invoked separately via speckit.echelon.build
 # COMMANDER reads this section when build phase is active.
 # =============================================================================
 
@@ -792,7 +784,7 @@ escalation:
       - spec_ambiguity          # Route to CARTOGRAPHER via clarification
       - approach_disagreements  # Use Toulmin conflict resolution first
     skill: speckit.diagnostic.run
-    availability_check: extension-capabilities.json  # If kt-diagnostic not listed, skip to direct escalation
+    on_skill_failure: skip_to_direct_escalation  # If kt-diagnostic unavailable, skip to direct escalation
     state_fields:
       in_progress:
         diagnostic_status: IN_PROGRESS
@@ -808,4 +800,4 @@ escalation:
     description: "Root cause known but unresolvable without human."
     template: templates/escalation-request.md
     state: blocked
-    resume_command: /speckit.echelon.resume <answer>
+    resume_command: speckit.echelon.resume <answer>

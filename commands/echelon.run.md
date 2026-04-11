@@ -166,13 +166,13 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 4. **If the constitution itself has a gap** (situation not covered):
    - MANAGER flags the gap as a human escalation
    - Prints: "Constitution gap detected: {description}. No principle covers {situation}."
-   - STOP and wait for human to add/update the constitution via `/speckit.constitution`
+   - STOP and wait for human to add/update the constitution via `speckit.constitution`
    - Resume after human updates
 
 5. **If an agent believes a constitution principle is wrong:**
    - The agent reports to MANAGER: "Constitution principle X may need revision because {evidence}"
    - MANAGER escalates to human — NEVER auto-modifies the constitution
-   - Human decides via `/speckit.constitution` whether to amend
+   - Human decides via `speckit.constitution` whether to amend
 
 **Only the human can amend the constitution. The squad follows it. Period.**
 
@@ -299,7 +299,7 @@ mkdir -p .specify/squad
 
 **Archive structure:** `.specify/squad/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.json, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
 
-**Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `/speckit.specify`, which creates the branch and directory structure.
+**Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `speckit.specify`, which creates the branch and directory structure.
 
 ### 1.3 Initialize State
 
@@ -325,7 +325,7 @@ Create `.specify/squad/state.json`:
   "escalation_question": null,
   "dispatch_counters": {},
   "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 },
-  "prospector_status": null,
+  "fallback_mode": false,
   "golddigger_status": null,
   "golddigger_mode": null,
   "golddigger_notes": null,
@@ -335,7 +335,7 @@ Create `.specify/squad/state.json`:
 }
 ```
 
-Note: `spec_id` and `spec_dir` are set later when `/speckit.specify` creates the branch. `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
+Note: `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch. `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
 ### 1.3.1 Start RADAR (if enabled)
 
@@ -381,7 +381,7 @@ Create `.specify/squad/staging/reasoning-journal.json`:
 }
 ```
 
-This will be moved to the spec directory after `/speckit.specify` creates it.
+This will be moved to the spec directory after `speckit.specify` creates it.
 
 ### 1.5 Load Prior Run Data (if re-run)
 
@@ -445,13 +445,9 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 - **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
 - Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
 
-### Spec-kit Availability Detection (via PROSPECTOR)
+### Spec-kit Availability
 
-Spec-kit availability is detected by PROSPECTOR, not by a preflight bash script. PROSPECTOR enumerates available `speckit.*` skills from its conversation context and writes `extension-capabilities.json` with a `spec_kit_available` field.
-
-COMMANDER reads `extension-capabilities.json` after PROSPECTOR completes (see COMMANDER section 2) and sets fallback mode accordingly:
-- `spec_kit_available: true` → normal mode
-- `spec_kit_available: false` → `state.json.fallback_mode=true`, `execution_mode=manual_specification`
+spec-kit skill availability is validated at install time (`specify extension add echelon`). COMMANDER assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, COMMANDER sets `state.json.fallback_mode = true` and `execution_mode = manual_specification` at that point.
 
 CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
 
@@ -468,27 +464,9 @@ scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
 - Exit 0: Continue
 - Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
 
-### 1.8 Dispatch PROSPECTOR
+### 1.8 GOLDDIGGER Mode 1 dispatch (brownfield path only)
 
-Before dispatching DISCOVER, dispatch PROSPECTOR to discover installed spec-kit extensions.
-
-**Dispatch:**
-
-Use the Agent tool:
-
-- **prompt:** Read the file `agents/control/prospector.md` for your complete instructions. You are the PROSPECTOR (SURVEY) agent. Scan for installed spec-kit extensions and write `.specify/squad/extension-capabilities.json`. Your context: target path is `{target_path}`, mode is `{detected_mode}`, run_id is `{run_id}`.
-
-Block until PROSPECTOR completes.
-
-**After PROSPECTOR completes:**
-
-- Read `.specify/squad/extension-capabilities.json`
-- If file is absent, malformed, or empty: update `state.json.prospector_status` to `"failed"`, log a warning, treat as empty-extensions (no GOLDDIGGER dispatch). **PROSPECTOR failure never blocks the run.**
-- If valid: set `state.json.prospector_status` to `"complete"`. Extract the list of relevant extensions and store a brief summary in context — include this summary in every subsequent agent's context pack (e.g., `"Extensions available: revenge extension 1.1.0 [relevant]"` or `"No extensions available"`).
-
-**GOLDDIGGER Mode 1 dispatch (brownfield path only):**
-
-If `detected_mode` is `brownfield` AND `extension-capabilities.json` lists an extension with `id: "revenge"` and `relevant: true`:
+If `detected_mode` is `brownfield`:
 
 1. Dispatch GOLDDIGGER in Mode 1 (Survey) before DISCOVER:
    - Use the Agent tool
@@ -520,7 +498,7 @@ After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, 
 
 ## 2. DISCOVER Phase (UNDERSTAND)
 
-> **Note:** This is the UNDERSTAND phase. We don't yet know WHAT to build, so outputs go to the staging area. The spec directory is created later when `/speckit.specify` runs.
+> **Note:** This is the UNDERSTAND phase. We don't yet know WHAT to build, so outputs go to the staging area. The spec directory is created later when `speckit.specify` runs.
 
 ### Context Pack Assembly
 
@@ -691,10 +669,10 @@ Gather UNDERSTAND findings from `.specify/squad/staging/`:
 
 ### Create Constitution via Spec-Kit
 
-**Call `/speckit.constitution`** with the gathered context:
+**Call `speckit.constitution`** with the gathered context:
 
 ```text
-/speckit.constitution
+speckit.constitution
 
 Based on our understanding phase:
 - Domain: {summarize from glossary/mental-model}
@@ -713,7 +691,7 @@ Spec-kit will:
 
 ### Verify Constitution Created
 
-After `/speckit.constitution` completes:
+After `speckit.constitution` completes:
 
 1. Verify `.specify/memory/constitution.md` exists
 2. Read and store constitution principles in context
@@ -724,7 +702,7 @@ After `/speckit.constitution` completes:
 **In `guided` mode:**
 
 - Present constitution draft to user for review before proceeding
-- User can modify principles via `/speckit.constitution` amendments
+- User can modify principles via `speckit.constitution` amendments
 
 **In `semi` mode:**
 
@@ -742,7 +720,7 @@ For brownfield projects where constitution doesn't exist:
 
 1. **Option A:** If GOLDDIGGER ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the revenge extension artifacts.
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
-3. Either way, `/speckit.constitution` is called with the derived context
+3. Either way, `speckit.constitution` is called with the derived context
 
 **Transition:** Update state.json phase to "what". Proceed to WHAT.
 
@@ -750,7 +728,7 @@ For brownfield projects where constitution doesn't exist:
 
 ## 4. WHAT Phase (Requirements Definition)
 
-> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. CARTOGRAPHER owns spec creation — it calls `/speckit.specify` itself.
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. CARTOGRAPHER owns spec creation — it calls `speckit.specify` itself.
 
 ### 4.1 Context Pack Assembly
 
@@ -764,11 +742,11 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 
 ### 4.2 Dispatch CARTOGRAPHER
 
-CARTOGRAPHER calls `/speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls revenge extension and SAGE calls Understanding via Skill tool. COMMANDER does NOT call `/speckit.specify`.
+CARTOGRAPHER calls `speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls revenge extension and SAGE calls Understanding via Skill tool. COMMANDER does NOT call `speckit.specify`.
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. You will call `/speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include staging files]. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include staging files]. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
 - **description:** "CARTOGRAPHER: spec creation and requirements definition"
 
 ### 4.3 Post-CARTOGRAPHER
@@ -785,7 +763,7 @@ After CARTOGRAPHER completes, read its output to get the created `spec_id` and `
 
 ### Expected Outputs
 
-- `spec.md` (created by `/speckit.specify`, enhanced by CARTOGRAPHER)
+- `spec.md` (created by `speckit.specify`, enhanced by CARTOGRAPHER)
 - `00-overview.md`
 
 **Transition:** Update state.json phase to "why2". Proceed to WHY2.
@@ -796,9 +774,9 @@ After CARTOGRAPHER completes, read its output to get the created `spec_id` and `
 
 ### Preflight: Understanding Extension Availability (HARD STOP)
 
-Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding is available. SAGE invokes Understanding via the Skill tool (`/speckit.understanding.validate`), not as a CLI binary. PROSPECTOR's `extension-capabilities.json` should list Understanding as available.
+Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding is available. SAGE invokes Understanding via the Skill tool (`speckit.understanding.validate`), not as a CLI binary.
 
-If Understanding extension is not available (PROSPECTOR did not find `speckit.understanding.*` skills):
+If the `speckit.understanding.validate` skill invocation fails (Understanding extension unavailable):
 
 1. Set `state.json.status` to `"blocked"`
 2. Set `state.json.blocked_reason` to `"Understanding extension unavailable — required for WHY2/WHY3 spec validation"`
@@ -829,7 +807,7 @@ Persist `state.json.dependency_checks.understanding` with `status`, `checked_at`
 Read and include in the subagent prompt:
 
 - All current artifacts in `specs/{feature}/`
-- Understanding access (via `/speckit.understanding.validate` Skill tool)
+- Understanding access (via `speckit.understanding.validate` Skill tool)
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 
@@ -1196,7 +1174,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 ### 11.1 WHY3 Context Pack
 
 - All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
-- Understanding access (via `/speckit.understanding.validate` Skill tool)
+- Understanding access (via `speckit.understanding.validate` Skill tool)
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 
@@ -1475,10 +1453,10 @@ RISKS ACCEPTED AUTONOMOUSLY:
 ──────────────────────────────────────────
 
 Spec ID for feedback: {NNN}
-Run: /speckit.echelon.feedback {NNN} after implementation
+Run: speckit.echelon.feedback {NNN} after implementation
 
 BRANCH: {NNN}-{feature}
-Ready for: /speckit.echelon.build {NNN}-{feature}
+Ready for: speckit.echelon.build {NNN}-{feature}
 ============================================
 ```
 
@@ -1517,11 +1495,11 @@ rm -rf .specify/squad/staging
 
 When the user starts a new squad run while implementation of the current spec is in progress:
 
-1. The new spec will be created on a new branch via `/speckit.specify`
+1. The new spec will be created on a new branch via `speckit.specify`
 2. Spec-kit handles branch stacking (new branch based on current feature branch)
 3. This allows parallel specification work while implementation continues
 
-**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `/speckit.echelon.build`.
+**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `speckit.echelon.build`.
 
 ---
 
@@ -1691,9 +1669,9 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 | Tool | Failure | Fallback |
 |------|---------|----------|
-| Understanding extension | Skill invocation fails or PROSPECTOR finds no `speckit.understanding.*` skills | **HARD STOP for WHY2/WHY3.** SAGE invokes `/speckit.understanding.validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
-| spec-kit-revenge | PROSPECTOR fails or revenge extension not installed | COMMANDER treats as empty-extensions; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
-| spec-kit skills | Skill invocation fails or PROSPECTOR finds no `speckit.*` skills | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit commands (e.g. `/speckit.specify`, `/speckit.constitution`) are AI coding assistant skills, not CLI tools — availability is detected by PROSPECTOR from the agent's context, not by filesystem scanning. |
+| Understanding extension | `speckit.understanding.validate` skill invocation fails | **HARD STOP for WHY2/WHY3.** SAGE invokes `speckit.understanding.validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
+| spec-kit-revenge | `speckit.revenge.extract` skill invocation fails | GOLDDIGGER reports failure; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
+| spec-kit skills | Skill invocation fails at runtime | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit skills (e.g. `speckit.specify`, `speckit.constitution`) are AI coding assistant skills, not CLI tools — validated at install time via `specify extension add echelon`. |
 
 ### Subagent Failures
 
@@ -1760,11 +1738,11 @@ Escalation to human is triggered when:
 
    Recommended: {option}
 
-   Respond with: /speckit.echelon.resume {your answer}
+   Respond with: speckit.echelon.resume {your answer}
    ============================================
    ```
 
-5. **STOP execution.** Do not proceed. The user must run `/speckit.echelon.resume` to continue.
+5. **STOP execution.** Do not proceed. The user must run `speckit.echelon.resume` to continue.
 
 ---
 

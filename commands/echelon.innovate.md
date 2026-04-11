@@ -20,7 +20,7 @@ Manually dispatch the INNOVATE specialist to propose fundamentally different app
 
 Read `.specify/squad/state.json`.
 
-- If the file does not exist, report **"No active squad run. Run /speckit.echelon.run first."** and stop.
+- If the file does not exist, report **"No active squad run. Run speckit.echelon.run first."** and stop.
 - If `status` is `"killed"` or `"done"`, report **"Squad run is already {status}. Start a new run first."** and stop.
 
 Extract `spec_id` and locate the spec directory: `.specify/specs/{spec_id}-*/`.
@@ -97,6 +97,6 @@ Alternatives: {count from alternatives.md}
 Files:        alternatives.md, risk-opportunities.md, challenge-assumptions.md
 
 Review the alternatives and decide whether to incorporate
-them into the current approach via a re-run of /speckit.echelon.run.
+them into the current approach via a re-run of speckit.echelon.run.
 ============================================
 ```

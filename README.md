@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.8.0** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.6 Depth gate, BUILD/QA split workflow, brownfield extraction (PROSPECTOR + GOLDDIGGER), internalization loop
+**Version 0.9.0** — 41-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop
 
 ## Quick Start
 
@@ -32,16 +32,16 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 
 ```bash
 # Run analysis on your project idea
-/speckit.echelon.run "Build a photo album app with sharing and tagging"
+speckit.echelon.run "Build a photo album app with sharing and tagging"
 
 # Build with quality gates
-/speckit.echelon.build 001-photo-album
+speckit.echelon.build 001-photo-album
 
 # Verify 100% spec coverage
-/speckit.echelon.verify
+speckit.echelon.verify
 
 # Close the learning loop after implementation
-/speckit.echelon.feedback 001
+speckit.echelon.feedback 001
 
 # Validate the extension setup
 ./scripts/bash/dry-run.sh
@@ -55,8 +55,8 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ PHASE 1: UNDERSTAND                                                      │
 │                                                                          │
-│   PROSPECTOR ──► [GOLDDIGGER] ──► SCOUT ──► SYNTHESIZER ──►            │
-│   (survey)     (brownfield)     (discover)  (fuse)                     │
+│   [GOLDDIGGER] ──► SCOUT ──► SYNTHESIZER ──►                           │
+│   (brownfield)    (discover)  (fuse)                                   │
 │                                                                          │
 │   ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER                    │
 │      (why1)   (what)         (why2)    (assess)                        │
@@ -125,11 +125,10 @@ File: agents/exploration/scout.md
 
 ### Agent Reference
 
-#### Control Layer (6 agents)
+#### Control Layer (5 agents)
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **COMMANDER** | MANAGER | Orchestrates all phases, dispatches agents, conflict resolution |
-| **PROSPECTOR** | SURVEY | Discovers available spec-kit skills from context, writes capability manifest |
 | **CHECKPOINT** | INTERNALIZE | Ensures agents prove comprehension before building |
 | **TRACKER** | INTENT-TRACKER | Watches user intent vs spec drift |
 | **STRATEGIST** | STRATEGIC-ADVISOR | Alignment analysis and advisory |
@@ -199,9 +198,8 @@ File: agents/exploration/scout.md
 
 When analyzing an existing codebase, the squad uses a two-phase extraction pipeline:
 
-1. **PROSPECTOR** enumerates available `speckit.*` skills from the agent's conversation context (assistant-agnostic — no filesystem scanning)
-2. If `speckit.revenge.*` skills are available:
-   - **GOLDDIGGER Mode 1 (Survey)** runs revenge extension at signature level → writes artifact paths to `state.json.golddigger_artifacts`
+1. **GOLDDIGGER Mode 1 (Survey)** runs revenge extension at signature level → writes artifact paths to `state.json.golddigger_artifacts`
+2. If `speckit.revenge.extract` skill invocation succeeds:
    - **SCOUT** reads artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping
    - **GOLDDIGGER Mode 2 (Deep Dive)** runs on-demand when Phase 1 agents need deeper analysis of specific domains
 3. If revenge extension is not available, SCOUT proceeds with manual structural analysis
@@ -212,17 +210,17 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 | Command | Purpose |
 |---------|---------|
-| `/speckit.echelon.run` | Start analysis (Phase 1-3) |
-| `/speckit.echelon.build` | Execute build phase |
-| `/speckit.echelon.verify` | Check 100% spec coverage |
-| `/speckit.echelon.health` | Periodic health check (drift, KB freshness) |
-| `/speckit.echelon.status` | Check progress |
-| `/speckit.echelon.resume` | Answer squad's question |
-| `/speckit.echelon.change` | Handle spec change during build |
-| `/speckit.echelon.investigate` | Trigger INVESTIGATOR |
-| `/speckit.echelon.innovate` | Trigger MAVERICK |
-| `/speckit.echelon.ground` | Trigger REALIST |
-| `/speckit.echelon.feedback` | Post-implementation feedback |
+| `speckit.echelon.run` | Start analysis (Phase 1-3) |
+| `speckit.echelon.build` | Execute build phase |
+| `speckit.echelon.verify` | Check 100% spec coverage |
+| `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
+| `speckit.echelon.status` | Check progress |
+| `speckit.echelon.resume` | Answer squad's question |
+| `speckit.echelon.change` | Handle spec change during build |
+| `speckit.echelon.investigate` | Trigger INVESTIGATOR |
+| `speckit.echelon.innovate` | Trigger MAVERICK |
+| `speckit.echelon.ground` | Trigger REALIST |
+| `speckit.echelon.feedback` | Post-implementation feedback |
 
 ## Configuration
 
@@ -257,10 +255,10 @@ Innovation process: Design Thinking (find right problem) → AutoTRIZ (resolve c
 
 ## Fallback Mode
 
-When spec-kit skills are unavailable (PROSPECTOR finds no `speckit.*` skills in context), the system degrades gracefully:
+When spec-kit skill invocations fail at runtime, the system degrades gracefully:
 
-- PROSPECTOR detects availability from the agent's conversation context — no filesystem scanning, works across any AI coding assistant
-- System sets `fallback_mode=true` and continues with manual specification
+- spec-kit dependencies are validated at install time via `specify extension add echelon` (declared in `extension.yml requires.skills[]`)
+- If a skill invocation fails during the run, COMMANDER sets `fallback_mode=true` and continues with manual specification
 - All fallback artifacts are marked with `FALLBACK STATUS: UNVALIDATED_DEPENDENCY`
 - Quality gates remain active — no phase skipping allowed
 - Recovery runs reconciliation checklist when skills become available
@@ -335,7 +333,7 @@ specify extension add --dev /path/to/echelon
 
 ```text
 agents/
-├── control/           # COMMANDER, PROSPECTOR, CHECKPOINT, TRACKER, STRATEGIST, SCOREKEEPER
+├── control/           # COMMANDER, CHECKPOINT, TRACKER, STRATEGIST, SCOREKEEPER
 ├── exploration/       # SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
 ├── feasibility/       # GATEKEEPER, VALIDATOR
 ├── solution/          # ARCHITECT, ORCHESTRATOR, SENTINEL
@@ -396,7 +394,7 @@ Each layer has a distinct color in the Claude Code UI task list:
 
 | Layer | Color | Agents |
 |-------|-------|--------|
-| Control | `blue` | COMMANDER, CHECKPOINT, PROSPECTOR, SCOREKEEPER, STRATEGIST, TRACKER |
+| Control | `blue` | COMMANDER, CHECKPOINT, SCOREKEEPER, STRATEGIST, TRACKER |
 | Exploration | `green` | SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER |
 | Feasibility | `orange` | GATEKEEPER, VALIDATOR |
 | Solution | `purple` | ARCHITECT, ORCHESTRATOR, SENTINEL |

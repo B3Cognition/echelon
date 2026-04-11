@@ -50,7 +50,7 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 For task execution, leverage spec-kit's implementation workflow:
 
-1. Call `/speckit.implement` which handles:
+1. Call `speckit.implement` which handles:
    - Checklist verification (blocks if incomplete unless user confirms)
    - Project setup (ignore files, directory structure)
    - Task ordering and progress tracking
@@ -86,7 +86,7 @@ Read and verify these files exist in `specs/{NNN}-{feature}/`:
 - `estimates.md` — Effort estimates per task
 - `calibration-profile.yaml` — Historical accuracy data
 
-If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `/speckit.echelon.run` first."
+If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `speckit.echelon.run` first."
 
 ### 1.2 Parse Tasks
 
@@ -591,7 +591,7 @@ For each expert dispatch:
 
 Dispatch SAGE in post-build-validation mode:
 
-- **prompt:** Read `agents/exploration/sage.md`. You are SAGE in **post-build-validation mode**. Run `/speckit.understanding.validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT. Produce `post-build-validation.md`.
+- **prompt:** Read `agents/exploration/sage.md`. You are SAGE in **post-build-validation mode**. Run `speckit.understanding.validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT. Produce `post-build-validation.md`.
 - **description:** "SAGE: post-build Understanding re-scan"
 
 **b) Intent alignment check:**

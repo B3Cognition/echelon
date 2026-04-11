@@ -23,7 +23,7 @@ Auto-feedback runs automatically after every build (see `echelon.build.md` Secti
 
 ## Step 1: Validate Input
 
-If `$ARGUMENTS` is empty, report **"Please provide the spec ID. Usage: /speckit.echelon.feedback 001"** and stop.
+If `$ARGUMENTS` is empty, report **"Please provide the spec ID. Usage: speckit.echelon.feedback 001"** and stop.
 
 Extract `{spec-id}` from `$ARGUMENTS` (first token, e.g., "001").
 
@@ -102,7 +102,7 @@ If the human corrected any values that differ from auto-assessment:
 ## Step 4b: Standalone Mode (Legacy — no auto-feedback exists)
 
 Full human questionnaire. This is the original behavior, used when:
-- Build was done manually (not via `/speckit.echelon.build`)
+- Build was done manually (not via `speckit.echelon.build`)
 - `feedback.auto_feedback` was disabled in config
 
 Read the original artifacts:

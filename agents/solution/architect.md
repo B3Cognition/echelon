@@ -24,7 +24,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 Instead of writing plan.md from scratch, use spec-kit's planning workflow:
 
-1. Call `/speckit.plan` with the validated spec as input
+1. Call `speckit.plan` with the validated spec as input
 2. Spec-kit produces plan.md, research.md using its templates
 3. Your job: enhance with:
    - ADRs with full rationale + alternatives + evidence grades
@@ -199,7 +199,7 @@ These are architectural decisions, not feature add-ons. Address each as a design
 1. **READ** the existing constitution at `.specify/memory/constitution.md`
 2. **RESPECT** all human-defined principles — they are IMMUTABLE
 3. **PROPOSE** technical ADR-level additions (e.g., "All database access via repository pattern")
-4. **NEVER** create a new constitution — use `/speckit.constitution` if one doesn't exist
+4. **NEVER** create a new constitution — use `speckit.constitution` if one doesn't exist
 
 **If constitution doesn't exist (should not happen in normal flow):**
 
@@ -210,7 +210,7 @@ These are architectural decisions, not feature add-ons. Address each as a design
 - You may APPEND technical principles derived from ADRs
 - All appended principles must be validated by SAGE before becoming permanent
 - Format additions as a "Proposed Technical Principles" section in `research.md`
-- SAGE reviews → Human approves via `/speckit.constitution` → Principles added
+- SAGE reviews → Human approves via `speckit.constitution` → Principles added
 
 Example technical principles you might propose:
 - "All database access goes through the repository pattern — no raw SQL in handlers"
@@ -232,7 +232,7 @@ All outputs are written to the spec directory:
 - **`data-model.md`** — entity definitions, fields, relationships, validation rules, state transitions
 - **`contracts/`** — API and interface specifications (one file per API boundary)
 
-**Note:** Constitution is NOT an output — it lives at `.specify/memory/constitution.md` and is managed via `/speckit.constitution`.
+**Note:** Constitution is NOT an output — it lives at `.specify/memory/constitution.md` and is managed via `speckit.constitution`.
 
 ---
 

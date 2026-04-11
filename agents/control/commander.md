@@ -340,9 +340,8 @@ Maintain `state.json` with:
 - Convergence metrics (deltas between iterations)
 - Specialist summoning log
 
-### New state.json fields (PROSPECTOR + GOLDDIGGER)
+### New state.json fields (GOLDDIGGER)
 
-- `prospector_status`: `"complete"` | `"failed"` — set by COMMANDER after PROSPECTOR runs
 - `golddigger_status`: `"complete"` | `"partial"` | `"failed"` — set by GOLDDIGGER
 - `golddigger_mode`: `"survey"` | `"polyrepo-survey"` | `"deep-dive"` — which mode last ran
 - `golddigger_notes`: array of strings — any warnings or known issues from GOLDDIGGER
@@ -458,7 +457,7 @@ For each file: if it exists, read and extract relevant fields. If absent, note a
   "type": "cold_start_warning",
   "agent": "COMMANDER",
   "timestamp": "<ISO 8601>",
-  "message": "COLD START: no real feedback data. calibration-profile.yaml values are proxy-estimated. Run /speckit.echelon.feedback after this project completes to start improving calibration accuracy."
+  "message": "COLD START: no real feedback data. calibration-profile.yaml values are proxy-estimated. Run speckit.echelon.feedback after this project completes to start improving calibration accuracy."
 }
 ```
 
@@ -486,7 +485,7 @@ Log `calibration_map_agents_loaded: {count}` in the `init_knowledge_read` journa
 
 Set `state.json` field `init_reads.completed: true` after this step.
 
-> **Belief Freshness Gate** — after `init_reads.completed` is set and before dispatching PROSPECTOR, run:
+> **Belief Freshness Gate** — after `init_reads.completed` is set, run:
 > ```bash
 > BELIEF_JSON=$(scripts/bash/belief-freshness-check.sh 2>/dev/null)
 > BELIEF_EXIT=$?
@@ -504,7 +503,7 @@ Set `state.json` field `init_reads.completed: true` after this step.
 > 1. Parse `$BELIEF_JSON` to extract `stale_beliefs[].dependent_config_key` values.
 > 2. For each stale belief, identify which dispatch decisions depend on that config key (e.g., `execution.models.control` → model tier selection for control agents).
 > 3. For exit 1 (defer): apply the conservative default for the affected config key (e.g., use `opus` instead of `sonnet` when the "sonnet is sufficient" belief is stale). Log the fallback in `reasoning-journal.json` type `belief_fallback_applied`.
-> 4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. INVESTIGATOR runs after PROSPECTOR and before DISCOVER. If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
+> 4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. INVESTIGATOR runs before DISCOVER. If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
 > 5. If endocrine system is enabled, call `endocrine.sh update_adrenaline {affected_agent} +0.2` for agents whose dispatch depends on stale beliefs.
 >
 > **Fallback (FR-010):** If the script exits 0 (including when the graph is missing or python3 is unavailable), proceed with no routing changes — full backward compatibility.
@@ -567,38 +566,28 @@ When `specialists.guardian_mode` is `always_on`:
 
 Log `guardian_dispatch_mode` in `state.json` (`always_on` or `on_demand`).
 
-### 2. Dispatch PROSPECTOR (MANDATORY)
+### 2. Spec-Kit Dependency Check (inline)
 
-**You MUST dispatch PROSPECTOR.** This dispatch is not optional — PROSPECTOR must be invoked and must return before proceeding. Do not skip this step or treat PROSPECTOR's output as pre-known.
+spec-kit dependency validation happens at install time via `specify extension add echelon` — skills declared in `extension.yml requires.skills[]` are verified before the run starts. At runtime, COMMANDER assumes `fallback_mode = false` by default.
 
-Dispatch the PROSPECTOR (SURVEY) agent with the current run context (target path, run_id). Block until PROSPECTOR completes. Record `dispatch_id` and `timestamp` in `state.json` under `token_ledger.dispatches[]` as proof of dispatch.
+**If a spec-kit skill invocation fails during the run** (e.g., CARTOGRAPHER cannot invoke `speckit.specify`):
+- Set `state.json.fallback_mode = true`
+- Set `state.json.execution_mode = manual_specification`
+- Append journal entry: `{type: dependency_failure, dependency: speckit.<skill-name>, phase: <current-phase>, fallback_mode: true}`
+- Continue the run in degraded mode — produce artifacts manually as markdown, flag as UNVALIDATED
 
-**ONLY after PROSPECTOR returns do you proceed:**
-
-- Read `.specify/squad/extension-capabilities.json`
-- If the file is absent, malformed, or empty: log `prospector_status: failed` in `state.json`; treat identically to empty-extensions (no GOLDDIGGER dispatch, fallback mode)
-- If valid:
-  - Read `spec_kit_available` field:
-    - `true`: spec-kit skills are available. Set `state.json.fallback_mode = false`.
-    - `false`: no spec-kit skills found. Set `state.json.fallback_mode = true`, `state.json.execution_mode = manual_specification`. Append `reasoning-journal.json` entry: `{type: dependency_failure, dependency: spec-kit, phase: phase1-understand, fallback_mode: true}`.
-  - Extract the list of relevant extensions and **store a brief summary in the run context** — include this summary in every subsequent agent's context pack (e.g., "Extensions available: revenge extension [relevant], understanding [relevant]" or "No spec-kit skills available — fallback mode")
-
-**PROSPECTOR failure never blocks the run.** Continue to mode detection regardless. But PROSPECTOR must have been dispatched — a missing `dispatch_id` for PROSPECTOR in `token_ledger` is an invalid state.
-
-**Note:** PROSPECTOR replaces the former `preflight-speckit.sh` script. There is no separate spec-kit dependency detection step — PROSPECTOR is the single source of truth for all spec-kit capability discovery.
+**If the `revenge` extension is needed** (brownfield mode, step 3 below): GOLDDIGGER attempts to invoke `speckit.revenge.extract` and handles unavailability directly — no preflight required.
 
 ### 3. Brownfield Extension Check
 
 After brownfield mode is confirmed, before dispatching SCOUT:
 
-1. Read `extension-capabilities.json` (already loaded at init)
-2. If `revenge extension` is listed with `relevant: true`:
-   - **Dispatch GOLDDIGGER in Mode 1 (Survey).** This dispatch is mandatory when `revenge extension` is relevant. Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
-   - Block SCOUT dispatch until GOLDDIGGER returns
-   - **ONLY after GOLDDIGGER returns**, read `golddigger_status` from `state.json`:
-     - `complete`: proceed normally, SCOUT will read artifact paths from `state.json.golddigger_artifacts`
-     - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual). The `golddigger_notes` field MUST contain a verbatim error from the Skill tool — if it instead contains "manual code analysis used" or references `execution_mode`, GOLDDIGGER has violated its NEVER rules. Re-dispatch GOLDDIGGER rather than accepting the invalid state.
-3. If `revenge extension` is not listed, or `extensions` is empty: dispatch SCOUT directly (unchanged)
+1. **Dispatch GOLDDIGGER in Mode 1 (Survey).** Record `dispatch_id` and `timestamp` in `token_ledger.dispatches[]`.
+2. Block SCOUT dispatch until GOLDDIGGER returns.
+3. **ONLY after GOLDDIGGER returns**, read `golddigger_status` from `state.json`:
+   - `complete`: proceed normally, SCOUT will read artifact paths from `state.json.golddigger_artifacts`
+   - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual). The `golddigger_notes` field MUST contain a verbatim error from the Skill tool — if it instead contains "manual code analysis used" or references `execution_mode`, GOLDDIGGER has violated its NEVER rules. Re-dispatch GOLDDIGGER rather than accepting the invalid state.
+   - If GOLDDIGGER reports that `speckit.revenge.extract` is unavailable: set `fallback_mode = true` for brownfield extraction, continue with manual structural analysis.
 
 ### 4. GOLDDIGGER Mode 2 Queue (Phase 1 agents)
 
@@ -846,7 +835,7 @@ The internalization data handoff follows this strict sequence within FINALIZE:
 | CMD-006 | Token budget allocation ratios (25/20/25/15/10/5%) optimally balance squad phases | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | high |
 | CMD-007 | A single agent consuming > 40% of total budget is pathological and must be capped | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
 | CMD-008 | Issuing the same issue 3 times without resolution is the right threshold for human escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| CMD-009 | PROSPECTOR is the single correct mechanism for spec-kit capability discovery | 2026-03-28 | 2026-09-28 | Architectural decision (replaces preflight-speckit.sh) | 0.80 | medium |
+| CMD-009 | spec-kit dependency validation at install time is sufficient; no runtime preflight agent required | 2026-04-11 | 2026-10-11 | Architectural decision (PROSPECTOR removed; depends on `specify extension add` validation) | 0.85 | medium |
 | CMD-010 | Build phase token allocation (50% implementation / 30% quality / 15% integration / 5% reserve) is well-calibrated | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
 | CMD-011 | assess.defer_loop_limit default of 2 is the right cap before human escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
 | CMD-012 | Calibration data requires sample_size >= 3 before it is trustworthy enough to apply | 2026-03-28 | 2026-09-28 | Statistical convention (small sample caution) | 0.75 | medium |

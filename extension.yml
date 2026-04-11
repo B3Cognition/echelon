@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "0.9.0"
-  description: "Multi-agent cognitive system: 7-layer, 42-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning with per-agent injection, full 34-metric Understanding integration, expert persona prompts, brownfield support via PROSPECTOR+GOLDDIGGER, and RADAR real-time monitoring"
+  version: "0.9.1"
+  description: "Multi-agent cognitive system: 7-layer, 41-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning per-agent injection, full 34-metric Understanding integration, expert persona prompts, brownfield support via GOLDDIGGER, and RADAR real-time monitoring"
   author: "Ladislav Bihari"
   repository: "https://github.com/B3Cognition/echelon"
   license: "MIT"
@@ -12,9 +12,33 @@ extension:
 
 requires:
   speckit_version: ">=0.4.2"
+  skills:
+    # Core spec-kit skills — validated at install time via `specify extension add echelon`
+    - name: "speckit.specify"
+      required: true
+      required_for: "CARTOGRAPHER — spec creation and branch setup"
+      hard_stop: true
+    - name: "speckit.constitution"
+      required: true
+      required_for: "constitution creation and amendment (ARCHITECT, COMMANDER)"
+    - name: "speckit.plan"
+      required: true
+      required_for: "ARCHITECT — technical plan generation"
+    - name: "speckit.tasks"
+      required: true
+      required_for: "ORCHESTRATOR — task decomposition"
+    - name: "speckit.implement"
+      required: true
+      required_for: "IMPLEMENTER — task execution orchestration"
+    - name: "speckit.clarify"
+      required: false
+      required_for: "CARTOGRAPHER — optional spec Q&A"
+    - name: "speckit.analyze"
+      required: false
+      required_for: "ORCHESTRATOR — cross-artifact consistency check"
   tools:
     - name: "understanding"
-      version: ">=3.6.0"
+      version: ">=3.8.0"
       required_for: "WHY2, WHY3 (spec-validation)"
       hard_stop: true
       note: "System CLI at ~/.local/bin/understanding. HARD STOP if unavailable for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident (PAT-006). WHY1 (assumption-challenge) does not require it."
@@ -22,7 +46,6 @@ requires:
       version: ">=3.0.0"
       required: false
       # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
-      # PROSPECTOR discovers availability; GOLDDIGGER drives extraction.
 
 provides:
   commands:
@@ -77,14 +100,6 @@ provides:
         execution: agent
         capability: strong
         tools: write         # writes internalization-report.md
-        color: blue
-    - name: "speckit.echelon.prospector"
-      file: "agents/control/prospector.md"
-      description: "PROSPECTOR — capability scanner for available spec-kit skills"
-      behavior:
-        execution: agent
-        capability: strong
-        tools: write         # writes extension-capabilities.json
         color: blue
     - name: "speckit.echelon.scorekeeper"
       file: "agents/control/scorekeeper.md"

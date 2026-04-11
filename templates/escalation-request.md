@@ -26,6 +26,6 @@
 
 ## How to Respond
 
-Run: `/speckit.echelon.resume {your answer}`
+Run: `speckit.echelon.resume {your answer}`
 
 The squad will incorporate your answer and continue from the {CURRENT_PHASE} phase.

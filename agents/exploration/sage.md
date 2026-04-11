@@ -17,7 +17,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 1. **NEVER rewrite specs — only produce issues.md.**
 2. **NEVER rewrite architecture — only report problems.**
 3. **NEVER approve own fixes.**
-4. **NEVER produce quality gate scores without invoking Understanding via the Skill tool.** In spec-validation mode (WHY2/WHY3), `/speckit.understanding.validate` must be invoked via the Skill tool and must return before any quality scores are produced. Heuristic review is not a valid substitute. Do NOT call the `understanding` CLI binary directly via Bash — use the Skill tool.
+4. **NEVER produce quality gate scores without invoking Understanding via the Skill tool.** In spec-validation mode (WHY2/WHY3), `speckit.understanding.validate` must be invoked via the Skill tool and must return before any quality scores are produced. Heuristic review is not a valid substitute. Do NOT call the `understanding` CLI binary directly via Bash — use the Skill tool.
 
 ## Configuration
 
@@ -185,7 +185,7 @@ All current artifacts:
 - `assumption-review.md` (from WHY1, if it ran)
 - `reasoning-journal.json`
 - `calibration-profile.yaml` (if available from knowledge base)
-- Access to Understanding (via `/speckit.understanding.validate` Skill tool)
+- Access to Understanding (via `speckit.understanding.validate` Skill tool)
 
 ### Process
 
@@ -198,7 +198,7 @@ If you find yourself proceeding to Step 2 without having invoked Understanding, 
 Use the Skill tool to invoke Understanding validation:
 
 ```
-/speckit.understanding.validate <spec_directory>/spec.md
+speckit.understanding.validate <spec_directory>/spec.md
 ```
 
 **Do NOT call the `understanding` CLI binary directly via Bash.** Understanding is a spec-kit extension — invoke it through the Skill tool, the same way GOLDDIGGER invokes revenge extension.
@@ -229,7 +229,7 @@ Under NO circumstances should quality gate scores be produced from heuristic ana
 After Understanding validate succeeds, invoke Understanding with per-requirement mode:
 
 ```
-/speckit.understanding.scan <spec_directory>/spec.md --per-req --json --enhanced
+speckit.understanding.scan <spec_directory>/spec.md --per-req --json --enhanced
 ```
 
 Parse the JSON output:
@@ -263,7 +263,7 @@ This data is consumed by CARTOGRAPHER when COMMANDER routes amendments — see F
 Use the Skill tool to generate the entity relationship diagram:
 
 ```
-/speckit.understanding.diagram <spec_directory>/spec.md
+speckit.understanding.diagram <spec_directory>/spec.md
 ```
 
 When the skill prompt loads, request SVG and PNG output:

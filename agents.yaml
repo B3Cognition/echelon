@@ -23,12 +23,12 @@ schema_version: 1
 # If output conflicts with constitution → output is wrong, not constitution.
 # If constitution has a gap → escalate to human. NEVER auto-fill.
 # If agent believes constitution is wrong → escalate to human. NEVER auto-modify.
-# ONLY the human can amend the constitution via /speckit.constitution.
+# ONLY the human can amend the constitution via speckit.constitution.
 
 constitution:
   authority: highest
   mutable_by: human_only
-  amendment_method: "/speckit.constitution"
+  amendment_method: "speckit.constitution"
   agent_can_append: ARCHITECT  # technical principles only, validated by SAGE
   on_conflict: agent_output_is_wrong
   on_gap: escalate_to_human
@@ -80,20 +80,6 @@ agents:
       - "NEVER do another agent's job directly"
       - "NEVER dispatch SAGE with fix/rewrite prompts"
       - "NEVER skip phases"
-
-  PROSPECTOR:
-    codename: PROSPECTOR
-    function: SURVEY
-    file: agents/control/prospector.md
-    layer: control
-    phase: all
-    role: "Extension discovery — scans for installed spec-kit extensions, writes capability manifest"
-    when: "Always — first agent dispatched on every run, before mode detection"
-    inputs: [".specify/extensions/*/extension.yml", "~/.specify/extensions/*/extension.yml", "run context (target_path, mode)"]
-    outputs: [".specify/squad/extension-capabilities.json"]
-    never:
-      - "NEVER do domain analysis"
-      - "NEVER block the run on failure"
 
   SCOREKEEPER:
     codename: SCOREKEEPER
@@ -236,8 +222,8 @@ agents:
     layer: exploration
     phase: understand
     role: "Brownfield extraction driver — drives spec-kit-revenge Phase 1 and normalizes output into brownfield-index.md"
-    when: "Brownfield runs only, when revenge extension is listed as relevant in extension-capabilities.json. Dispatched before SCOUT."
-    inputs: ["target codebase path", ".specify/squad/extension-capabilities.json", ".specify/squad/state.json"]
+    when: "Brownfield runs only, Dispatched before SCOUT."
+    inputs: ["target codebase path", ".specify/squad/state.json"]
     outputs: [".specify/squad/brownfield-index.md", ".specify/squad/golddigger-cache/survey.md", ".specify/squad/golddigger-cache/{domain}.md"]
     never:
       - "NEVER pass raw revenge extension domain specs to downstream agents"

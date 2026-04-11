@@ -5,7 +5,7 @@ behavior:
   invocation: explicit
 ---
 
-# /speckit.echelon.change
+# speckit.echelon.change
 
 Handle a specification change during the build phase by dispatching the CHANGE CONTROLLER agent.
 
@@ -17,7 +17,7 @@ The change description provided by the user. This should describe:
 - Why the change is needed
 - Any urgency or priority context
 
-Example: `/speckit.echelon.change "FR-012 payment flow now requires 3DS2 authentication instead of 3DS1"`
+Example: `speckit.echelon.change "FR-012 payment flow now requires 3DS2 authentication instead of 3DS1"`
 
 ---
 
@@ -83,8 +83,8 @@ If ACCEPTED:
 6. Notify PROGRESS TRACKER of the re-baseline
 
 7. Resolve re-entry dispatch target:
-   - `BUILD_RESTART` -> resume via `/speckit.echelon.build {feature}`
-   - `QA_RESTART` -> resume via `/speckit.echelon.verify {feature}`
+   - `BUILD_RESTART` -> resume via `speckit.echelon.build {feature}`
+   - `QA_RESTART` -> resume via `speckit.echelon.verify {feature}`
 
 If DEFERRED:
 

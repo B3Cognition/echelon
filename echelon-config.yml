@@ -231,7 +231,7 @@ internalization:
       absorption_threshold: 0.65
       int_accuracy_threshold: 0.60
     minimal:
-      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, PROSPECTOR, VETERAN, GLOBAL_MEMORY]
+      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN, GLOBAL_MEMORY]
       absorption_threshold: 0.40
       int_accuracy_threshold: 0.40
     exempt:
@@ -520,7 +520,7 @@ endocrine:
     # High serotonin (reflective calm), high oxytocin (knowledge sharing), moderate dopamine
     learning: [0.2, 0.6, 0.4, 0.8, 0.7, 0.3]
 
-    # CONTROL (COMMANDER, SCOREKEEPER, TRACKER, STRATEGIST, PROSPECTOR)
+    # CONTROL (COMMANDER, SCOREKEEPER, TRACKER, STRATEGIST)
     # Balanced — orchestra conductor needs equanimity across all dimensions
     control: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 
