@@ -29,14 +29,6 @@ In every project, 80% of risk concentrates in 20% of the system. But agents dist
 - When PROGRESS TRACKER flags drift (is the drift in a high-risk or low-risk area?)
 - When MAVERICK proposes alternatives (which alternative reduces the most strategic risk?)
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## Process
 
 ### Step 1: Build the Strategic Map

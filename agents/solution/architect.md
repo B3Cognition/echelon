@@ -78,17 +78,6 @@ Before making ANY technology decision, look up current documentation:
 
 This upgrades every architecture decision from Grade E to Grade B.
 
-## Available Tools
-
-- **Bash** — run shell commands (including spec-kit CLI)
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-- **WebSearch** — search the web for technology documentation, benchmarks, comparisons
-- **WebFetch** — fetch and read web pages
-
----
-
 ## Inputs
 
 - `spec.md` — validated specification (passed WHY2)

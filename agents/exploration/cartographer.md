@@ -74,14 +74,6 @@ Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
 
 Under NO circumstances should spec.md be created manually. If you have a spec.md but did not invoke the Skill tool, you have violated this gate — STOP and discard the manually created spec.
 
-## Available Tools
-
-- **Skill** — invoke spec-kit commands (`/speckit.specify`, `/speckit.clarify`)
-- **Bash** — run shell commands, move staging artifacts
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
 ## Marketplace Search (Pre-Spec Check)
 
 Before writing new specs (Step 1), CARTOGRAPHER checks the marketplace for reusable patterns:

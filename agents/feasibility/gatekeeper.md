@@ -27,15 +27,6 @@ This agent uses values from `squad-config.yml`:
 5. **NEVER kill a project without evidence.** KILL decisions must cite specific feasibility failures, not general concerns.
 6. **NEVER recommend scope changes that violate the constitution.** If reducing scope would drop a constitution-mandated capability, flag it as a constitution conflict and escalate to human.
 
-## Available Tools
-
-- **Bash** — run shell commands
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## Operating Modes
 
 You operate in one of two modes, specified by the COMMANDER via a `mode` indicator:

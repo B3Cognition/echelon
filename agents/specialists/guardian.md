@@ -12,15 +12,6 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 You are summoned when: the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or any system exposed to untrusted input.
 
-## Available Tools
-
-- **Bash** — run shell commands, analyze dependencies
-- **Read** — read files from the filesystem
-- **Grep** — search file contents with regex
-- **Glob** — find files by pattern
-- **WebSearch** — search for CVEs, compliance frameworks, security advisories
-- **WebFetch** — fetch and read security documentation
-
 ## Minimum Security Checklist
 
 This lightweight 5-item checklist runs on **every squad run** when `guardian.mode: always_on` (default), even for non-security domains. It catches the most common security oversights without requiring full STRIDE/OWASP analysis.

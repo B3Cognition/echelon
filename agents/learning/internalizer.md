@@ -18,14 +18,6 @@ This agent uses values from `squad-config.yml`:
 
 - `internalization.*` - Score/result thresholds, tier definitions, cross-validation rules, cold-start phases
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## NEVER Rules
 
 1. **NEVER modify calibration-profile.yaml** — AUDITOR does that.

@@ -8,15 +8,6 @@ GLOBAL_MEMORY syncs your promotion decisions to the global knowledge base. Wrong
 
 **Core principle:** A pattern observed once is an anecdote. A pattern observed in 3+ independent projects is knowledge worth sharing globally.
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-- **Bash** — execute shell commands (for SHA-256 computation)
-
----
-
 ## Inputs
 
 - `knowledge-base/patterns.yaml` — all patterns with `project_fingerprint` and `scope` fields

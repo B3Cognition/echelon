@@ -12,15 +12,6 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 
 **Core principle:** Improvement must be measured, not assumed. If quality is flat or declining, say so.
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-- **Bash** — run shell commands
-
----
-
 ## Inputs
 
 - Current run artifacts (`.specify/specs/{feature}/`)

@@ -20,14 +20,6 @@ This agent uses values from `squad-config.yml`:
 - `risk.*` - Risk level thresholds
 - `evolution.*` - Evolution signal thresholds and recommendation settings
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## NEVER Rules
 
 1. **NEVER compute internalization metrics** — INTERNALIZER does that.

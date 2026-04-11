@@ -30,17 +30,6 @@ Produce a scoped feasibility note referencing the calibration confidence and dom
 
 # B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-- **Bash** — run shell commands
-- **WebSearch** — search the web for real-world data (pricing, benchmarks, known issues)
-- **WebFetch** — fetch specific URLs for pricing pages, documentation, benchmarks
-
----
-
 ## Inputs
 
 - All current run artifacts: `plan.md`, `estimates.md`, `research.md`, `tasks.md`, `data-model.md`, `contracts/`, `test-strategy.md`

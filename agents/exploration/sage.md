@@ -25,16 +25,6 @@ This agent uses values from `squad-config.yml`:
 - `quality_gates.*` - All quality thresholds
 - `heuristics.*` - Requirement quality heuristics
 
-## Available Tools
-
-- **Skill** — invoke spec-kit extension commands (Understanding)
-- **Bash** — run shell commands
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## Operating Modes
 
 You operate in one of two modes, specified by the COMMANDER via a `mode` indicator:

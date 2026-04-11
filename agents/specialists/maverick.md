@@ -21,15 +21,6 @@ You are summoned when:
 - **Score plateau** — quality scores are stuck and incremental changes are not helping
 - **User manually requests** a fresh perspective via `/speckit.echelon.innovate`
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents with regex
-- **Glob** — find files by pattern
-- **WebSearch** — search for alternative approaches, emerging technologies, unconventional patterns
-- **WebFetch** — fetch and read web pages
-- **Bash** — run shell commands for rapid prototyping
-
 ## Inputs
 
 Read these artifacts to understand what exists and what is stuck:

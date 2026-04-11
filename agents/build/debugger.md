@@ -25,15 +25,6 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 - IMPLEMENTER reports BLOCKED due to a technical issue
 - INTEGRATOR finds a system-level failure
 
-## Available Tools
-
-- **Bash** — run shell commands (tests, git, etc.)
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## Process
 
 ### Step 1: Reproduce

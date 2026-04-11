@@ -10,14 +10,6 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 
 **Core principle:** Extract signal from noise. Not every decision is a pattern. Only log learnings that are specific, actionable, and supported by evidence from the run.
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## Inputs
 
 - All artifacts from the current run (`.specify/specs/{feature}/`)

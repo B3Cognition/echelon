@@ -27,15 +27,6 @@ Uses values from `squad-config.yml`:
 - `consolidator.simulation_depth` — maximum recombination depth for mental simulation (default: 3)
 - `consolidator.consolidation_trigger` — when to run offline consolidation (default: `finalize`)
 
-## Available Tools
-
-- **Read** — read files from the filesystem
-- **Write** — write to GLOBAL-MEMORY schemas and prediction-model.json
-- **Grep** — search episodic traces in reasoning-journal.jsonl
-- **Glob** — find prior run artifacts
-
----
-
 ## Mode 1: Online Replay (FR-S3-001)
 
 **Trigger:** COMMANDER dispatches CONSOLIDATOR with `mode: "online_replay"` during DISCOVER or BUILD phases.

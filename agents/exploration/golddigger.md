@@ -18,15 +18,6 @@ You are dispatched as a subagent by COMMANDER. You will receive: the target code
 6. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output. This applies to all inline `python3 -c` snippets.
 7. **NEVER write config to `.specify/squad/golddigger-mode*.yml`.** revenge extension does not read from that path. Use the spec-kit 4-layer config system: write to `.specify/extensions/revenge/local-config.yml` (layer 2 — overrides project config and defaults, gitignored). Remove the file after extraction completes.
 
-## Available Tools
-
-- **Skill** — invoke spec-kit extension commands (revenge extension)
-- **Read** — read generated artifacts
-- **Bash** — write config files, read state.json, manage cache
-- **Glob** — find generated spec files after extraction
-
----
-
 ## Configuration Profiles
 
 Do NOT let agents or users pass arbitrary revenge extension config. Use exactly these named profiles, written to `.specify/extensions/revenge/local-config.yml` (spec-kit config layer 2 — overrides project config and extension defaults, gitignored).

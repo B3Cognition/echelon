@@ -38,18 +38,11 @@ Return the cached capability manifest without re-executing a capability scan.
 3. **NEVER scan filesystems to detect skills.** Do not use `ls`, `find`, `glob`, `command -v`, or any file path scanning to discover spec-kit commands. Your AI coding assistant already tells you what skills are available — read your context.
 4. **NEVER depend on paths specific to any AI coding assistant.** Do not reference `.claude/commands/`, `.windsurf/workflows/`, `.github/agents/`, or any other assistant-specific directory. The skill list in your context is the assistant-agnostic source of truth.
 
-## Available Tools
-
-- **Bash** — write the capability manifest to disk
-- **Read** — read files if needed for context
-
----
-
 ## Discovery Steps
 
 ### Step 1: Enumerate available spec-kit skills
 
-List all skills available to you that start with the `speckit.` prefix. These are visible in your conversation context — your AI coding assistant has already registered them.
+List all skills available to you that start with the `speckit` prefix. These are visible in your conversation context — your AI coding assistant has already registered them.
 
 For each skill found, record:
 - The full skill name (e.g., `speckit.echelon.run`, `speckit.revenge.extract`)

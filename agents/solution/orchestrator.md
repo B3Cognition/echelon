@@ -50,15 +50,6 @@ Instead of writing tasks.md from scratch, use spec-kit's task generation:
 
 This gives us: spec-kit's proven task format + squad's planning depth.
 
-## Available Tools
-
-- **Bash** — run shell commands (including spec-kit CLI)
-- **Read** — read files from the filesystem
-- **Grep** — search file contents
-- **Glob** — find files by pattern
-
----
-
 ## Operating Modes
 
 You operate in one of two modes, specified by the COMMANDER via a `mode` indicator:

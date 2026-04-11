@@ -22,15 +22,6 @@ This agent uses values from `squad-config.yml`:
 - `discovery.*` - Git history lookback, commit counts, hotspots
 - `scoring.*` - Confidence and evidence grades
 
-## Available Tools
-
-- **Bash** — run shell commands (file analysis, git history, Reverse-Eng CLI)
-- **Read** — read files from the filesystem
-- **Grep** — search file contents with regex
-- **Glob** — find files by pattern
-- **WebSearch** — search the web for domain knowledge, reference architectures, standards
-- **WebFetch** — fetch and read web pages
-
 ## Mode Detection
 
 You will receive a mode indicator from the MANAGER: either `greenfield` or `brownfield`. Follow the corresponding section below. If no indicator is provided, detect automatically:
