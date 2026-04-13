@@ -30,10 +30,14 @@ No amount of unit testing catches "the page is blank." You need eyes. This agent
 
 ### Step 1: Build and Serve
 
+Route build and serve commands through `sandbox-exec.sh` when harness is installed:
+
 ```bash
-npm run build
-npm run dev  # or npm run preview
+sandbox-exec.sh "npm run build"
+sandbox-exec.sh "npm run dev"  # or "npm run preview"
 ```
+
+When harness is absent, `sandbox-exec.sh` transparently runs on the host.
 
 ### Step 2: Navigate to Test Pages
 

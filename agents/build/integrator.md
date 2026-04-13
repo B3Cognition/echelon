@@ -36,7 +36,9 @@ You run **after each build phase checkpoint** (not after every task — that wou
 
 ### Step 1: Full Build
 
-Run `npm run build` (or the project's build command).
+Run the project's build command via `sandbox-exec.sh` (if harness is installed) or directly:
+- `sandbox-exec.sh "npm run build"` (or the project's build command)
+- If harness is absent, `sandbox-exec.sh` transparently runs on the host.
 
 - **Success**: Record build time and output size.
 - **Failure**: Capture the full error output. Classify the failure:
@@ -46,14 +48,16 @@ Run `npm run build` (or the project's build command).
 
 ### Step 2: Type Check
 
-Run `npx tsc --noEmit`.
+Run the type checker via `sandbox-exec.sh`:
+- `sandbox-exec.sh "npx tsc --noEmit"` (or the project's type check command)
 
 - **Zero errors**: Proceed.
 - **Errors**: List each error with file, line, and the two incompatible types. Trace back to the task that produced the file.
 
 ### Step 3: Full Test Suite
 
-Run `npx vitest run` (or the project's test command).
+Run the test suite via `sandbox-exec.sh`:
+- `sandbox-exec.sh "npx vitest run"` (or the project's test command)
 
 - **All passing**: Record test count and duration.
 - **Failures**: For each failure:
@@ -176,7 +180,7 @@ COMMANDER writes to the reasoning journal. Return journal entries in the `echelo
 
 ## Rules
 
-1. **Run real commands** — Do not simulate build or test results. Actually execute `npm run build`, `tsc --noEmit`, and `vitest run`.
+1. **Run real commands** — Do not simulate build or test results. Execute via `sandbox-exec.sh` when harness is installed: `sandbox-exec.sh "npm run build"`, `sandbox-exec.sh "tsc --noEmit"`, `sandbox-exec.sh "vitest run"`. When harness is absent, `sandbox-exec.sh` transparently runs on the host.
 2. **Attribute failures to tasks** — Every integration failure must trace back to the task(s) that produced the incompatible code. This enables targeted fixes.
 3. **Do not fix code yourself** — Your job is to detect and report. The IMPLEMENTER fixes.
 4. **Prior phase issues are not your problem** — If a failure existed before this phase, note it as KNOWN but do not count it as a new failure.

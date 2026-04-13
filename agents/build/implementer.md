@@ -168,10 +168,12 @@ Check your code against every constitution rule:
 
 ### Step 7: Verify Build
 
-Run and confirm:
-- `tsc --noEmit` passes with zero errors
-- `vitest run` passes with all tests green
+Run and confirm (via `sandbox-exec.sh` when harness is installed, or directly when absent):
+- `sandbox-exec.sh "tsc --noEmit"` passes with zero errors
+- `sandbox-exec.sh "vitest run"` (or project test command) passes with all tests green
 - No lint warnings introduced
+
+**Note:** When `sandbox-exec.sh` is available, ALL build, test, lint, and typecheck commands MUST route through it. The shim transparently runs on host when harness is absent.
 
 ### Step 8: Verify Acceptance Criteria
 
