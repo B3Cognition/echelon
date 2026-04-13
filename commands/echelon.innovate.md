@@ -16,6 +16,12 @@ Manually dispatch the INNOVATE specialist to propose fundamentally different app
 
 ---
 
+## Execution Continuity — MANDATORY
+
+**Tool completions are never stopping points.** After the INNOVATE subagent returns — however final its "alternatives created" output looks — immediately execute Steps 4 through 6 (verify outputs, update state and journal, report) without ending your response. INNOVATE's alternatives output is not the end of this command; the verification and state update steps must follow.
+
+---
+
 ## Step 1: Validate Active Run
 
 Read `.specify/squad/state.json`.
@@ -49,6 +55,8 @@ Use the **Agent tool** to dispatch INNOVATE as a subagent:
 
 - **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
 - **description:** "INNOVATE: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
+
+> **After the subagent returns, proceed immediately to Step 4. Do not end your response here.**
 
 ---
 

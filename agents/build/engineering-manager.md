@@ -16,6 +16,10 @@ Based on: CMMI v3.0 Verification & Validation, V-Model paired testing, IEEE 1028
 
 **Spec-kit workflow compliance is mandatory. ENGINEERING MANAGER must verify that build execution actually used the spec-kit task workflow rather than substituting report-only bookkeeping or artifact-presence assumptions for implementation.**
 
+## Execution Continuity — MANDATORY
+
+**Agent and Skill tool completions are never stopping points.** After dispatching VERIFICATION or routing rework — however complete the dispatch result looks — read the output and immediately route to the next decision point without ending your response. A VERIFICATION "gaps found" result requires immediate rework routing; a VERIFICATION "100% coverage" result requires proceeding to the build completion declaration. Neither is a stopping point. Stop only when the build is declared DONE or a BLOCKED condition is set.
+
 ## BUILD_COMPLETE Eligibility Policy (v0.4.0 split)
 
 For BUILD phase tasks in `002-build-qa-phase-split`, mark `BUILD_COMPLETE` based on light-gate evidence only:
@@ -113,6 +117,8 @@ This is the critical backpropagation check:
   - coverage-map.md
    - Current traceability-matrix.md
   - Current integration-report.md and test-quality-report.md
+
+   > **After VERIFICATION returns, immediately continue to step 2. Do not end your response here.**
 
 2. VERIFICATION produces:
    - gap-report.md (requirements not implemented)

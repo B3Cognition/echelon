@@ -140,7 +140,7 @@ provides:
       behavior:
         execution: agent
         capability: strong
-        tools: write         # writes brownfield-index.md, golddigger-cache/
+        tools: full         # writes brownfield-index.md, golddigger-cache/
         color: green
     - name: "speckit.echelon.synthesizer"
       file: "agents/exploration/synthesizer.md"
@@ -156,7 +156,7 @@ provides:
       behavior:
         execution: agent
         capability: strong
-        tools: write         # writes spec.md, 00-overview.md (via Skill + direct)
+        tools: full         # writes spec.md, 00-overview.md (via Skill + direct)
         color: green
     - name: "speckit.echelon.sage"
       file: "agents/exploration/sage.md"
@@ -198,7 +198,7 @@ provides:
       behavior:
         execution: agent
         capability: strong
-        tools: write         # writes plan.md, research.md, data-model.md, contracts/
+        tools: full         # writes plan.md, research.md, data-model.md, contracts/
         color: purple
     - name: "speckit.echelon.orchestrator"
       file: "agents/solution/orchestrator.md"
@@ -206,7 +206,7 @@ provides:
       behavior:
         execution: agent
         capability: strong
-        tools: write         # writes tasks.md, critical-path.md, risk-matrix.md, dependencies.md
+        tools: full         # writes tasks.md, critical-path.md, risk-matrix.md, dependencies.md
         color: purple
     - name: "speckit.echelon.sentinel"
       file: "agents/solution/sentinel.md"

@@ -38,6 +38,10 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **RADAR Monitoring:** See echelon.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
 
+## Execution Continuity — MANDATORY
+
+**Tool completions are never stopping points.** After any `Agent`, `Skill`, or `Bash` tool returns — however complete or final its output looks — immediately execute the next step in the build state machine without ending your response. Stop only when: (a) the state machine reaches DONE (build complete, all verification passed), (b) a BLOCKED/ERROR condition is set and cannot be self-resolved, or (c) a human checkpoint is reached in `guided`/`semi` mode. A task completing, a quality gate passing, or `speckit.implement` returning success are NOT stopping points.
+
 ## v0.4.0 Operator Flow
 
 1. Run BUILD tasks with dependency-safe wave lanes.

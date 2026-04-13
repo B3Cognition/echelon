@@ -37,6 +37,24 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 **You must not skip phases.** Each phase exists for a reason grounded in engineering science. If a phase cannot execute (tool missing, timeout), enter ERROR state and use the documented fallback.
 
+## Execution Continuity — ABSOLUTE RULE
+
+**Tool completions are never stopping points.** After any `Agent`, `Skill`, or `Bash` tool returns — regardless of how complete or final its output looks — you MUST immediately execute the next step in the state machine without ending your response.
+
+The run ends ONLY when one of these three conditions is reached:
+
+1. The state machine reaches **DONE** (FINALIZE phase complete, all artifacts validated)
+2. A **BLOCKED** condition is set and cannot be self-resolved (set `state.json.status = "blocked"`, print the BLOCKED banner, stop)
+3. A **human checkpoint** is reached in `guided` or `semi` mode only
+
+These are NEVER stopping points:
+- A `Skill` tool returning with success (e.g. `speckit.specify`, `speckit.constitution`, `speckit.understanding.validate`) — continue to the next step immediately
+- An `Agent` subagent completing its dispatch — read its output and continue routing
+- A `Bash` command returning output — process it and continue
+- A phase completing successfully — update `state.json` and proceed to the next phase
+
+If you find yourself ending a response after a tool returns and you are not in DONE/BLOCKED/human-checkpoint state, you are violating this rule.
+
 ## State Transition Checkpoints
 
 For BUILD/QA split features, MANAGER must emit explicit workflow checkpoints in `state.json` during command execution.
@@ -752,6 +770,17 @@ Use the Agent tool to dispatch a subagent with:
 
 - **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include staging files]. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
 - **description:** "CARTOGRAPHER: spec creation and requirements definition"
+
+#### CARTOGRAPHER Fallback (if CARTOGRAPHER signals BLOCKED on speckit.specify)
+
+If CARTOGRAPHER returns `CARTOGRAPHER BLOCKED — speckit.specify unavailable`:
+
+1. COMMANDER calls `speckit.specify` directly (via Skill tool) with the same feature description CARTOGRAPHER would have used (derive from DISCOVER staging artifacts)
+2. After the Skill returns (success or error):
+   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch CARTOGRAPHER with the spec directory already created (add `spec_dir` to the context pack prompt). Continue to 4.3 immediately — **do not stop**.
+   - **Error:** Set `state.json.status = "blocked"`, set `blocked_reason = "speckit.specify unavailable"`, print the BLOCKED banner, stop.
+
+This is the only case where COMMANDER calls `speckit.specify` directly. Do NOT use this path pre-emptively.
 
 ### 4.3 Post-CARTOGRAPHER
 
