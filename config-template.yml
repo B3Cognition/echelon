@@ -64,32 +64,6 @@ execution:
     exploration_budget_per_branch: 5  # % of total token budget per branch
 
 # =============================================================================
-# RADAR — Real-time monitoring server
-# =============================================================================
-
-radar:
-  # Enable/disable RADAR monitoring server
-  # [default: true] Set false to disable automatic RADAR startup
-  # @belief(claim: "Running RADAR by default provides observability benefit that outweighs the port-binding overhead", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: low)
-  enabled: false
-
-  # Port for RADAR SSE server
-  # [range: 1024-65535] [default: 7891]
-  # If port is in use, RADAR auto-increments until it finds an available port
-  # @belief(claim: "Port 7891 is unlikely to conflict with common developer services and is a reasonable default", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: low)
-  port: 7891
-
-  # Record all SSE events to a JSONL file for later replay in the mock server
-  # [default: false] Set true to enable recording.
-  # Recording file: .specify/squad/radar-recording-{run_id}.jsonl
-  # @belief(claim: "Recording disabled by default prevents unbounded disk usage on production runs", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.90, severity: low)
-  record: false
-
-  # Host binding
-  # [default: localhost] Set to 0.0.0.0 to expose on LAN
-  # host: localhost
-
-# =============================================================================
 # ANALYSIS SETTINGS
 # =============================================================================
 
@@ -114,7 +88,7 @@ analysis:
   #    Recommended: 500-1000k for most projects, 1500-2000k for very large codebases.
   # [disable: 999999] - effectively no budget limit (not recommended)
   # @belief(claim: "1000k tokens is adequate for most project analyses without diminishing returns from verbosity", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
-  token_budget_k: 1000
+  token_budget_k: 9999
 
   # Convergence threshold for Understanding score delta
   # [range: 0.01-0.05] Smaller = stricter (more iterations), larger = looser.

@@ -198,48 +198,6 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 
 ---
 
-### Helper: Stop RADAR
-
-Use this command at any exit point (kill verdict, error, completion):
-
-```bash
-[ -f .specify/squad/radar.pid ] && kill $(cat .specify/squad/radar.pid) 2>/dev/null; rm -f .specify/squad/radar.pid
-```
-
----
-
-### RADAR Emitter Pattern
-
-For every agent dispatch, wrap the Agent tool call with emitter calls.
-
-**Setup (at start of run):**
-
-```bash
-RADAR_EXT=".specify/extensions/echelon"
-```
-
-**Before dispatching:**
-
-```bash
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_dispatched; on_dispatched('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
-```
-
-**After successful completion:**
-
-```bash
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_complete; on_complete('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}', ${ARTIFACTS_LIST})"
-```
-
-**After error/failure:**
-
-```bash
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_error; on_error('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
-```
-
-**Dispatch ID format:** `CODENAME-N` (e.g., SCOUT-1, SAGE-2). Track counter per codename in state.json under `dispatch_counters`.
-
----
-
 ## 0. MANAGER Reflection Protocol (Plan Mode)
 
 Before EVERY major phase transition, MANAGER enters a structured reflection:
@@ -285,6 +243,17 @@ It takes 30 seconds and prevents reactive routing. Think before dispatching.
 **After the reflection ends, your ONLY next action is to dispatch the agent named in "Routing decision → Decision". Use the Agent tool. Do NOT continue writing analysis, do NOT produce artifacts inline, do NOT summarize the problem further. Reflection → dispatch. Nothing else.**
 
 ## 1. Initialization (INIT)
+
+### 1.0 Anchor Project Root
+
+Before any file operation, establish and record the absolute project root:
+
+```bash
+PROJECT_ROOT=$(pwd)
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+```
+
+Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
 ### 1.1 Detect Greenfield vs Brownfield
 
@@ -334,6 +303,7 @@ Create `.specify/squad/state.json`:
   "phase": "init",
   "mode": "{greenfield|brownfield}",
   "iteration": 0,
+  "project_root": "{absolute path from PROJECT_ROOT}",
   "spec_id": null,
   "spec_dir": null,
   "constitution_status": "pending",
@@ -357,41 +327,7 @@ Create `.specify/squad/state.json`:
 }
 ```
 
-Note: `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch. `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
-
-### 1.3.1 Start RADAR (if enabled)
-
-Read `radar.enabled` from squad-config.yml (default: true). If enabled:
-
-```bash
-# Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/echelon"
-
-# Install RADAR dependencies if needed
-pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
-
-# Read port from config (default 7891)
-RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
-
-# Optional: record SSE events for replay (set radar.record: true in squad-config.yml)
-# Note: -A3 is intentional — config-template.yml has a comment line between
-# "radar:" and "record:", so -A1 would miss it.
-RADAR_RECORD_FLAG=""
-if [ "$(grep -A3 'radar:' squad-config.yml 2>/dev/null | grep 'record:' | awk '{print $2}')" = "true" ]; then
-  RADAR_RECORD_FLAG="--record .specify/squad/radar-recording-${run_id}.jsonl"
-fi
-
-# Start RADAR in background (PYTHONPATH allows python -m radar.server to work)
-PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
-  ${RADAR_RECORD_FLAG} \
-  >> .specify/squad/radar.log 2>&1 &
-echo $! > .specify/squad/radar.pid
-
-# Initialize emitter (creates/truncates agent-states files)
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import init_run; init_run('${run_id}')"
-```
-
-**Note:** If RADAR fails to start, log a warning but continue the run. The squad executes without live monitoring.
+Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
 ### 1.4 Initialize Staging Reasoning Journal
 
@@ -1416,16 +1352,6 @@ Update `state.json`:
   "phase": "done",
   "updated_at": "{ISO-8601}"
 }
-```
-
-### 12.8.1 Stop RADAR
-
-```bash
-# Stop RADAR if running
-if [ -f .specify/squad/radar.pid ]; then
-  kill $(cat .specify/squad/radar.pid) 2>/dev/null || true
-  rm -f .specify/squad/radar.pid
-fi
 ```
 
 ### 12.8 Print Final Summary

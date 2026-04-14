@@ -36,8 +36,6 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
-**RADAR Monitoring:** See echelon.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
-
 ## Execution Continuity — MANDATORY
 
 **Tool completions are never stopping points.** After any `Agent`, `Skill`, or `Bash` tool returns — however complete or final its output looks — immediately execute the next step in the build state machine without ending your response. Stop only when: (a) the state machine reaches DONE (build complete, all verification passed), (b) a BLOCKED/ERROR condition is set and cannot be self-resolved, or (c) a human checkpoint is reached in `guided`/`semi` mode. A task completing, a quality gate passing, or `speckit.implement` returning success are NOT stopping points.
@@ -69,6 +67,17 @@ This gives us: spec-kit's proven task execution + squad's multi-agent quality ga
 ---
 
 ## 1. Initialization (BUILD_INIT)
+
+### 1.0 Anchor Project Root
+
+Before any file operation, establish the absolute project root:
+
+```bash
+PROJECT_ROOT=$(pwd)
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+```
+
+Read `project_root` from `.specify/squad/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. The feature directory is `${PROJECT_ROOT}/specs/{NNN}-{feature}` — never a bare relative path.
 
 ### 1.1 Validate Phase A Artifacts
 
@@ -134,31 +143,6 @@ Update `.specify/squad/state.json`:
   "updated_at": "{ISO-8601}"
 }
 ```
-
-### 1.4.1 Start RADAR (if enabled)
-
-Read `radar.enabled` from squad-config.yml (default: true). If enabled:
-
-```bash
-# Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/echelon"
-
-# Install RADAR dependencies if needed
-pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
-
-# Read port from config (default 7891)
-RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
-
-# Start RADAR in background
-PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
-  >> .specify/squad/radar.log 2>&1 &
-echo $! > .specify/squad/radar.pid
-
-# Initialize emitter (creates/truncates agent-states files)
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import init_run; init_run('${run_id}')"
-```
-
-**Note:** If RADAR fails to start, log a warning but continue the build. The squad executes without live monitoring.
 
 ### 1.5 Initialize Build Reports
 
@@ -380,7 +364,7 @@ If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
 
 3. Update `state.json.updated_at` to current timestamp.
 
-**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for RADAR, ENGINEERING MANAGER, and any external tooling reading state.json.
+**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for ENGINEERING MANAGER and any external tooling reading state.json.
 
 ---
 
@@ -560,15 +544,6 @@ Verify all report files are populated:
   },
   "updated_at": "{ISO-8601}"
 }
-```
-
-### 8.3.1 Stop RADAR
-
-```bash
-if [ -f .specify/squad/radar.pid ]; then
-  kill $(cat .specify/squad/radar.pid) 2>/dev/null || true
-  rm -f .specify/squad/radar.pid
-fi
 ```
 
 ### 8.4 Run SCOREKEEPER

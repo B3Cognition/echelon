@@ -41,15 +41,6 @@ execution:
     exploration_budget_per_branch: 10  # 10% per branch — generous creativity budget
 
 # =============================================================================
-# RADAR — Live monitoring on
-# =============================================================================
-
-radar:
-  enabled: true
-  port: 7891
-  record: true                  # Record everything for replay analysis
-
-# =============================================================================
 # ANALYSIS — No token limit, max iterations, full banzai
 # =============================================================================
 

@@ -3,3 +3,5 @@ tests/
 docs/superpowers/
 .superpowers/
 knowledge-base/
+.git/
+specs/
