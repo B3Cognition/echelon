@@ -120,11 +120,13 @@ with open(global_state, 'w') as f:
     json.dump(state, f, indent=2)
 PYEOF
 
-ACTIVE_DISPLAY=$(STATE_FILE="${STATE_FILE}" python3 -c "
+ACTIVE_DISPLAY=$(STATE_FILE="${STATE_FILE}" python3 - <<'PYEOF'
 import os, json
-d = json.load(open(os.environ['STATE_FILE']))
+with open(os.environ['STATE_FILE']) as f:
+    d = json.load(f)
 print(d.get('active_port', '?'))
-")
+PYEOF
+)
 echo ""
 echo "════════════════════════════════════════"
 echo "  ✓ ${APP} deployed"
