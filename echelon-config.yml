@@ -536,7 +536,7 @@ endocrine:
 # =============================================================================
 
 deploy:
-  type: http             # http (default) | cli
+  type: http             # http (default) | cli — see config-template.yml for full reference
   blue_port: 3000        # blue slot
   green_port: 3001       # green slot
   active_port: 80        # Traefik entry point (http://localhost)
