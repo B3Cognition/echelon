@@ -83,7 +83,7 @@ with open(state_file) as f:
 
 state['active'] = inactive
 state[f'{inactive}_image'] = f'{app}:{inactive}'
-state['last_deploy'] = datetime.datetime.utcnow().isoformat() + 'Z'
+state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
 
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
@@ -188,7 +188,7 @@ with open(state_file) as f:
 
 state['active'] = inactive
 state[f'{inactive}_image'] = f'{app}:{inactive}'
-state['last_deploy'] = datetime.datetime.utcnow().isoformat() + 'Z'
+state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
 
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
