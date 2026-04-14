@@ -59,7 +59,7 @@ ACTIVE_PORT=$(echo "${_config}"  | sed -n '5p')
 HEALTH_CHECK=$(echo "${_config}" | sed -n '6p')
 INSTALL_PATH=$(echo "${_config}" | sed -n '7p')
 
-APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]')
+APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 
 GLOBAL_STATE_DIR="${HOME}/.speckit-deploy"
 mkdir -p "${GLOBAL_STATE_DIR}"
@@ -152,7 +152,7 @@ PYEOF
   echo "  Deploy initialized for ${APP_NAME} (cli)"
   echo "  Hook:    ${GIT_HOOK}"
   if [ -n "${INSTALL_PATH}" ]; then
-    EXPANDED=$(python3 -c "import os; print(os.path.expanduser('${INSTALL_PATH}'))")
+    EXPANDED=$(INSTALL_PATH="${INSTALL_PATH}" python3 -c "import os; print(os.path.expanduser(os.environ['INSTALL_PATH']))")
     echo "  Wrapper: ${EXPANDED}/${APP_NAME}"
     echo "  Run:     ${APP_NAME} [args...]"
   else
