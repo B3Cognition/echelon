@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deploy.sh — blue/green swap via Traefik
+# deploy.sh — blue/green swap (http) or tag-pointer swap (cli)
 # Called by .git/hooks/post-merge (or manually via echelon.deploy)
 set -euo pipefail
 
@@ -15,23 +15,104 @@ fi
 _state=$(STATE_FILE="${STATE_FILE}" python3 - <<'PYEOF'
 import os, sys, json
 try:
-    d = json.load(open(os.environ['STATE_FILE']))
+    with open(os.environ['STATE_FILE']) as f:
+        d = json.load(f)
+    print(d.get('type', 'http'))
     print(d['app'])
     print(d['active'])
-    print(d['blue_port'])
-    print(d['green_port'])
+    print(d.get('blue_port') or '')
+    print(d.get('green_port') or '')
     print(d.get('dockerfile', 'Dockerfile'))
+    print(d.get('health_check', ''))
+    print(d.get('install_path', ''))
 except Exception as e:
     sys.exit(f'Cannot read deploy state: {e}')
 PYEOF
 )
-APP=$(echo "${_state}"       | sed -n '1p')
-ACTIVE=$(echo "${_state}"    | sed -n '2p')
-BLUE_PORT=$(echo "${_state}" | sed -n '3p')
-GREEN_PORT=$(echo "${_state}"| sed -n '4p')
-DOCKERFILE=$(echo "${_state}"| sed -n '5p')
+DEPLOY_TYPE=$(echo "${_state}"   | sed -n '1p')
+APP=$(echo "${_state}"           | sed -n '2p')
+ACTIVE=$(echo "${_state}"        | sed -n '3p')
+BLUE_PORT=$(echo "${_state}"     | sed -n '4p')
+GREEN_PORT=$(echo "${_state}"    | sed -n '5p')
+DOCKERFILE=$(echo "${_state}"    | sed -n '6p')
+HEALTH_CHECK=$(echo "${_state}"  | sed -n '7p')
+INSTALL_PATH=$(echo "${_state}"  | sed -n '8p')
 
 INACTIVE=$([ "${ACTIVE}" = "blue" ] && echo "green" || echo "blue")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CLI PATH
+# ══════════════════════════════════════════════════════════════════════════════
+if [ "${DEPLOY_TYPE}" = "cli" ]; then
+  echo "deploy: ${APP} (cli) ${ACTIVE} → ${INACTIVE}"
+
+  # ── Build ─────────────────────────────────────────────────────────────────
+  echo "deploy: building ${APP}:candidate..."
+  docker build -t "${APP}:candidate" -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
+
+  # ── Health check (optional) ───────────────────────────────────────────────
+  # HEALTH_CHECK is intentionally unquoted so multi-word commands split correctly
+  # (e.g. "myapp --version" becomes: docker run --rm myapp:candidate myapp --version)
+  if [ -n "${HEALTH_CHECK}" ]; then
+    echo "deploy: health check — docker run --rm ${APP}:candidate ${HEALTH_CHECK}"
+    # shellcheck disable=SC2086
+    if ! docker run --rm "${APP}:candidate" ${HEALTH_CHECK}; then
+      echo "✗ Health check failed. Rolling back (build discarded)." >&2
+      echo "  Active slot '${ACTIVE}' unchanged." >&2
+      exit 1
+    fi
+    echo "deploy: health check passed"
+  else
+    echo "deploy: health check skipped (health_check not configured)"
+  fi
+
+  # ── Tag ───────────────────────────────────────────────────────────────────
+  docker tag "${APP}:candidate" "${APP}:${INACTIVE}"
+  echo "deploy: tagged ${APP}:candidate → ${APP}:${INACTIVE}"
+
+  # ── Update state ──────────────────────────────────────────────────────────
+  STATE_FILE="${STATE_FILE}" APP="${APP}" INACTIVE="${INACTIVE}" python3 - <<'PYEOF'
+import os, sys, json, datetime
+
+state_file = os.environ['STATE_FILE']
+app = os.environ['APP']
+inactive = os.environ['INACTIVE']
+
+with open(state_file) as f:
+    state = json.load(f)
+
+state['active'] = inactive
+state[f'{inactive}_image'] = f'{app}:{inactive}'
+state['last_deploy'] = datetime.datetime.utcnow().isoformat() + 'Z'
+
+with open(state_file, 'w') as f:
+    json.dump(state, f, indent=2)
+
+global_dir = os.path.expanduser("~/.speckit-deploy")
+os.makedirs(global_dir, exist_ok=True)
+global_state = os.path.join(global_dir, f"{state['app']}.json")
+with open(global_state, 'w') as f:
+    json.dump(state, f, indent=2)
+PYEOF
+
+  echo ""
+  echo "════════════════════════════════════════"
+  echo "  ✓ ${APP} deployed (cli)"
+  echo "  Slot:   ${INACTIVE} (was ${ACTIVE})"
+  echo "  Image:  ${APP}:${INACTIVE}"
+  if [ -n "${INSTALL_PATH}" ]; then
+    EXPANDED=$(INSTALL_PATH="${INSTALL_PATH}" python3 -c "import os; print(os.path.expanduser(os.environ['INSTALL_PATH']))")
+    echo "  Run:    ${EXPANDED}/${APP} [args...]"
+  else
+    echo "  Run:    docker run --rm ${APP}:${INACTIVE} [args...]"
+  fi
+  echo "════════════════════════════════════════"
+  exit 0
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HTTP PATH (unchanged from original)
+# ══════════════════════════════════════════════════════════════════════════════
 INACTIVE_PORT=$([ "${INACTIVE}" = "blue" ] && echo "${BLUE_PORT}" || echo "${GREEN_PORT}")
 
 echo "deploy: ${APP} ${ACTIVE} → ${INACTIVE} (port ${INACTIVE_PORT})"
@@ -112,7 +193,6 @@ state['last_deploy'] = datetime.datetime.utcnow().isoformat() + 'Z'
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-# Mirror to global state (always write — creates if absent)
 global_dir = os.path.expanduser("~/.speckit-deploy")
 os.makedirs(global_dir, exist_ok=True)
 global_state = os.path.join(global_dir, f"{state['app']}.json")
