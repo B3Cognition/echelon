@@ -407,8 +407,26 @@ Use the Agent tool:
 
 ### 7.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass INTEGRATOR`. Record checkpoint. Proceed to next phase group.
+- **PASS** — Run `endocrine.sh on_gate_pass INTEGRATOR`. Run 7.2.1 (browser-app visual check if applicable). Record checkpoint. Proceed to next phase group.
 - **FAIL** — Run `endocrine.sh on_gate_fail INTEGRATOR` + `endocrine.sh on_low_confidence IMPLEMENTER` (for responsible task). Route integration failures back to the responsible task's IMPLEMENTER. Re-run INTEGRATOR after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
+
+### 7.2.1 Visual Validator Dispatch (MANDATORY for browser/SPA apps)
+
+**Detect stack:** Check `research.md` and `plan.md` for browser/SPA indicators: Vite, React, Vue, Svelte, Angular, SolidJS, Astro, Next.js, Nuxt, Remix, static site, or any spec requirement for a web UI.
+
+**If browser/SPA detected:** Dispatch VISUAL VALIDATOR immediately after INTEGRATOR PASS — before recording the checkpoint and before proceeding to the next phase group.
+
+Use the Agent tool:
+
+- **prompt:** Read the file `agents/build/visual-validator.md` for your complete instructions. You are the VISUAL VALIDATOR. Verify that the browser application renders correctly after phase "{phase_group}". Build the app, serve it, use Playwright to screenshot every page/view, and verify nothing is blank. Here is your context pack: [include spec.md, plan.md, code from this phase]. Write or append to `visual-validation-report.md`. Append entries to `reasoning-journal.json`.
+- **description:** "VISUAL VALIDATOR: phase '{phase_group}' — browser render check"
+
+Handle result:
+
+- **VISUAL_PASS** — proceed to 7.3.
+- **VISUAL_FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER`. Route visual failures back to IMPLEMENTER with the specific rendering issues (blank page, missing components, console errors). IMPLEMENTER fixes, INTEGRATOR re-runs, then VISUAL VALIDATOR re-runs. Max 2 fix cycles. If still failing, flag phase as DEGRADED and escalate to human.
+
+**If not browser/SPA:** skip 7.2.1 and proceed directly to 7.3.
 
 ### 7.3 Record Checkpoint
 

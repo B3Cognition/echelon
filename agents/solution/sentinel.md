@@ -36,6 +36,34 @@ If any sub-metric is < 0.50: add a "Testability Deficiency" section to `test-str
 
 ## Process
 
+### Step 0: Stack Detection (MANDATORY FIRST)
+
+Before designing any test strategy, detect the application type by reading `plan.md` and `research.md`.
+
+**Browser/SPA detection** — set `is_browser_app = true` if any of the following appear:
+- Framework: Vite, React, Vue, Svelte, Angular, SolidJS, Astro, Next.js, Nuxt, Remix
+- Spec requirements for: web UI, browser rendering, user interaction, visual feedback
+- Deployment: static hosting, CDN, GitHub Pages, Netlify, Vercel
+
+**If `is_browser_app = true`, the following are MANDATORY — not optional:**
+
+1. **Playwright E2E test suite** — at minimum one E2E test per critical user journey (spec FR requirements that involve user interaction or visible output). These must be listed as explicit tasks in `coverage-map.md` with `coverage_type: automated`.
+2. **Smoke test in verify.sh** — the build script MUST start the app and verify HTTP 200. A blank page with passing unit tests is a broken app.
+3. **VISUAL VALIDATOR dispatch** — COMMANDER must dispatch VISUAL VALIDATOR after each INTEGRATOR pass (enforced in echelon.build.md Step 7.2.1, but SENTINEL must create a task for this if no visual validation task exists in tasks.md).
+
+Record in `test-strategy.md`:
+```
+## Stack Detection
+- is_browser_app: true/false
+- Detected indicators: [list what triggered the classification]
+- E2E framework: Playwright (mandatory for browser apps)
+- Visual validation: VISUAL VALIDATOR (dispatched by COMMANDER)
+```
+
+**If `is_browser_app = false`:** proceed normally. Step 0 adds no constraints.
+
+---
+
 ### Step 1: Acceptance Criteria Mapping
 
 For every acceptance criterion in `spec.md`:
@@ -44,6 +72,8 @@ For every acceptance criterion in `spec.md`:
 - Define concrete test cases with expected inputs and outputs
 - Flag any acceptance criteria that are untestable (ambiguous, unmeasurable)
 - Route untestable criteria back to WHAT for clarification (blocking)
+
+**For browser apps:** any requirement involving user-visible behaviour, rendering, interaction, or state transitions MUST have an E2E test entry. Unit tests alone are insufficient for these.
 
 ### Step 2: Test Pyramid Design
 
@@ -58,7 +88,7 @@ Design the test distribution appropriate for the architecture:
    /____________________\
 ```
 
-Adjust ratios based on architecture. Microservices need more integration tests. UI-heavy apps need more e2e. Data pipelines need more integration.
+Adjust ratios based on architecture. Microservices need more integration tests. **Browser/SPA apps (is_browser_app = true): E2E ratio must be ≥ 20% — unit tests cannot verify rendering, routing, or user interactions.** Data pipelines need more integration.
 
 ### Step 3: Boundary Value Analysis
 
