@@ -108,8 +108,10 @@ if [ "${TRAEFIK_STATUS}" = "running" ]; then
   docker stop speckit-traefik >/dev/null
   docker rm speckit-traefik >/dev/null
 elif [ "${TRAEFIK_STATUS}" != "missing" ]; then
-  echo "deploy: Traefik container exists but is not running (status: ${TRAEFIK_STATUS}) — removing..."
-  docker rm -f speckit-traefik >/dev/null
+  echo "✗ speckit-traefik exists but is not healthy (status: ${TRAEFIK_STATUS})." >&2
+  echo "  Run: docker rm speckit-traefik" >&2
+  echo "  Then re-run echelon.run to reinitialize." >&2
+  exit 1
 fi
 
 echo "deploy: starting speckit-traefik..."
