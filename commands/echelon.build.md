@@ -459,8 +459,40 @@ ENGINEERING MANAGER must confirm:
 1. Spec-kit task workflow was actually followed.
 2. Task status, state tracking, and reports are internally consistent.
 3. The build is ready for full VERIFICATION.
+4. **`verify.sh` exists and contains a smoke test** (see below).
 
 If any of these fail, do not proceed to BUILD_DONE. Route to rework first.
+
+### 8.1b.1 verify.sh Smoke Test Requirement (MANDATORY)
+
+Every build must produce a `verify.sh` in the repo root. This script is what the harness runs in Docker to verify the build.
+
+**`verify.sh` MUST include a smoke test that starts the application and verifies it responds.** "All unit tests pass" is not sufficient — a blank page with passing unit tests is a failed build.
+
+Minimum smoke test pattern for web applications:
+
+```sh
+# After npm test passes:
+npm run build
+npx vite preview --port 4173 &
+PREVIEW_PID=$!
+sleep 3
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4173)
+kill $PREVIEW_PID 2>/dev/null || true
+if [ "$STATUS" != "200" ]; then
+  echo "Smoke test FAILED: app returned HTTP $STATUS (expected 200)"
+  exit 1
+fi
+echo "Smoke test PASSED: app served HTTP 200"
+```
+
+Adapt for other stacks:
+- **Node/Express:** `node server.js & sleep 2 && curl -s http://localhost:3000`
+- **Python/FastAPI:** `uvicorn main:app & sleep 2 && curl -s http://localhost:8000/health`
+- **Static site:** `npx serve dist & sleep 2 && curl -s http://localhost:3000`
+- **No HTTP server (CLI tool, library):** smoke test = `node dist/index.js --version` or equivalent invocation that proves the artifact runs
+
+If `verify.sh` does not contain a smoke test, ENGINEERING MANAGER must request IMPLEMENTER add one before sign-off. This is not optional.
 
 ### 8.1c Final Verification
 
