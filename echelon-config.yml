@@ -536,6 +536,6 @@ endocrine:
 # =============================================================================
 
 deploy:
-  blue_port: 3000
-  green_port: 3001
-  active_port: 80
+  blue_port: 3000        # blue slot
+  green_port: 3001       # green slot
+  active_port: 80        # Traefik entry point (http://localhost)

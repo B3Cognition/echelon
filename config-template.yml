@@ -1056,7 +1056,7 @@ deploy:
   # [range: 1024-65535] Must not conflict with other apps registered in deploy-state.json
   green_port: 3001
 
-  # Port Traefik exposes to the host — what you type in the browser (e.g. http://localhost)
+  # Traefik entry point port — the port Traefik binds on the host (e.g. 80 for http://localhost)
   # [range: 1-65535] Typically 80, 81, 82... one per app
   active_port: 80
 
