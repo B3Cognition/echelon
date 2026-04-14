@@ -1044,10 +1044,18 @@ endocrine:
     norepinephrine: 0.75
 
 # =============================================================================
-# DEPLOY — Blue/green local CD via Traefik
+# =============================================================================
+# DEPLOY — Blue/green local CD
 # =============================================================================
 
 deploy:
+  # Deployment type. Controls which infrastructure is used.
+  # [values: http | cli]  Default: http
+  # - http: Traefik reverse proxy, two long-lived containers (blue/green), curl health check
+  # - cli:  No Traefik, no containers — build → optional health check → tag → state pointer
+  type: http
+
+  # ── HTTP only ──────────────────────────────────────────────────────────────
   # Host port for the blue slot container
   # [range: 1024-65535] Must not conflict with other apps registered in deploy-state.json
   blue_port: 3000
@@ -1060,9 +1068,19 @@ deploy:
   # [range: 1-65535] Typically 80, 81, 82... one per app
   active_port: 80
 
+  # ── CLI only ───────────────────────────────────────────────────────────────
+  # Command run inside the candidate container to verify the build is healthy.
+  # Example: "myapp --version"   Empty string (default) = skip health check.
+  # health_check: ""
+
+  # Directory where the wrapper script is installed. Empty = no wrapper installed.
+  # Wrapper reads active tag at runtime — rollbacks are instant, no reinstall needed.
+  # Example: "~/.local/bin"
+  # install_path: ""
+
+  # ── Shared ─────────────────────────────────────────────────────────────────
   # Path to Dockerfile relative to project root. Optional — defaults to "Dockerfile"
-  # The Dockerfile must: COPY the build output (e.g. dist/), install a static
-  # server (e.g. nginx or serve), and EXPOSE port 80.
+  # The Dockerfile must: COPY the build output, install a server/entrypoint, EXPOSE port 80.
   # Example minimal Dockerfile for a Vite/React app:
   #   FROM nginx:alpine
   #   COPY dist/ /usr/share/nginx/html/
