@@ -24,42 +24,26 @@ if ! grep -q "^deploy:" "${ECHELON_YML}" 2>/dev/null; then
   exit 1
 fi
 
-BLUE_PORT=$(python3 -c "
-import sys
+_config=$(ECHELON_YML="${ECHELON_YML}" python3 - <<'PYEOF'
+import os, sys
 try:
     import yaml
-    c = yaml.safe_load(open('${ECHELON_YML}'))
-    print(c['deploy']['blue_port'])
+    c = yaml.safe_load(open(os.environ['ECHELON_YML']))
+    d = c.get('deploy', {})
+    print(d['blue_port'])
+    print(d['green_port'])
+    print(d['active_port'])
+    print(d.get('dockerfile', 'Dockerfile'))
+except KeyError as e:
+    sys.exit(f'Cannot read deploy config key {e} from echelon.yml')
 except Exception as e:
-    sys.exit(f'Cannot read blue_port: {e}')
-")
-GREEN_PORT=$(python3 -c "
-import sys
-try:
-    import yaml
-    c = yaml.safe_load(open('${ECHELON_YML}'))
-    print(c['deploy']['green_port'])
-except Exception as e:
-    sys.exit(f'Cannot read green_port: {e}')
-")
-ACTIVE_PORT=$(python3 -c "
-import sys
-try:
-    import yaml
-    c = yaml.safe_load(open('${ECHELON_YML}'))
-    print(c['deploy']['active_port'])
-except Exception as e:
-    sys.exit(f'Cannot read active_port: {e}')
-")
-DOCKERFILE=$(python3 -c "
-import sys
-try:
-    import yaml
-    c = yaml.safe_load(open('${ECHELON_YML}'))
-    print(c.get('deploy', {}).get('dockerfile', 'Dockerfile'))
-except Exception:
-    print('Dockerfile')
-")
+    sys.exit(f'Cannot read deploy config: {e}')
+PYEOF
+)
+BLUE_PORT=$(echo "${_config}"  | sed -n '1p')
+GREEN_PORT=$(echo "${_config}" | sed -n '2p')
+ACTIVE_PORT=$(echo "${_config}" | sed -n '3p')
+DOCKERFILE=$(echo "${_config}" | sed -n '4p')
 
 APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]')
 
@@ -121,8 +105,7 @@ docker run -d \
   --network speckit-deploy \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   --restart unless-stopped \
-  $(for port in $(echo "${ENTRYPOINT_FLAGS}" | grep -oP ':\d+' | tr -d ':' | sort -u); do
-      echo "-p ${port}:${port}"; done) \
+  $(echo "${ENTRYPOINT_FLAGS}" | grep -oE ':[0-9]+' | tr -d ':' | sort -u | while IFS= read -r port; do echo "-p ${port}:${port}"; done) \
   traefik:v3 \
     --providers.docker=true \
     --providers.docker.network=speckit-deploy \
@@ -146,9 +129,10 @@ done
 # ── Git hook ─────────────────────────────────────────────────────────────────
 GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
 echo "deploy: installing git post-merge hook..."
-cat > "${GIT_HOOK}" << HOOK
+cat > "${GIT_HOOK}" << 'HOOK'
 #!/usr/bin/env bash
 # Installed by echelon deploy-init.sh
+SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/scripts"
 exec "${SCRIPTS_DIR}/deploy.sh"
 HOOK
 chmod +x "${GIT_HOOK}"
