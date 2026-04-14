@@ -82,6 +82,14 @@ provides:
     - name: "speckit.echelon.health"
       file: "commands/echelon.health.md"
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
+    - name: "speckit.echelon.deploy"
+      file: "commands/echelon.deploy.md"
+      description: "Manual deploy trigger, status, and rollback for blue/green local CD"
+      behavior:
+        execution: skill
+        capability: balanced
+        tools: write
+        color: blue
 
     # ── Agent Definitions ──────────────────────────────────────────
     # Control layer
