@@ -255,6 +255,37 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
+**Validate deploy config:**
+
+```bash
+python3 -c "
+import sys, yaml
+try:
+    c = yaml.safe_load(open('echelon.yml'))
+    d = c.get('deploy', {})
+    missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
+    if missing:
+        print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
+        print('  Add a deploy: block with blue_port, green_port, active_port.', file=sys.stderr)
+        print('  See config-template.yml for reference.', file=sys.stderr)
+        sys.exit(1)
+except FileNotFoundError:
+    print('✗ echelon.yml not found.', file=sys.stderr)
+    sys.exit(1)
+"
+```
+
+If exit code is non-zero, stop immediately — do not proceed with the run.
+
+**Run deploy init (idempotent):**
+
+```bash
+ECHELON_EXT=".specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "echelon.yml"
+```
+
+If exit code is non-zero, report the error and stop.
+
 ### 1.1 Detect Greenfield vs Brownfield
 
 The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its output is available as `$SH_OUTPUT`.
