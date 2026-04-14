@@ -529,4 +529,13 @@ endocrine:
     cortisol: 0.80                # Moderate — stress shouldn't linger too long
     serotonin: 0.95               # Slowest — baseline calm persists
     oxytocin: 0.92                # Slow — collaboration trust persists
-    norepinephrine: 0.70          # Fast decay — intense focus is exhausting
+    norepinephrine: 0.70
+
+# =============================================================================
+# DEPLOY — test-echelon-refactor local deployment
+# =============================================================================
+
+deploy:
+  blue_port: 3000
+  green_port: 3001
+  active_port: 80

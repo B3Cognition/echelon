@@ -1042,3 +1042,29 @@ endocrine:
     oxytocin: 0.9
     # @belief(claim: "Norepinephrine decays at 0.75 — attention/focus signals are second-fastest to decay after adrenaline", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
     norepinephrine: 0.75
+
+# =============================================================================
+# DEPLOY — Blue/green local CD via Traefik
+# =============================================================================
+
+deploy:
+  # Host port for the blue slot container
+  # [range: 1024-65535] Must not conflict with other apps registered in deploy-state.json
+  blue_port: 3000
+
+  # Host port for the green slot container
+  # [range: 1024-65535] Must not conflict with other apps registered in deploy-state.json
+  green_port: 3001
+
+  # Port Traefik exposes to the host — what you type in the browser (e.g. http://localhost)
+  # [range: 1-65535] Typically 80, 81, 82... one per app
+  active_port: 80
+
+  # Path to Dockerfile relative to project root. Optional — defaults to "Dockerfile"
+  # The Dockerfile must: COPY the build output (e.g. dist/), install a static
+  # server (e.g. nginx or serve), and EXPOSE port 80.
+  # Example minimal Dockerfile for a Vite/React app:
+  #   FROM nginx:alpine
+  #   COPY dist/ /usr/share/nginx/html/
+  #   EXPOSE 80
+  # dockerfile: Dockerfile
