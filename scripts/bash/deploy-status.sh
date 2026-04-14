@@ -32,8 +32,6 @@ GREEN_PORT=$(echo "${_state}" | sed -n '4p')
 ACTIVE_PORT=$(echo "${_state}"| sed -n '5p')
 LAST=$(echo "${_state}"       | sed -n '6p')
 
-INACTIVE=$([ "${ACTIVE}" = "blue" ] && echo "green" || echo "blue")
-
 status_of() {
   docker inspect --format='{{.State.Status}}' "$1" 2>/dev/null || echo "not found"
 }
