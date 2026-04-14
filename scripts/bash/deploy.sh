@@ -112,11 +112,12 @@ state['last_deploy'] = datetime.datetime.utcnow().isoformat() + 'Z'
 with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
-# Mirror to global state
-global_state = os.path.expanduser(f"~/.speckit-deploy/{state['app']}.json")
-if os.path.exists(global_state):
-    with open(global_state, 'w') as f:
-        json.dump(state, f, indent=2)
+# Mirror to global state (always write — creates if absent)
+global_dir = os.path.expanduser("~/.speckit-deploy")
+os.makedirs(global_dir, exist_ok=True)
+global_state = os.path.join(global_dir, f"{state['app']}.json")
+with open(global_state, 'w') as f:
+    json.dump(state, f, indent=2)
 PYEOF
 
 ACTIVE_DISPLAY=$(STATE_FILE="${STATE_FILE}" python3 -c "
