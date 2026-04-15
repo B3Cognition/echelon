@@ -115,14 +115,16 @@ STRATEGY_DIR="${PROJECT_ROOT}/.specify/harness/strategies/${FEATURE_PATH}"
 STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
 mkdir -p "$STRATEGY_DIR"
 
-EXPECTED_CONTENT="Invoke: /speckit.echelon.codegen ${FEATURE_PATH}"
+EXPECTED_CONTENT="command: echelon codegen"
 if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "$EXPECTED_CONTENT" "$STRATEGY_FILE"; then
   cat > "$STRATEGY_FILE" << EOF
+---
+command: echelon codegen
+---
 # Codegen Strategy
 
 This strategy uses the SOAR-powered codegen pipeline.
-
-${EXPECTED_CONTENT}
+Invoke: /speckit.echelon.codegen ${FEATURE_PATH}
 
 To run in parallel with default (squad) strategy:
   run spec ${FEATURE_PATH} strategies=default,codegen kill_losers
