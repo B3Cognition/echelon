@@ -263,12 +263,17 @@ import sys, yaml
 try:
     c = yaml.safe_load(open('echelon.yml'))
     d = c.get('deploy', {})
-    missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
-    if missing:
-        print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
-        print('  Add a deploy: block with blue_port, green_port, active_port.', file=sys.stderr)
-        print('  See config-template.yml for reference.', file=sys.stderr)
+    deploy_type = d.get('type', 'http')
+    if deploy_type not in ('http', 'cli'):
+        print(f'✗ deploy.type must be http or cli, got: {deploy_type}', file=sys.stderr)
         sys.exit(1)
+    if deploy_type == 'http':
+        missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
+        if missing:
+            print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
+            print('  HTTP type requires: blue_port, green_port, active_port.', file=sys.stderr)
+            print('  See config-template.yml for reference.', file=sys.stderr)
+            sys.exit(1)
 except FileNotFoundError:
     print('✗ echelon.yml not found.', file=sys.stderr)
     sys.exit(1)
