@@ -255,6 +255,27 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
+**Bootstrap echelon.yml (if absent):**
+
+If `echelon.yml` does not exist at the project root, copy a starter config from the extension. The extension ships with `config-template.yml`; `echelon-config.yml` may or may not be present depending on the install:
+
+```bash
+ECHELON_EXT=".specify/extensions/echelon"
+if [ ! -f echelon.yml ]; then
+  if [ -f "${ECHELON_EXT}/echelon-config.yml" ]; then
+    cp "${ECHELON_EXT}/echelon-config.yml" echelon.yml
+    echo "Bootstrapped echelon.yml from echelon-config.yml"
+  elif [ -f "${ECHELON_EXT}/config-template.yml" ]; then
+    cp "${ECHELON_EXT}/config-template.yml" echelon.yml
+    echo "Bootstrapped echelon.yml from config-template.yml"
+  else
+    echo "✗ echelon.yml not found and no template available in ${ECHELON_EXT}" >&2
+    echo "  Create echelon.yml at the project root before running echelon." >&2
+    exit 1
+  fi
+fi
+```
+
 **Validate deploy config:**
 
 ```bash
