@@ -245,13 +245,17 @@ See `config-template.yml` for full reference with guidance comments.
 
 ## Local CD
 
-Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, a `post-merge` git hook fires `deploy.sh` automatically. Two deployment types are supported — `http` for web services and `cli` for terminal apps.
+Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, a `post-merge` git hook fires `deploy.sh` automatically.
 
-Both types run the app in Docker to keep the dev machine clean.
+**Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
 
-### HTTP — Zero-downtime blue/green via Traefik
+The only difference between UI and CLI is how traffic is routed to the active slot:
+- **UI apps (`type: http`)** — Traefik reverse proxy routes HTTP traffic to the active container
+- **CLI apps (`type: cli`)** — no long-lived containers; a wrapper script reads the active image tag at invocation time
 
-For web apps. Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
+### UI apps — `type: http` (blue/green via Traefik)
+
+Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
 
 **Config (`echelon.yml`):**
 
@@ -287,9 +291,9 @@ EXPOSE 80
 
 ---
 
-### CLI — Image-tag pointer swap
+### CLI apps — `type: cli` (blue/green via tag pointer)
 
-For terminal apps. No Traefik, no long-lived containers. Each deploy builds a new image, optionally verifies it, then updates an active-tag pointer. An optional wrapper script at `install_path` reads the active tag on every invocation.
+Two image tags (blue/green) are maintained. No Traefik, no long-lived containers. Each deploy builds a new image, optionally verifies it via `docker run --rm`, then updates the active-tag pointer. An optional wrapper script at `install_path` reads the active tag on every invocation — rollback is instant since the wrapper always checks the pointer at runtime.
 
 **Config (`echelon.yml`):**
 
