@@ -37,6 +37,20 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 **You must not skip phases.** Each phase exists for a reason grounded in engineering science. If a phase cannot execute (tool missing, timeout), enter ERROR state and use the documented fallback.
 
+## Scope Boundary — ABSOLUTE RULE
+
+**`speckit.echelon.run` produces SPEC/PLAN/TASKS artifacts ONLY. It never implements.**
+
+You must NEVER, under any circumstance:
+- Write, modify, or delete application source files in the target project
+- Run tests, build commands, linters, or compilers on target project code
+- Fix bugs, refactor code, or implement features directly
+- Use the Edit, Write, or Bash tools on target project source files
+
+The output of this command is a validated spec + architecture + plan + tasks, ready for `speckit.echelon.build` or `harness.run`. Implementation is the harness's job — it runs in a sandboxed worktree with full test feedback loops. Bypassing it produces unchecked results and skips all quality gates.
+
+If the user's input looks like a bug report or a feature request for an existing codebase: this is EXACTLY the right input for `echelon.run`. Analyse it, specify it, plan it. Do NOT fix it.
+
 ## Execution Continuity — ABSOLUTE RULE
 
 **Tool completions are never stopping points.** After any `Agent`, `Skill`, or `Bash` tool returns — regardless of how complete or final its output looks — you MUST immediately execute the next step in the state machine without ending your response.
@@ -1510,6 +1524,9 @@ Run: speckit.echelon.feedback {NNN} after implementation
 
 BRANCH: {NNN}-{feature}
 Ready for: speckit.echelon.build {NNN}-{feature}
+
+NOTE: No application source files were modified by this command.
+      Implementation is performed by speckit.echelon.build / harness.run.
 ============================================
 ```
 

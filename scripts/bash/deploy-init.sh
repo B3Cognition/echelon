@@ -8,7 +8,7 @@ set -euo pipefail
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
 ECHELON_YML="${2:-${PROJECT_ROOT}/echelon.yml}"
 STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
-SCRIPTS_DIR="${PROJECT_ROOT}/.specify/scripts"
+SCRIPTS_DIR="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
 
 # ── Idempotency guard ────────────────────────────────────────────────────────
 if [ -f "${STATE_FILE}" ]; then
@@ -76,7 +76,7 @@ if [ "${DEPLOY_TYPE}" = "cli" ]; then
   cat > "${GIT_HOOK}" << 'HOOK'
 #!/usr/bin/env bash
 # Installed by echelon deploy-init.sh
-SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/scripts"
+SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/extensions/echelon/scripts/bash"
 exec "${SCRIPTS_DIR}/deploy.sh"
 HOOK
   chmod +x "${GIT_HOOK}"
@@ -246,7 +246,7 @@ echo "deploy: installing git post-merge hook..."
 cat > "${GIT_HOOK}" << 'HOOK'
 #!/usr/bin/env bash
 # Installed by echelon deploy-init.sh
-SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/scripts"
+SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/extensions/echelon/scripts/bash"
 exec "${SCRIPTS_DIR}/deploy.sh"
 HOOK
 chmod +x "${GIT_HOOK}"
