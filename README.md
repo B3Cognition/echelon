@@ -221,6 +221,7 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 | `speckit.echelon.innovate` | Trigger MAVERICK |
 | `speckit.echelon.ground` | Trigger REALIST |
 | `speckit.echelon.feedback` | Post-implementation feedback |
+| `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
 
 ## Configuration
 
@@ -241,6 +242,108 @@ cp config-template.yml squad-config.yml
 | `endocrine.enabled` | Hormone-modulated motivation | `false` (default) |
 
 See `config-template.yml` for full reference with guidance comments.
+
+## Local CD
+
+Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, a `post-merge` git hook fires `deploy.sh` automatically. Two deployment types are supported — `http` for web services and `cli` for terminal apps.
+
+Both types run the app in Docker to keep the dev machine clean.
+
+### HTTP — Zero-downtime blue/green via Traefik
+
+For web apps. Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
+
+**Config (`echelon.yml`):**
+
+```yaml
+deploy:
+  type: http
+  blue_port: 3000    # blue slot host port
+  green_port: 3001   # green slot host port
+  active_port: 80    # Traefik entry point (http://localhost)
+```
+
+**Dockerfile (minimal Vite/React example):**
+
+```dockerfile
+FROM nginx:alpine
+COPY dist/ /usr/share/nginx/html/
+EXPOSE 80
+```
+
+**What happens on first `echelon.run`:**
+- Docker network `speckit-deploy` created (shared across all apps on this machine)
+- `speckit-traefik` container started (one per machine, auto-discovers apps via Docker labels)
+- `.git/hooks/post-merge` installed
+
+**Deploy flow (automatic after merge to main):**
+1. `docker build` → `{app}:candidate`
+2. Start inactive slot with Traefik labels, expose on its port
+3. `curl -sf http://localhost:{port}` — 5 attempts, 2s apart
+4. On success: stop old slot, tag image, update state
+5. On failure: stop new slot, old slot unchanged (automatic rollback)
+
+**Rollback:** `speckit.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
+
+---
+
+### CLI — Image-tag pointer swap
+
+For terminal apps. No Traefik, no long-lived containers. Each deploy builds a new image, optionally verifies it, then updates an active-tag pointer. An optional wrapper script at `install_path` reads the active tag on every invocation.
+
+**Config (`echelon.yml`):**
+
+```yaml
+deploy:
+  type: cli
+  health_check: "myapp --version"  # command run inside container; empty = skip
+  install_path: "~/.local/bin"     # where to install wrapper; empty = no wrapper
+```
+
+**Dockerfile (minimal Python CLI example):**
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY . .
+RUN pip install -e .
+ENTRYPOINT ["myapp"]
+```
+
+**What happens on first `echelon.run`:**
+- `.git/hooks/post-merge` installed
+- Wrapper script installed to `install_path/myapp` (if `install_path` set)
+
+**Deploy flow (automatic after merge to main):**
+1. `docker build` → `{app}:candidate`
+2. If `health_check` set: `docker run --rm {app}:candidate {health_check_cmd}` (exit 0 = healthy)
+3. On success: tag image → `{app}:{inactive_slot}`, update state pointer
+4. On failure: build discarded, active pointer unchanged
+
+**Running the app:**
+```bash
+# Via wrapper (transparent — always runs the active version):
+myapp --help
+
+# Or directly:
+docker run --rm myapp:blue --help
+```
+
+**Rollback:** `speckit.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
+
+---
+
+### Deploy Commands
+
+| Command | Purpose |
+|---------|---------|
+| `speckit.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
+| `speckit.echelon.deploy status` | Show active slot, image, ports, last deploy time |
+| `speckit.echelon.deploy rollback` | Roll back to the previous slot |
+
+Deploy state lives in two locations (kept in sync on every deploy and rollback):
+- `.specify/squad/deploy-state.json` — project-local copy
+- `~/.speckit-deploy/{app}.json` — global registry (used for Traefik entrypoint aggregation and CLI wrapper scripts)
 
 ## Innovation Templates
 
