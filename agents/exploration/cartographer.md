@@ -57,7 +57,23 @@ Before Step 1, you MUST invoke `speckit.specify` via the Skill tool. This invoca
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 
-- **On success:** proceed to Step 1 (the spec creation is already underway via the Skill tool response).
+- **On success:** verify the branch was actually created before proceeding:
+
+  ```bash
+  git branch --show-current
+  ```
+
+  The output MUST match the branch name returned by `speckit.specify` (e.g. `042-user-auth`). If it does not match — the Skill returned success but the branch script failed silently — treat this as a branch creation failure and output:
+
+  ```
+  CARTOGRAPHER BLOCKED — branch not created
+  Phase: WHAT (requirements definition)
+  Error: speckit.specify returned success but git branch --show-current does not match expected branch <NNN>-<feature-name>. The create-new-feature.sh script likely failed silently.
+  Action required: COMMANDER must create the branch manually (git checkout -b <NNN>-<feature-name>) and re-dispatch CARTOGRAPHER with spec_dir set.
+  ```
+
+  Do NOT proceed to Steps 1-2 if the branch check fails.
+
 - **On error (skill not found, error, timeout):**
   1. **STOP immediately.** Do not proceed to Steps 1-2. Do not create spec.md manually.
   2. Output the following signal for COMMANDER:

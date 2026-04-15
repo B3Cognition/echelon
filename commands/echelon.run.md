@@ -756,7 +756,44 @@ This is the only case where COMMANDER calls `speckit.specify` directly. Do NOT u
 
 ### 4.3 Post-CARTOGRAPHER
 
-After CARTOGRAPHER completes, read its output to get the created `spec_id` and `spec_dir`. Update state.json:
+After CARTOGRAPHER completes, read its output to get the created `spec_id` and `spec_dir`.
+
+#### Branch + Directory Verification (MANDATORY)
+
+Before updating state.json, verify both invariants:
+
+1. **Branch exists:**
+   ```bash
+   git branch --show-current
+   ```
+   The output must equal `{NNN}-{feature-name}` from CARTOGRAPHER's output.
+
+2. **Spec directory exists:**
+   ```bash
+   ls "{spec_dir}/spec.md"
+   ```
+
+**If either check fails** (branch missing, directory missing, or spec.md missing):
+
+1. If the branch is missing, create it now:
+   ```bash
+   git checkout -b {NNN}-{feature-name}
+   ```
+2. If `specs/{NNN}-{feature-name}/` is missing, create it and re-dispatch CARTOGRAPHER with `spec_dir` pre-set in the context pack — CARTOGRAPHER will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
+3. Log a `branch_recovery` entry to `journal.json`:
+   ```json
+   {
+     "type": "branch_recovery",
+     "phase": "phase1-what",
+     "agent": "COMMANDER",
+     "detail": "Feature branch was absent after CARTOGRAPHER completed — created manually",
+     "timestamp": "{ISO-8601}"
+   }
+   ```
+
+**If both checks pass**, proceed normally.
+
+Update state.json:
 
 ```json
 {
