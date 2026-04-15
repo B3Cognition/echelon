@@ -1,18 +1,24 @@
-# Build → QA Handoff Contract
-# Defines conditions under which build phase output is accepted by QA phase.
+contract_id: build-qa-handoff
+version: "0.4.0"
+description: >
+  Contract governing the handoff gate from BUILD phase to QA phase.
+  All required tasks must be build-complete with zero blocked required tasks
+  before QA can begin.
 
-handoff_preconditions:
+preconditions:
   all_required_tasks_build_complete: true
+  required_task_status: BUILD_COMPLETE
   required_blocked_task_count: 0
+  rules:
+    - required_tasks_must_be_complete
+    - required_blocked_forbidden
+  gate_checks:
+    - build_valid
+    - tests_passed
+    - lint_clean
+    - required_outputs_present
 
-validation_rules:
-  required_tasks_must_be_complete:
-    description: Every task marked as required must have status DONE or DONE_WITH_CONCERNS
-    severity: blocking
-  required_blocked_forbidden:
-    description: No required task may have status BLOCKED at handoff time
-    severity: blocking
-
-on_failure:
+on_violation:
   failure_action: reject_handoff
-  message: "Build handoff rejected: preconditions not met"
+  notify: COMMANDER
+  log_entry: true

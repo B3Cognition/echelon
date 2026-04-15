@@ -36,6 +36,34 @@ If any sub-metric is < 0.50: add a "Testability Deficiency" section to `test-str
 
 ## Process
 
+### Step 0: Stack Detection (MANDATORY FIRST)
+
+Before designing any test strategy, detect the application type by reading `plan.md` and `research.md`.
+
+**Browser/SPA detection** — set `is_browser_app = true` if any of the following appear:
+- Framework: Vite, React, Vue, Svelte, Angular, SolidJS, Astro, Next.js, Nuxt, Remix
+- Spec requirements for: web UI, browser rendering, user interaction, visual feedback
+- Deployment: static hosting, CDN, GitHub Pages, Netlify, Vercel
+
+**If `is_browser_app = true`, the following are MANDATORY — not optional:**
+
+1. **Playwright E2E test suite** — at minimum one E2E test per critical user journey (spec FR requirements that involve user interaction or visible output). These must be listed as explicit tasks in `coverage-map.md` with `coverage_type: automated`.
+2. **Smoke test in verify.sh** — the build script MUST start the app and verify HTTP 200. A blank page with passing unit tests is a broken app.
+3. **VISUAL VALIDATOR dispatch** — COMMANDER must dispatch VISUAL VALIDATOR after each INTEGRATOR pass (enforced in echelon.build.md Step 7.2.1, but SENTINEL must create a task for this if no visual validation task exists in tasks.md).
+
+Record in `test-strategy.md`:
+```
+## Stack Detection
+- is_browser_app: true/false
+- Detected indicators: [list what triggered the classification]
+- E2E framework: Playwright (mandatory for browser apps)
+- Visual validation: VISUAL VALIDATOR (dispatched by COMMANDER)
+```
+
+**If `is_browser_app = false`:** proceed normally. Step 0 adds no constraints.
+
+---
+
 ### Step 1: Acceptance Criteria Mapping
 
 For every acceptance criterion in `spec.md`:
@@ -44,6 +72,8 @@ For every acceptance criterion in `spec.md`:
 - Define concrete test cases with expected inputs and outputs
 - Flag any acceptance criteria that are untestable (ambiguous, unmeasurable)
 - Route untestable criteria back to WHAT for clarification (blocking)
+
+**For browser apps:** any requirement involving user-visible behaviour, rendering, interaction, or state transitions MUST have an E2E test entry. Unit tests alone are insufficient for these.
 
 ### Step 2: Test Pyramid Design
 
@@ -58,7 +88,7 @@ Design the test distribution appropriate for the architecture:
    /____________________\
 ```
 
-Adjust ratios based on architecture. Microservices need more integration tests. UI-heavy apps need more e2e. Data pipelines need more integration.
+Adjust ratios based on architecture. Microservices need more integration tests. **Browser/SPA apps (is_browser_app = true): E2E ratio must be ≥ 20% — unit tests cannot verify rendering, routing, or user interactions.** Data pipelines need more integration.
 
 ### Step 3: Boundary Value Analysis
 
@@ -88,14 +118,29 @@ For each contract in `contracts/`:
 - Identify breaking change detection strategy
 - Map contract versions to compatibility requirements
 
-### Step 6: Manual Testing Identification
+### Step 6: Automation Coverage Gate (BLOCKING)
 
-Identify what CANNOT be automated cost-effectively:
+**Core principle: automation first, always. Manual testing does not work in agentic/harness pipelines.**
 
-- Exploratory testing areas
-- Visual/UX verification
-- Accessibility testing requiring human judgment
-- Performance perception testing
+For every requirement in `spec.md`, assign one of:
+- `automated` — covered by a test that runs in CI without human involvement
+- `deferred-automation` — not yet automated but MUST be automated before merge; create a task
+- `escalate` — genuinely cannot be automated (rare; requires user approval)
+
+**NEVER assign `manual` as a coverage status.** Manual testing is not a substitute for automated testing. It is invisible to the harness, invisible to CI, and produces no signal. A requirement that is only manually tested is an unverified requirement.
+
+If you identify a requirement where automation seems difficult:
+1. First, look harder — most "untestable" requirements can be tested with the right approach (visual regression tools, headless browser, contract tests, property-based tests)
+2. If genuinely infeasible: write an `escalate` item and escalate to COMMANDER: **"Requirement {ID} cannot be automated. Options: (a) accept unverified risk, (b) add tooling to enable automation, (c) remove requirement. User decision required."**
+3. COMMANDER relays to the user. Work does not proceed until a decision is recorded in state.json.
+
+**SENTINEL cannot produce a PASS verdict if any requirement has `manual` or unaddressed `escalate` coverage.**
+
+What was previously called "manual testing" maps to:
+- Exploratory testing → property-based tests, fuzzing, or schedule a `deferred-automation` task
+- Visual/UX verification → Playwright visual regression, snapshot tests, or `escalate`
+- Accessibility → axe-core automated scans (automated, not manual)
+- Performance perception → Lighthouse CI, k6, or `escalate`
 
 ### Step 7: CI/CD Pipeline Design
 
@@ -172,9 +217,12 @@ Review quarantined tests weekly — fix or remove. Tests quarantined for more th
 ## Key Rules
 
 1. If an acceptance criterion has no corresponding test approach, it blocks. Route back to WHAT.
-2. Prefer deterministic tests. Flaky tests are worse than no tests.
-3. Test behavior, not implementation. Tests should survive refactoring.
-4. Every external dependency must have a test double strategy (mock, stub, fake, or contract test).
+2. **Manual testing is not a test approach.** It is the absence of one. See Step 6.
+3. Prefer deterministic tests. Flaky tests are worse than no tests.
+4. Test behavior, not implementation. Tests should survive refactoring.
+5. Every external dependency must have a test double strategy (mock, stub, fake, or contract test).
+6. **Every web/UI application must include a smoke test** that starts the built app and verifies it serves a non-empty response. `npm test` passing is necessary but not sufficient — a blank page with passing unit tests is a broken app.
+7. `coverage-map.md` must have zero rows with `coverage_type: manual`. Any such row is a SENTINEL failure.
 
 ## Reasoning Journal
 

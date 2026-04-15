@@ -23,6 +23,10 @@ Unlike SPEC GUARD (which checks per-task, forward), VERIFICATION checks the ENTI
 - When you want to confirm the implementation is truly done
 - Before declaring the build complete
 
+## Execution Continuity — MANDATORY
+
+**Tool completions are never stopping points.** After the VERIFICATION agent (or any batch QA reviewer) returns — however final its gap report or "all passing" verdict looks — immediately execute the next step in the verification state machine without ending your response. VERIFICATION's coverage report is not the end of this command; gap review, rework routing, and the QA completion gate must all follow before declaring the build complete.
+
 ## Steps
 
 ### 0. QA Phase Entry Gate (v0.4.0)
@@ -48,6 +52,8 @@ Use the Agent tool to dispatch a subagent:
 - Provide: spec.md (full), all source code paths, all test paths, traceability-matrix.md
 - The agent will check EVERY FR-*, AC-*, and NFR-* against the codebase
 
+> **After VERIFICATION returns, proceed immediately to Step 3. Do not end your response here.**
+
 ### 2b. Batch QA Dispatch Order
 
 For split BUILD/QA runs, execute batch reviewers before VERIFICATION:
@@ -58,6 +64,8 @@ For split BUILD/QA runs, execute batch reviewers before VERIFICATION:
 4. INTEGRATOR
 5. VISUAL_VALIDATOR (if applicable)
 6. VERIFICATION (final deterministic coverage verdict)
+
+> **After each reviewer returns, dispatch the next one in order. After VERIFICATION (step 6) returns, proceed immediately to Step 3. Do not end your response between reviewers or after the final dispatch.**
 
 ### 3. Review Gap Report
 

@@ -27,6 +27,86 @@
 schema_version: 1
 
 # =============================================================================
+# GLOSSARY
+# Ambiguous terms used across agents. prompt_lint.py uses this to detect
+# overloaded terms in agent prompts. Each term lists its distinct senses,
+# how to detect which sense is intended, and an example.
+# =============================================================================
+
+glossary:
+  - term: "Phase"
+    senses:
+      - sense: "coarse phase group"
+        detect: "when the term appears inside a reasoning-journal entry's 'phase' field"
+        example: "build_init, understanding, finalize"
+      - sense: "graph node"
+        detect: "when the term appears inside definition.yaml phases[] as a node id"
+        example: "phase1-what, phase2-why1, phase3-specialists"
+
+  - term: "Assess"
+    senses:
+      - sense: "GATEKEEPER agent action"
+        detect: "when Assess appears as a phase node id or agent name in definition.yaml"
+        example: "phase4-assess node dispatches GATEKEEPER"
+      - sense: "general evaluation verb"
+        detect: "when used in prose (COMMANDER prompt, reasoning journal)"
+        example: "COMMANDER assesses whether to continue"
+
+  - term: "State"
+    senses:
+      - sense: "state.json document"
+        detect: "when referred to as a file or JSON document"
+        example: "Read state.json before every dispatch"
+      - sense: "lifecycle state value"
+        detect: "when used as a status enum value (initialized, running, done)"
+        example: "state.status = 'running'"
+
+  - term: "Verdict"
+    senses:
+      - sense: "echelon_result block verdict"
+        detect: "when it appears as a field inside an agent's echelon_result YAML block"
+        example: "verdict: PASS, FAIL, BLOCKED, DONE"
+      - sense: "transition condition value"
+        detect: "when used in a definition.yaml condition string"
+        example: "condition: verdict = PASS"
+
+  - term: "Mode"
+    senses:
+      - sense: "run mode (greenfield/brownfield/self_analysis)"
+        detect: "when it refers to state.mode or squad-config.yml mode setting"
+        example: "mode: brownfield"
+      - sense: "agent sub-mode"
+        detect: "when it refers to a named agent operating variant"
+        example: "SAGE mode: WHY2, AUDITOR mode: post_build_self_assessment"
+
+  - term: "Review"
+    senses:
+      - sense: "code review gate"
+        detect: "when used in the build phase for CODE_REVIEWER or quality gate"
+        example: "CODE REVIEWER APPROVED — proceed to TEST GUARDIAN"
+      - sense: "COMMANDER evolution signal review"
+        detect: "when COMMANDER reviews evolution signals after FINALIZE"
+        example: "COMMANDER reviews open evolution signals post-run"
+
+  - term: "Widget"
+    senses:
+      - sense: "UI component"
+        detect: "when used in product/feature specs referring to screen elements"
+        example: "The dashboard widget shows current token usage"
+      - sense: "generic placeholder"
+        detect: "when used abstractly in template or example YAML blocks"
+        example: "widget: <replace with actual component name>"
+
+  - term: "Run"
+    senses:
+      - sense: "Echelon run (squad run)"
+        detect: "when referring to a single speckit.echelon.run invocation (run_id: squad-N)"
+        example: "This run produced 52 journal entries"
+      - sense: "shell command execution"
+        detect: "when used in bash/script context"
+        example: "Run kb-seed.sh to populate the KB"
+
+# =============================================================================
 # CONVERGENCE THRESHOLDS
 # All convergence decisions reference these values — never hardcode in prompts.
 # Runtime overrides sourced from squad-config.yml take precedence.

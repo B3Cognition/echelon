@@ -1,0 +1,22 @@
+{
+  "run_id": "squad-12345",
+  "phase": "done",
+  "mode": "invalid_mode",
+  "meta_run": false,
+  "iteration": 3,
+  "degraded_mode_stack": [],
+  "issues_log": [],
+  "dependency_checks": {},
+  "last_dispatch": {
+    "agent": "SCOREKEEPER",
+    "dispatched_at": "2026-04-11T00:00:00Z",
+    "post_dispatch_complete": true,
+    "journal_entries_written": []
+  },
+  "dispatch_counters": {
+    "SAGE": 3
+  },
+  "defer_count": 0,
+  "autonomy_mode": "guided",
+  "updated_at": "2026-04-11T03:10:00Z"
+}

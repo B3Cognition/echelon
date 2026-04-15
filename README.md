@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.9.0** — 41-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop
+**Version 0.9.0** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop
 
 ## Quick Start
 
@@ -53,41 +53,41 @@ speckit.echelon.feedback 001
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 1: UNDERSTAND                                                      │
-│                                                                          │
-│   [GOLDDIGGER] ──► SCOUT ──► SYNTHESIZER ──►                           │
-│   (brownfield)    (discover)  (fuse)                                   │
-│                                                                          │
-│   ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER                    │
-│      (why1)   (what)         (why2)    (assess)                        │
-│                                                                          │
-│   + Specialists: INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE    │
+│ PHASE 1: UNDERSTAND                                                     │
+│                                                                         │
+│   [GOLDDIGGER] ──► SCOUT ──► SYNTHESIZER ──►                            │
+│   (brownfield)    (discover)  (fuse)                                    │
+│                                                                         │
+│   ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER                     │
+│      (why1)   (what)         (why2)    (assess)                         │
+│                                                                         │
+│   + Specialists: INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCAT     │
 │   Output: spec.md, feasibility.md, estimates.md, priorities.md          │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 2: DECIDE                                                          │
-│                                                                          │
-│   CHECKPOINT: Internalize spec — every agent proves comprehension        │
+│ PHASE 2: DECIDE                                                         │
+│                                                                         │
+│   CHECKPOINT: Internalize spec — every agent proves comprehension       │
 │   Decision: PASS (continue) / KILL (stop) / DEFER (reduce scope)        │
 │   STRATEGIST: Alignment analysis and advisory                           │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 3: SOLUTION                                                        │
-│                                                                          │
+│ PHASE 3: SOLUTION                                                       │
+│                                                                         │
 │   ARCHITECT ──► Specialists ──► SENTINEL ──► ORCHESTRATOR               │
 │   (how)                         (test)        (plan)                    │
-│                                                                          │
+│                                                                         │
 │   Output: plan.md, data-model.md, contracts/, test-strategy.md, tasks.md│
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 4: BUILD (optional)                                                │
-│                                                                          │
+│ PHASE 4: BUILD (optional)                                               │
+│                                                                         │
 │   Per task: IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN    │
 │   Per phase: ENGINEERING MANAGER + INTEGRATOR + VISUAL VALIDATOR        │
 │   Debug: DEBUGGER (root cause analysis on non-obvious failures)         │
@@ -167,7 +167,7 @@ File: agents/exploration/scout.md
 | **ORACLE** | DOMAIN-EXPERT | Domain-specific knowledge |
 | **MAVERICK** | INNOVATE | Stagnation, need alternatives (uses AutoTRIZ) |
 
-#### Learning Layer (8 agents, cross-cutting)
+#### Learning Layer (9 agents, cross-cutting)
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **AUDITOR** | CALIBRATE | Tracks accuracy, adjusts confidence |
@@ -177,6 +177,7 @@ File: agents/exploration/scout.md
 | **MIRROR** | REFLECT | Extracts patterns and pitfalls |
 | **MONITOR** | METACOGNITION-MONITOR | "Are we still doing the right thing?" |
 | **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge (~/.specify/squad-global/) |
+| **CONSOLIDATOR** | CONSOLIDATE | Transforms episodic experience into generalized schemas across projects |
 | **GLOBAL-MEMORY** | GLOBAL-MEMORY | Manages cross-project pattern persistence |
 
 #### Build Layer (11 agents, Phase 4)
@@ -221,6 +222,7 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 | `speckit.echelon.innovate` | Trigger MAVERICK |
 | `speckit.echelon.ground` | Trigger REALIST |
 | `speckit.echelon.feedback` | Post-implementation feedback |
+| `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
 
 ## Configuration
 
@@ -241,6 +243,112 @@ cp config-template.yml squad-config.yml
 | `endocrine.enabled` | Hormone-modulated motivation | `false` (default) |
 
 See `config-template.yml` for full reference with guidance comments.
+
+## Local CD
+
+Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, a `post-merge` git hook fires `deploy.sh` automatically.
+
+**Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
+
+The only difference between UI and CLI is how traffic is routed to the active slot:
+- **UI apps (`type: http`)** — Traefik reverse proxy routes HTTP traffic to the active container
+- **CLI apps (`type: cli`)** — no long-lived containers; a wrapper script reads the active image tag at invocation time
+
+### UI apps — `type: http` (blue/green via Traefik)
+
+Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
+
+**Config (`echelon.yml`):**
+
+```yaml
+deploy:
+  type: http
+  blue_port: 3000    # blue slot host port
+  green_port: 3001   # green slot host port
+  active_port: 80    # Traefik entry point (http://localhost)
+```
+
+**Dockerfile (minimal Vite/React example):**
+
+```dockerfile
+FROM nginx:alpine
+COPY dist/ /usr/share/nginx/html/
+EXPOSE 80
+```
+
+**What happens on first `echelon.run`:**
+- Docker network `speckit-deploy` created (shared across all apps on this machine)
+- `speckit-traefik` container started (one per machine, auto-discovers apps via Docker labels)
+- `.git/hooks/post-merge` installed
+
+**Deploy flow (automatic after merge to main):**
+1. `docker build` → `{app}:candidate`
+2. Start inactive slot with Traefik labels, expose on its port
+3. `curl -sf http://localhost:{port}` — 5 attempts, 2s apart
+4. On success: stop old slot, tag image, update state
+5. On failure: stop new slot, old slot unchanged (automatic rollback)
+
+**Rollback:** `speckit.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
+
+---
+
+### CLI apps — `type: cli` (blue/green via tag pointer)
+
+Two image tags (blue/green) are maintained. No Traefik, no long-lived containers. Each deploy builds a new image, optionally verifies it via `docker run --rm`, then updates the active-tag pointer. An optional wrapper script at `install_path` reads the active tag on every invocation — rollback is instant since the wrapper always checks the pointer at runtime.
+
+**Config (`echelon.yml`):**
+
+```yaml
+deploy:
+  type: cli
+  health_check: "myapp --version"  # command run inside container; empty = skip
+  install_path: "~/.local/bin"     # where to install wrapper; empty = no wrapper
+```
+
+**Dockerfile (minimal Python CLI example):**
+
+```dockerfile
+FROM python:3.12-slim
+WORKDIR /app
+COPY . .
+RUN pip install -e .
+ENTRYPOINT ["myapp"]
+```
+
+**What happens on first `echelon.run`:**
+- `.git/hooks/post-merge` installed
+- Wrapper script installed to `install_path/myapp` (if `install_path` set)
+
+**Deploy flow (automatic after merge to main):**
+1. `docker build` → `{app}:candidate`
+2. If `health_check` set: `docker run --rm {app}:candidate {health_check_cmd}` (exit 0 = healthy)
+3. On success: tag image → `{app}:{inactive_slot}`, update state pointer
+4. On failure: build discarded, active pointer unchanged
+
+**Running the app:**
+```bash
+# Via wrapper (transparent — always runs the active version):
+myapp --help
+
+# Or directly:
+docker run --rm myapp:blue --help
+```
+
+**Rollback:** `speckit.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
+
+---
+
+### Deploy Commands
+
+| Command | Purpose |
+|---------|---------|
+| `speckit.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
+| `speckit.echelon.deploy status` | Show active slot, image, ports, last deploy time |
+| `speckit.echelon.deploy rollback` | Roll back to the previous slot |
+
+Deploy state lives in two locations (kept in sync on every deploy and rollback):
+- `.specify/squad/deploy-state.json` — project-local copy
+- `~/.speckit-deploy/{app}.json` — global registry (used for Traefik entrypoint aggregation and CLI wrapper scripts)
 
 ## Innovation Templates
 
@@ -338,7 +446,7 @@ agents/
 ├── feasibility/       # GATEKEEPER, VALIDATOR
 ├── solution/          # ARCHITECT, ORCHESTRATOR, SENTINEL
 ├── specialists/       # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
-├── learning/          # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, GLOBAL-MEMORY
+├── learning/          # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY
 └── build/             # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
 commands/

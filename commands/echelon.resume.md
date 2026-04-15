@@ -16,6 +16,12 @@ Resume a blocked squad run by providing the human's answer to the escalation que
 
 ---
 
+## Execution Continuity — MANDATORY
+
+**Tool completions are never stopping points.** After re-dispatching the agent in Step 7 — however complete the re-dispatched agent's output looks — immediately execute Step 8 (continue MANAGER flow) without ending your response. The re-dispatched agent's success is not the end of this command; MANAGER must continue driving through all remaining phases until DONE or a new BLOCKED condition is set.
+
+---
+
 ## Step 1: Validate Input
 
 If `$ARGUMENTS` is empty, report **"Please provide your answer. Usage: speckit.echelon.resume <your answer to the escalation question>"** and stop.
@@ -136,6 +142,8 @@ Incorporate this answer as a binding constraint and continue your analysis.
 Use the **Agent tool** to dispatch the subagent with the appropriate prompt, context pack, and the human's answer woven in.
 
 - **description:** "Resuming {phase} with human input: {$ARGUMENTS truncated to 50 chars}"
+
+> **After the subagent returns, proceed immediately to Step 8. Do not end your response here.**
 
 ---
 

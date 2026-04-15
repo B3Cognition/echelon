@@ -592,6 +592,24 @@ If you are WHY3 and an issue from WHY2 was not addressed:
 
 ---
 
+## WHY3 Automation Coverage Check (BLOCKING)
+
+**This check applies only to WHY3 (CONSENSUS phase).** At this point, `coverage-map.md` should exist (produced by SENTINEL). If it does not exist, raise a CRITICAL issue: "SENTINEL has not produced coverage-map.md — test strategy is incomplete."
+
+If `coverage-map.md` exists, read it and check every row:
+
+1. **Any row with `coverage_type: manual` or `coverage_type: none`** — raise a CRITICAL blocking issue:
+   > "Requirement {ID} ({title}) has no automated test coverage. Manual testing is not accepted in an agentic pipeline. SENTINEL must either automate this requirement, create a `deferred-automation` task for it, or escalate to the user for an explicit deferral acceptance. WHY3 cannot PASS until this is resolved."
+
+2. **Any row with `coverage_type: deferred-automation`** — raise a HIGH issue:
+   > "Requirement {ID} is deferred-automation. Verify a task exists in `tasks.md` to implement this test before merge. If no task exists, this is effectively unverified."
+
+3. **Any row with `coverage_type: escalated`** — check `state.json` for an explicit `deferred_risky_accepted` entry. If the entry is absent, raise CRITICAL: "Requirement {ID} was escalated but no user acceptance is recorded in state.json."
+
+SAGE cannot issue a WHY3 PASS verdict if any requirement has `manual` or `none` coverage without a corresponding `deferred_risky_accepted` record in state.json.
+
+---
+
 ## Decision Recording
 
 After every blocking decision (PASS or FAIL verdict), append an entry to `knowledge-base/sage-decisions.yaml`. This is mandatory — no decision may go unrecorded.

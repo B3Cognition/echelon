@@ -36,7 +36,9 @@ Your job is to iterate through tasks, dispatch build agents for each, enforce qu
 
 **You must not skip quality gates.** Each gate exists because bugs caught in review cost 10x less than bugs caught in production.
 
-**RADAR Monitoring:** See echelon.run.md "RADAR Emitter Pattern" section for how to emit agent state changes.
+## Execution Continuity — MANDATORY
+
+**Tool completions are never stopping points.** After any `Agent`, `Skill`, or `Bash` tool returns — however complete or final its output looks — immediately execute the next step in the build state machine without ending your response. Stop only when: (a) the state machine reaches DONE (build complete, all verification passed), (b) a BLOCKED/ERROR condition is set and cannot be self-resolved, or (c) a human checkpoint is reached in `guided`/`semi` mode. A task completing, a quality gate passing, or `speckit.implement` returning success are NOT stopping points.
 
 ## v0.4.0 Operator Flow
 
@@ -65,6 +67,17 @@ This gives us: spec-kit's proven task execution + squad's multi-agent quality ga
 ---
 
 ## 1. Initialization (BUILD_INIT)
+
+### 1.0 Anchor Project Root
+
+Before any file operation, establish the absolute project root:
+
+```bash
+PROJECT_ROOT=$(pwd)
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+```
+
+Read `project_root` from `.specify/squad/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. The feature directory is `${PROJECT_ROOT}/specs/{NNN}-{feature}` — never a bare relative path.
 
 ### 1.1 Validate Phase A Artifacts
 
@@ -130,31 +143,6 @@ Update `.specify/squad/state.json`:
   "updated_at": "{ISO-8601}"
 }
 ```
-
-### 1.4.1 Start RADAR (if enabled)
-
-Read `radar.enabled` from squad-config.yml (default: true). If enabled:
-
-```bash
-# Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/echelon"
-
-# Install RADAR dependencies if needed
-pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
-
-# Read port from config (default 7891)
-RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
-
-# Start RADAR in background
-PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
-  >> .specify/squad/radar.log 2>&1 &
-echo $! > .specify/squad/radar.pid
-
-# Initialize emitter (creates/truncates agent-states files)
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import init_run; init_run('${run_id}')"
-```
-
-**Note:** If RADAR fails to start, log a warning but continue the build. The squad executes without live monitoring.
 
 ### 1.5 Initialize Build Reports
 
@@ -376,7 +364,7 @@ If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
 
 3. Update `state.json.updated_at` to current timestamp.
 
-**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for RADAR, ENGINEERING MANAGER, and any external tooling reading state.json.
+**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for ENGINEERING MANAGER and any external tooling reading state.json.
 
 ---
 
@@ -403,8 +391,26 @@ Use the Agent tool:
 
 ### 7.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass INTEGRATOR`. Record checkpoint. Proceed to next phase group.
+- **PASS** — Run `endocrine.sh on_gate_pass INTEGRATOR`. Run 7.2.1 (browser-app visual check if applicable). Record checkpoint. Proceed to next phase group.
 - **FAIL** — Run `endocrine.sh on_gate_fail INTEGRATOR` + `endocrine.sh on_low_confidence IMPLEMENTER` (for responsible task). Route integration failures back to the responsible task's IMPLEMENTER. Re-run INTEGRATOR after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
+
+### 7.2.1 Visual Validator Dispatch (MANDATORY for browser/SPA apps)
+
+**Detect stack:** Check `research.md` and `plan.md` for browser/SPA indicators: Vite, React, Vue, Svelte, Angular, SolidJS, Astro, Next.js, Nuxt, Remix, static site, or any spec requirement for a web UI.
+
+**If browser/SPA detected:** Dispatch VISUAL VALIDATOR immediately after INTEGRATOR PASS — before recording the checkpoint and before proceeding to the next phase group.
+
+Use the Agent tool:
+
+- **prompt:** Read the file `agents/build/visual-validator.md` for your complete instructions. You are the VISUAL VALIDATOR. Verify that the browser application renders correctly after phase "{phase_group}". Build the app, serve it, use Playwright to screenshot every page/view, and verify nothing is blank. Here is your context pack: [include spec.md, plan.md, code from this phase]. Write or append to `visual-validation-report.md`. Append entries to `reasoning-journal.json`.
+- **description:** "VISUAL VALIDATOR: phase '{phase_group}' — browser render check"
+
+Handle result:
+
+- **VISUAL_PASS** — proceed to 7.3.
+- **VISUAL_FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER`. Route visual failures back to IMPLEMENTER with the specific rendering issues (blank page, missing components, console errors). IMPLEMENTER fixes, INTEGRATOR re-runs, then VISUAL VALIDATOR re-runs. Max 2 fix cycles. If still failing, flag phase as DEGRADED and escalate to human.
+
+**If not browser/SPA:** skip 7.2.1 and proceed directly to 7.3.
 
 ### 7.3 Record Checkpoint
 
@@ -455,8 +461,40 @@ ENGINEERING MANAGER must confirm:
 1. Spec-kit task workflow was actually followed.
 2. Task status, state tracking, and reports are internally consistent.
 3. The build is ready for full VERIFICATION.
+4. **`verify.sh` exists and contains a smoke test** (see below).
 
 If any of these fail, do not proceed to BUILD_DONE. Route to rework first.
+
+### 8.1b.1 verify.sh Smoke Test Requirement (MANDATORY)
+
+Every build must produce a `verify.sh` in the repo root. This script is what the harness runs in Docker to verify the build.
+
+**`verify.sh` MUST include a smoke test that starts the application and verifies it responds.** "All unit tests pass" is not sufficient — a blank page with passing unit tests is a failed build.
+
+Minimum smoke test pattern for web applications:
+
+```sh
+# After npm test passes:
+npm run build
+npx vite preview --port 4173 &
+PREVIEW_PID=$!
+sleep 3
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4173)
+kill $PREVIEW_PID 2>/dev/null || true
+if [ "$STATUS" != "200" ]; then
+  echo "Smoke test FAILED: app returned HTTP $STATUS (expected 200)"
+  exit 1
+fi
+echo "Smoke test PASSED: app served HTTP 200"
+```
+
+Adapt for other stacks:
+- **Node/Express:** `node server.js & sleep 2 && curl -s http://localhost:3000`
+- **Python/FastAPI:** `uvicorn main:app & sleep 2 && curl -s http://localhost:8000/health`
+- **Static site:** `npx serve dist & sleep 2 && curl -s http://localhost:3000`
+- **No HTTP server (CLI tool, library):** smoke test = `node dist/index.js --version` or equivalent invocation that proves the artifact runs
+
+If `verify.sh` does not contain a smoke test, ENGINEERING MANAGER must request IMPLEMENTER add one before sign-off. This is not optional.
 
 ### 8.1c Final Verification
 
@@ -506,15 +544,6 @@ Verify all report files are populated:
   },
   "updated_at": "{ISO-8601}"
 }
-```
-
-### 8.3.1 Stop RADAR
-
-```bash
-if [ -f .specify/squad/radar.pid ]; then
-  kill $(cat .specify/squad/radar.pid) 2>/dev/null || true
-  rm -f .specify/squad/radar.pid
-fi
 ```
 
 ### 8.4 Run SCOREKEEPER

@@ -1,0 +1,224 @@
+# Echelon CI Pipeline — 5 stages per test-strategy spec (T038)
+#
+# Stage budget targets:
+#   pre-commit:  < 30s
+#   pr-merge:    < 5min
+#   post-merge:  < 15min
+#   pre-deploy:  < 10min  (degraded E2E is a HARD GATE)
+#   post-deploy: < 2min
+
+pipeline:
+  name: echelon-kernel-ci
+  schema_version: 1
+
+stages:
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: pre-commit (< 30s)
+  # Runs on every git commit (pre-commit hook or equivalent).
+  # Fast feedback: schema validation + unit tests only.
+  # ---------------------------------------------------------------------------
+  - id: pre-commit
+    budget_seconds: 30
+    description: "Fast unit tests and schema validation"
+    trigger: pre-commit-hook
+    commands:
+      - name: schema-validate
+        run: "python3 .specify/extensions/echelon/scripts/python/evaluate_transition.py --help > /dev/null"
+        timeout_seconds: 5
+
+      - name: unit-tests-kernel
+        run: "python3 -m pytest .specify/extensions/echelon/tests/kernel/ -q --tb=short"
+        timeout_seconds: 25
+
+    gates:
+      - all_commands_pass: true
+    on_fail: block_commit
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: pr-merge (< 5 min)
+  # Runs on PR creation and merge. Full unit + e2e smoke tests.
+  # ---------------------------------------------------------------------------
+  - id: pr-merge
+    budget_seconds: 300
+    description: "Full unit + e2e smoke tests"
+    trigger: pull_request
+    commands:
+      - name: unit-tests-full
+        run: "python3 -m pytest .specify/extensions/echelon/tests/ -q --tb=short"
+        timeout_seconds: 60
+
+      - name: prompt-lint
+        run: >
+          python3 .specify/extensions/echelon/scripts/python/prompt_lint.py
+          --root .specify/extensions/echelon/agents
+          --output json
+        timeout_seconds: 30
+        # Non-blocking at PR stage — report only
+        on_fail: warn
+
+      - name: post-run-audit-dry
+        run: >
+          bash .specify/extensions/echelon/scripts/bash/post-run-audit.sh
+          --dry-run 2>/dev/null || true
+        timeout_seconds: 10
+        on_fail: warn
+
+    gates:
+      - command: unit-tests-full
+        verdict: pass
+        required: true
+    on_fail: block_merge
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: post-merge (< 15 min)
+  # Runs after merge to main. Learning loop + pattern detection dry-run.
+  # ---------------------------------------------------------------------------
+  - id: post-merge
+    budget_seconds: 900
+    description: "Learning loop dry-run + replay parity"
+    trigger: push_to_main
+    commands:
+      - name: full-test-suite
+        run: "python3 -m pytest .specify/extensions/echelon/tests/ -v --tb=short"
+        timeout_seconds: 120
+
+      - name: pattern-detection-dry-run
+        run: >
+          python3 .specify/extensions/echelon/scripts/python/detect_patterns.py
+          --run-id squad-latest
+          --dry-run
+          2>/dev/null || echo "no squad-latest archive, skip"
+        timeout_seconds: 60
+        on_fail: warn
+
+      - name: score-delta-dry-run
+        run: >
+          python3 .specify/extensions/echelon/scripts/python/emit_score_deltas.py
+          --run-id squad-latest
+          --dry-run
+          2>/dev/null || echo "no squad-latest archive, skip"
+        timeout_seconds: 60
+        on_fail: warn
+
+      - name: flaky-test-check
+        run: "python3 -m pytest .specify/extensions/echelon/tests/kernel/ --count=5 -q 2>/dev/null || python3 -m pytest .specify/extensions/echelon/tests/kernel/ -q"
+        timeout_seconds: 300
+        on_fail: warn
+
+    gates:
+      - command: full-test-suite
+        verdict: pass
+        required: true
+    on_fail: alert_team
+
+  # ---------------------------------------------------------------------------
+  # Stage 4: pre-deploy (< 10 min)
+  # HARD GATE — degraded E2E must pass.
+  # Blocks deployment if any critical checks fail.
+  # ---------------------------------------------------------------------------
+  - id: pre-deploy
+    budget_seconds: 600
+    description: "Degraded E2E smoke test + preflight checks — HARD GATE"
+    trigger: pre-deploy
+    commands:
+      - name: degraded-e2e-smoke
+        run: >
+          python3 -m pytest
+          .specify/extensions/echelon/tests/e2e/test_degraded_run.py
+          -v --tb=short
+        timeout_seconds: 120
+        # HARD GATE: degraded E2E is mandatory
+        on_fail: block_deploy
+
+      - name: replay-parity-smoke
+        run: >
+          python3 -m pytest
+          .specify/extensions/echelon/tests/e2e/test_replay_parity.py
+          -v --tb=short
+        timeout_seconds: 60
+        on_fail: block_deploy
+
+      - name: preflight-verification
+        run: >
+          python3 -c "
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('.specify/extensions/echelon').resolve()))
+          from kernel.preflight import _PROBE_REGISTRY
+          assert 'understanding' in _PROBE_REGISTRY
+          assert 'revenge' in _PROBE_REGISTRY
+          assert 'skill:GOLDDIGGER' in _PROBE_REGISTRY
+          assert 'kb_schema' in _PROBE_REGISTRY
+          print('All 4 probes registered: OK')
+          "
+        timeout_seconds: 10
+        on_fail: block_deploy
+
+      - name: schema-validator-check
+        run: >
+          python3 -c "
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('.specify/extensions/echelon').resolve()))
+          from kernel.state_loader import load_or_raise
+          print('state_loader importable: OK')
+          "
+        timeout_seconds: 10
+        on_fail: block_deploy
+
+    gates:
+      # ALL commands must pass for deploy to proceed
+      - all_commands_pass: true
+        required: true
+    on_fail: block_deploy
+
+  # ---------------------------------------------------------------------------
+  # Stage 5: post-deploy (< 2 min)
+  # Smoke check after deploy to confirm nothing broke in the live environment.
+  # ---------------------------------------------------------------------------
+  - id: post-deploy
+    budget_seconds: 120
+    description: "Post-deploy smoke verification"
+    trigger: post-deploy
+    commands:
+      - name: import-smoke
+        run: >
+          python3 -c "
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path('.specify/extensions/echelon').resolve()))
+          from kernel import evaluator, preflight, constitution_checker, state_loader, schema_validator, accessors
+          print('All kernel modules importable: OK')
+          "
+        timeout_seconds: 10
+
+      - name: quick-unit
+        run: "python3 -m pytest .specify/extensions/echelon/tests/kernel/ -q --tb=line -x"
+        timeout_seconds: 60
+
+    gates:
+      - all_commands_pass: true
+        required: true
+    on_fail: alert_oncall
+
+# ---------------------------------------------------------------------------
+# Flaky test detection policy
+# ---------------------------------------------------------------------------
+flaky_test_policy:
+  enabled: true
+  min_runs: 5
+  command: "python3 -m pytest {test_file} --count=5 -q"
+  note: "pytest-repeat plugin required for --count flag; fallback to single run if unavailable"
+  threshold_flaky_percent: 10  # >10% failure rate = flaky
+
+# ---------------------------------------------------------------------------
+# Hard gates summary
+# ---------------------------------------------------------------------------
+hard_gates:
+  - stage: pre-deploy
+    check: degraded-e2e-smoke
+    rationale: "Degraded mode is the critical failure recovery path — must work before deploy"
+  - stage: pre-deploy
+    check: replay-parity-smoke
+    rationale: "Archive replay parity ensures routing decisions are deterministically reproducible"

@@ -37,6 +37,24 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 **You must not skip phases.** Each phase exists for a reason grounded in engineering science. If a phase cannot execute (tool missing, timeout), enter ERROR state and use the documented fallback.
 
+## Execution Continuity — ABSOLUTE RULE
+
+**Tool completions are never stopping points.** After any `Agent`, `Skill`, or `Bash` tool returns — regardless of how complete or final its output looks — you MUST immediately execute the next step in the state machine without ending your response.
+
+The run ends ONLY when one of these three conditions is reached:
+
+1. The state machine reaches **DONE** (FINALIZE phase complete, all artifacts validated)
+2. A **BLOCKED** condition is set and cannot be self-resolved (set `state.json.status = "blocked"`, print the BLOCKED banner, stop)
+3. A **human checkpoint** is reached in `guided` or `semi` mode only
+
+These are NEVER stopping points:
+- A `Skill` tool returning with success (e.g. `speckit.specify`, `speckit.constitution`, `speckit.understanding.validate`) — continue to the next step immediately
+- An `Agent` subagent completing its dispatch — read its output and continue routing
+- A `Bash` command returning output — process it and continue
+- A phase completing successfully — update `state.json` and proceed to the next phase
+
+If you find yourself ending a response after a tool returns and you are not in DONE/BLOCKED/human-checkpoint state, you are violating this rule.
+
 ## State Transition Checkpoints
 
 For BUILD/QA split features, MANAGER must emit explicit workflow checkpoints in `state.json` during command execution.
@@ -180,48 +198,6 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 
 ---
 
-### Helper: Stop RADAR
-
-Use this command at any exit point (kill verdict, error, completion):
-
-```bash
-[ -f .specify/squad/radar.pid ] && kill $(cat .specify/squad/radar.pid) 2>/dev/null; rm -f .specify/squad/radar.pid
-```
-
----
-
-### RADAR Emitter Pattern
-
-For every agent dispatch, wrap the Agent tool call with emitter calls.
-
-**Setup (at start of run):**
-
-```bash
-RADAR_EXT=".specify/extensions/echelon"
-```
-
-**Before dispatching:**
-
-```bash
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_dispatched; on_dispatched('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
-```
-
-**After successful completion:**
-
-```bash
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_complete; on_complete('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}', ${ARTIFACTS_LIST})"
-```
-
-**After error/failure:**
-
-```bash
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import on_error; on_error('${run_id}', '${DISPATCH_ID}', '${CODENAME}', '${phase}')"
-```
-
-**Dispatch ID format:** `CODENAME-N` (e.g., SCOUT-1, SAGE-2). Track counter per codename in state.json under `dispatch_counters`.
-
----
-
 ## 0. MANAGER Reflection Protocol (Plan Mode)
 
 Before EVERY major phase transition, MANAGER enters a structured reflection:
@@ -267,6 +243,53 @@ It takes 30 seconds and prevents reactive routing. Think before dispatching.
 **After the reflection ends, your ONLY next action is to dispatch the agent named in "Routing decision → Decision". Use the Agent tool. Do NOT continue writing analysis, do NOT produce artifacts inline, do NOT summarize the problem further. Reflection → dispatch. Nothing else.**
 
 ## 1. Initialization (INIT)
+
+### 1.0 Anchor Project Root
+
+Before any file operation, establish and record the absolute project root:
+
+```bash
+PROJECT_ROOT=$(pwd)
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+```
+
+Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
+
+**Validate deploy config:**
+
+```bash
+python3 -c "
+import sys, yaml
+try:
+    c = yaml.safe_load(open('echelon.yml'))
+    d = c.get('deploy', {})
+    deploy_type = d.get('type', 'http')
+    if deploy_type not in ('http', 'cli'):
+        print(f'✗ deploy.type must be http or cli, got: {deploy_type}', file=sys.stderr)
+        sys.exit(1)
+    if deploy_type == 'http':
+        missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
+        if missing:
+            print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
+            print('  HTTP type requires: blue_port, green_port, active_port.', file=sys.stderr)
+            print('  See config-template.yml for reference.', file=sys.stderr)
+            sys.exit(1)
+except FileNotFoundError:
+    print('✗ echelon.yml not found.', file=sys.stderr)
+    sys.exit(1)
+"
+```
+
+If exit code is non-zero, stop immediately — do not proceed with the run.
+
+**Run deploy init (idempotent):**
+
+```bash
+ECHELON_EXT=".specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "echelon.yml"
+```
+
+If exit code is non-zero, report the error and stop.
 
 ### 1.1 Detect Greenfield vs Brownfield
 
@@ -316,6 +339,7 @@ Create `.specify/squad/state.json`:
   "phase": "init",
   "mode": "{greenfield|brownfield}",
   "iteration": 0,
+  "project_root": "{absolute path from PROJECT_ROOT}",
   "spec_id": null,
   "spec_dir": null,
   "constitution_status": "pending",
@@ -339,41 +363,7 @@ Create `.specify/squad/state.json`:
 }
 ```
 
-Note: `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch. `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
-
-### 1.3.1 Start RADAR (if enabled)
-
-Read `radar.enabled` from squad-config.yml (default: true). If enabled:
-
-```bash
-# Extension path (where RADAR lives when installed)
-RADAR_EXT=".specify/extensions/echelon"
-
-# Install RADAR dependencies if needed
-pip install -q -r ${RADAR_EXT}/radar/requirements.txt 2>/dev/null || true
-
-# Read port from config (default 7891)
-RADAR_PORT=$(grep -A2 "^radar:" squad-config.yml 2>/dev/null | grep "port:" | awk '{print $2}' || echo 7891)
-
-# Optional: record SSE events for replay (set radar.record: true in squad-config.yml)
-# Note: -A3 is intentional — config-template.yml has a comment line between
-# "radar:" and "record:", so -A1 would miss it.
-RADAR_RECORD_FLAG=""
-if [ "$(grep -A3 'radar:' squad-config.yml 2>/dev/null | grep 'record:' | awk '{print $2}')" = "true" ]; then
-  RADAR_RECORD_FLAG="--record .specify/squad/radar-recording-${run_id}.jsonl"
-fi
-
-# Start RADAR in background (PYTHONPATH allows python -m radar.server to work)
-PYTHONPATH=${RADAR_EXT} python3 -m radar.server --port ${RADAR_PORT:-7891} \
-  ${RADAR_RECORD_FLAG} \
-  >> .specify/squad/radar.log 2>&1 &
-echo $! > .specify/squad/radar.pid
-
-# Initialize emitter (creates/truncates agent-states files)
-PYTHONPATH=${RADAR_EXT} python3 -c "from radar.emitter import init_run; init_run('${run_id}')"
-```
-
-**Note:** If RADAR fails to start, log a warning but continue the run. The squad executes without live monitoring.
+Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
 ### 1.4 Initialize Staging Reasoning Journal
 
@@ -752,6 +742,17 @@ Use the Agent tool to dispatch a subagent with:
 
 - **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include staging files]. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
 - **description:** "CARTOGRAPHER: spec creation and requirements definition"
+
+#### CARTOGRAPHER Fallback (if CARTOGRAPHER signals BLOCKED on speckit.specify)
+
+If CARTOGRAPHER returns `CARTOGRAPHER BLOCKED — speckit.specify unavailable`:
+
+1. COMMANDER calls `speckit.specify` directly (via Skill tool) with the same feature description CARTOGRAPHER would have used (derive from DISCOVER staging artifacts)
+2. After the Skill returns (success or error):
+   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch CARTOGRAPHER with the spec directory already created (add `spec_dir` to the context pack prompt). Continue to 4.3 immediately — **do not stop**.
+   - **Error:** Set `state.json.status = "blocked"`, set `blocked_reason = "speckit.specify unavailable"`, print the BLOCKED banner, stop.
+
+This is the only case where COMMANDER calls `speckit.specify` directly. Do NOT use this path pre-emptively.
 
 ### 4.3 Post-CARTOGRAPHER
 
@@ -1387,16 +1388,6 @@ Update `state.json`:
   "phase": "done",
   "updated_at": "{ISO-8601}"
 }
-```
-
-### 12.8.1 Stop RADAR
-
-```bash
-# Stop RADAR if running
-if [ -f .specify/squad/radar.pid ]; then
-  kill $(cat .specify/squad/radar.pid) 2>/dev/null || true
-  rm -f .specify/squad/radar.pid
-fi
 ```
 
 ### 12.8 Print Final Summary

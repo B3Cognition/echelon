@@ -41,15 +41,6 @@ execution:
     exploration_budget_per_branch: 10  # 10% per branch — generous creativity budget
 
 # =============================================================================
-# RADAR — Live monitoring on
-# =============================================================================
-
-radar:
-  enabled: true
-  port: 7891
-  record: true                  # Record everything for replay analysis
-
-# =============================================================================
 # ANALYSIS — No token limit, max iterations, full banzai
 # =============================================================================
 
@@ -538,4 +529,14 @@ endocrine:
     cortisol: 0.80                # Moderate — stress shouldn't linger too long
     serotonin: 0.95               # Slowest — baseline calm persists
     oxytocin: 0.92                # Slow — collaboration trust persists
-    norepinephrine: 0.70          # Fast decay — intense focus is exhausting
+    norepinephrine: 0.70
+
+# =============================================================================
+# DEPLOY — test-echelon-refactor local deployment
+# =============================================================================
+
+deploy:
+  type: http             # http (default) | cli — see config-template.yml for full reference
+  blue_port: 3000        # blue slot
+  green_port: 3001       # green slot
+  active_port: 80        # Traefik entry point (http://localhost)

@@ -32,6 +32,23 @@ Instead of writing plan.md from scratch, use spec-kit's planning workflow:
    - Cross-cutting concern analysis (security, observability, performance)
 4. Output: enhanced plan.md (spec-kit structure + squad architecture depth)
 
+## Deferral Classification (MANDATORY for every deferred ADR)
+
+When deferring any decision, ARCHITECT must classify it as one of two categories:
+
+**`deferred-safe`** — Infrastructure, tooling, optimization. Does not affect whether requirements are verified.
+Examples: CI/CD pipeline choice, observability tooling, caching strategy, deployment platform.
+
+**`deferred-risky`** — Testing, validation, error handling, security controls, or anything that means a requirement ships UNVERIFIED.
+Examples: E2E test framework, visual regression testing, input validation, authentication.
+
+**`deferred-risky` deferrals are BLOCKING.** ARCHITECT must immediately escalate to COMMANDER:
+> "ADR-{NNN} defers {decision}. This means requirement(s) {IDs} will have no automated verification. This is `deferred-risky`. Options: (a) accept and record explicitly in state.json with user approval, (b) include it in scope now, (c) remove the requirement. SAGE must be notified."
+
+ARCHITECT does NOT proceed to the next ADR until COMMANDER records the user's decision. There is no "manual testing will cover it" fallback — if a requirement cannot be automatically verified, that is a scope decision requiring explicit user acknowledgement, not an architectural trade-off ARCHITECT can make unilaterally.
+
+---
+
 ## ADR Self-Check Protocol
 
 After completing each ADR draft — and BEFORE proceeding to the next ADR — produce a structured self-check entry and append it to the reasoning journal.
