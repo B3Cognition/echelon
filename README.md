@@ -34,8 +34,11 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 # Run analysis on your project idea
 speckit.echelon.run "Build a photo album app with sharing and tagging"
 
-# Build with quality gates
+# Build with quality gates (agent-driven)
 speckit.echelon.build 001-photo-album
+
+# Build via SOAR codegen pipeline (alternative — see Codegen Integration below)
+speckit.echelon.codegen 001-photo-album
 
 # Verify 100% spec coverage
 speckit.echelon.verify
@@ -212,7 +215,8 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 | Command | Purpose |
 |---------|---------|
 | `speckit.echelon.run` | Start analysis (Phase 1-3) |
-| `speckit.echelon.build` | Execute build phase |
+| `speckit.echelon.build` | Execute build phase (agent-driven) |
+| `speckit.echelon.codegen` | Execute build phase via SOAR codegen pipeline (alternative to build) |
 | `speckit.echelon.verify` | Check 100% spec coverage |
 | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
 | `speckit.echelon.status` | Check progress |
@@ -223,6 +227,52 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 | `speckit.echelon.ground` | Trigger REALIST |
 | `speckit.echelon.feedback` | Post-implementation feedback |
 | `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
+
+## Codegen Integration
+
+`speckit.echelon.codegen` is a first-class alternative to `speckit.echelon.build`. It drives the same Phase A artifacts (`spec.md`, `tasks.md`, `constitution.md`, `research.md`) through the SOAR-powered codegen pipeline with inviolable CQ-ISC quality gates instead of the multi-agent squad.
+
+### Standalone use
+
+```bash
+# After Phase A artifacts are in place
+speckit.echelon.codegen 001-photo-album
+```
+
+This runs `RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER` and writes `.specify/squad/state.json` after every phase transition — the same schema `echelon.build` uses, so all status commands work unchanged.
+
+### Parallel strategy run (with echelon-harness)
+
+On the first `echelon.codegen` run, a strategy file is auto-registered at `.specify/harness/strategies/001-photo-album/codegen.md`. No manual setup required. Once registered, run both build strategies in parallel:
+
+```bash
+run spec 001-photo-album strategies=default,codegen kill_losers
+```
+
+`kill_losers=true` cancels the slower strategy the moment the first one converges. Omit it to let both run to completion for comparison.
+
+### Requirements
+
+Requires the `codegen` spec-kit extension (SOAR 9.6.4+, codegen CLI). Install via:
+
+```bash
+specify extension add codegen
+```
+
+### Convergence signals
+
+| Condition | `state.json` status |
+|-----------|---------------------|
+| Ψ ≥ 0.70, Tier 1 tests pass | `build_done` |
+| Pipeline in progress | `building` |
+| SOAR impasse (conflict, escalate) | `escalated` |
+| SOAR blocked task | `blocked` |
+
+On impasse, `codegen-impasse.md` is written with the exact conflict. Resume where it left off:
+
+```bash
+speckit.echelon.codegen 001-photo-album --resume
+```
 
 ## Configuration
 
