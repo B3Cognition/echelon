@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.9.0** — 41-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop
+**Version 0.9.0** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop
 
 ## Quick Start
 
@@ -53,41 +53,41 @@ speckit.echelon.feedback 001
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 1: UNDERSTAND                                                      │
-│                                                                          │
-│   [GOLDDIGGER] ──► SCOUT ──► SYNTHESIZER ──►                           │
-│   (brownfield)    (discover)  (fuse)                                   │
-│                                                                          │
-│   ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER                    │
-│      (why1)   (what)         (why2)    (assess)                        │
-│                                                                          │
-│   + Specialists: INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCATE    │
+│ PHASE 1: UNDERSTAND                                                     │
+│                                                                         │
+│   [GOLDDIGGER] ──► SCOUT ──► SYNTHESIZER ──►                            │
+│   (brownfield)    (discover)  (fuse)                                    │
+│                                                                         │
+│   ──► SAGE ──► CARTOGRAPHER ──► SAGE ──► GATEKEEPER                     │
+│      (why1)   (what)         (why2)    (assess)                         │
+│                                                                         │
+│   + Specialists: INVESTIGATOR, GUARDIAN, ORACLE, BENCHMARK, ADVOCAT     │
 │   Output: spec.md, feasibility.md, estimates.md, priorities.md          │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 2: DECIDE                                                          │
-│                                                                          │
-│   CHECKPOINT: Internalize spec — every agent proves comprehension        │
+│ PHASE 2: DECIDE                                                         │
+│                                                                         │
+│   CHECKPOINT: Internalize spec — every agent proves comprehension       │
 │   Decision: PASS (continue) / KILL (stop) / DEFER (reduce scope)        │
 │   STRATEGIST: Alignment analysis and advisory                           │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 3: SOLUTION                                                        │
-│                                                                          │
+│ PHASE 3: SOLUTION                                                       │
+│                                                                         │
 │   ARCHITECT ──► Specialists ──► SENTINEL ──► ORCHESTRATOR               │
 │   (how)                         (test)        (plan)                    │
-│                                                                          │
+│                                                                         │
 │   Output: plan.md, data-model.md, contracts/, test-strategy.md, tasks.md│
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ PHASE 4: BUILD (optional)                                                │
-│                                                                          │
+│ PHASE 4: BUILD (optional)                                               │
+│                                                                         │
 │   Per task: IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN    │
 │   Per phase: ENGINEERING MANAGER + INTEGRATOR + VISUAL VALIDATOR        │
 │   Debug: DEBUGGER (root cause analysis on non-obvious failures)         │
@@ -167,7 +167,7 @@ File: agents/exploration/scout.md
 | **ORACLE** | DOMAIN-EXPERT | Domain-specific knowledge |
 | **MAVERICK** | INNOVATE | Stagnation, need alternatives (uses AutoTRIZ) |
 
-#### Learning Layer (8 agents, cross-cutting)
+#### Learning Layer (9 agents, cross-cutting)
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **AUDITOR** | CALIBRATE | Tracks accuracy, adjusts confidence |
@@ -177,6 +177,7 @@ File: agents/exploration/scout.md
 | **MIRROR** | REFLECT | Extracts patterns and pitfalls |
 | **MONITOR** | METACOGNITION-MONITOR | "Are we still doing the right thing?" |
 | **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge (~/.specify/squad-global/) |
+| **CONSOLIDATOR** | CONSOLIDATE | Transforms episodic experience into generalized schemas across projects |
 | **GLOBAL-MEMORY** | GLOBAL-MEMORY | Manages cross-project pattern persistence |
 
 #### Build Layer (11 agents, Phase 4)
@@ -445,7 +446,7 @@ agents/
 ├── feasibility/       # GATEKEEPER, VALIDATOR
 ├── solution/          # ARCHITECT, ORCHESTRATOR, SENTINEL
 ├── specialists/       # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
-├── learning/          # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, GLOBAL-MEMORY
+├── learning/          # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY
 └── build/             # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
 commands/
