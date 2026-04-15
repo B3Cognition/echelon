@@ -187,6 +187,218 @@ touch .codegen-active
 echo "[ECHELON CODEGEN] State initialized — pipeline_id=${PIPELINE_ID} tasks=${TOTAL_TASKS}"
 ```
 
+## 2. Pipeline Execution (BUILD_LOOP)
+
+### 2.1 SOAR bridge init
+
+```bash
+codegen --verbose gate --phase RE --language auto --files /dev/null \
+  --state-file codegen-state.json 2>&1 \
+  | grep -E "Model A|Model B|soar_model|RuntimeError" | head -5
+```
+
+If the output contains `RuntimeError`:
+
+```bash
+write_state "codegen_re" "escalated" 0 null null
+echo "[ECHELON CODEGEN] HARD STOP: SOAR Model A failed to start."
+echo "  Verify SOAR installation and that CODEGEN_REQUIRE_MODEL_A=1 is set."
+rm -f .codegen-active
+exit 1
+```
+
+Print: `[ECHELON CODEGEN] SOAR Model A active ✓`
+
+### 2.2 RE phase
+
+**Print:** `[ECHELON CODEGEN] Phase RE — Starting...`
+
+```bash
+codegen run \
+  --intent "$(head -3 ${FEATURE_DIR}/spec.md | tr '\n' ' ')" \
+  --wing "$WING" \
+  --state-file codegen-state.json
+```
+
+After RE completes:
+
+```bash
+write_state "codegen_decompose" "building" 0 null null
+echo "[ECHELON CODEGEN] Phase RE — COMPLETE ✓"
+```
+
+### 2.3 DECOMPOSE phase
+
+**Print:** `[ECHELON CODEGEN] Phase DECOMPOSE — Starting...`
+
+DECOMPOSE runs automatically as part of `codegen run`. After DECOMPOSE completes:
+
+```bash
+TOTAL_TASKS=$(jq '(.task_queue.pending | length) + (.task_queue.completed | length)' \
+  codegen-state.json 2>/dev/null || echo $TOTAL_TASKS)
+write_state "codegen_implement" "building" 0 null null
+echo "[ECHELON CODEGEN] Phase DECOMPOSE — COMPLETE ✓ (${TOTAL_TASKS} tasks queued)"
+```
+
+### 2.4 IMPLEMENT phase
+
+**Print:** `[ECHELON CODEGEN] Phase IMPLEMENT — Starting...`
+
+IMPLEMENT runs per-task inside the codegen pipeline. After each task ADVANCE:
+
+```bash
+COMPLETED=$(jq '.task_queue.completed | length' codegen-state.json 2>/dev/null || echo 0)
+NEXT=$(jq -r '.task_queue.pending[0] // "null"' codegen-state.json 2>/dev/null || echo null)
+if [ "$NEXT" = "null" ]; then
+  write_state "codegen_implement" "building" $COMPLETED null null
+else
+  write_state "codegen_implement" "building" $COMPLETED "\"${NEXT}\"" null
+fi
+```
+
+On ESCALATE (codegen gate exit code 2):
+
+```bash
+COMPLETED=$(jq '.task_queue.completed | length' codegen-state.json 2>/dev/null || echo 0)
+write_state "codegen_implement" "escalated" $COMPLETED null null
+echo "[ECHELON CODEGEN] IMPASSE — see codegen-impasse.md for resolution options"
+rm -f .codegen-active
+exit 2
+```
+
+**Print:** `[ECHELON CODEGEN] Phase IMPLEMENT — COMPLETE ✓`
+
+### 2.5 GATE phase (CQ-ISC verification)
+
+**Print:** `[ECHELON CODEGEN] Phase GATE — Running CQ-ISC verification...`
+
+```bash
+codegen gate \
+  --phase GATE \
+  --language auto \
+  --files $(jq -r '.task_queue.completed | join(" ")' codegen-state.json 2>/dev/null || echo ".") \
+  --state-file codegen-state.json
+GATE_EXIT=$?
+COMPLETED=$(jq '.task_queue.completed | length' codegen-state.json 2>/dev/null || echo 0)
+```
+
+- Exit 0 (Ψ ≥ 0.70, zero violations):
+
+```bash
+write_state "codegen_test" "building" $COMPLETED null null
+echo "[ECHELON CODEGEN] Phase GATE — COMPLETE ✓ (Ψ=$(jq -r '.psi.score // "N/A"' codegen-state.json))"
+```
+
+- Exit 1 (RETRY): re-dispatch IMPLEMENT with violation details (max 3 retries). Update state on each retry.
+
+- Exit 2 (ESCALATE):
+
+```bash
+write_state "codegen_gate" "escalated" $COMPLETED null null
+echo "[ECHELON CODEGEN] GATE IMPASSE — see codegen-impasse.md"
+rm -f .codegen-active
+exit 2
+```
+
+### 2.6 TEST phase (Tier 1 gate)
+
+**Print:** `[ECHELON CODEGEN] Phase TEST — Running Tier 1 gate...`
+
+Auto-detect stack and run tests:
+
+```bash
+TEST_EXIT=0
+mkdir -p ./codegen-staging
+
+if [ -f "pyproject.toml" ] || [ -f "setup.py" ]; then
+  pytest --tb=short --json-report --json-report-file=./codegen-staging/test-results.json 2>&1
+  TEST_EXIT=$?
+elif [ -f "package.json" ]; then
+  npx vitest run --reporter=json --outputFile=./codegen-staging/test-results.json 2>&1
+  TEST_EXIT=$?
+elif [ -f "go.mod" ]; then
+  go test ./... -json 2>&1 | tee ./codegen-staging/test-results.json
+  TEST_EXIT=$?
+else
+  echo "[ECHELON CODEGEN] WARNING: No test runner detected — Tier 1 gate unavailable"
+fi
+```
+
+On pass (TEST_EXIT=0):
+
+```bash
+write_state "codegen_deliver" "building" $COMPLETED null null
+echo "[ECHELON CODEGEN] Phase TEST — COMPLETE ✓ (Tier 1 gate PASSED)"
+```
+
+On fail: route back to IMPLEMENT with failing test output. Max 2 retry cycles. If still failing:
+
+```bash
+write_state "codegen_test" "blocked" $COMPLETED null '"FAIL"'
+echo "[ECHELON CODEGEN] Tier 1 gate FAILED — delivery blocked"
+rm -f .codegen-active
+exit 1
+```
+
+---
+
+## 3. BUILD_DONE
+
+### 3.1 DELIVER phase
+
+SOAR selects DELIVER only when Ψ ≥ 0.70 and all Tier 1 tests pass.
+
+```bash
+codegen gate \
+  --phase DELIVER \
+  --language auto \
+  --files $(jq -r '.task_queue.completed | join(" ")' codegen-state.json 2>/dev/null || echo ".") \
+  --state-file codegen-state.json
+
+WALL_CLOCK_END=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+jq --arg end "$WALL_CLOCK_END" '.wall_clock_end = $end' codegen-state.json > /tmp/cg-state.json \
+  && mv /tmp/cg-state.json codegen-state.json
+
+write_state "done" "build_done" $TOTAL_TASKS null '"PASS"'
+rm -f .codegen-active
+```
+
+### 3.2 Print terminal summary
+
+```
+============================================
+  ECHELON CODEGEN BUILD COMPLETE
+============================================
+
+Feature:    ${FEATURE_PATH}
+Wing:       ${WING}
+Pipeline:   ${PIPELINE_ID}
+
+QUALITY GATES (SOAR CQ-ISC):
+  Ψ score:        $(jq -r '.psi.score // "N/A"' codegen-state.json)  (threshold 0.70)
+  CQ-ISC blocks:  $(jq -r '.violations_blocked // 0' codegen-state.json)
+  Tier 1 gate:    $(jq -r '.tier1_gate // "UNAVAILABLE"' codegen-state.json | tr '[:lower:]' '[:upper:]')
+
+TASKS:
+  Total:     ${TOTAL_TASKS}
+  Completed: $(jq -r '.task_queue.completed | length' codegen-state.json)
+
+HARNESS (parallel run available):
+  Strategy file: .specify/harness/strategies/${FEATURE_PATH}/codegen.md
+  To run in parallel:
+    run spec ${FEATURE_PATH} strategies=default,codegen kill_losers
+
+REPORTS:
+  codegen-report.md      (SOAR delivery report)
+  codegen-state.json     (full pipeline audit trail)
+  .specify/squad/state.json  (harness state)
+
+HUMAN ACTIONS REQUIRED:
+  None — build completed autonomously.
+
+============================================
+```
+
 ---
 
 ## 4. Resume Mode
