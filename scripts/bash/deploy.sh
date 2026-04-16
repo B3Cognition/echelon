@@ -243,6 +243,8 @@ docker run -d \
   --label "traefik.enable=true" \
   --label "traefik.http.routers.${APP}.rule=PathPrefix(\`/${APP}\`)" \
   --label "traefik.http.routers.${APP}.entrypoints=web" \
+  --label "traefik.http.routers.${APP}.middlewares=${APP}-strip" \
+  --label "traefik.http.middlewares.${APP}-strip.stripprefix.prefixes=/${APP}" \
   --label "traefik.http.services.${APP}.loadbalancer.server.port=80" \
   -p "${INACTIVE_PORT}:80" \
   "${APP}:candidate"
