@@ -69,9 +69,18 @@ provides:
         effort: high
         tools: full
 
+    - name: "speckit.echelon.init"
+      file: "commands/echelon.init.md"
+      description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik/git hook. Run once per project before speckit.echelon.run."
+      behavior:
+        execution: isolated
+        invocation: explicit
+        capability: balanced
+        tools: write
+
     - name: "speckit.echelon.run"
       file: "commands/echelon.run.md"
-      description: "Full autonomous cognitive squad run"
+      description: "Full autonomous cognitive squad run — requires speckit.echelon.init first"
     - name: "speckit.echelon.build"
       file: "commands/echelon.build.md"
       description: "Execute the building phase — implement tasks with role-based agents"

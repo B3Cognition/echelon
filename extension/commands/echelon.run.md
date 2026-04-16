@@ -290,41 +290,19 @@ if [ ! -f echelon.yml ]; then
 fi
 ```
 
-**Validate deploy config:**
+**Guard: deploy infrastructure must be initialized:**
 
 ```bash
-python3 -c "
-import sys, yaml
-try:
-    c = yaml.safe_load(open('echelon.yml'))
-    d = c.get('deploy', {})
-    deploy_type = d.get('type', 'http')
-    if deploy_type not in ('http', 'cli'):
-        print(f'✗ deploy.type must be http or cli, got: {deploy_type}', file=sys.stderr)
-        sys.exit(1)
-    if deploy_type == 'http':
-        missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
-        if missing:
-            print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
-            print('  HTTP type requires: blue_port, green_port, active_port.', file=sys.stderr)
-            print('  See config-template.yml for reference.', file=sys.stderr)
-            sys.exit(1)
-except FileNotFoundError:
-    print('✗ echelon.yml not found.', file=sys.stderr)
-    sys.exit(1)
-"
+ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
 ```
 
-If exit code is non-zero, stop immediately — do not proceed with the run.
+If exit code is non-zero, HARD STOP:
 
-**Run deploy init (idempotent):**
-
-```bash
-ECHELON_EXT=".specify/extensions/echelon"
-bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "echelon.yml"
 ```
-
-If exit code is non-zero, report the error and stop.
+✗ Deploy infrastructure not initialized.
+  Run speckit.echelon.init first, then re-run speckit.echelon.run.
+```
 
 ### 1.1 Detect Greenfield vs Brownfield
 

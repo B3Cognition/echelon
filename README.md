@@ -37,6 +37,9 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 ### Usage
 
 ```bash
+# Initialize deploy infrastructure (once per project)
+speckit.echelon.init
+
 # Run analysis on your project idea
 speckit.echelon.run "Build a photo album app with sharing and tagging"
 
@@ -219,6 +222,7 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 | Command | Purpose |
 |---------|---------|
+| `speckit.echelon.init` | One-time project setup — deploy infra, git hook (run first) |
 | `speckit.echelon.run` | Start analysis (Phase 1-3) |
 | `speckit.echelon.build` | Execute build phase (agent-driven) |
 | `speckit.echelon.codegen` | Execute build phase via SOAR codegen pipeline (alternative to build) |
@@ -330,7 +334,7 @@ COPY dist/ /usr/share/nginx/html/
 EXPOSE 80
 ```
 
-**What happens on first `echelon.run`:**
+**What happens on `echelon.init`:**
 - Docker network `speckit-deploy` created (shared across all apps on this machine)
 - `speckit-traefik` container started (one per machine, auto-discovers apps via Docker labels)
 - `.git/hooks/post-merge` installed
@@ -369,7 +373,7 @@ RUN pip install -e .
 ENTRYPOINT ["myapp"]
 ```
 
-**What happens on first `echelon.run`:**
+**What happens on `echelon.init`:**
 - `.git/hooks/post-merge` installed
 - Wrapper script installed to `install_path/myapp` (if `install_path` set)
 
