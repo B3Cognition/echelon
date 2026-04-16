@@ -64,7 +64,7 @@ provides:
       description: "Standalone SOAR-powered build pipeline — RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER"
       behavior:
         execution: isolated
-        invocation: explicit
+        invocation: automatic
         capability: strong
         effort: high
         tools: full
@@ -116,7 +116,7 @@ provides:
       description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build"
       behavior:
         execution: isolated
-        invocation: explicit
+        invocation: automatic
         capability: strong
         effort: high
         tools: full
