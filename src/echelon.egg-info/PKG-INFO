@@ -209,9 +209,8 @@ File: agents/exploration/scout.md
 | **REALIST** | GROUND | Reality-checks estimates with real-world data |
 | **MIRROR** | REFLECT | Extracts patterns and pitfalls |
 | **MONITOR** | METACOGNITION-MONITOR | "Are we still doing the right thing?" |
-| **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge (~/.specify/squad-global/) |
+| **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge — promotes validated patterns to ~/.specify/squad-global/ |
 | **CONSOLIDATOR** | CONSOLIDATE | Transforms episodic experience into generalized schemas across projects |
-| **GLOBAL-MEMORY** | GLOBAL-MEMORY | Manages cross-project pattern persistence |
 
 #### Build Layer (11 agents, Phase 4)
 | Agent | Purpose |
@@ -527,7 +526,7 @@ extension/
 │   ├── feasibility/     # GATEKEEPER, VALIDATOR
 │   ├── solution/        # ARCHITECT, ORCHESTRATOR, SENTINEL
 │   ├── specialists/     # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
-│   ├── learning/        # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY
+│   ├── learning/        # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR
 │   └── build/           # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
 │                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
 └── commands/
@@ -583,7 +582,7 @@ Each layer has a distinct color in the Claude Code UI task list:
 | Solution | `purple` | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | `cyan` | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
 | Build | `red` | IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, ENGINEERING MANAGER, INTEGRATOR, PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
-| Learning | `yellow` | AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY |
+| Learning | `yellow` | AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR |
 
 The `understanding` extension commands also use `green` — they are invoked by SAGE during the exploration phase (WHY2/WHY3).
 
