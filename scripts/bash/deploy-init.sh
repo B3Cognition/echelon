@@ -232,13 +232,15 @@ if [ "${TRAEFIK_STATUS}" = "running" ]; then
   echo "deploy: Traefik already running — no restart needed (new apps auto-discovered via labels)"
 elif [ "${TRAEFIK_STATUS}" = "missing" ]; then
   echo "deploy: starting speckit-traefik (single shared instance at :80)..."
+  # Resolve the real Docker socket path (macOS Docker Desktop uses a symlink)
+  _DOCKER_SOCK=$(realpath /var/run/docker.sock 2>/dev/null || echo /var/run/docker.sock)
   docker run -d \
     --name speckit-traefik \
     --network speckit-deploy \
-    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    -v "${_DOCKER_SOCK}:/var/run/docker.sock:ro" \
     -p 80:80 \
     --restart unless-stopped \
-    traefik:v3 \
+    traefik:latest \
       --providers.docker=true \
       --providers.docker.network=speckit-deploy \
       --entrypoints.web.address=:80
