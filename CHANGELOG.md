@@ -6,13 +6,24 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- `codegen` CLI absorbed into echelon (`src/codegen/`) — SOAR-powered build pipeline now bundled
+- `understanding` CLI absorbed into echelon (`src/understanding/`) — 31-metric requirements quality analysis now bundled
+- `scripts/install.sh` — single installer: downloads SOAR 9.6.4, creates `~/.echelon/venv/`, installs both CLIs
+- `INSTALLATION.md` — prerequisites, verify, upgrade, uninstall instructions
+- 5 `b3c.understanding.*` commands added to extension (`scan`, `validate`, `energy`, `diagram`, `batch`)
+- `before_plan` hook: `b3c.understanding.scan` (runs quality scan before planning)
+- Single extension registration: `specify extension add --dev ~/echelon/extension`
+
+### Changed
+
+- Extension moved from root to `extension/` subfolder (`agents/`, `commands/`, `extension.yml`)
+- Runtime state directory: `~/.codegen/` → `~/.echelon/` (memory, SOAR binary, venv, config)
+- `extension.yml`: external `understanding` tool requirement replaced with bundled note; SOAR requirement added
+- `pyproject.toml` added — unified package with `codegen` and `understanding` entry points
 - Understanding v3.6 integration: Depth quality gate (>= 0.30) in config-template and SAGE
 - v0.4.0 BUILD/QA split workflow artifacts under `specs/002-build-qa-phase-split/`
 - Deterministic BUILD light-gate evaluator and US1/US2/US3 test harnesses
 - Split-phase state schema fields and rework telemetry checkpoints
-
-### Changed
-
 - SAGE references updated from 31 to 34 metrics (Understanding v3.6 adds Depth category)
 - run-understanding.sh fixed: added missing `scan` subcommand
 - Build command guidance now includes dependency-safe lane execution and QA handoff policy

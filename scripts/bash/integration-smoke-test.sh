@@ -240,9 +240,9 @@ fi
 
 # Check key echelon skills deployed (skills are dirs with SKILL.md inside)
 KEY_SKILLS=(
-  "speckit-echelon-run"
-  "speckit-echelon-build"
-  "speckit-echelon-status"
+  "b3c-echelon-run"
+  "b3c-echelon-build"
+  "b3c-echelon-status"
 )
 for skill in "${KEY_SKILLS[@]}"; do
   if [[ -f "$SKILL_DIR/${skill}/SKILL.md" ]]; then
@@ -254,13 +254,13 @@ done
 
 # Check key echelon agents are present
 KEY_AGENTS=(
-  "speckit-echelon-commander"
-  "speckit-echelon-scout"
-  "speckit-echelon-sage"
-  "speckit-echelon-cartographer"
-  "speckit-echelon-gatekeeper"
-  "speckit-echelon-architect"
-  "speckit-echelon-implementer"
+  "b3c-echelon-commander"
+  "b3c-echelon-scout"
+  "b3c-echelon-sage"
+  "b3c-echelon-cartographer"
+  "b3c-echelon-gatekeeper"
+  "b3c-echelon-architect"
+  "b3c-echelon-implementer"
 )
 
 for agent in "${KEY_AGENTS[@]}"; do
@@ -279,8 +279,8 @@ for agent in "${KEY_AGENTS[@]}"; do
 done
 
 # Check PROSPECTOR is NOT deployed (was removed)
-if [[ -f "$AGENT_DIR/speckit-echelon-prospector.md" ]]; then
-  red "speckit-echelon-prospector.md still deployed — should have been removed"
+if [[ -f "$AGENT_DIR/b3c-echelon-prospector.md" ]]; then
+  red "b3c-echelon-prospector.md still deployed — should have been removed"
 else
   green "PROSPECTOR correctly absent from deployed agents"
 fi

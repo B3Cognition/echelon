@@ -527,7 +527,7 @@ git commit -m "feat(deploy): add deploy-status.sh — slot health display"
 ```bash
 cat > commands/echelon.deploy.md << 'CMD'
 ---
-name: speckit.echelon.deploy
+name: b3c.echelon.deploy
 description: "Manual deploy trigger, status, and rollback for blue/green local CD"
 behavior:
   invocation: explicit
@@ -648,7 +648,7 @@ git commit -m "feat(deploy): add echelon.deploy.md command — status, manual de
 In `extension.yml`, under `provides: commands:`, add after the last existing command entry (before the `# ── Agent Definitions ──` comment):
 
 ```yaml
-    - name: "speckit.echelon.deploy"
+    - name: "b3c.echelon.deploy"
       file: "commands/echelon.deploy.md"
       description: "Manual deploy trigger, status, and rollback for blue/green local CD"
       behavior:
@@ -670,7 +670,7 @@ Expected: `YAML valid`
 
 ```bash
 git add extension.yml
-git commit -m "feat(deploy): register speckit.echelon.deploy in extension.yml"
+git commit -m "feat(deploy): register b3c.echelon.deploy in extension.yml"
 ```
 
 ---

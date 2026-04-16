@@ -1,0 +1,97 @@
+# react_hooks.yaml — React Hooks Rule Pack
+# Spec 018 Wave 1 F2 T-008
+# Pack ID: react-hooks
+# Pack Version: 1.0.0
+
+pack_id: react-hooks
+pack_version: "1.0.0"
+pack_name: React Hooks
+description: >
+  Rules enforcing correct React Hooks usage, dependency management, and component patterns.
+
+entries:
+
+  - cq_isc_id: CQ-ISC-REACT-001
+    rule_text: "React hooks must follow the Rules of Hooks. Hooks must only be called at the top level of React function components or custom hooks, never inside loops, conditions, or nested functions."
+    rule_content_hash: "a0cfeb8db1823a3150b00704849d075d6450b0ce106683eb273fadd5c5aa7d11"
+    constraint_class: STRUCTURAL
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: REACT_HOOKS_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |react-hooks-rules-violation| ^count > 0)"
+    wme_source: "eslint"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      Violating Rules of Hooks causes unpredictable component behavior and hard-to-debug errors.
+      Detection: eslint-plugin-react-hooks rules-of-hooks rule.
+
+  - cq_isc_id: CQ-ISC-REACT-002
+    rule_text: "useEffect dependency arrays must be complete and accurate. All reactive values used inside useEffect must be listed as dependencies."
+    rule_content_hash: "3943a3db377ae14bbaf7227eaabd6319d2b7a257da67c5e790dbe39ca6540af0"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: REACT_HOOKS_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |react-exhaustive-deps| ^count > 0)"
+    wme_source: "eslint"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Missing dependencies cause stale closures and incorrect effect behavior.
+      Detection: eslint-plugin-react-hooks exhaustive-deps rule.
+
+  - cq_isc_id: CQ-ISC-REACT-003
+    rule_text: "React components must not directly mutate state. Always use the setState function or dispatch action to trigger re-renders."
+    rule_content_hash: "d0d1fb58c4c3bfbb89c7555ae565489c714a920b99e96b4f933a634ab245868e"
+    constraint_class: STRUCTURAL
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: REACT_HOOKS_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |react-direct-state-mutation| ^count > 0)"
+    wme_source: "eslint"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Direct state mutation bypasses React's reconciliation and causes missed re-renders.
+      Detection: no-direct-mutation-state rule, custom AST analysis.
+
+  - cq_isc_id: CQ-ISC-REACT-004
+    rule_text: "Keys in React list renders must be stable, unique identifiers. Array indices must not be used as keys when list items can be reordered or filtered."
+    rule_content_hash: "96a69262e6e4d739c3b86de923443bc3a80cc46db3d92145cba135f906fc5856"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: REACT_HOOKS_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |react-key-index-usage| ^count > 0)"
+    wme_source: "eslint"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Using array indices as keys causes incorrect component reuse and state bugs.
+      Detection: react/no-array-index-key eslint rule.
+
+  - cq_isc_id: CQ-ISC-REACT-005
+    rule_text: "React components must not call hooks conditionally. Hook calls must be unconditional and appear before any early returns."
+    rule_content_hash: "45a16ff6a6bbdd14e285c38f90f614ac1612476f9c6acf7da72ca71540b89e8d"
+    constraint_class: STRUCTURAL
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: REACT_HOOKS_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |react-conditional-hook| ^count > 0)"
+    wme_source: "eslint"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      Conditional hooks violate the Rules of Hooks and cause inconsistent hook call order.
+      Detection: eslint-plugin-react-hooks rules-of-hooks rule.

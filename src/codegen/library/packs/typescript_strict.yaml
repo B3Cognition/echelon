@@ -1,0 +1,97 @@
+# typescript_strict.yaml — TypeScript Strict Mode Rule Pack
+# Spec 018 Wave 1 F2 T-008
+# Pack ID: typescript-strict
+# Pack Version: 1.0.0
+
+pack_id: typescript-strict
+pack_version: "1.0.0"
+pack_name: TypeScript Strict Mode
+description: >
+  Rules enforcing TypeScript strict mode, explicit typing, and type safety best practices.
+
+entries:
+
+  - cq_isc_id: CQ-ISC-TS-001
+    rule_text: "TypeScript strict mode must be enabled in tsconfig.json. The strict flag must be true, enabling strictNullChecks, noImplicitAny, strictFunctionTypes, and strictPropertyInitialization."
+    rule_content_hash: "336f2b623cfaf1d2f05b50b912089a5c0d65362001e81375127755204227e6c4"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: TYPESCRIPT_STRICT_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |ts-strict-disabled| ^count > 0)"
+    wme_source: "tsc,eslint"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      TypeScript strict mode prevents entire classes of runtime errors at compile time.
+      Detection: tsc --strict, eslint @typescript-eslint/strict config.
+
+  - cq_isc_id: CQ-ISC-TS-002
+    rule_text: "No use of type any in TypeScript source files. All variables, parameters, and return types must have explicit type annotations or inferrable types."
+    rule_content_hash: "1ee32d15036aa439698657befdefbd7a62d9ce8c081912c4bf3438c39220a50f"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: TYPESCRIPT_STRICT_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |ts-any-usage| ^count > 0)"
+    wme_source: "eslint,tsc"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Using 'any' defeats the purpose of TypeScript's type system.
+      Detection: @typescript-eslint/no-explicit-any rule.
+
+  - cq_isc_id: CQ-ISC-TS-003
+    rule_text: "No non-null assertion operator (!) usage unless explicitly justified with a comment. Use optional chaining or null checks instead."
+    rule_content_hash: "722632792be6458d1a318ac82b291549f92e3c86e07856f214c1bf1863cff432"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: TYPESCRIPT_STRICT_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |ts-non-null-assertion| ^count > 0)"
+    wme_source: "eslint"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Non-null assertions can cause runtime errors when assumptions are wrong.
+      Detection: @typescript-eslint/no-non-null-assertion rule.
+
+  - cq_isc_id: CQ-ISC-TS-004
+    rule_text: "TypeScript enums must not use const enum for cross-module use. Use union types or plain enum to avoid bundler compatibility issues."
+    rule_content_hash: "f5a69cdb239e165e6444dffbb04b111d2ca1960d01e89811d419d7c5e43beba2"
+    constraint_class: STRUCTURAL
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: TYPESCRIPT_STRICT_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |ts-const-enum-cross-module| ^count > 0)"
+    wme_source: "eslint,tsc"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      const enums are inlined at compile time and can break with bundlers like esbuild.
+      Detection: @typescript-eslint/prefer-enum-initializers, custom rule.
+
+  - cq_isc_id: CQ-ISC-TS-005
+    rule_text: "All public class members and function parameters in TypeScript must have explicit type annotations. Implicit any is forbidden."
+    rule_content_hash: "c2eb072ed1929019269910f53e652f2be5f7b445cc9084162304431002c6c477"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: typescript
+    source_authority: TYPESCRIPT_STRICT_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |ts-implicit-any-member| ^count > 0)"
+    wme_source: "tsc,eslint"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Explicit annotations on public APIs ensure type contract clarity.
+      Detection: tsc with noImplicitAny, @typescript-eslint/explicit-member-accessibility.

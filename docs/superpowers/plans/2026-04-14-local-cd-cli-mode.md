@@ -810,7 +810,7 @@ Write the following content to `commands/echelon.deploy.md`:
 
 ```markdown
 ---
-name: speckit.echelon.deploy
+name: b3c.echelon.deploy
 description: "Manual deploy trigger, status, and rollback for blue/green and CLI local CD"
 behavior:
   invocation: explicit
@@ -1032,10 +1032,10 @@ git commit -m "feat(deploy): type-aware deploy config validation in echelon.run.
 
 - [ ] **Step 1: Add the deploy command row to the Commands table**
 
-Find the Commands table (line ~209). Add a row for `speckit.echelon.deploy` after `speckit.echelon.feedback`:
+Find the Commands table (line ~209). Add a row for `b3c.echelon.deploy` after `b3c.echelon.feedback`:
 
 ```markdown
-| `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
+| `b3c.echelon.deploy` | Trigger deploy, check status, or rollback |
 ```
 
 - [ ] **Step 2: Insert the "Local CD" section**
@@ -1083,7 +1083,7 @@ EXPOSE 80
 4. On success: stop old slot, tag image, update state
 5. On failure: stop new slot, old slot unchanged (automatic rollback)
 
-**Rollback:** `speckit.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
+**Rollback:** `b3c.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
 
 ---
 
@@ -1129,7 +1129,7 @@ myapp --help
 docker run --rm myapp:blue --help
 ```
 
-**Rollback:** `speckit.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
+**Rollback:** `b3c.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
 
 ---
 
@@ -1137,9 +1137,9 @@ docker run --rm myapp:blue --help
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
-| `speckit.echelon.deploy status` | Show active slot, image, ports, last deploy time |
-| `speckit.echelon.deploy rollback` | Roll back to the previous slot |
+| `b3c.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
+| `b3c.echelon.deploy status` | Show active slot, image, ports, last deploy time |
+| `b3c.echelon.deploy rollback` | Roll back to the previous slot |
 
 Deploy state lives in two locations (kept in sync on every deploy and rollback):
 - `.specify/squad/deploy-state.json` — project-local copy

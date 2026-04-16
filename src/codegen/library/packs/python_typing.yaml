@@ -1,0 +1,97 @@
+# python_typing.yaml — Python Type Annotation Rule Pack
+# Spec 018 Wave 1 F2 T-008
+# Pack ID: python-typing
+# Pack Version: 1.0.0
+
+pack_id: python-typing
+pack_version: "1.0.0"
+pack_name: Python Typing
+description: >
+  Rules enforcing Python type annotations, mypy compliance, and typed data structures.
+
+entries:
+
+  - cq_isc_id: CQ-ISC-PY-001
+    rule_text: "Python functions and methods must have complete type annotations. All parameters and return types must be annotated using the typing module or built-in types."
+    rule_content_hash: "2960a46759b1180034cc6f81da591468af0f3e0fa8491cd91b38a9f2ebe86fec"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: python
+    source_authority: PYTHON_TYPING_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |py-missing-annotations| ^count > 0)"
+    wme_source: "mypy,ruff"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Complete type annotations enable static analysis and improve code maintainability.
+      Detection: mypy --strict, ruff ANN rules.
+
+  - cq_isc_id: CQ-ISC-PY-002
+    rule_text: "Python code must pass mypy type checking in strict mode. No implicit any types allowed and all type errors must be resolved."
+    rule_content_hash: "ece4c23cd07b33a3d71c1a86c647136117b6da443e119d6aa467247f22b7f148"
+    constraint_class: QUALITY
+    phase_scope: VERIFY
+    language_scope: python
+    source_authority: PYTHON_TYPING_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |py-mypy-strict-failure| ^count > 0)"
+    wme_source: "mypy"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      mypy strict mode catches type errors that would otherwise only surface at runtime.
+      Detection: mypy --strict CI integration.
+
+  - cq_isc_id: CQ-ISC-PY-003
+    rule_text: "Python TypedDict or dataclass with field annotations must be used for structured data instead of plain untyped dicts."
+    rule_content_hash: "660aa902500b7d45785f875992d069b33c2d99f83bf39b4c411d9fda10ba66d3"
+    constraint_class: STRUCTURAL
+    phase_scope: ALL
+    language_scope: python
+    source_authority: PYTHON_TYPING_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |py-untyped-dict-structure| ^count > 0)"
+    wme_source: "mypy,ruff"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      TypedDict and dataclasses provide compile-time validation for structured data.
+      Detection: mypy type narrowing, custom AST inspection.
+
+  - cq_isc_id: CQ-ISC-PY-004
+    rule_text: "Python Optional types must be explicitly declared using Optional[X] or X | None syntax. Functions returning None must declare return type as None or Optional."
+    rule_content_hash: "7eeb44a50aee15354eb2c2b4484adf6f7e6bd605133b6a6455dbc2ffe5f824db"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: python
+    source_authority: PYTHON_TYPING_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |py-implicit-optional| ^count > 0)"
+    wme_source: "mypy,ruff"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Implicit Optional types obscure function contracts and lead to AttributeError at runtime.
+      Detection: mypy implicit-optional check, ruff UP007.
+
+  - cq_isc_id: CQ-ISC-PY-005
+    rule_text: "Python Generic type variables must be used instead of Any when writing reusable container types or utility functions."
+    rule_content_hash: "848e1b240274ad87eaa9ad6961e9ce3cf2a2f51b7fec7d85265c97c4a5ab3c9e"
+    constraint_class: QUALITY
+    phase_scope: ALL
+    language_scope: python
+    source_authority: PYTHON_TYPING_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |py-any-instead-of-generic| ^count > 0)"
+    wme_source: "mypy"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Generic types preserve type information through function boundaries unlike Any.
+      Detection: mypy type narrowing analysis, manual review.

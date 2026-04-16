@@ -1,0 +1,343 @@
+##
+## phases.soar — Phase gate production rules for /codegen pipeline
+## Spec 008: SOAR-Powered Claude Code Software Development Agent
+## Version: 1.0.0
+##
+## INV-001: chunk never inherited from codegen.soar (sourced by parent)
+## INV-005: (build ^current-phase <phase>) MUST be FIRST LHS condition on every rule.
+##
+## Six phases: RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER
+##
+
+##
+## RE Phase Rules
+## Reverse Engineering (brownfield) or Domain Research (greenfield)
+##
+
+sp {codegen*phase*RE*propose-complete
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase RE
+       ^re-status complete
+       ^re-id-estimate <ide>)
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name phase-RE-complete
+       ^id-estimate <ide>)
+  (write (crlf) |[SOAR] RE phase ready to advance — |I_D| estimate: | <ide>)
+}
+
+sp {codegen*phase*RE*apply-complete
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name phase-RE-complete
+       ^id-estimate <ide>)
+  (<s> ^build <b>)
+  -->
+  (<b> ^re-status complete -
+       ^re-status accepted
+       ^psi-denominator <ide>)
+  (write (crlf) |[SOAR] RE phase ACCEPTED — Ψ denominator set to | <ide>)
+}
+
+sp {codegen*phase*RE*prohibit-advance-without-complete
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase RE
+       -^re-status complete)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: RE phase not yet complete|)
+}
+
+sp {codegen*phase*RE*prohibit-advance-low-confidence-unconfirmed
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase RE
+       ^re-confidence low
+       ^re-human-confirm pending)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: |I_D| confidence LOW — awaiting human confirmation|)
+}
+
+##
+## DECOMPOSE Phase Rules
+##
+
+sp {codegen*phase*DECOMPOSE*propose-complete
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase DECOMPOSE
+       ^task-queue-populated true
+       ^task-count <tc>)
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name phase-DECOMPOSE-complete
+       ^task-count <tc>)
+  (write (crlf) |[SOAR] DECOMPOSE phase ready — | <tc> | tasks queued|)
+}
+
+sp {codegen*phase*DECOMPOSE*apply-complete
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name phase-DECOMPOSE-complete
+       ^task-count <tc>)
+  (<s> ^build <b>)
+  -->
+  (<b> ^decompose-status accepted)
+  (write (crlf) |[SOAR] DECOMPOSE phase ACCEPTED — task queue initialized|)
+}
+
+sp {codegen*phase*DECOMPOSE*prohibit-advance-without-tasks
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase DECOMPOSE
+       -^task-queue-populated true)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: DECOMPOSE task queue not populated|)
+}
+
+##
+## IMPLEMENT Phase Rules
+##
+
+sp {codegen*phase*IMPLEMENT*propose-dispatch
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase IMPLEMENT
+       ^pipeline-status active
+       ^task <t>)
+  (<t> ^status PENDING
+       ^task-id <tid>
+       ^language <lang>)
+  -->
+  (<s> ^operator <o> + >)
+  (<o> ^name dispatch-implementer
+       ^task-id <tid>
+       ^language <lang>)
+}
+
+sp {codegen*phase*IMPLEMENT*apply-dispatch
+  (state <s> ^name codegen
+             ^operator <o>
+             ^build <b>)
+  (<o> ^name dispatch-implementer
+       ^task-id <tid>)
+  (<b> ^task <t>)
+  (<t> ^task-id <tid>
+       ^status PENDING)
+  -->
+  (<t> ^status PENDING -
+       ^status IN_PROGRESS)
+  (write (crlf) |[SOAR] Dispatching IMPLEMENTER for task: | <tid>)
+}
+
+sp {codegen*phase*IMPLEMENT*prohibit-advance-while-tasks-pending
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase IMPLEMENT
+       ^pipeline-status active
+       ^task <t>)
+  (<t> ^status PENDING)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: tasks still PENDING in IMPLEMENT phase|)
+}
+
+sp {codegen*phase*IMPLEMENT*prohibit-advance-while-tasks-in-progress
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase IMPLEMENT
+       ^pipeline-status active
+       ^task <t>)
+  (<t> ^status IN_PROGRESS)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: tasks still IN_PROGRESS in IMPLEMENT phase|)
+}
+
+##
+## GATE Phase Rules
+## CQ-ISC prohibit preferences are primary enforcement (INV-002).
+## Per-entry prohibit rules generated dynamically from SMEM library.
+##
+
+sp {codegen*phase*GATE*propose-full-scan
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase GATE
+       ^gate-scan-status pending)
+  -->
+  (<s> ^operator <o> + >)
+  (<o> ^name run-cq-isc-gate-scan)
+}
+
+sp {codegen*phase*GATE*apply-full-scan-initiated
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name run-cq-isc-gate-scan)
+  (<s> ^build <b>)
+  -->
+  (<b> ^gate-scan-status running)
+  (write (crlf) |[SOAR] CQ-ISC gate scan initiated over all generated files|)
+}
+
+sp {codegen*phase*GATE*prohibit-advance-while-scan-running
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase GATE
+       ^gate-scan-status running)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: CQ-ISC gate scan in progress|)
+}
+
+sp {codegen*phase*GATE*prohibit-advance-on-violation
+  (state <s> ^name codegen
+             ^build <b>
+             ^code-violation <v>)
+  (<b> ^current-phase GATE
+       ^gate-scan-status complete)
+  (<v> ^status confirmed-failing
+       ^cq-isc-id <id>)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: CQ-ISC violation confirmed-failing — | <id>)
+}
+
+sp {codegen*phase*GATE*propose-advance-on-clean
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase |GATE|
+       ^gate-scan-status |complete|
+       ^psi-score {<psi> >= <thresh>}
+       ^psi-threshold <thresh>)
+  -{(<s> ^code-violation <v>)
+    (<v> ^status |confirmed-failing|)}
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name advance-phase
+       ^from-phase GATE)
+  (write (crlf) |[SOAR] GATE phase CLEAN — Ψ=| <psi> | >= threshold | <thresh>)
+}
+
+##
+## TEST Phase Rules (Tier 1 gate — INV-010 blocking for delivery)
+##
+
+sp {codegen*phase*TEST*propose-run-tier1
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase TEST
+       ^tier1-gate pending)
+  -->
+  (<s> ^operator <o> + >)
+  (<o> ^name run-tier1-gate)
+}
+
+sp {codegen*phase*TEST*apply-run-tier1
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name run-tier1-gate)
+  (<s> ^build <b>)
+  -->
+  (<b> ^tier1-gate running)
+  (write (crlf) |[SOAR] Tier 1 gate: executing unit test suite|)
+}
+
+sp {codegen*phase*TEST*prohibit-advance-while-tests-running
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase TEST
+       ^tier1-gate running)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: Tier 1 tests running|)
+}
+
+sp {codegen*phase*TEST*prohibit-advance-on-fail
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase TEST
+       ^tier1-gate fail)
+  (<s> ^operator <o> +)
+  (<o> ^name advance-phase)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT advance-phase: Tier 1 gate FAILED (INV-010)|)
+}
+
+sp {codegen*phase*TEST*propose-advance-on-pass
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase TEST
+       ^tier1-gate pass)
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name advance-phase
+       ^from-phase TEST)
+  (write (crlf) |[SOAR] TEST phase: Tier 1 gate PASSED|)
+}
+
+##
+## DELIVER Phase Rules
+## Final delivery: all gates passed, Ψ above threshold, zero violations.
+##
+
+sp {codegen*phase*DELIVER*prohibit-on-violations
+  (state <s> ^name codegen
+             ^build <b>
+             ^code-violation <v>)
+  (<b> ^current-phase DELIVER
+       ^tier1-gate pass)
+  (<v> ^status confirmed-failing
+       ^cq-isc-id <id>)
+  (<s> ^operator <o> +)
+  (<o> ^name deliver)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT deliver: outstanding CQ-ISC violation — | <id>)
+}
+
+sp {codegen*phase*DELIVER*prohibit-on-low-psi
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase |DELIVER|
+       ^psi-score {<psi> < <thresh>}
+       ^psi-threshold <thresh>)
+  (<s> ^operator <o> +)
+  (<o> ^name deliver)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT deliver: Ψ=| <psi> | < threshold | <thresh>)
+}
+
+sp {codegen*phase*DELIVER*prohibit-on-tier1-fail
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase DELIVER
+       ^tier1-gate fail)
+  (<s> ^operator <o> +)
+  (<o> ^name deliver)
+  -->
+  (<s> ^operator <o> - :prohibit)
+  (write (crlf) |[SOAR] PROHIBIT deliver: Tier 1 gate FAILED (INV-010 — blocking for delivery)|)
+}

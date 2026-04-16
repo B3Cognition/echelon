@@ -321,7 +321,7 @@ Level 2: ARTIFACTS
   ✓ polyrepo: artifacts exist per repo (per-domain specs)
 
 Level 3: QUALITY GATES  (skipped if understanding not installed)
-  ✓ each produced spec.md scores >= threshold on speckit.understanding.validate
+  ✓ each produced spec.md scores >= threshold on b3c.understanding.validate
   ✓ overall >= 0.70, testability >= 0.70, semantic >= 0.60
   ✓ per-spec scores written to assertion-report.json
 

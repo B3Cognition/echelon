@@ -1,0 +1,288 @@
+# CQ-ISC Entry Schema v1.0.0
+# Code Quality Impossibility Constraint entry for SOAR SMEM
+# Spec 008: SOAR-Powered Claude Code Software Development Agent
+# Date: 2026-04-05
+#
+# INV-002: CQ-ISC prohibit preferences are the SOLE enforcement mechanism.
+# INV-005: soar_predicate must reference (build ^current-phase <phase>) as FIRST condition.
+# FR-ISC-DEFAULT-002: All mandatory fields listed here.
+
+schema:
+  name: CQISCEntry
+  version: "1.0.0"
+  description: >
+    A Code Quality Impossibility Constraint entry.
+    Each entry encodes one quality rule as a SOAR prohibit preference.
+    Entries are loaded into SOAR SMEM at pipeline initialization.
+    Violations of the rule cause SOAR to fire a prohibit preference,
+    structurally preventing the corresponding operator from being selected.
+    This is the inviolable enforcement mechanism (INV-002).
+
+fields:
+  # ------------------------------------------------------------------
+  # Identity
+  # ------------------------------------------------------------------
+  cq_isc_id:
+    type: string
+    pattern: "CQ-ISC-[A-Z]+-[0-9]{3}"
+    required: true
+    description: >
+      Unique identifier. Format: CQ-ISC-<DOMAIN>-<NNN>.
+      DOMAIN: SEC (security), STRUCT (structural), TEST (test coverage), QUAL (code quality).
+      Example: CQ-ISC-SEC-001, CQ-ISC-STRUCT-003.
+
+  rule_text:
+    type: string
+    required: true
+    min_length: 10
+    description: >
+      Natural language statement of the quality rule.
+      Must be unambiguous and evaluable by the wme_source tool.
+
+  # ------------------------------------------------------------------
+  # Classification
+  # ------------------------------------------------------------------
+  constraint_class:
+    type: enum
+    values: [SECURITY, STRUCTURAL, TEST, QUALITY]
+    required: true
+    description: >
+      Category of the constraint.
+      SECURITY: prevents exploitable vulnerabilities.
+      STRUCTURAL: enforces code architecture and metric limits.
+      TEST: ensures test coverage and test quality.
+      QUALITY: enforces code hygiene and maintainability.
+
+  phase_scope:
+    type: enum
+    values: [VERIFY, DELIVER, ALL]
+    required: true
+    description: >
+      The pipeline phase(s) at which this rule is evaluated.
+      VERIFY: evaluated at the GATE phase after IMPLEMENT.
+      DELIVER: evaluated at the final DELIVER phase only.
+      ALL: evaluated at every phase transition.
+
+  language_scope:
+    type: string
+    required: true
+    description: >
+      Language(s) this rule applies to.
+      "ALL" or comma-separated language identifiers.
+      Valid values: all, typescript, python, go, java.
+    examples:
+      - "ALL"
+      - "typescript,java"
+      - "python"
+
+  source_authority:
+    type: string
+    required: true
+    description: >
+      Origin of this rule.
+      "DEFAULT_LIBRARY" for seed entries.
+      Constitution section reference (e.g., "constitution.md#security-rules") for project-specific entries.
+
+  rule_content_hash:
+    type: string
+    required: true
+    pattern: "^[0-9a-f]{64}$"
+    description: >
+      SHA-256 hex digest of the rule_text field (as loaded by yaml.safe_load, UTF-8 encoded).
+      Used as the canonical matching key for impasse memory lookup (F5) and drift detection (F6).
+      Computed at authoring time: hashlib.sha256(rule_text.encode('utf-8')).hexdigest().
+      TP-005: stored alongside rule_text_normalized_hash to enable cosmetic-vs-semantic change detection.
+
+  rule_text_normalized_hash:
+    type: string
+    required: false
+    pattern: "^[0-9a-f]{64}$"
+    description: >
+      SHA-256 hex digest of rule_text after normalization: lowercase, whitespace collapsed.
+      Enables cosmetic-vs-semantic change detection (TP-005, AC-017-6a).
+      Absent on entries authored before Spec 018 — treated as unset by impasse memory.
+
+  policy_drift_status:
+    type: enum
+    values: [current, drifted, pending-review, overridden]
+    required: true
+    default: current
+    description: >
+      Whether this entry is in sync with its source authority.
+      current: entry matches source constitution section (hash verified).
+      drifted: source constitution section has changed since this entry was authored.
+               DRIFTED entries are EXCLUDED from prohibit preference evaluation.
+      pending-review: entry is newly authored and awaiting Executor validation.
+                      PENDING-REVIEW entries do NOT fire prohibit preferences.
+      overridden: entry has been superseded by a rule pack entry for this run.
+                  OVERRIDDEN entries are excluded from prohibit preference evaluation
+                  for the current run only; they resume active status in subsequent runs
+                  unless re-overridden by the same pack.
+
+  # ------------------------------------------------------------------
+  # Ψ computation
+  # ------------------------------------------------------------------
+  psi_contribution_weight:
+    type: float
+    min: 0.0
+    max: 10.0
+    required: true
+    default: 1.0
+    description: >
+      Numeric weight for Ψ (completeness) computation.
+      Represents the number of reference constitution rules this entry covers.
+      Default 1.0: this entry covers exactly one rule in the project constitution.
+      2.0: entry covers two reference constitution rules.
+      1.5: entry covers one full rule plus partially covers another.
+      0.5: partial coverage only (rule is partially enforced by this entry).
+      0.0: entry does not contribute to Ψ (e.g., advisory-only).
+      Ψ_seed = sum(psi_contribution_weight for all current entries) / total_reference_rules.
+      For the default library: Ψ_seed = sum(weights) / 50 must be >= 0.70.
+
+  # ------------------------------------------------------------------
+  # SOAR enforcement
+  # ------------------------------------------------------------------
+  soar_predicate:
+    type: string
+    required: true
+    description: >
+      The SOAR WME attribute-value pattern that triggers the prohibit preference.
+      INV-005: The generated production rule MUST have (build ^current-phase <phase>)
+      as its FIRST LHS condition. The soar_predicate is added AFTER that condition.
+      Examples:
+        "(code ^function-length > 30)"
+        "(code ^hardcoded-secret > 0)"
+        "(code ^cyclomatic-complexity > 10)"
+
+  wme_source:
+    type: string
+    required: true
+    description: >
+      The static analysis tool that produces the triggering WME.
+      The WME Translator (T-011) uses this field to map tool output to CQ-ISC IDs.
+    examples:
+      - "eslint"
+      - "ruff"
+      - "golangci-lint"
+      - "checkstyle"
+      - "go-vet"
+      - "mypy"
+      - "pytest"
+      - "vitest"
+      - "junit"
+      - "semgrep"
+
+  test_proxy_observable:
+    type: boolean
+    required: true
+    description: >
+      true: This rule fires on static analysis WME alone (no test execution required).
+      false: This rule requires test execution results as a proxy observable.
+             E.g., test coverage rules require pytest/vitest results.
+
+  # ------------------------------------------------------------------
+  # Optional metadata
+  # ------------------------------------------------------------------
+  law_ref:
+    type: string
+    required: false
+    description: >
+      Optional reference to project constitution rule (e.g., "constitution.md#SEC-003").
+      Used to detect policy drift.
+
+  law_drift_status:
+    type: enum
+    values: [current, pending_review, drifted]
+    required: false
+    default: current
+    description: Alias for policy_drift_status — kept for backward compatibility.
+
+  severity:
+    type: enum
+    values: [critical, high, medium, low]
+    required: false
+    description: >
+      Severity of violations of this rule.
+      critical: security or safety breach.
+      high: significant quality degradation.
+      medium: moderate quality issue.
+      low: style or hygiene.
+
+  description:
+    type: string
+    required: false
+    description: Extended description of the rule and its rationale.
+
+  nl2gensym_generated:
+    type: boolean
+    required: false
+    default: false
+    description: >
+      Whether this entry was generated by the NL2GenSym pipeline (Grade C accuracy, 70-85%).
+      Human-authored entries have higher confidence. Both must pass Executor validation.
+
+  executor_validated:
+    type: boolean
+    required: false
+    default: false
+    description: >
+      Whether this entry has passed NL2GenSym Executor validation
+      (SOAR kernel loaded and fired against synthetic test WMEs).
+      Unvalidated entries go to pending-review quarantine.
+
+# ------------------------------------------------------------------
+# Validation rules (enforced by validate_cq_isc.py)
+# ------------------------------------------------------------------
+validation_rules:
+  - name: id_format
+    rule: "cq_isc_id must match pattern CQ-ISC-[A-Z]+-[0-9]{3}"
+    error: "CQ-ISC ID format invalid"
+
+  - name: id_unique
+    rule: "cq_isc_id must be unique across all entries in the library"
+    error: "Duplicate CQ-ISC ID"
+
+  - name: soar_predicate_nonempty
+    rule: "soar_predicate must be non-empty string"
+    error: "soar_predicate is required for prohibit preference generation"
+
+  - name: wme_source_nonempty
+    rule: "wme_source must be non-empty string"
+    error: "wme_source is required for WME Translator mapping"
+
+  - name: psi_weight_range
+    rule: "psi_contribution_weight must be 0.0 <= w <= 10.0 (values > 1.0 indicate multi-rule coverage)"
+    error: "psi_contribution_weight out of range [0.0, 10.0]"
+
+  - name: constraint_class_valid
+    rule: "constraint_class must be one of SECURITY, STRUCTURAL, TEST, QUALITY"
+    error: "constraint_class value invalid"
+
+  - name: phase_scope_valid
+    rule: "phase_scope must be one of VERIFY, DELIVER, ALL"
+    error: "phase_scope value invalid"
+
+  - name: policy_drift_status_valid
+    rule: "policy_drift_status must be one of current, drifted, pending-review, overridden"
+    error: "policy_drift_status value invalid"
+
+  - name: rule_content_hash_required
+    rule: "rule_content_hash must be present and be a 64-character lowercase hex string (SHA-256)"
+    error: "rule_content_hash missing or malformed — required by Spec 018 (TP-005)"
+
+  - name: rule_content_hash_matches_rule_text
+    rule: >
+      rule_content_hash must equal SHA-256(rule_text.encode('utf-8')).hexdigest().
+      Mismatch indicates rule_text was edited without recomputing the hash.
+    error: "rule_content_hash does not match SHA-256 of rule_text"
+
+  - name: rule_text_meaningful
+    rule: "rule_text length must be >= 10 characters"
+    error: "rule_text too short — must be a meaningful natural language rule"
+
+  - name: inv005_predicate_not_first_condition
+    rule: >
+      soar_predicate must NOT include (build ^current-phase ...) —
+      the phase-gate condition is prepended automatically (INV-005).
+      If soar_predicate starts with '(build', it is malformed.
+    error: "soar_predicate must not include phase-gate condition — INV-005 violation"

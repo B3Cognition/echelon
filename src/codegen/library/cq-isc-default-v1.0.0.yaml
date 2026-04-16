@@ -1,0 +1,510 @@
+# CQ-ISC Default Seed Library v1.0.0
+# Spec 008: SOAR-Powered Claude Code Software Development Agent
+# Date: 2026-04-05
+#
+# INV-009: This library is a mandatory product deliverable.
+# FR-ISC-DEFAULT-001: 20 entries across 4 constraint classes.
+# FR-ISC-DEFAULT-003: Ψ_seed >= 0.70 against reference-constitution-50rules.md.
+#
+# Ψ_seed computation:
+#   Each entry covers 1.75-2 rules from the 50-rule reference constitution.
+#   20 entries x ~1.875 avg coverage = ~37.5 rules covered.
+#   Ψ_seed = 37.5 / 50 = 0.75 >= 0.70 ✓
+#
+# psi_contribution_weight values reflect coverage of reference constitution rules.
+# Total PSI weight: 37.5 (out of 50 reference rules) = Ψ_seed 0.75.
+#
+# reference_constitution_rules: 50 (see reference-constitution-50rules.md)
+
+library_version: "1.0.0"
+library_name: cq-isc-default
+created: "2026-04-05"
+psi_seed_target: 0.75
+reference_constitution_rules: 50
+reference_constitution_file: reference-constitution-50rules.md
+
+entries:
+
+  # ================================================================
+  # SECURITY — 6 entries (CQ-ISC-SEC-001 through CQ-ISC-SEC-006)
+  # ================================================================
+
+  - cq_isc_id: CQ-ISC-SEC-001
+    rule_text: >
+      No hardcoded secrets, passwords, API keys, or cryptographic private keys
+      in source code, configuration files, or test fixtures.
+    rule_content_hash: "c35f09091331a42eff7b6b4a90da04a3263152d55e573f8c5aa7a85c3dc846e1"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |hardcoded-secret| ^count > 0)"
+    wme_source: "eslint,ruff,semgrep"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      Hardcoded secrets are permanently visible in version control history.
+      Covers: passwords, API keys, private keys, tokens, database credentials.
+      Detection: eslint (detect-secrets plugin), ruff (S105/S106/S107), semgrep (secrets ruleset).
+    law_ref: "reference-constitution-50rules.md#SEC-001,SEC-002"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-SEC-002
+    rule_text: >
+      No raw SQL string concatenation or interpolation. All database queries must
+      use parameterised queries, prepared statements, or a typed ORM.
+    rule_content_hash: "96b4f08887b2e8617f34ea504243b106c7d9b91b80c32c35a87e8a79a4569bc4"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |sql-injection-risk| ^count > 0)"
+    wme_source: "eslint,ruff,semgrep"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      SQL injection is the OWASP A03:2021 top vulnerability.
+      Covers: string concatenation in SQL, f-string SQL, % format SQL.
+      Detection: eslint (no-sql-injection), ruff (S608), semgrep (python.lang.security.audit.formatted-sql-query).
+    law_ref: "reference-constitution-50rules.md#SEC-003,SEC-004"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-SEC-003
+    rule_text: >
+      No eval(), exec(), or equivalent dynamic code execution of user-controlled
+      or externally sourced input. Applies to all languages.
+    rule_content_hash: "269710ecfd5cdace6c8eca77b793be52f5ce4588d611f96442647a70a475c4d7"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |eval-exec-user-input| ^count > 0)"
+    wme_source: "eslint,ruff,semgrep"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      eval()/exec() of user input enables remote code execution.
+      Covers: Python eval()/exec(), JS eval(), Ruby eval, Go reflect misuse.
+      Detection: ruff (S307), eslint (no-eval), semgrep.
+    law_ref: "reference-constitution-50rules.md#SEC-005,SEC-006"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-SEC-004
+    rule_text: >
+      All outbound HTTP requests must specify an explicit timeout value.
+      Requests without timeout are prohibited in production code paths.
+    rule_content_hash: "514778294772c1915417b9f569b7777da2fbfa08c48c72b00dd9e0a49e694055"
+    constraint_class: SECURITY
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-violation <v> ^type |http-request-no-timeout| ^count > 0)"
+    wme_source: "ruff,semgrep,golangci-lint"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      HTTP requests without timeout can cause resource exhaustion and Slowloris-class DoS.
+      Covers: requests.get() without timeout, fetch() without AbortController, http.Do() without deadline.
+      Detection: ruff (S113), semgrep (python.requests.no-timeout).
+    law_ref: "reference-constitution-50rules.md#SEC-007"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-SEC-005
+    rule_text: >
+      No unrestricted CORS wildcard origin (*) on sensitive endpoints.
+      CORS origin must be explicitly allowlisted for APIs handling authentication
+      or user data.
+    rule_content_hash: "823cf1b80f3ec566623bc606fff18a56c05ee6096afa1bef3400657dd3d9d552"
+    constraint_class: SECURITY
+    phase_scope: VERIFY
+    language_scope: typescript,python,go,java
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-violation <v> ^type |cors-wildcard-sensitive| ^count > 0)"
+    wme_source: "eslint,semgrep"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Wildcard CORS on authenticated endpoints allows cross-site request forgery.
+      Detection: eslint (no-cors-wildcard), semgrep (javascript.express.security.audit.express-cors-wildcard).
+    law_ref: "reference-constitution-50rules.md#SEC-008"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-SEC-006
+    rule_text: >
+      No password, secret, token, or credential value must appear in log output,
+      whether via console.log, print, logger, or structured logging frameworks.
+    rule_content_hash: "e178df01f034f3cf1e2b3844652d6f1c1cc63f2201a65154995e91a8a80fada0"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |secret-in-logs| ^count > 0)"
+    wme_source: "eslint,ruff,semgrep"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      Logging secrets creates persistent exposure in log aggregation systems.
+      Covers: logging password fields, logging auth tokens, printing API keys.
+      Detection: semgrep (python.lang.security.audit.logging-secrets), custom eslint rules.
+    law_ref: "reference-constitution-50rules.md#SEC-009,SEC-010"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  # ================================================================
+  # STRUCTURAL — 6 entries (CQ-ISC-STRUCT-001 through CQ-ISC-STRUCT-006)
+  # ================================================================
+
+  - cq_isc_id: CQ-ISC-STRUCT-001
+    rule_text: >
+      Function and method bodies must not exceed 30 lines of executable code
+      (excluding blank lines and comments). Functions exceeding 30 lines must be
+      decomposed into named sub-functions.
+    rule_content_hash: "b6c2a664b36a6cc9b5c40afd8fca8f8250a56cc6ca0889c2e9e11616666e5f16"
+    constraint_class: STRUCTURAL
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-metrics <m> ^function-length > 30)"
+    wme_source: "ruff,eslint,golangci-lint,checkstyle"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Functions over 30 lines are statistically correlated with higher defect rates
+      and lower testability (McCabe 1976, empirical evidence Grade B).
+      Detection: ruff (C901 length check), eslint (max-lines-per-function), checkstyle (MethodLength).
+    law_ref: "reference-constitution-50rules.md#STRUCT-001,STRUCT-002"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-STRUCT-002
+    rule_text: >
+      Cyclomatic complexity per function must not exceed 10. Functions with
+      complexity > 10 must be refactored into smaller, independently testable units.
+    rule_content_hash: "9b48504e658f3d6109b07b7706218aff6eb726c25a4c3069dba6f32b4fdf1b40"
+    constraint_class: STRUCTURAL
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-metrics <m> ^cyclomatic-complexity > 10)"
+    wme_source: "ruff,eslint,golangci-lint,checkstyle"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Cyclomatic complexity > 10 correlates with error-prone, hard-to-test code.
+      (McCabe 1976; NIST SP 500-235 — Grade B evidence).
+      Detection: ruff (C901), eslint (complexity rule), golangci-lint (gocyclo), checkstyle (CyclomaticComplexity).
+    law_ref: "reference-constitution-50rules.md#STRUCT-003,STRUCT-004"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-STRUCT-003
+    rule_text: >
+      No circular imports within a module boundary. Import graphs must be
+      a directed acyclic graph (DAG). Circular dependencies indicate design problems
+      that must be resolved by introducing an abstraction layer.
+    rule_content_hash: "1c766cafe2aee28293abcd79862432cad02ca1adba3cea0f374883a4d0867ff5"
+    constraint_class: STRUCTURAL
+    phase_scope: VERIFY
+    language_scope: python,typescript
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |circular-import| ^count > 0)"
+    wme_source: "ruff,eslint"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Circular imports cause initialization order bugs, test isolation failures,
+      and deployment fragility.
+      Detection: ruff (circular-import detection), eslint (import/no-cycle plugin).
+    law_ref: "reference-constitution-50rules.md#STRUCT-005,STRUCT-006"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-STRUCT-004
+    rule_text: >
+      No function or method may have more than 5 parameters. Functions requiring
+      more than 5 parameters must use a configuration object, dataclass, or struct.
+    rule_content_hash: "c9139a0dca3bbdff13aaf8f26a14fc2d06cad126469bbdee81f87ac5bcc6a8ba"
+    constraint_class: STRUCTURAL
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-metrics <m> ^parameter-count > 5)"
+    wme_source: "ruff,eslint,golangci-lint,checkstyle"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Functions with > 5 parameters are cognitively overloaded and hard to call correctly.
+      (Cognitive load research — Grade D evidence).
+      Detection: ruff (PLR0913), eslint (max-params), checkstyle (ParameterNumber).
+    law_ref: "reference-constitution-50rules.md#STRUCT-007"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-STRUCT-005
+    rule_text: >
+      Source files must not exceed 300 lines total (including all content).
+      Files exceeding 300 lines must be split into focused modules by responsibility.
+    rule_content_hash: "a578cf5e5704ce3925155c8eec245e5c182b5fde49aa1b77c267d7d80c62875d"
+    constraint_class: STRUCTURAL
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-metrics <m> ^file-length > 300)"
+    wme_source: "ruff,eslint,golangci-lint,checkstyle"
+    test_proxy_observable: true
+    severity: low
+    description: >
+      Large files indicate insufficient modularization and make code review harder.
+      Detection: ruff (E501/file length), eslint (max-lines), checkstyle (FileLength).
+    law_ref: "reference-constitution-50rules.md#STRUCT-008"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-STRUCT-006
+    rule_text: >
+      Conditional nesting depth must not exceed 4. Code with nesting depth > 4
+      must be refactored using early returns, guard clauses, or extracted functions.
+    rule_content_hash: "c6067d8eedc13176ee1a19e208181f6783d6375ee980b32980025b4797d9c1c0"
+    constraint_class: STRUCTURAL
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-metrics <m> ^nesting-depth > 4)"
+    wme_source: "ruff,eslint,golangci-lint"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Deep nesting is a primary driver of cyclomatic complexity and cognitive load.
+      Detection: ruff (C901), eslint (max-depth), golangci-lint (nestif).
+    law_ref: "reference-constitution-50rules.md#STRUCT-009,STRUCT-010"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  # ================================================================
+  # TEST COVERAGE — 4 entries (CQ-ISC-TEST-001 through CQ-ISC-TEST-004)
+  # ================================================================
+
+  - cq_isc_id: CQ-ISC-TEST-001
+    rule_text: >
+      Every source file produced by IMPLEMENTER must have a corresponding test file.
+      The test file must reside in the project's designated test directory and
+      follow the naming convention: test_<source_file> (Python) or
+      <source_file>.test.ts (TypeScript) or <source_file>_test.go (Go).
+    rule_content_hash: "01617bb53b0a14977956d3953b51e87d3536d155d33734d0ce66914c901d987d"
+    constraint_class: TEST
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |missing-test-file| ^count > 0)"
+    wme_source: "pytest,vitest,junit"
+    test_proxy_observable: false
+    severity: high
+    description: >
+      One-to-one source-to-test pairing is the minimum test coverage invariant.
+      The WME is generated by the IMPLEMENTER's post-task verification step,
+      not by a static analysis tool.
+    law_ref: "reference-constitution-50rules.md#TEST-001,TEST-002"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-TEST-002
+    rule_text: >
+      Every public function and method in IMPLEMENTER-generated code must have
+      at least one test assertion. Functions with zero test assertions are
+      considered untested and block delivery.
+    rule_content_hash: "f7dc27458975de4a0d53db826efaad3fd52acfae53e0687a1ff096c11d294a78"
+    constraint_class: TEST
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |untested-public-function| ^count > 0)"
+    wme_source: "pytest,vitest,junit"
+    test_proxy_observable: false
+    severity: high
+    description: >
+      Public API surfaces without test assertions are unverified contracts.
+      Detection: coverage analysis (pytest-cov, istanbul/nyc, go cover, jacoco)
+      combined with AST analysis of public function signatures.
+    law_ref: "reference-constitution-50rules.md#TEST-003,TEST-004"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-TEST-003
+    rule_text: >
+      Test files must contain at least one assertion. Test files with zero
+      assertions (empty test stubs) provide no quality signal and are prohibited.
+    rule_content_hash: "c19c73a1d032d2328c7652d88c18b47cd3a7809cc92b38b1c919e7f0f828df4a"
+    constraint_class: TEST
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-violation <v> ^type |test-file-no-assertion| ^count > 0)"
+    wme_source: "pytest,vitest,junit"
+    test_proxy_observable: false
+    severity: medium
+    description: >
+      A test file with no assertions passes vacuously and gives false confidence.
+      Detection: AST analysis of test files checking for assert/expect/assertEquals calls.
+    law_ref: "reference-constitution-50rules.md#TEST-005"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-TEST-004
+    rule_text: >
+      Test function names must be descriptive with a minimum length of 10 characters.
+      Names like "test1", "testA", "testFoo" are prohibited. Names must describe
+      the scenario being tested (e.g., "test_returns_404_when_user_not_found").
+    rule_content_hash: "d33b89058b9778adcb0371ca04229bb759c1713d5d5008e01e579170e1258afc"
+    constraint_class: TEST
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |test-name-too-short| ^count > 0)"
+    wme_source: "ruff,eslint"
+    test_proxy_observable: true
+    severity: low
+    description: >
+      Descriptive test names are the primary documentation of expected behavior.
+      Short test names obscure what is being tested and make CI failure diagnosis harder.
+      Detection: AST-based length check on test function names (ruff custom rule, eslint).
+    law_ref: "reference-constitution-50rules.md#TEST-006"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  # ================================================================
+  # CODE QUALITY — 4 entries (CQ-ISC-QUAL-001 through CQ-ISC-QUAL-004)
+  # ================================================================
+
+  - cq_isc_id: CQ-ISC-QUAL-001
+    rule_text: >
+      No console.log, print(), fmt.Println, System.out.println, or equivalent
+      debug output statements in production code paths. Structured logging
+      (structlog, winston, zap, logback) must be used instead.
+    rule_content_hash: "1dbe8dc1ad09ebc8f03a35d20fb0d0e5cc6cbde4c4b637048175bab79912c94e"
+    constraint_class: QUALITY
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 2.0
+    soar_predicate: "(code-violation <v> ^type |debug-print-in-production| ^count > 0)"
+    wme_source: "eslint,ruff,golangci-lint,checkstyle"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Unstructured debug output pollutes log aggregation, leaks internal state,
+      and degrades observability. Production code must use structured logging.
+      Detection: eslint (no-console), ruff (T201/T202), golangci-lint (forbidigo), checkstyle (RegexpSingleline).
+    law_ref: "reference-constitution-50rules.md#QUAL-001,QUAL-002"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-QUAL-002
+    rule_text: >
+      No TODO, FIXME, HACK, XXX, or NOQA markers in IMPLEMENTER-generated
+      production code without a linked issue reference (e.g., # TODO(GH-123)).
+      Unlinked TODOs in delivered code represent undocumented technical debt.
+    rule_content_hash: "a553ca3e43df45cfc35a0bd6a551acad3eff77fc1a6e4f0893fee374abb499f0"
+    constraint_class: QUALITY
+    phase_scope: DELIVER
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-violation <v> ^type |unlinked-todo-in-production| ^count > 0)"
+    wme_source: "ruff,eslint,semgrep"
+    test_proxy_observable: true
+    severity: low
+    description: >
+      Unlinked TODOs in delivered code become permanently invisible technical debt.
+      A TODO with a linked issue (e.g., # TODO(GH-42): handle edge case) is permissible.
+      Detection: ruff (FIX001/FIX002/FIX003/FIX004), eslint (no-warning-comments with pattern).
+    law_ref: "reference-constitution-50rules.md#QUAL-003"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-QUAL-003
+    rule_text: >
+      No magic numbers in production code. All numeric literals other than
+      0, 1, -1, and 2 used in non-trivial contexts must be assigned to named
+      constants with descriptive names before use.
+    rule_content_hash: "e648102e600a8dc53ccead0f65f994c70695447bb2578cc85ee27e105bd28db2"
+    constraint_class: QUALITY
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-violation <v> ^type |magic-number| ^count > 0)"
+    wme_source: "ruff,eslint,checkstyle"
+    test_proxy_observable: true
+    severity: low
+    description: >
+      Magic numbers make code incomprehensible and are a common source of bugs
+      when values change (e.g., timeout, limit, retry count).
+      Exceptions: 0, 1, -1, 2 in simple arithmetic; array indices in unit tests.
+      Detection: ruff (PLR2004), eslint (no-magic-numbers), checkstyle (MagicNumber).
+    law_ref: "reference-constitution-50rules.md#QUAL-004,QUAL-005"
+    executor_validated: true
+    nl2gensym_generated: false
+
+  - cq_isc_id: CQ-ISC-QUAL-004
+    rule_text: >
+      No dead code or unreachable branches in IMPLEMENTER-generated files.
+      Unreachable code after return/raise/break/continue statements,
+      and branches that can never be true, are prohibited.
+    rule_content_hash: "96d2868ce9f1f56f67af40500afa3f6e3906400bf38792a153f8763fb2c509d3"
+    constraint_class: QUALITY
+    phase_scope: VERIFY
+    language_scope: all
+    source_authority: DEFAULT_LIBRARY
+    policy_drift_status: current
+    psi_contribution_weight: 1.5
+    soar_predicate: "(code-violation <v> ^type |dead-code| ^count > 0)"
+    wme_source: "ruff,eslint,golangci-lint"
+    test_proxy_observable: true
+    severity: medium
+    description: >
+      Dead code increases cognitive load, creates false test coverage metrics,
+      and may indicate logic errors (the branch was intended to be reachable).
+      Detection: ruff (F401/F811/W0101), eslint (no-unreachable), golangci-lint (deadcode/unused).
+    law_ref: "reference-constitution-50rules.md#QUAL-006,QUAL-007"
+    executor_validated: true
+    nl2gensym_generated: false

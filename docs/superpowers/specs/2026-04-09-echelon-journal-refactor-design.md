@@ -10,7 +10,7 @@
 
 Echelon's orchestration has three coupled problems:
 
-1. **Workflow definition lives in COMMANDER's prompt.** Phase graph, routing rules, convergence thresholds, and build state machine are embedded as prose in `agents/control/commander.md` (~750 lines) and `skills/speckit-echelon-run/SKILL.md` (~1873 lines). After context compaction, COMMANDER must reconstruct routing logic from an incomplete context window.
+1. **Workflow definition lives in COMMANDER's prompt.** Phase graph, routing rules, convergence thresholds, and build state machine are embedded as prose in `agents/control/commander.md` (~750 lines) and `skills/b3c-echelon-run/SKILL.md` (~1873 lines). After context compaction, COMMANDER must reconstruct routing logic from an incomplete context window.
 
 2. **Multiple agents write to `reasoning-journal.json` directly.** 42 agents append entries independently. No single writer means no atomic index maintenance, making relevance-based queries impossible. COMMANDER falls back to "last N entries" which loses critical rework history when context is tight.
 

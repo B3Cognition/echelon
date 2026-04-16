@@ -1,0 +1,401 @@
+#!/usr/bin/env python3
+"""
+Enhanced Requirements Metrics - 34 Total Metrics (18 Base + 16 New)
+
+Combines all metric layers:
+- Layer 1: Readability + Structure + Cognitive (18 metrics)
+- Layer 2: Semantic Category Coverage (6 metrics)
+- Layer 3: Constraint Testability (3 metrics)
+- Layer 4: Behavioral Simulatability (4 metrics)
+- Layer 5: Specification Depth (3 metrics) — NEW in v3.6
+
+Total: 34 metrics across 7 categories
+
+Weight distribution (35% form, 65% substance):
+- Structure: 15% (IEEE 830, ISO 29148)
+- Readability: 10% (Flesch/Kincaid/Gunning)
+- Cognitive: 10% (Sweller 1988)
+- Testability: 20% (ISO 29148 mandatory)
+- Semantic: 15% (Lucassen 2017)
+- Behavioral: 15% (Harel 2003/2005)
+- Depth: 15% (specification thoroughness) — NEW
+"""
+
+from typing import Dict, Any
+import re
+
+try:
+    from .normalized_metrics import analyze_with_normalized_metrics, NormalizedScore, NormalizedMetrics
+    from .semantic_metrics import SemanticAnalyzer
+    from .constraint_metrics import ConstraintAnalyzer
+    from .behavioral_metrics import BehavioralAnalyzer
+    from .depth_metrics import DepthAnalyzer
+    from .markdown_parser import extract_requirements
+except ImportError:
+    from normalized_metrics import analyze_with_normalized_metrics, NormalizedScore, NormalizedMetrics
+    from semantic_metrics import SemanticAnalyzer
+    from constraint_metrics import ConstraintAnalyzer
+    from behavioral_metrics import BehavioralAnalyzer
+    from depth_metrics import DepthAnalyzer
+    from markdown_parser import extract_requirements
+
+
+# Enhanced category weights (sum to 1.0)
+# Substance-first: 35% form / 65% substance
+# Form: Structure + Readability + Cognitive = how well it's written
+# Substance: Testability + Semantic + Behavioral + Depth = what it actually says
+ENHANCED_CATEGORY_WEIGHTS = {
+    "structure": 0.15,      # IEEE 830, ISO 29148 — foundational quality
+    "readability": 0.10,    # Flesch/Kincaid/Gunning — baseline
+    "cognitive": 0.10,      # Sweller 1988 — cognitive load management
+    "testability": 0.20,    # ISO 29148 mandatory — if you can't test it, it's not a requirement
+    "semantic": 0.15,       # Lucassen 2017 — actor/action/object completeness
+    "behavioral": 0.15,     # Harel 2003/2005 — observable behavior
+    "depth": 0.15,          # Specification thoroughness — NEW in v3.6
+}
+
+# Weights within each new category (must sum to 1.0 per category)
+NEW_CATEGORY_WEIGHTS = {
+    "semantic": {
+        "actor_presence": 0.20,
+        "action_presence": 0.20,
+        "object_presence": 0.20,
+        "outcome_presence": 0.20,
+        "trigger_presence": 0.10,
+        "scc_score": 0.10,  # Composite
+    },
+    "testability": {
+        "hard_constraint_ratio": 0.45,
+        "constraint_density": 0.35,
+        "negative_space_coverage": 0.20,
+    },
+    "behavioral": {
+        "scenario_decomposition_score": 0.25,
+        "transition_completeness_score": 0.35,
+        "branch_coverage_score": 0.20,
+        "observability_score": 0.20,
+    },
+    "depth": {
+        "requirement_volume_score": 0.40,
+        "coverage_density": 0.35,
+        "cross_reference_index": 0.25,
+    },
+}
+
+
+def analyze_with_enhanced_metrics(
+    text: str,
+    use_spacy: bool = True,
+    mode: str = "standard",
+) -> Dict[str, Any]:
+    """
+    Analyze requirements with all 34 enhanced metrics.
+
+    Args:
+        text: Requirements text to analyze
+        use_spacy: Whether to use spaCy for semantic extraction (if available)
+        mode: Scoring mode — 'standard' or 'squad'
+
+    Returns:
+        Dictionary with 34 normalized metrics (0-1 range) across 7 categories
+    """
+    # Get base 18 metrics (readability, structure, cognitive)
+    base_result = analyze_with_normalized_metrics(text)
+    base_normalized = base_result["normalized_metrics"]
+
+    # Extract requirements using markdown-aware parser (replaces broken re.split)
+    requirements = extract_requirements(text)
+
+    # Create combined normalized metrics
+    enhanced = NormalizedMetrics()
+
+    # Add base metrics with adjusted category weights
+    for score_dict in base_normalized["scores"]:
+        category = score_dict["category"]
+        new_cat_weight = ENHANCED_CATEGORY_WEIGHTS[category]
+        old_cat_weight = 0.30 if category in ["readability", "cognitive"] else 0.40  # Old weights
+
+        # Adjust individual metric weight proportionally
+        old_metric_weight = score_dict["weight"]
+        new_metric_weight = (old_metric_weight / old_cat_weight) * new_cat_weight
+
+        enhanced.add(NormalizedScore(
+            name=score_dict["name"],
+            score=score_dict["score"],
+            weight=new_metric_weight,
+            category=category,
+            raw_value=score_dict["raw_value"],
+            ideal_value=score_dict["ideal_value"],
+            description=score_dict["description"]
+        ))
+
+    # Add semantic metrics (Layer 2)
+    semantic_analyzer = SemanticAnalyzer(use_spacy=use_spacy)
+    semantic_metrics = semantic_analyzer.analyze_requirements(requirements)
+
+    cat = "semantic"
+    cat_weight = ENHANCED_CATEGORY_WEIGHTS[cat]
+
+    enhanced.add(NormalizedScore(
+        name="actor_presence",
+        score=semantic_metrics.actor_presence,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["actor_presence"] * cat_weight,
+        category=cat,
+        raw_value=semantic_metrics.actor_presence,
+        ideal_value=1.0,
+        description="% requirements with identified actor (who)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="action_presence",
+        score=semantic_metrics.action_presence,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["action_presence"] * cat_weight,
+        category=cat,
+        raw_value=semantic_metrics.action_presence,
+        ideal_value=1.0,
+        description="% requirements with identified action (what)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="object_presence",
+        score=semantic_metrics.object_presence,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["object_presence"] * cat_weight,
+        category=cat,
+        raw_value=semantic_metrics.object_presence,
+        ideal_value=1.0,
+        description="% requirements with identified object (to what)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="outcome_presence",
+        score=semantic_metrics.outcome_presence,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["outcome_presence"] * cat_weight,
+        category=cat,
+        raw_value=semantic_metrics.outcome_presence,
+        ideal_value=1.0,
+        description="% requirements with identified outcome (result)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="trigger_presence",
+        score=semantic_metrics.trigger_presence,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["trigger_presence"] * cat_weight,
+        category=cat,
+        raw_value=semantic_metrics.trigger_presence,
+        ideal_value=0.7,  # Not all requirements need triggers
+        description="% requirements with identified trigger (when)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="scc_score",
+        score=semantic_metrics.scc_score,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["scc_score"] * cat_weight,
+        category=cat,
+        raw_value=semantic_metrics.scc_score,
+        ideal_value=1.0,
+        description="Semantic completeness composite score"
+    ))
+
+    # Add testability metrics (Layer 3)
+    constraint_analyzer = ConstraintAnalyzer()
+    constraint_metrics = constraint_analyzer.analyze_requirements(requirements)
+
+    cat = "testability"
+    cat_weight = ENHANCED_CATEGORY_WEIGHTS[cat]
+
+    enhanced.add(NormalizedScore(
+        name="hard_constraint_ratio",
+        score=constraint_metrics.hard_constraint_ratio,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["hard_constraint_ratio"] * cat_weight,
+        category=cat,
+        raw_value=constraint_metrics.hard_constraint_ratio,
+        ideal_value=1.0,
+        description="Ratio of testable/quantifiable constraints"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="constraint_density",
+        score=constraint_metrics.constraint_density,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["constraint_density"] * cat_weight,
+        category=cat,
+        raw_value=constraint_metrics.constraint_density,
+        ideal_value=0.85,  # Saturation point
+        description="Constraints per requirement (saturating)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="negative_space_coverage",
+        score=constraint_metrics.negative_space_coverage,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["negative_space_coverage"] * cat_weight,
+        category=cat,
+        raw_value=constraint_metrics.negative_space_coverage,
+        ideal_value=0.63,  # Saturation point
+        description="Explicit boundary/exclusion statements"
+    ))
+
+    # Add behavioral metrics (Layer 4)
+    behavioral_analyzer = BehavioralAnalyzer()
+    behavioral_metrics = behavioral_analyzer.analyze_requirements(requirements)
+    behavioral_transitions = behavioral_analyzer.extract_all_transitions(requirements)
+
+    cat = "behavioral"
+    cat_weight = ENHANCED_CATEGORY_WEIGHTS[cat]
+
+    enhanced.add(NormalizedScore(
+        name="scenario_decomposition_score",
+        score=behavioral_metrics.scenario_decomposition_score,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["scenario_decomposition_score"] * cat_weight,
+        category=cat,
+        raw_value=behavioral_metrics.scenario_decomposition_score,
+        ideal_value=0.85,  # Saturation point
+        description="Presence of conditional structures"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="transition_completeness_score",
+        score=behavioral_metrics.transition_completeness_score,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["transition_completeness_score"] * cat_weight,
+        category=cat,
+        raw_value=behavioral_metrics.transition_completeness_score,
+        ideal_value=1.0,
+        description="% complete guard→action→outcome transitions"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="branch_coverage_score",
+        score=behavioral_metrics.branch_coverage_score,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["branch_coverage_score"] * cat_weight,
+        category=cat,
+        raw_value=behavioral_metrics.branch_coverage_score,
+        ideal_value=1.0,
+        description="Decision branches and error paths"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="observability_score",
+        score=behavioral_metrics.observability_score,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["observability_score"] * cat_weight,
+        category=cat,
+        raw_value=behavioral_metrics.observability_score,
+        ideal_value=1.0,
+        description="% requirements with observable outcomes"
+    ))
+
+    # Add depth metrics (Layer 5) — NEW in v3.6
+    depth_analyzer = DepthAnalyzer()
+    dependency_graph = depth_analyzer.extract_dependency_graph(requirements)
+    # Count unique concepts from semantic analyzer for coverage density
+    _sem = SemanticAnalyzer(use_spacy=False)
+    unique_concepts = len(set(
+        a for r in requirements
+        for a in (_sem.extract_semantic_roles_basic(r).actors + _sem.extract_semantic_roles_basic(r).objects)
+    )) if requirements else 0
+    depth_metrics = depth_analyzer.analyze(requirements, text, unique_concepts)
+
+    cat = "depth"
+    cat_weight = ENHANCED_CATEGORY_WEIGHTS[cat]
+
+    enhanced.add(NormalizedScore(
+        name="requirement_volume_score",
+        score=depth_metrics.requirement_volume_score,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["requirement_volume_score"] * cat_weight,
+        category=cat,
+        raw_value=len(requirements),
+        ideal_value=200,
+        description="Logarithmic measure of requirement count (thoroughness)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="coverage_density",
+        score=depth_metrics.coverage_density,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["coverage_density"] * cat_weight,
+        category=cat,
+        raw_value=depth_metrics.coverage_density,
+        ideal_value=1.0,
+        description="Requirements per unique domain concept (coverage)"
+    ))
+
+    enhanced.add(NormalizedScore(
+        name="cross_reference_index",
+        score=depth_metrics.cross_reference_index,
+        weight=NEW_CATEGORY_WEIGHTS[cat]["cross_reference_index"] * cat_weight,
+        category=cat,
+        raw_value=depth_metrics.cross_reference_index,
+        ideal_value=1.0,
+        description="Internal requirement cross-references (interconnection)"
+    ))
+
+    result = {
+        "base_metrics": base_result,
+        "enhanced_metrics": enhanced.to_dict(),
+        "metric_count": {
+            "total": len(enhanced.scores),
+            "readability": len(enhanced.get_by_category("readability")),
+            "structure": len(enhanced.get_by_category("structure")),
+            "cognitive": len(enhanced.get_by_category("cognitive")),
+            "semantic": len(enhanced.get_by_category("semantic")),
+            "testability": len(enhanced.get_by_category("testability")),
+            "behavioral": len(enhanced.get_by_category("behavioral")),
+            "depth": len(enhanced.get_by_category("depth")),
+        },
+        "behavioral_transitions": behavioral_transitions,
+        "dependency_graph": dependency_graph,
+    }
+    if mode == "squad":
+        result["mode"] = "squad"
+    return result
+
+
+if __name__ == "__main__":
+    # Test with sample requirements
+    sample_text = """
+    FR-001: System must validate user email format before saving to database.
+    FR-002: When user clicks submit button with invalid email, system displays error message "Invalid email format" and returns HTTP 400.
+    FR-003: System must store validated user data within 200ms.
+    FR-004: Users must be able to update their profile information.
+    FR-005: System must not allow access to deleted accounts.
+    """
+
+    result = analyze_with_enhanced_metrics(sample_text)
+
+    print("=" * 80)
+    print("ENHANCED REQUIREMENTS METRICS (31 Total)")
+    print("=" * 80)
+    print()
+
+    enhanced = result["enhanced_metrics"]
+
+    print(f"Overall Score: {enhanced['overall_weighted_average']:.4f}/1.00")
+    print()
+
+    print("Category Scores:")
+    for cat, score in sorted(enhanced["category_averages"].items()):
+        weight_pct = ENHANCED_CATEGORY_WEIGHTS[cat] * 100
+        print(f"  {cat.capitalize():<15} {score:.4f} ({weight_pct:.0f}% weight)")
+    print()
+
+    print("Metric Count:")
+    for cat, count in sorted(result["metric_count"].items()):
+        if cat != "total":
+            print(f"  {cat.capitalize():<15} {count} metrics")
+    print(f"  {'TOTAL':<15} {result['metric_count']['total']} metrics")
+    print()
+
+    print("=" * 80)
+    print("Top 10 Metrics by Impact (Weighted Score)")
+    print("=" * 80)
+    print()
+
+    # Sort by weighted score
+    sorted_scores = sorted(enhanced["scores"],
+                          key=lambda x: x["weighted_score"],
+                          reverse=True)
+
+    print(f"{'Rank':<6} {'Metric':<40} {'Score':<8} {'Weight':<10} {'Impact':<10}")
+    print("-" * 80)
+
+    for i, score in enumerate(sorted_scores[:10], 1):
+        print(f"{i:<6} {score['name']:<40} "
+              f"{score['score']:<8.4f} "
+              f"{score['weight']:<10.4f} "
+              f"{score['weighted_score']:<10.4f}")

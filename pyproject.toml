@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "echelon"
+version = "0.9.1"
+description = "Multi-agent cognitive system with SOAR-powered build pipeline and 31-metric requirements quality analysis"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Ladislav Bihari" },
+  { name = "B3 Cognition", email = "b3.cognition@gmail.com" },
+]
+
+dependencies = [
+  # codegen
+  "pyyaml>=6.0",
+  "mempalace @ https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz",
+  # understanding
+  "typer>=0.9.0",
+  "rich>=13.0.0",
+  "spacy>=3.0.0",
+  "en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl",
+  "graphviz>=0.20.0",
+  "transformers>=4.30.0",
+  "torch>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov",
+]
+
+[project.scripts]
+codegen     = "codegen.cli.codegen_cli:main"
+understanding = "understanding.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"codegen" = ["soar/*.soar", "library/packs/**/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

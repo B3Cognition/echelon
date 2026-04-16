@@ -1,0 +1,431 @@
+##
+## codegen.soar — Main SOAR configuration for /codegen pipeline
+## Spec 008: SOAR-Powered Claude Code Software Development Agent
+## Version: 1.0.0
+## Date: 2026-04-05
+##
+## CONSTITUTIONAL MANDATE: chunk never MUST be first directive (INV-001, ISS-007)
+## ISS-007 Second-Order Chunking Contamination is CONFIRMED SEVERE (Grade A).
+## A single LLM hallucination can propagate via SMEM -> subgoal -> chunk compilation
+## into a permanent production rule with no native rollback in SOAR 9.6.4.
+##
+
+chunk never
+
+##
+## Load phase gate and SMEM rules
+##
+source phases.soar
+source smem.soar
+
+##
+## Problem space declaration
+##
+sp {codegen*top*propose*init
+  (state <s> ^superstate nil
+             -^name)
+  -->
+  (<s> ^operator <o> +)
+  (<o> ^name init-codegen)
+}
+
+sp {codegen*top*apply*init
+  (state <s> ^operator <o>)
+  (<o> ^name init-codegen)
+  -->
+  (<s> ^name codegen)
+  (<s> ^build <b>)
+  (<b> ^current-phase RE
+       ^pipeline-status active
+       ^retry-count 0
+       ^max-retries 3
+       ^respec-count 0
+       ^psi-score 0.0
+       ^psi-threshold 0.70
+       ^violations-blocked 0
+       ^impasse-count 0
+       ^tier1-gate pending)
+}
+
+##
+## INV-005: Every CQ-ISC production rule MUST have (build ^current-phase <phase>)
+## as its FIRST LHS condition. The rules below demonstrate this invariant.
+##
+
+##
+## OPERATOR: ADVANCE_PHASE
+## Fires when: no CQ-ISC prohibit preferences active AND Ψ >= threshold
+## Blocked when: any code-violation WME with ^status confirmed-failing exists
+##
+sp {codegen*propose*advance-phase
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase <phase>
+       ^pipeline-status active
+       ^psi-score {>= <thresh>}
+       ^psi-threshold <thresh>)
+  -{(<s> ^code-violation <v>)
+    (<v> ^status |confirmed-failing|)}
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name advance-phase
+       ^from-phase <phase>)
+}
+
+sp {codegen*apply*advance-phase*RE-to-DECOMPOSE
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name advance-phase
+       ^from-phase RE)
+  (<s> ^build <b>)
+  -->
+  (<b> ^current-phase RE -
+       ^current-phase DECOMPOSE)
+  (write (crlf) |[SOAR] Phase transition: RE -> DECOMPOSE|)
+}
+
+sp {codegen*apply*advance-phase*DECOMPOSE-to-IMPLEMENT
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name advance-phase
+       ^from-phase DECOMPOSE)
+  (<s> ^build <b>)
+  -->
+  (<b> ^current-phase DECOMPOSE -
+       ^current-phase IMPLEMENT)
+  (write (crlf) |[SOAR] Phase transition: DECOMPOSE -> IMPLEMENT|)
+}
+
+sp {codegen*apply*advance-phase*IMPLEMENT-to-GATE
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name advance-phase
+       ^from-phase IMPLEMENT)
+  (<s> ^build <b>)
+  -->
+  (<b> ^current-phase IMPLEMENT -
+       ^current-phase GATE)
+  (write (crlf) |[SOAR] Phase transition: IMPLEMENT -> GATE|)
+}
+
+sp {codegen*apply*advance-phase*GATE-to-TEST
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name advance-phase
+       ^from-phase GATE)
+  (<s> ^build <b>)
+  -->
+  (<b> ^current-phase GATE -
+       ^current-phase TEST)
+  (write (crlf) |[SOAR] Phase transition: GATE -> TEST|)
+}
+
+sp {codegen*apply*advance-phase*TEST-to-DELIVER
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name advance-phase
+       ^from-phase TEST)
+  (<s> ^build <b>)
+  (<b> ^tier1-gate pass)
+  -->
+  (<b> ^current-phase TEST -
+       ^current-phase DELIVER)
+  (write (crlf) |[SOAR] Phase transition: TEST -> DELIVER|)
+}
+
+##
+##
+## BRIDGE HELPER: Create code-violation sub-object from flat violation-marker WME
+##
+## The Python bridge cannot create new SOAR identifiers via wm add — only productions
+## can do that. The bridge injects:
+##   S1 ^violation-marker |CQ-ISC-SEC-001|
+## This rule creates the proper sub-object structure that all gate rules check:
+##   S1 ^code-violation V
+##   V  ^cq-isc-id |CQ-ISC-SEC-001|
+##   V  ^status |confirmed-failing|
+##
+sp {codegen*bridge*create-violation-object
+  (state <s> ^name codegen
+             ^violation-marker <vid>)
+  -->
+  (<s> ^code-violation <v>)
+  (<v> ^cq-isc-id <vid>
+       ^status |confirmed-failing|)
+  (write (crlf) |[SOAR] Violation object created: | <vid>)
+}
+
+##
+## OPERATOR: RETRY_TASK
+## Fires when: CQ-ISC violation exists AND retry-count < max-retries
+##
+sp {codegen*propose*retry-task
+  (state <s> ^name codegen
+             ^build <b>
+             ^code-violation <v>)
+  (<b> ^current-phase <phase>
+       ^retry-count {< <max>}
+       ^max-retries <max>)
+  (<v> ^cq-isc-id <id>
+       ^status |confirmed-failing|)
+  -->
+  (<s> ^operator <o> + >)
+  (<o> ^name retry-task
+       ^cq-isc-id <id>
+       ^reason confirmed-violation)
+}
+
+sp {codegen*apply*retry-task
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name retry-task
+       ^cq-isc-id <id>)
+  (<s> ^build <b>)
+  (<b> ^retry-count <rc>)
+  -->
+  (<b> ^retry-count <rc> -
+       ^retry-count (+ <rc> 1))
+  (write (crlf) |[SOAR] RETRY_TASK: CQ-ISC violation | <id> | — retry count incremented|)
+}
+
+##
+## OPERATOR: ESCALATE
+## Fires when: retry-count >= max-retries OR conflict impasse
+##
+sp {codegen*propose*escalate*max-retries
+  (state <s> ^name codegen
+             ^build <b>
+             ^code-violation <v>)
+  (<b> ^current-phase <phase>
+       ^retry-count {>= <max>}
+       ^max-retries <max>
+       ^respec-count {>= 1})
+  (<v> ^status |confirmed-failing|)
+  -->
+  (<s> ^operator <o> + >)
+  (<o> ^name escalate
+       ^reason max-retries-exceeded)
+}
+
+sp {codegen*apply*escalate
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name escalate
+       ^reason <reason>)
+  (<s> ^build <b>)
+  -->
+  (<b> ^pipeline-status escalated)
+  (write (crlf) |[SOAR] ESCALATE: pipeline halted — reason: | <reason>)
+  (write (crlf) |[SOAR] Writing codegen-impasse.md — awaiting human resolution|)
+}
+
+##
+## OPERATOR: RESPECIFY — Spec 026 FR-013, FR-014, FR-021
+## Fires when: phase=IMPLEMENT, retry-count >= 2, respec-count < 1
+## Best preference (+ >) takes precedence over escalate when respec not yet used.
+## INV-003: best preference only; INV-001: chunk never (first line of file).
+##
+sp {codegen*propose*respecify
+  (state <s> ^name codegen
+             ^build <b>
+             ^code-violation <v>)
+  (<b> ^current-phase |IMPLEMENT|
+       ^retry-count {>= 2}
+       ^max-retries <max>
+       ^respec-count {< 1})
+  (<v> ^status |confirmed-failing|)
+  -->
+  (<s> ^operator <o> + >)
+  (<o> ^name respecify
+       ^reason max-retries-reached-for-respec)
+  (write (crlf) |[SOAR] RESPECIFY: FR revision triggered — retry-count >= 2, respec-count=0|)
+}
+
+sp {codegen*apply*respecify
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name respecify)
+  (<s> ^build <b>)
+  (<b> ^respec-count <rc>
+       ^retry-count <retc>)
+  -->
+  (<b> ^respec-count <rc> -
+       ^respec-count (+ <rc> 1)
+       ^retry-count <retc> -
+       ^retry-count 0
+       ^respecify-pending true)
+  (write (crlf) |[SOAR] RESPECIFY applied — respec-count incremented, retry-count reset|)
+}
+
+##
+## OPERATOR: DELIVER
+## Fires when: at DELIVER phase, all Tier 1 tests pass, Ψ >= threshold, zero violations
+##
+sp {codegen*propose*deliver
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase |DELIVER|
+       ^tier1-gate |pass|
+       ^psi-score {>= <thresh>}
+       ^psi-threshold <thresh>)
+  -{(<s> ^code-violation <v>)
+    (<v> ^status |confirmed-failing|)}
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name deliver)
+}
+
+sp {codegen*apply*deliver
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name deliver)
+  (<s> ^build <b>)
+  -->
+  (<b> ^pipeline-status delivered)
+  (write (crlf) |[SOAR] DELIVER: pipeline complete — all gates passed|)
+}
+
+##
+## LLM ADVISORY: Best preferences from IMPLEMENTER (INV-003)
+## IMPLEMENTER injects best preferences only. These can never outrank prohibit preferences.
+## CQ-ISC prohibit preferences always outrank best preferences structurally.
+##
+sp {codegen*advisory*implementer-best-preference
+  (state <s> ^name codegen
+             ^build <b>)
+  (<b> ^current-phase IMPLEMENT
+       ^advisory <a>)
+  (<a> ^source implementer
+       ^operator-name <op-name>
+       ^confidence {<conf> >= 0.6})
+  -->
+  (<s> ^operator <o> + =)
+  (<o> ^name <op-name>
+       ^advisory-source implementer)
+}
+
+##
+## CQ-ISC PROHIBIT PREFERENCE TEMPLATE
+## Generated per CQ-ISC entry by smem.soar production rules.
+## INV-002: prohibit preference is the SOLE enforcement mechanism.
+## INV-005: (build ^current-phase <phase>) MUST be FIRST LHS condition.
+##
+## Template (instantiated per CQ-ISC entry in phases.soar):
+##
+## sp {cq-isc*<CQ-ISC-ID>*prohibit
+##   (state <s> ^name codegen)
+##   (build <b> ^current-phase <phase>)
+##   (<b> ^task-id <tid>)
+##   (<b> ^language <lang>)
+##   (code-violation <v> ^cq-isc-id <id>
+##                       ^status confirmed-failing)
+##   (<v> ^language <lang>)
+##   -->
+##   (<s> ^operator <o> - :prohibit)
+##   (epmem --add <e>)
+##   (<e> ^cq-isc-fired <id>
+##        ^task-id <tid>
+##        ^timestamp (time))
+## }
+##
+
+##
+## IMPASSE HANDLER: no-change impasse → escalate-to-human (INV-008)
+## When two CQ-ISC rules prohibit ALL operators simultaneously, SOAR fires conflict impasse.
+## This is CORRECT BEHAVIOUR — not a failure.
+##
+sp {codegen*impasse*no-change*escalate
+  (state <s> ^superstate <ss>
+             ^attribute operator
+             ^impasse no-change)
+  (<ss> ^name codegen)
+  (<ss> ^build <b>)
+  -->
+  (<ss> ^build <b>)
+  (<b> ^impasse-detected true
+       ^impasse-type no-change)
+  (write (crlf) |[SOAR] No-change impasse detected — escalating to human (INV-008)|)
+}
+
+sp {codegen*impasse*conflict*escalate
+  (state <s> ^superstate <ss>
+             ^attribute operator
+             ^impasse conflict)
+  (<ss> ^name codegen)
+  (<ss> ^build <b>)
+  (<b> ^impasse-count <ic>)
+  -->
+  (<b> ^impasse-count <ic> -
+       ^impasse-count (+ <ic> 1)
+       ^impasse-detected true
+       ^impasse-type conflict)
+  (write (crlf) |[SOAR] Conflict impasse detected — CQ-ISC contradiction. Human escalation required (INV-008)|)
+}
+
+##
+## EPMEM: Record every phase transition (INV-004)
+## Every SOAR operator selection writes an AuditRecord to EPMEM.
+## EPMEM recording CANNOT be disabled.
+##
+sp {codegen*epmem*record-advance-phase
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name advance-phase
+       ^from-phase <phase>)
+  (<s> ^build <b>)
+  (<b> ^psi-score <psi>
+       ^violations-blocked <vb>)
+  -->
+  (<s> ^epmem-audit <audit>)
+  (<audit> ^record-type |phase-transition|
+           ^from-phase <phase>
+           ^psi-at-transition <psi>
+           ^violations-blocked-at-transition <vb>)
+  (epmem --add <audit>)
+  (write (crlf) |[SOAR EPMEM] Phase transition recorded: | <phase>)
+}
+
+sp {codegen*epmem*record-retry
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name retry-task
+       ^cq-isc-id <id>)
+  (<s> ^build <b>)
+  (<b> ^retry-count <rc>)
+  -->
+  (<s> ^epmem-audit <audit>)
+  (<audit> ^record-type |retry-task|
+           ^cq-isc-id <id>
+           ^retry-count <rc>)
+  (epmem --add <audit>)
+}
+
+sp {codegen*epmem*record-escalate
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name escalate
+       ^reason <reason>)
+  -->
+  (<s> ^epmem-audit <audit>)
+  (<audit> ^record-type |escalation|
+           ^reason <reason>)
+  (epmem --add <audit>)
+}
+
+sp {codegen*epmem*record-deliver
+  (state <s> ^name codegen
+             ^operator <o>)
+  (<o> ^name deliver)
+  (<s> ^build <b>)
+  (<b> ^psi-score <psi>
+       ^violations-blocked <vb>
+       ^impasse-count <ic>)
+  -->
+  (<s> ^epmem-audit <audit>)
+  (<audit> ^record-type |delivery|
+           ^psi-final <psi>
+           ^violations-blocked <vb>
+           ^impasse-count <ic>)
+  (epmem --add <audit>)
+  (write (crlf) |[SOAR EPMEM] Delivery audit record written|)
+}

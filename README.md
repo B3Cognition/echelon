@@ -9,21 +9,27 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 ### First-time install
 
 ```bash
-# 1. Install spec-kit with --dev update support
+# 1. Install spec-kit
 uv tool install specify-cli --force --from "git+https://github.com/Testimonial/qag-spec-kit.git@35bc7c7"
 
 # 2. Clone echelon
-git clone https://github.com/B3Cognition/echelon.git /tmp/echelon
+git clone https://github.com/B3Cognition/echelon.git ~/echelon
 
-# 3. Install as dev extension
-specify extension add --dev /tmp/echelon
+# 3. Install Python CLIs + SOAR (codegen pipeline + understanding metrics)
+bash ~/echelon/scripts/install.sh
+
+# 4. Register the spec-kit extension
+specify extension add --dev ~/echelon/extension
 ```
+
+See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
 
 ### Update to latest version
 
 ```bash
-cd /tmp/echelon && git pull
-specify extension update --dev /tmp/echelon
+cd ~/echelon && git pull
+bash ~/echelon/scripts/install.sh   # re-run to pick up dependency updates
+specify extension update --dev ~/echelon/extension
 ```
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
@@ -32,19 +38,19 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 
 ```bash
 # Run analysis on your project idea
-speckit.echelon.run "Build a photo album app with sharing and tagging"
+b3c.echelon.run "Build a photo album app with sharing and tagging"
 
 # Build with quality gates (agent-driven)
-speckit.echelon.build 001-photo-album
+b3c.echelon.build 001-photo-album
 
 # Build via SOAR codegen pipeline (alternative — see Codegen Integration below)
-speckit.echelon.codegen 001-photo-album
+b3c.echelon.codegen 001-photo-album
 
 # Verify 100% spec coverage
-speckit.echelon.verify
+b3c.echelon.verify
 
 # Close the learning loop after implementation
-speckit.echelon.feedback 001
+b3c.echelon.feedback 001
 
 # Validate the extension setup
 ./scripts/bash/dry-run.sh
@@ -214,32 +220,39 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.run` | Start analysis (Phase 1-3) |
-| `speckit.echelon.build` | Execute build phase (agent-driven) |
-| `speckit.echelon.codegen` | Execute build phase via SOAR codegen pipeline (alternative to build) |
-| `speckit.echelon.verify` | Check 100% spec coverage |
-| `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
-| `speckit.echelon.status` | Check progress |
-| `speckit.echelon.resume` | Answer squad's question |
-| `speckit.echelon.change` | Handle spec change during build |
-| `speckit.echelon.investigate` | Trigger INVESTIGATOR |
-| `speckit.echelon.innovate` | Trigger MAVERICK |
-| `speckit.echelon.ground` | Trigger REALIST |
-| `speckit.echelon.feedback` | Post-implementation feedback |
-| `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
+| `b3c.echelon.run` | Start analysis (Phase 1-3) |
+| `b3c.echelon.build` | Execute build phase (agent-driven) |
+| `b3c.echelon.codegen` | Execute build phase via SOAR codegen pipeline (alternative to build) |
+| `b3c.echelon.verify` | Check 100% spec coverage |
+| `b3c.echelon.health` | Periodic health check (drift, KB freshness) |
+| `b3c.echelon.status` | Check progress |
+| `b3c.echelon.resume` | Answer squad's question |
+| `b3c.echelon.change` | Handle spec change during build |
+| `b3c.echelon.investigate` | Trigger INVESTIGATOR |
+| `b3c.echelon.innovate` | Trigger MAVERICK |
+| `b3c.echelon.ground` | Trigger REALIST |
+| `b3c.echelon.feedback` | Post-implementation feedback |
+| `b3c.echelon.deploy` | Trigger deploy, check status, or rollback |
 
-## Codegen Integration
+## Codegen Pipeline
 
-`speckit.echelon.codegen` is a first-class alternative to `speckit.echelon.build`. It drives the same Phase A artifacts (`spec.md`, `tasks.md`, `constitution.md`, `research.md`) through the SOAR-powered codegen pipeline with inviolable CQ-ISC quality gates instead of the multi-agent squad.
+`b3c.echelon.codegen` is a first-class alternative to `b3c.echelon.build`. It drives the same Phase A artifacts (`spec.md`, `tasks.md`, `constitution.md`, `research.md`) through a SOAR-powered pipeline with inviolable CQ-ISC quality gates instead of the multi-agent squad.
+
+The `codegen` CLI and SOAR binary are bundled — installed by `scripts/install.sh`, no separate setup needed.
+
+Two entry points are available:
+
+- `/codegen` — standalone skill, drives the full pipeline directly
+- `b3c.echelon.codegen` — echelon wrapper, validates Phase A artifacts and delegates to `/codegen`
 
 ### Standalone use
 
 ```bash
 # After Phase A artifacts are in place
-speckit.echelon.codegen 001-photo-album
+b3c.echelon.codegen 001-photo-album
 ```
 
-This runs `RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER` and writes `.specify/squad/state.json` after every phase transition — the same schema `echelon.build` uses, so all status commands work unchanged.
+This runs `RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER` and writes `.specify/squad/state.json` after every phase transition — same schema as `echelon.build`, so all status commands work unchanged.
 
 ### Parallel strategy run (with echelon-harness)
 
@@ -251,14 +264,6 @@ run spec 001-photo-album strategies=default,codegen kill_losers
 
 `kill_losers=true` cancels the slower strategy the moment the first one converges. Omit it to let both run to completion for comparison.
 
-### Requirements
-
-Requires the `codegen` spec-kit extension (SOAR 9.6.4+, codegen CLI). Install via:
-
-```bash
-specify extension add codegen
-```
-
 ### Convergence signals
 
 | Condition | `state.json` status |
@@ -268,10 +273,10 @@ specify extension add codegen
 | SOAR impasse (conflict, escalate) | `escalated` |
 | SOAR blocked task | `blocked` |
 
-On impasse, `codegen-impasse.md` is written with the exact conflict. Resume where it left off:
+On impasse, `codegen-impasse.md` is written with the exact conflict. Resume:
 
 ```bash
-speckit.echelon.codegen 001-photo-album --resume
+b3c.echelon.codegen 001-photo-album --resume
 ```
 
 ## Configuration
@@ -338,7 +343,7 @@ EXPOSE 80
 4. On success: stop old slot, tag image, update state
 5. On failure: stop new slot, old slot unchanged (automatic rollback)
 
-**Rollback:** `speckit.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
+**Rollback:** `b3c.echelon.deploy rollback` restarts the stopped inactive container and flips Traefik routing.
 
 ---
 
@@ -384,7 +389,7 @@ myapp --help
 docker run --rm myapp:blue --help
 ```
 
-**Rollback:** `speckit.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
+**Rollback:** `b3c.echelon.deploy rollback` flips the active pointer — the wrapper picks it up on next invocation, no reinstall needed.
 
 ---
 
@@ -392,9 +397,9 @@ docker run --rm myapp:blue --help
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
-| `speckit.echelon.deploy status` | Show active slot, image, ports, last deploy time |
-| `speckit.echelon.deploy rollback` | Roll back to the previous slot |
+| `b3c.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
+| `b3c.echelon.deploy status` | Show active slot, image, ports, last deploy time |
+| `b3c.echelon.deploy rollback` | Roll back to the previous slot |
 
 Deploy state lives in two locations (kept in sync on every deploy and rollback):
 - `.specify/squad/deploy-state.json` — project-local copy
@@ -470,67 +475,63 @@ Checks: agent files, commands, config, templates, state machine flow, role separ
 
 ## Installation
 
-### From catalog
 ```bash
-specify extension add echelon
+git clone https://github.com/B3Cognition/echelon.git ~/echelon
+bash ~/echelon/scripts/install.sh
+specify extension add --dev ~/echelon/extension
 ```
 
-### From source
-```bash
-git clone https://github.com/B3Cognition/echelon.git
-specify extension add --dev /path/to/echelon
-```
+See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and uninstall instructions.
 
 ## Requirements
 
 - **spec-kit** >= 0.4.2 (required)
-- **understanding** >= 3.8.0 (hard stop for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident; WHY1 does not require it)
+- **uv** (required — install via `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
+- **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
+- **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)
 - **revenge** >= 3.0.0 (optional — brownfield extraction via GOLDDIGGER)
 
 ## Directory Structure
 
 ```text
-agents/
-├── control/           # COMMANDER, CHECKPOINT, TRACKER, STRATEGIST, SCOREKEEPER
-├── exploration/       # SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
-├── feasibility/       # GATEKEEPER, VALIDATOR
-├── solution/          # ARCHITECT, ORCHESTRATOR, SENTINEL
-├── specialists/       # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
-├── learning/          # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY
-└── build/             # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
-                       # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
-commands/
-├── echelon.run.md       # Main squad run orchestration
-├── echelon.build.md     # Build phase orchestration
-└── squad.*.md         # Other squad commands (11 total)
+extension/
+├── extension.yml        # Single merged extension manifest
+├── agents/
+│   ├── control/         # COMMANDER, CHECKPOINT, TRACKER, STRATEGIST, SCOREKEEPER
+│   ├── exploration/     # SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
+│   ├── feasibility/     # GATEKEEPER, VALIDATOR
+│   ├── solution/        # ARCHITECT, ORCHESTRATOR, SENTINEL
+│   ├── specialists/     # INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK
+│   ├── learning/        # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR, GLOBAL-MEMORY
+│   └── build/           # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
+│                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
+└── commands/
+    ├── echelon.run.md          # Main squad run orchestration
+    ├── echelon.build.md        # Build phase (agent-driven)
+    ├── echelon.codegen.md      # Build phase (SOAR pipeline)
+    ├── echelon.*.md            # Other echelon commands (10 more)
+    ├── understanding.scan.md   # 31-metric spec quality scan
+    ├── understanding.validate.md
+    ├── understanding.energy.md
+    ├── understanding.diagram.md
+    └── understanding.batch.md
+src/
+├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
+└── understanding/       # Requirements quality metrics CLI (entry point: understanding)
+scripts/
+└── install.sh           # Downloads SOAR, creates ~/.echelon/venv/, installs both CLIs
 docs/
-└── fallback-mode.md   # Fallback mode documentation
+└── fallback-mode.md
 knowledge-base/
-├── agent-scores.yaml  # Agent performance tracking
 ├── calibration-profile.yaml
 ├── estimates-log.yaml
-├── kb-schema.md       # Knowledge base schema
-├── patterns.yaml      # Learned patterns
-└── pitfalls.yaml      # Known pitfalls
-scripts/bash/
-├── dry-run.sh         # Validation script
-├── kb-*.sh            # Knowledge base management (7 scripts)
-├── endocrine.sh       # Hormone-modulated motivation system
-├── state-backup.sh    # State checkpoint before phase transitions
-├── run-understanding.sh # Understanding CLI wrapper
-└── ...                # 22 scripts total
+├── patterns.yaml
+└── pitfalls.yaml
 templates/
 ├── triz-40-principles.md
 ├── triz-contradiction-matrix.md
-├── state-schema.json
-├── fallback-artifact-banner.md
-└── recovery-checklist.md
-tests/
-├── unit/              # Unit tests
-├── integration/       # Integration tests
-├── e2e/               # End-to-end tests
-├── benchmarks/        # Performance benchmarks
-└── manual/            # Manual test procedures
+└── state-schema.json
 ```
 
 ## Why Multiple Agents?

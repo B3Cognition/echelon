@@ -34,7 +34,7 @@ entries:
     assess2_adjusted_hours: 4.25
     correction_factor: 1.214
     quality_convergence_iterations: 3
-    notes: "Brownfield analysis + task planning run. Estimated 3.5h from estimates.md. ASSESS2 uplift: 4.25h (1.214 correction factor from framework-modification domain). Quality: overall 0.6399, testability gap structural (0.4873). No feedback collected yet — actual_hours will be null until /speckit.echelon.feedback is run. 3 WHY passes (WHY1, WHY2, WHY2-rerun). Spec format was brownfield analysis, not BDD — this likely reduces testability convergence in future runs of similar type."
+    notes: "Brownfield analysis + task planning run. Estimated 3.5h from estimates.md. ASSESS2 uplift: 4.25h (1.214 correction factor from framework-modification domain). Quality: overall 0.6399, testability gap structural (0.4873). No feedback collected yet — actual_hours will be null until /b3c.echelon.feedback is run. 3 WHY passes (WHY1, WHY2, WHY2-rerun). Spec format was brownfield analysis, not BDD — this likely reduces testability convergence in future runs of similar type."
     run_type: validation_run
 
   - id: est-003

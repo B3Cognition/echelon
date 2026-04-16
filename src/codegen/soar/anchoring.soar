@@ -1,0 +1,22 @@
+;; anchoring.soar — Anchoring Mode SOAR productions
+;; Spec 018 T-016: F4 Anchoring Mode
+;; INV-001: chunk never is first non-comment directive
+chunk never
+
+;; ANCHOR-PROHIBIT: Block ADVANCE when anchoring constraint is violated
+;; INV-005: (build ^current-phase <phase>) is FIRST LHS condition
+sp {cq_isc*anchoring-constraint*prohibit
+   (state <s> ^operator <o> + ^build <b>)
+   (<b> ^current-phase <phase>)
+   (<s> ^anchoring-constraint <ac>)
+   (<ac> ^status active ^matched true)
+-->
+   (<s> ^operator <o> -)}
+
+;; ANCHOR-UNAVAILABLE: Log unavailable when no constraints present
+sp {cq_isc*anchoring-constraint*unavailable
+   (state <s> ^build <b>)
+   (<b> ^current-phase <phase>)
+  -(<s> ^anchoring-constraint)
+-->
+   (write (crlf) |[ANCHOR] No anchoring constraints loaded — tier_anchor_gate: unavailable|)}

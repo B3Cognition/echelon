@@ -1,0 +1,98 @@
+# sql_injection_prevention.yaml — SQL Injection Prevention Rule Pack
+# Spec 018 Wave 1 F2 T-008
+# Pack ID: sql-injection-prevention
+# Pack Version: 1.0.0
+
+pack_id: sql-injection-prevention
+pack_version: "1.0.0"
+pack_name: SQL Injection Prevention
+description: >
+  Rules enforcing SQL injection prevention through parameterized queries,
+  input validation, and least-privilege database access patterns.
+
+entries:
+
+  - cq_isc_id: CQ-ISC-SQL-001
+    rule_text: "All SQL queries must use parameterized statements or prepared statements. String formatting or concatenation for query construction is forbidden."
+    rule_content_hash: "be28849a8e98797483001043b0b7382df570dfae194cccc20e49d8b3737bb3d9"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: SQL_INJECTION_PREVENTION_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |sql-string-concat-query| ^count > 0)"
+    wme_source: "semgrep,ruff,eslint"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      Parameterized queries are the primary defense against SQL injection attacks.
+      Detection: semgrep sql-injection rules, ruff S608, bandit B608.
+
+  - cq_isc_id: CQ-ISC-SQL-002
+    rule_text: "SQL input values must be validated and sanitized before use in any query, even with parameterized statements, to prevent second-order injection."
+    rule_content_hash: "e131fcc3f3b9930797959c617f968afc6a11a584ba21862ed6ffce09c48e28b0"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: SQL_INJECTION_PREVENTION_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |sql-unvalidated-input| ^count > 0)"
+    wme_source: "semgrep"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Second-order injection occurs when stored data is later used unsafely in queries.
+      Detection: semgrep taint analysis, manual security review.
+
+  - cq_isc_id: CQ-ISC-SQL-003
+    rule_text: "Database connections must use least-privilege accounts. Application database users must not have DDL permissions such as CREATE, DROP, or ALTER."
+    rule_content_hash: "67ed8f9d16a79dec25696ed43f5cf5dc8446b2e45c87215acac4e13e28199cc3"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: SQL_INJECTION_PREVENTION_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |sql-excessive-db-privileges| ^count > 0)"
+    wme_source: "manual-review,policy-check"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      Least-privilege database accounts limit blast radius of successful SQL injection.
+      Detection: database permission audit, infrastructure-as-code review.
+
+  - cq_isc_id: CQ-ISC-SQL-004
+    rule_text: "Stored procedures that accept user input must use parameterized variables, not dynamic SQL construction with EXEC or sp_executesql with unescaped input."
+    rule_content_hash: "6c01bffcb42fafcc111de919660829b86821d4f6fec95188e1ff37579e9a8164"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: all
+    source_authority: SQL_INJECTION_PREVENTION_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |sql-dynamic-exec-injection| ^count > 0)"
+    wme_source: "semgrep,manual-review"
+    test_proxy_observable: true
+    severity: critical
+    description: >
+      Dynamic SQL in stored procedures is as dangerous as application-level string concatenation.
+      Detection: semgrep stored procedure analysis, database code review.
+
+  - cq_isc_id: CQ-ISC-SQL-005
+    rule_text: "ORM raw query methods such as raw(), execute(), or extra() must be reviewed for injection risk and must never accept unsanitized user input."
+    rule_content_hash: "9fff2d741cf471d565e7b2f48bb2141925410d221c2028a473cf38e04fc1711f"
+    constraint_class: SECURITY
+    phase_scope: ALL
+    language_scope: python
+    source_authority: SQL_INJECTION_PREVENTION_PACK
+    policy_drift_status: current
+    psi_contribution_weight: 1.0
+    soar_predicate: "(code-violation <v> ^type |orm-raw-query-injection| ^count > 0)"
+    wme_source: "semgrep,bandit"
+    test_proxy_observable: true
+    severity: high
+    description: >
+      ORM raw methods bypass parameterization and reintroduce injection risk.
+      Detection: semgrep django-sql-injection, bandit B608, custom rules for SQLAlchemy.

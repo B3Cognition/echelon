@@ -1,0 +1,63 @@
+chunk never
+
+##
+## tier0_gate.soar — F1 LSP Pre-Flight Gate (Tier 0 Gate) SOAR productions
+## Spec 018 T-004
+## Version: 1.0.0
+##
+## INV-001: chunk never is the first non-comment directive (above).
+## INV-005: (build ^current-phase GATE) is FIRST LHS condition on every rule.
+## INV-006: No production writes current_phase directly — operator selection only.
+##
+## Three productions:
+##   BLOCK-TIER0:   tier0-gate status=fail  → prohibit ADVANCE operator
+##   ADVANCE-TIER0: tier0-gate status=pass  → indifferent preference (selects ADVANCE)
+##   DEGRADE-TIER0: tier0-gate status=unavailable → inject WARNING WME, no block
+##
+
+##
+## BLOCK-TIER0: Type violations found — halt pipeline before TEST phase.
+## Fires when the LSP gate returned status "fail" (LspResult.status="failed" maps to "fail").
+##
+sp {BLOCK-TIER0
+   (state <s> ^operator <o> +
+              ^build <b>)
+   (<b> ^current-phase GATE)             # INV-005: phase-gate is FIRST LHS condition
+   (<s> ^tier0-gate <g>)
+   (<g> ^status |fail|)
+-->
+   (<s> ^operator <o> -)                 # prohibit ADVANCE operator (INV-002 enforcement)
+   (write (crlf) |[TIER0] BLOCK: LSP gate failed. Pipeline halted before TEST.|)
+}
+
+##
+## ADVANCE-TIER0: Gate passed — proceed to TEST phase normally.
+## Fires when LSP gate returned status "pass" (LspResult.status="passed").
+##
+sp {ADVANCE-TIER0
+   (state <s> ^operator <o> +
+              ^build <b>)
+   (<b> ^current-phase GATE)             # INV-005
+   (<s> ^tier0-gate <g>)
+   (<g> ^status |pass|)
+-->
+   (<s> ^operator <o> =)                 # indifferent; SOAR selects ADVANCE (no prohibit)
+   (write (crlf) |[TIER0] ADVANCE: LSP gate passed. Proceeding to TEST.|)
+}
+
+##
+## DEGRADE-TIER0: Tool unavailable — degrade gracefully, proceed with WARNING.
+## Fires when LSP gate returned status "unavailable" (tool not on PATH or unknown language).
+## Per NFR-008: tool absence is a WARNING, NOT a fatal error.
+##
+sp {DEGRADE-TIER0
+   (state <s> ^operator <o> +
+              ^build <b>)
+   (<b> ^current-phase GATE)             # INV-005
+   (<s> ^tier0-gate <g>)
+   (<g> ^status |unavailable|)
+-->
+   (<s> ^operator <o> =)                 # indifferent; pipeline continues
+   (<s> ^tier0-gate-warning |Tool unavailable — LSP gate skipped|)
+   (write (crlf) |[TIER0] DEGRADE: LSP tool unavailable. Pipeline continues with WARNING.|)
+}

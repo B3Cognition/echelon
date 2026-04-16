@@ -1,0 +1,559 @@
+schema_version: "1.0"
+
+extension:
+  id: "echelon"
+  name: "Echelon"
+  version: "1.0.0"
+  description: "Multi-agent cognitive system: 7-layer, 41-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 31-metric requirements quality analysis (understanding), expert persona prompts, and brownfield support via GOLDDIGGER"
+  author: "B3Cognition"
+  repository: "https://github.com/B3Cognition/echelon"
+  license: "MIT"
+  homepage: "https://github.com/B3Cognition/echelon"
+
+requires:
+  speckit_version: ">=0.4.2"
+  skills:
+    # Core spec-kit skills — validated at install time via `specify extension add echelon`
+    - name: "speckit.specify"
+      required: true
+      required_for: "CARTOGRAPHER — spec creation and branch setup"
+      hard_stop: true
+    - name: "speckit.constitution"
+      required: true
+      required_for: "constitution creation and amendment (ARCHITECT, COMMANDER)"
+    - name: "speckit.plan"
+      required: true
+      required_for: "ARCHITECT — technical plan generation"
+    - name: "speckit.tasks"
+      required: true
+      required_for: "ORCHESTRATOR — task decomposition"
+    - name: "speckit.implement"
+      required: true
+      required_for: "IMPLEMENTER — task execution orchestration"
+    - name: "speckit.clarify"
+      required: false
+      required_for: "CARTOGRAPHER — optional spec Q&A"
+    - name: "speckit.analyze"
+      required: false
+      required_for: "ORCHESTRATOR — cross-artifact consistency check"
+  tools:
+    - name: "soar"
+      version: ">=9.6.4"
+      required_for: "echelon.codegen — SOAR-powered build pipeline"
+      hard_stop: true
+      note: "Install via: bash scripts/install.sh — downloads SoarSuite and places binary at ~/.echelon/soar/bin/soar"
+    - name: "understanding"
+      version: ">=3.7.0"
+      required_for: "WHY2, WHY3 (spec-validation), understanding.scan/validate/energy/diagram/batch"
+      hard_stop: true
+      note: "Bundled — installed via scripts/install.sh into ~/.echelon/venv/. HARD STOP if unavailable for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident (PAT-006)."
+    - name: "codegen"
+      version: ">=0.9.1"
+      required_for: "echelon.codegen — SOAR build pipeline"
+      hard_stop: true
+      note: "Bundled — installed via scripts/install.sh into ~/.echelon/venv/."
+    - name: "revenge"
+      version: ">=3.0.0"
+      required: false
+      # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
+
+provides:
+  commands:
+    - name: "b3c.echelon.codegenlight"
+      file: "commands/echelon.codegenlight.md"
+      description: "Standalone SOAR-powered build pipeline — RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER"
+      behavior:
+        execution: isolated
+        invocation: explicit
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "b3c.echelon.run"
+      file: "commands/echelon.run.md"
+      description: "Full autonomous cognitive squad run"
+    - name: "b3c.echelon.build"
+      file: "commands/echelon.build.md"
+      description: "Execute the building phase — implement tasks with role-based agents"
+    - name: "b3c.echelon.status"
+      file: "commands/echelon.status.md"
+      description: "Check current squad state and progress"
+    - name: "b3c.echelon.innovate"
+      file: "commands/echelon.innovate.md"
+      description: "Manually trigger INNOVATE specialist"
+    - name: "b3c.echelon.investigate"
+      file: "commands/echelon.investigate.md"
+      description: "Manually trigger SCIENTIST for a specific question"
+    - name: "b3c.echelon.ground"
+      file: "commands/echelon.ground.md"
+      description: "Manually trigger reality check on artifacts"
+    - name: "b3c.echelon.feedback"
+      file: "commands/echelon.feedback.md"
+      description: "Post-implementation feedback intake"
+    - name: "b3c.echelon.resume"
+      file: "commands/echelon.resume.md"
+      description: "Provide answer to human escalation"
+    - name: "b3c.echelon.change"
+      file: "commands/echelon.change.md"
+      description: "Handle specification change during build phase"
+    - name: "b3c.echelon.verify"
+      file: "commands/echelon.verify.md"
+      description: "Run full backpropagation verification — 100% spec coverage check"
+    - name: "b3c.echelon.health"
+      file: "commands/echelon.health.md"
+      description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
+    - name: "b3c.echelon.codegen"
+      file: "commands/echelon.codegen.md"
+      description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build"
+      behavior:
+        execution: isolated
+        invocation: explicit
+        capability: strong
+        effort: high
+        tools: full
+    - name: "b3c.echelon.deploy"
+      file: "commands/echelon.deploy.md"
+      description: "Manual deploy trigger, status, and rollback for blue/green local CD"
+      behavior:
+        execution: skill
+        capability: balanced
+        tools: write
+        color: blue
+
+    # ── Agent Definitions ──────────────────────────────────────────
+    # Control layer
+    - name: "b3c.echelon.commander"
+      file: "agents/control/commander.md"
+      description: "COMMANDER — principal orchestrator for all echelon phases"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full          # needs Bash (state-backup.sh) + Write (journal, state.json)
+        color: blue
+    - name: "b3c.echelon.checkpoint"
+      file: "agents/control/checkpoint.md"
+      description: "CHECKPOINT — internalization quality assessor"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes internalization-report.md
+        color: blue
+    - name: "b3c.echelon.scorekeeper"
+      file: "agents/control/scorekeeper.md"
+      description: "SCOREKEEPER — tracks and scores agent performance"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes agent-scorecard.md, agent-scores.yaml
+        color: blue
+    - name: "b3c.echelon.strategist"
+      file: "agents/control/strategist.md"
+      description: "STRATEGIST — risk-weighted alignment advisor for COMMANDER"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes strategic-overview.md
+        color: blue
+    - name: "b3c.echelon.tracker"
+      file: "agents/control/tracker.md"
+      description: "TRACKER — intent analyst detecting scope drift"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes user-intent.md
+        color: blue
+    # Exploration layer
+    - name: "b3c.echelon.scout"
+      file: "agents/exploration/scout.md"
+      description: "SCOUT — reconnaissance analyst mapping domain territory"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md
+        color: green
+    - name: "b3c.echelon.golddigger"
+      file: "agents/exploration/golddigger.md"
+      description: "GOLDDIGGER — brownfield extraction driver via revenge extension"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full         # writes brownfield-index.md, golddigger-cache/
+        color: green
+    - name: "b3c.echelon.synthesizer"
+      file: "agents/exploration/synthesizer.md"
+      description: "SYNTHESIZER — fuses raw discovery outputs into unified knowledge base"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes contradictions-and-gaps.md, risks.md, unified outputs
+        color: green
+    - name: "b3c.echelon.cartographer"
+      file: "agents/exploration/cartographer.md"
+      description: "CARTOGRAPHER — transforms domain understanding into testable specifications"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full         # writes spec.md, 00-overview.md (via Skill + direct)
+        color: green
+    - name: "b3c.echelon.sage"
+      file: "agents/exploration/sage.md"
+      description: "SAGE — adversarial critic and requirements quality gatekeeper"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full          # needs Bash to run `understanding` CLI in WHY2/WHY3
+        color: green
+    - name: "b3c.echelon.modeler"
+      file: "agents/exploration/modeler.md"
+      description: "MODELER — maintains living queryable map of the codebase"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes mental-model-code.md, invariant alerts
+        color: green
+    # Feasibility layer
+    - name: "b3c.echelon.gatekeeper"
+      file: "agents/feasibility/gatekeeper.md"
+      description: "GATEKEEPER — kill gate for project feasibility and RICE scoring"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes feasibility.md, prioritization.md, estimates.md, mvp-scope.md
+        color: orange
+    - name: "b3c.echelon.validator"
+      file: "agents/feasibility/validator.md"
+      description: "VALIDATOR — internalization gate ensuring comprehension before work"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes internalization-report.md
+        color: orange
+    # Solution layer
+    - name: "b3c.echelon.architect"
+      file: "agents/solution/architect.md"
+      description: "ARCHITECT — designs system structure and makes technology decisions"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full         # writes plan.md, research.md, data-model.md, contracts/
+        color: purple
+    - name: "b3c.echelon.orchestrator"
+      file: "agents/solution/orchestrator.md"
+      description: "ORCHESTRATOR — decomposes projects into executable task sequences"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full         # writes tasks.md, critical-path.md, risk-matrix.md, dependencies.md
+        color: purple
+    - name: "b3c.echelon.sentinel"
+      file: "agents/solution/sentinel.md"
+      description: "SENTINEL — test architecture lead designing test strategies"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes test-strategy.md, test-architecture.md, coverage-map.md
+        color: purple
+    # Specialists layer
+    - name: "b3c.echelon.investigator"
+      file: "agents/specialists/investigator.md"
+      description: "INVESTIGATOR — scientific researcher for unknowns and spike investigations"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full          # needs Bash to run experiments in worktrees
+        color: cyan
+    - name: "b3c.echelon.guardian"
+      file: "agents/specialists/guardian.md"
+      description: "GUARDIAN — security architect conducting threat models"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes threat-model.md, compliance-requirements.md, risk-acceptance-log.md
+        color: cyan
+    - name: "b3c.echelon.benchmark"
+      file: "agents/specialists/benchmark.md"
+      description: "BENCHMARK — performance engineer modeling capacity and scalability"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes performance-requirements.md, capacity-model.md
+        color: cyan
+    - name: "b3c.echelon.advocate"
+      file: "agents/specialists/advocate.md"
+      description: "ADVOCATE — accessibility specialist ensuring WCAG compliance"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes accessibility-requirements.md, user-flow.md
+        color: cyan
+    - name: "b3c.echelon.oracle"
+      file: "agents/specialists/oracle.md"
+      description: "ORACLE — domain-specific knowledge specialist"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes domain amendments to spec, plan, glossary
+        color: cyan
+    - name: "b3c.echelon.maverick"
+      file: "agents/specialists/maverick.md"
+      description: "MAVERICK — innovation consultant breaking assumptions via AutoTRIZ"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes alternatives.md, risk-opportunities.md
+        color: cyan
+    # Learning layer
+    - name: "b3c.echelon.auditor"
+      file: "agents/learning/auditor.md"
+      description: "AUDITOR — calibration engineer tracking squad confidence profile"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: full          # needs Bash to run `understanding` CLI in Mode 4 post-build self-assessment
+        color: yellow
+    - name: "b3c.echelon.internalizer"
+      file: "agents/learning/internalizer.md"
+      description: "INTERNALIZER — computes 16 internalization metrics for comprehension measurement"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes internalization-metrics.md, internalization-log.yaml
+        color: yellow
+    - name: "b3c.echelon.adaptive"
+      file: "agents/learning/adaptive.md"
+      description: "ADAPTIVE — quality trajectory analyst detecting stagnation and regression"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes evolution-report.md, stagnation-flags.md
+        color: yellow
+    - name: "b3c.echelon.realist"
+      file: "agents/learning/realist.md"
+      description: "REALIST — connects squad artifacts to real-world data and historical outcomes"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes reality-check.md, cost-analysis.md, benchmark-data.md
+        color: yellow
+    - name: "b3c.echelon.mirror"
+      file: "agents/learning/mirror.md"
+      description: "MIRROR — post-mortem facilitator extracting patterns from retrospectives"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes patterns.yaml, pitfalls.yaml, knowledge-transfer-assessment.md
+        color: yellow
+    - name: "b3c.echelon.monitor"
+      file: "agents/learning/monitor.md"
+      description: "MONITOR — metacognition watchdog asking if the squad is still on track"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes metacognition-log.md
+        color: yellow
+    - name: "b3c.echelon.veteran"
+      file: "agents/learning/veteran.md"
+      description: "VETERAN — cross-project knowledge curator managing patterns and pitfalls"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes updated scope fields in patterns.yaml
+        color: yellow
+    - name: "b3c.echelon.consolidator"
+      file: "agents/learning/consolidator.md"
+      description: "CONSOLIDATOR — transforms raw episodic experience into generalized schemas"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes pattern schemas
+        color: yellow
+    - name: "b3c.echelon.global-memory"
+      file: "agents/learning/global-memory.md"
+      description: "GLOBAL-MEMORY — manages cross-project knowledge base across all runs"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes ~/.specify/squad-global/ knowledge files
+        color: yellow
+    # Build layer
+    - name: "b3c.echelon.implementer"
+      file: "agents/build/implementer.md"
+      description: "IMPLEMENTER — senior developer writing production code following TDD"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full          # needs Bash (run tests, git worktree) + Write (source + test files)
+        color: red
+    - name: "b3c.echelon.spec-guard"
+      file: "agents/build/spec-guard.md"
+      description: "SPEC GUARD — verifies implemented code matches specification requirements"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes spec-compliance-report.md, traceability-matrix.md
+        color: red
+    - name: "b3c.echelon.code-reviewer"
+      file: "agents/build/code-reviewer.md"
+      description: "CODE REVIEWER — reviews code quality, patterns, security, and architecture"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes code-review-report.md
+        color: red
+    - name: "b3c.echelon.test-guardian"
+      file: "agents/build/test-guardian.md"
+      description: "TEST GUARDIAN — audits test sufficiency and edge case coverage"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes test-quality-report.md, updated coverage-map.md
+        color: red
+    - name: "b3c.echelon.engineering-manager"
+      file: "agents/build/engineering-manager.md"
+      description: "ENGINEERING MANAGER — orchestrates build phase convergence toward spec coverage"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes workflow-compliance-report.md
+        color: red
+    - name: "b3c.echelon.integrator"
+      file: "agents/build/integrator.md"
+      description: "INTEGRATOR — verifies system integration after each build phase"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes integration-report.md
+        color: red
+    - name: "b3c.echelon.progress-tracker"
+      file: "agents/build/progress-tracker.md"
+      description: "PROGRESS TRACKER — tracks effort vs estimates and warns on schedule drift"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes progress-report.md, process-metrics.md
+        color: red
+    - name: "b3c.echelon.change-controller"
+      file: "agents/build/change-controller.md"
+      description: "CHANGE CONTROLLER — assesses blast radius of spec changes and plans propagation"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write         # writes change-impact-report.md, updated tasks.md
+        color: red
+    - name: "b3c.echelon.debugger"
+      file: "agents/build/debugger.md"
+      description: "DEBUGGER — systematic root cause analyst for build failures"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full          # needs Bash (reproduce failures, run tests) + Write (fixes)
+        color: red
+    - name: "b3c.echelon.verification"
+      file: "agents/build/verification.md"
+      description: "VERIFICATION — backpropagation specialist tracing requirements to 100% coverage"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes gap-report.md, traceability-matrix.md, verification-summary.md
+        color: red
+    - name: "b3c.echelon.visual-validator"
+      file: "agents/build/visual-validator.md"
+      description: "VISUAL VALIDATOR — UI verification specialist using Playwright for visual checks"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: full          # needs Bash (Playwright) + Write (screenshots, visual-validation-report.md)
+        color: red
+
+    # ── Understanding commands ─────────────────────────────────────────────────
+    - name: "b3c.understanding.scan"
+      file: "commands/understanding.scan.md"
+      description: "Scan spec for 31 requirements quality metrics with quality gates"
+      aliases: ["b3c.understanding.run"]
+      behavior:
+        execution: command
+        capability: balanced
+        tools: full
+        invocation: explicit
+        visibility: user
+        color: green
+
+    - name: "b3c.understanding.validate"
+      file: "commands/understanding.validate.md"
+      description: "Enforce quality gates on spec (exit code 1 on failure)"
+      behavior:
+        execution: command
+        capability: fast
+        tools: full
+        invocation: automatic
+        visibility: user
+        color: green
+
+    - name: "b3c.understanding.energy"
+      file: "commands/understanding.energy.md"
+      description: "[Experimental] Token-level ambiguity detection using energy metrics"
+      behavior:
+        execution: command
+        capability: balanced
+        tools: full
+        invocation: explicit
+        visibility: user
+        color: green
+
+    - name: "b3c.understanding.diagram"
+      file: "commands/understanding.diagram.md"
+      description: "Generate entity relationship diagrams from spec requirements"
+      behavior:
+        execution: command
+        capability: balanced
+        tools: full
+        invocation: explicit
+        visibility: user
+        color: green
+
+    - name: "b3c.understanding.batch"
+      file: "commands/understanding.batch.md"
+      description: "Batch-analyze all specs in a directory with summary report"
+      behavior:
+        execution: command
+        capability: balanced
+        tools: full
+        invocation: explicit
+        visibility: user
+        color: green
+
+  config:
+    - name: "echelon.yml"
+      template: "config-template.yml"
+      description: "Echelon configuration"
+      required: false
+
+hooks:
+  before_plan:
+    command: "b3c.understanding.scan"
+    optional: true
+    prompt: "Run requirements quality scan on the spec before planning?"
+    description: "Scan spec quality before creating the plan"
+  after_tasks:
+    command: "b3c.echelon.run"
+    optional: true
+    prompt: "Run echelon analysis on generated tasks?"
+    description: "Automatically analyze tasks with the echelon cognitive system for insights and improvements"
+
+tags:
+  - "ai-agents"
+  - "cognitive"
+  - "pre-code"
+  - "analysis"
+  - "quality"
+  - "metrics"
+  - "requirements"
+
+defaults:
+  understanding:
+    threshold: 0.70
+    format: "text"
+    energy: false
+    basic: false
+    per_req: false
+    diagram: false

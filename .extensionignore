@@ -5,3 +5,7 @@ docs/superpowers/
 knowledge-base/
 .git/
 specs/
+.pytest_cache/
+.specify
+.claude
+memory/
