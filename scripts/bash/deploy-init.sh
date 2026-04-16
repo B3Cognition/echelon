@@ -11,7 +11,43 @@ STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
 
 # ── Idempotency guard ────────────────────────────────────────────────────────
+GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
 if [ -f "${STATE_FILE}" ]; then
+  # Validate the state file is real (not a stub): must have required keys
+  VALID=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('${STATE_FILE}'))
+    required = {'app', 'type', 'active'}
+    missing = required - d.keys()
+    if missing:
+        print('missing:' + ','.join(missing))
+        sys.exit(1)
+    print('ok')
+except Exception as e:
+    print(f'invalid: {e}')
+    sys.exit(1)
+" 2>&1)
+  if [ "${VALID}" != "ok" ]; then
+    echo "✗ deploy-state.json exists but is invalid (${VALID})." >&2
+    echo "  Delete it and re-run echelon.run to reinitialize:" >&2
+    echo "    rm ${STATE_FILE}" >&2
+    exit 1
+  fi
+
+  # Post-merge hook: re-install if missing (partial recovery)
+  if [ ! -x "${GIT_HOOK}" ]; then
+    echo "deploy: state initialized but post-merge hook missing — reinstalling..."
+    cat > "${GIT_HOOK}" << 'HOOK'
+#!/usr/bin/env bash
+# Installed by echelon deploy-init.sh
+SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/extensions/echelon/scripts/bash"
+exec "${SCRIPTS_DIR}/deploy.sh"
+HOOK
+    chmod +x "${GIT_HOOK}"
+    echo "deploy: hook reinstalled at ${GIT_HOOK}"
+  fi
+
   echo "deploy: already initialized (${STATE_FILE} exists) — skipping"
   exit 0
 fi

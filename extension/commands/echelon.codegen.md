@@ -110,7 +110,16 @@ mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
 echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE}"
 ```
 
-### A.5 Register harness strategy file (idempotent, skip on resume)
+### A.5 Validate deploy infrastructure
+
+```bash
+ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
+```
+
+If exit code is non-zero, HARD STOP. Do not launch harness. The error output contains the fix instructions.
+
+### A.6 Register harness strategy file (idempotent, skip on resume)
 
 ```bash
 if [ "$RESUME_MODE" -eq 0 ]; then

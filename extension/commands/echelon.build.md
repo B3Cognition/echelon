@@ -79,6 +79,17 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Read `project_root` from `.specify/squad/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. The feature directory is `${PROJECT_ROOT}/specs/{NNN}-{feature}` — never a bare relative path.
 
+### 1.0b Validate Deploy Infrastructure
+
+Before loading Phase A artifacts, confirm the deploy pipeline is intact:
+
+```bash
+ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
+```
+
+If exit code is non-zero, HARD STOP. Do not proceed with the build. The error output contains the fix instructions.
+
 ### 1.1 Validate Phase A Artifacts
 
 Read and verify these files exist in `specs/{NNN}-{feature}/`:
@@ -765,6 +776,7 @@ RISKS ACCEPTED AUTONOMOUSLY:
 | INTEGRATOR finds > 5 failures | Pause phase. Assess whether tasks need re-ordering or re-specification. |
 | Build command fails completely | Check if `package.json` has the expected scripts. Flag as BLOCKED if not. |
 | All tasks in a phase BLOCKED | Skip phase. Flag as PHASE_SKIPPED. Continue to next phase (may also fail). |
+| `validate-deploy.sh` fails at 1.0b | HARD STOP. Deploy infrastructure not ready. Follow error output to fix, then re-run build. |
 
 ### Degraded Mode
 
