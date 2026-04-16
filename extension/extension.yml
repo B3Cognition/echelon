@@ -104,7 +104,7 @@ provides:
       description: "Provide answer to human escalation"
     - name: "speckit.echelon.bugfix"
       file: "commands/echelon.bugfix.md"
-      description: "Targeted bug fix or small enhancement on a delivered spec — diagnose, fix, verify, deploy without full squad run"
+      description: "Diagnostic squad for a bug or enhancement — DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks → hand off to harness.run"
     - name: "speckit.echelon.change"
       file: "commands/echelon.change.md"
       description: "Handle specification change during build phase"

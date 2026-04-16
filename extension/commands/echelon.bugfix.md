@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.bugfix
-description: "Targeted bug fix or enhancement for a delivered spec — simplified squad run (DEBUGGER → SENTINEL → IMPLEMENTER → TEST GUARDIAN → SPEC GUARD → INTEGRATOR → harness verify → deploy)."
+description: "Diagnostic squad for a bug or enhancement on a delivered spec — DEBUGGER → SENTINEL → SPEC GUARD → writes bugfix plan + tasks → hand off to harness.run."
 behavior:
   invocation: automatic
 ---
@@ -13,33 +13,35 @@ $ARGUMENTS
 
 ## Overview
 
-`echelon.bugfix` is the **lightweight squad pipeline** for bugs and small enhancements on features already delivered by a previous echelon run.
+`echelon.bugfix` is the **diagnostic half** of the bugfix pipeline. It mirrors the same split as `echelon.run` → `harness.run`:
 
-It runs a purposeful subset of the squad — the agents that matter for fixing something, not the ones that exist to discover and spec it from scratch:
+| Command | Does | Produces |
+| ------- | ---- | -------- |
+| `speckit.echelon.bugfix` | Diagnoses the issue, designs the test strategy, validates spec compliance | `bugfix-{n}.md` + updated `tasks.md` |
+| `speckit.harness.run {spec_id}` | Builds the fix, verifies in Docker, deploys | Working code in production |
+
+**`echelon.bugfix` never implements.** It produces the analysis and plan. The user then runs `harness.run` with their chosen strategy (`default` or `codegen`).
+
+Squad agents used in this command:
 
 | Phase | Agent | Purpose |
-| ------- | ------- | ------- |
+| ----- | ----- | ------- |
 | 1. Diagnose | **DEBUGGER** | Root cause analysis — reads code, identifies exact failure mechanism |
-| 2. Test strategy | **SENTINEL** | Designs the failing test that proves the bug exists and will prove the fix |
-| 3. Implement | **IMPLEMENTER** | Writes the fix + tests in the worktree |
-| 4. Coverage audit | **TEST GUARDIAN** | Ensures the fix has adequate test coverage, no gaps |
-| 5. Spec compliance | **SPEC GUARD** | Confirms the fix satisfies the original spec requirement |
-| 6. Verify | Harness Docker | Deterministic test run in isolation |
-| 7. Integration | **INTEGRATOR** | Checks for regressions introduced by the fix |
-| 8. Deploy | deploy.sh | Ships to the running environment |
+| 2. Test strategy | **SENTINEL** | Designs the failing test that proves the bug and will prove the fix |
+| 3. Spec compliance | **SPEC GUARD** | Confirms the fix scope satisfies the relevant spec requirement |
 
-Skipped intentionally: WHY2, ASSESS, HOW, CONSENSUS, CARTOGRAPHER, GATEKEEPER, ARCHITECT, SCOUT, ORACLE. That work was done for the original spec. The code exists — this pipeline fixes it.
+Skipped here (handled by harness): IMPLEMENTER, TEST GUARDIAN, INTEGRATOR, Docker verify, deploy.
 
 **Use this when:**
 
 - A delivered feature has a known bug
 - A small enhancement is needed on top of an existing spec
-- The verification gate caught a failure and you need to iterate
+- A previous harness run produced a broken result you want to fix
 
 **Do NOT use this for:**
 
-- New features with no existing spec — use `speckit.echelon.run`
-- Major scope or architecture changes — use `speckit.echelon.run` or `speckit.echelon.change`
+- New features — use `speckit.echelon.run`
+- Major scope or architecture changes — use `speckit.echelon.change`
 
 ---
 
@@ -51,7 +53,7 @@ Execute the request. Do not editorialize about whether it's too small, too large
 
 ## Execution Continuity — ABSOLUTE RULE
 
-After any agent returns, immediately execute the next step. Do not stop between phases. The run ends only at DONE or a documented BLOCKED condition.
+After any agent returns, immediately execute the next step without stopping. The run ends only at the HANDOFF step or a documented BLOCKED condition.
 
 ---
 
@@ -63,20 +65,20 @@ Extract from `$ARGUMENTS`:
 | --------- | ------- | ----------- |
 | `spec_id` | — | Required if multiple specs exist (e.g. `001`). |
 | `description` | — | Required. What is broken or what needs to change. |
-| `auto_deploy` | `true` | Deploy after successful verification. |
 
-If `description` is missing: **"What needs to be fixed or changed?"** and stop.
+If `description` is missing: ask **"What needs to be fixed or changed?"** and stop.
 
-If `spec_id` is absent and multiple specs exist under `specs/`, list them and ask. If only one exists, use it automatically.
+If `spec_id` is absent and multiple specs exist under `specs/`, list them and ask which one. If only one spec exists, use it automatically.
 
-Locate `specs/{spec_id}-*/`. Extract `{spec_name}`.
+Locate `specs/{spec_id}-*/`. Extract `{spec_name}`. If not found: report **"Spec `{spec_id}` not found."** and stop.
 
-Read the following context — you will pass it to every agent:
+Read the following — pass to every agent dispatch:
 
 - `specs/{spec_id}-{spec_name}/spec.md`
 - `specs/{spec_id}-{spec_name}/coverage-map.md` (if exists)
+- `specs/{spec_id}-{spec_name}/tasks.md` (if exists)
 - `.specify/squad/deploy-state.json` (if exists)
-- The relevant source files (read based on `description` — the component, hook, API call, config file, or test file most likely related to the issue)
+- The relevant source files based on `description` (the component, hook, API call, config file, or test most likely related to the issue)
 
 ---
 
@@ -85,17 +87,17 @@ Read the following context — you will pass it to every agent:
 Dispatch `agents/build/debugger.md` with:
 
 - The user's `description`
-- The spec (`spec.md`)
-- The relevant source files read in Step 1
-- The deploy context (`deploy-state.json`)
+- `spec.md`
+- The relevant source files from Step 1
+- `deploy-state.json`
 
 The DEBUGGER must produce:
 
-- Exact root cause (file + line + mechanism)
-- Minimal fix description (what changes, not how to implement it)
-- Risk surface (what else could break)
+- Exact root cause (file + line + mechanism — not a guess)
+- Minimal fix description (what changes and why — not how to implement it)
+- Risk surface (what else could break when this changes)
 
-Store the DEBUGGER output as `{debugger_report}`.
+Store as `{debugger_report}`.
 
 ---
 
@@ -103,197 +105,107 @@ Store the DEBUGGER output as `{debugger_report}`.
 
 Dispatch `agents/solution/sentinel.md` with:
 
-- The `{debugger_report}`
-- The `spec.md`
-- The `coverage-map.md`
+- `{debugger_report}`
+- `spec.md`
+- `coverage-map.md`
 - Existing test files for the affected component/module
 
 The SENTINEL must produce:
 
-- A **failing test** that proves the bug exists (red test)
-- The assertion that will turn green when the fix is correct
-- Any regression tests needed to protect adjacent behaviour
+- A **failing test specification** — the test that will be red before the fix and green after (write the assertion, not the code)
+- Regression test coverage: what adjacent behaviour needs protecting
 
-Store the SENTINEL output as `{test_strategy}`.
-
----
-
-## Step 4: Create Worktree
-
-```bash
-PYTHONPATH=.specify/extensions/harness python3 -c "
-import sys
-sys.path.insert(0, '.specify/extensions/harness')
-from harness.config import load_config
-from harness.gitops import GitOpsManager
-
-config = load_config()
-gitops = GitOpsManager(config)
-feature_branch = gitops.find_feature_branch('{spec_id}')
-worktree_path = gitops.create_worktree(
-    '{spec_id}',
-    'bugfix',
-    0,
-    base_branch=feature_branch or None,
-)
-print(worktree_path)
-"
-```
-
-Store as `{worktree_path}`. All implementation writes go here — never to CWD.
-
-Apply deployment context: if `deploy-state.json` has `type = http`, run SPA base correction on the worktree before any build:
-
-```bash
-bash .specify/extensions/echelon/scripts/bash/fix-spa-base.sh "{worktree_path}" "{app_name}"
-```
+Store as `{test_strategy}`.
 
 ---
 
-## Step 5: IMPLEMENTER — Write the Fix
-
-Dispatch `agents/build/implementer.md` with:
-
-- The `{debugger_report}`
-- The `{test_strategy}` (failing test to write first, then fix to make it pass)
-- The `spec.md`
-- The worktree path: `{worktree_path}`
-- The relevant source files
-
-The IMPLEMENTER must:
-
-1. Write the failing test from `{test_strategy}` to the worktree first (TDD red step)
-2. Write the minimal fix that makes it pass (TDD green step)
-3. Write a `bugfix-{timestamp}.md` to `specs/{spec_id}-{spec_name}/` documenting: root cause, files changed, tests added
-
-All files written to `{worktree_path}` — never to CWD.
-
----
-
-## Step 6: TEST GUARDIAN — Coverage Audit
-
-Dispatch `agents/build/test-guardian.md` with:
-
-- The IMPLEMENTER's output (what was written)
-- The `{test_strategy}`
-- The `spec.md`
-
-The TEST GUARDIAN must confirm:
-
-- The failing test from SENTINEL was written and covers the root cause
-- No reachable edge cases are left uncovered by the fix
-- Regression tests for adjacent behaviour are in place
-
-If TEST GUARDIAN identifies gaps: return to IMPLEMENTER with the specific gaps. Maximum 1 feedback loop. If gaps remain after the loop, document them in `bugfix-{timestamp}.md` as known gaps and continue.
-
----
-
-## Step 7: SPEC GUARD — Spec Compliance
+## Step 4: SPEC GUARD — Scope Validation
 
 Dispatch `agents/build/spec-guard.md` with:
 
-- The `spec.md`
-- The `coverage-map.md`
-- The list of files changed by IMPLEMENTER
+- `spec.md`
+- `coverage-map.md`
+- `{debugger_report}` — the proposed fix scope
 
-The SPEC GUARD must confirm the fix satisfies the relevant spec requirement(s) that the bug violated. If the fix is compliant, continue. If non-compliant, return the finding and stop with:
+The SPEC GUARD confirms the fix is within the spec boundary: it addresses a real spec requirement and doesn't silently expand scope. If the fix requires changes outside the spec, it must say so explicitly.
 
-```
-✗ SPEC GUARD: fix does not satisfy {requirement_id} — {reason}
-  Review the SPEC GUARD output above and re-run speckit.echelon.bugfix with an updated description.
-```
+Store as `{spec_guard_report}`.
 
 ---
 
-## Step 8: Verify (Docker)
+## Step 5: Write Bugfix Artifacts
 
-Read `detected_image` from `.specify/extensions/harness/harness-config.yml`. Fallback: `ubuntu:24.04`.
+Determine the next bugfix index:
 
 ```bash
-docker run --rm \
-  -v "{worktree_path}:/workspace:ro" \
-  {docker_image} \
-  sh /workspace/verify.sh
+ls specs/{spec_id}-{spec_name}/bugfix-*.md 2>/dev/null | wc -l
 ```
 
-Parse exit code:
+Let `{n}` = count + 1 (e.g. `bugfix-1.md` if none exist yet).
 
-- `0` → proceed to Step 9
-- non-zero → dispatch `agents/build/debugger.md` again with the verify failure output. Fix in the worktree. Re-run verify. Maximum `max_outer = 3` attempts total. If still failing, report and stop — do not deploy.
+Write `specs/{spec_id}-{spec_name}/bugfix-{n}.md`:
 
----
+```markdown
+# Bugfix {n}: {description}
 
-## Step 9: INTEGRATOR — Regression Check
+## Root Cause
+{from DEBUGGER: file, line, mechanism}
 
-Dispatch `agents/build/integrator.md` with:
+## Fix Scope
+{from DEBUGGER: what changes and why}
 
-- The list of files changed
-- The verify output (passing tests)
-- The `spec.md`
+## Risk Surface
+{from DEBUGGER: what else could break}
 
-The INTEGRATOR checks for regressions: does the fix break any behaviour specified in the original spec that wasn't in the failing test? If regressions are found, return to IMPLEMENTER. Maximum 1 feedback loop.
+## Test Strategy
+{from SENTINEL: failing test specification + regression coverage}
 
----
-
-## Step 10: Commit, Push, Deploy
-
-```bash
-PYTHONPATH=.specify/extensions/harness python3 -c "
-import sys
-sys.path.insert(0, '.specify/extensions/harness')
-from harness.config import load_config
-from harness.gitops import GitOpsManager
-
-config = load_config()
-gitops = GitOpsManager(config)
-feature_branch = gitops.find_feature_branch('{spec_id}')
-push_branch = feature_branch or 'bugfix/{spec_id}/iter-0'
-gitops.commit('{worktree_path}', 'fix({spec_id}): {short_description} [skip ci]')
-gitops.push('{worktree_path}', push_branch)
-print('branch:', push_branch)
-"
+## Spec Compliance
+{from SPEC GUARD: which requirement(s) this addresses, any scope notes}
 ```
 
-If `auto_deploy = true`:
+Then append the bugfix tasks to `specs/{spec_id}-{spec_name}/tasks.md`. Add a clearly delimited section at the end:
 
-```bash
-bash .specify/extensions/echelon/scripts/bash/deploy.sh
+```markdown
+---
+## Bugfix {n}: {description}
+
+> Source: bugfix-{n}.md
+> Status: pending
+
+- [ ] BF{n}-T1: Write failing test — {test from SENTINEL}
+- [ ] BF{n}-T2: Fix {file} — {what changes from DEBUGGER}
+- [ ] BF{n}-T3: Verify test passes and all prior tests still pass
+- [ ] BF{n}-T4: Update coverage-map.md if coverage changed
 ```
 
 ---
 
-## Step 11: Report
+## Step 6: Handoff
+
+Print the handoff block and stop:
 
 ```
 ════════════════════════════════════════════════
-  ✓ bugfix — {spec_id}: {spec_name}
+  ✓ echelon.bugfix — {spec_id}: {spec_name}
 ════════════════════════════════════════════════
-  Status:     {DEPLOYED | VERIFIED}
   Issue:      {description}
   Root cause: {one-liner from DEBUGGER}
-  Fix:        {N files changed}
-  Tests:      {N passing}  (+{N new})
-  Live:       http://localhost/{app_name}/
+  Fix:        {what changes — N files}
+  Risk:       {risk surface summary}
 
-  Squad used
-    DEBUGGER      ✓ root cause identified
-    SENTINEL      ✓ test strategy defined
-    IMPLEMENTER   ✓ fix written
-    TEST GUARDIAN ✓ coverage verified
-    SPEC GUARD    ✓ spec compliance confirmed
-    INTEGRATOR    ✓ no regressions
+  Artifacts written
+    specs/{spec_id}-{spec_name}/bugfix-{n}.md
+    specs/{spec_id}-{spec_name}/tasks.md  (BF{n} tasks appended)
+
+  Next step — choose your build strategy:
+
+    Default (LLM implements directly):
+      speckit.harness.run {spec_id} strategy=default
+
+    Codegen (SOAR pipeline):
+      speckit.harness.run {spec_id} strategy=codegen
 ════════════════════════════════════════════════
 ```
 
-If verification failed:
-
-```
-════════════════════════════════════════════════
-  ✗ bugfix — {spec_id}: {spec_name}
-════════════════════════════════════════════════
-  Status:   FAILED — {N} verify attempts exhausted
-  Stopped at: Step {N}
-  Reason:   {key error from last verify run}
-  Branch:   {feature_branch} (changes committed, not deployed)
-════════════════════════════════════════════════
-```
+Do not proceed further. The user runs `harness.run` when ready.
