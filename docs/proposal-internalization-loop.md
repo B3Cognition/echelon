@@ -18,7 +18,7 @@ Learning Layer (passive)
 │   └── Extracts patterns and pitfalls
 ├── MONITOR (METACOGNITION)
 │   └── Watches process compliance
-└── VETERAN (GLOBAL-MEMORY)
+└── VETERAN (VETERAN)
     └── Cross-project knowledge sync
 ```
 

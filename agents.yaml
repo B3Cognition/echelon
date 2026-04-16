@@ -619,24 +619,10 @@ agents:
     role: "Pattern scope promotion — evaluates local patterns for promotion to cross-project global scope"
     when: "During FINALIZE, after MIRROR; decides which patterns are project-specific vs universal"
     inputs: [knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, ~/.specify/squad-global/]
-    outputs: [updated scope fields in patterns.yaml, promotion candidates for GLOBAL_MEMORY]
+    outputs: [updated scope fields in patterns.yaml, updated ~/.specify/squad-global/]
     never:
       - "NEVER promote a pattern without project_fingerprint set"
       - "NEVER promote fewer than 3 confirmed observations to global scope"
-
-  GLOBAL_MEMORY:
-    codename: GLOBAL_MEMORY
-    function: CROSS_PROJECT_SYNC
-    file: agents/learning/global-memory.md
-    layer: learning
-    phase: finalize
-    role: "Cross-project knowledge sync — reads and writes ~/.specify/squad-global/ across all projects"
-    when: "At run start (read global into local context), at run end after VETERAN (write promoted patterns)"
-    inputs: [knowledge-base/patterns.yaml, knowledge-base/calibration-profile.yaml, ~/.specify/squad-global/]
-    outputs: [merged ~/.specify/squad-global/, cold_start_warning if no global data]
-    never:
-      - "NEVER write to global without VETERAN's promotion decision"
-      - "NEVER let local knowledge contradict global without flagging the conflict"
 
   MONITOR:
     codename: MONITOR

@@ -465,7 +465,7 @@ internalization:
     minimal:
       # Task-oriented agents — trackers, scorekeepers, memory.
       # Low thresholds: absorption >= 0.40, int-accuracy >= 0.40.
-      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN, GLOBAL_MEMORY]
+      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN]
       # @belief(claim: "0.40 absorption for minimal-tier is appropriate — task-tracking agents need orientation, not deep spec comprehension", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
       absorption_threshold: 0.40
       # @belief(claim: "0.40 int-accuracy for minimal-tier matches absorption — both thresholds set low for administrative agents", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)

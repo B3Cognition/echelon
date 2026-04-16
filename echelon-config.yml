@@ -222,7 +222,7 @@ internalization:
       absorption_threshold: 0.65
       int_accuracy_threshold: 0.60
     minimal:
-      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN, GLOBAL_MEMORY]
+      agents: [SCOREKEEPER, TRACKER, CHECKPOINT, STRATEGIST, PROGRESS_TRACKER, VETERAN]
       absorption_threshold: 0.40
       int_accuracy_threshold: 0.40
     exempt:
@@ -507,7 +507,7 @@ endocrine:
     # High dopamine (creative drive), low cortisol (no fear), low adrenaline (relaxed exploration)
     innovation: [0.2, 0.8, 0.2, 0.6, 0.5, 0.3]
 
-    # LEARNING (MIRROR, ADAPTIVE, AUDITOR, REALIST, VETERAN, GLOBAL-MEMORY)
+    # LEARNING (MIRROR, ADAPTIVE, AUDITOR, REALIST, VETERAN, CONSOLIDATOR)
     # High serotonin (reflective calm), high oxytocin (knowledge sharing), moderate dopamine
     learning: [0.2, 0.6, 0.4, 0.8, 0.7, 0.3]
 

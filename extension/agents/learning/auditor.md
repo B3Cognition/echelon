@@ -498,9 +498,9 @@ Evaluate the following output types using the ECC five-channel protocol:
 For each qualifying high-stakes output, compute five channels (each 0.0–1.0):
 
 - `coherence`: internal consistency with AUDITOR's mental model, constitution NEVER rules, and prior ADRs in this run
-- `surprise`: divergence from ORACLE/GLOBAL-MEMORY domain schema predictions
+- `surprise`: divergence from ORACLE/VETERAN domain schema predictions
 - `relevance`: degree to which the output addresses acceptance criteria for the triggering task
-- `familiarity`: match to GLOBAL-MEMORY domain and pattern history (default 0.5 during cold-start)
+- `familiarity`: match to VETERAN domain and pattern history (default 0.5 during cold-start)
 - `consistency`: consistency with other outputs in the same project run
 
 ### confidence_ecc Object (FR-ECC-003)
@@ -555,7 +555,7 @@ When `prior_runs_with_global_memory_domain_data < 3`:
 - Add both to `cold_start_channels`
 - Transition to computed values when `prior_runs_with_global_memory_domain_data >= 3`
 
-If GLOBAL-MEMORY is inaccessible: use 0.5 defaults for both `familiarity` and `surprise`, log the access failure, do NOT block or error.
+If VETERAN is inaccessible: use 0.5 defaults for both `familiarity` and `surprise`, log the access failure, do NOT block or error.
 
 Return this entry in the `echelon_result` block at the end of your response.
 
