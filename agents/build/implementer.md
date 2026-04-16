@@ -157,6 +157,44 @@ For each acceptance criterion, write at least one test:
 - Ensure no deeper than 3 levels of nesting
 - Add JSDoc/TSDoc for public APIs
 
+#### 5d. Test Separation — Unit vs Visual
+
+Write tests in two separate suites:
+
+**Unit tests** (`src/**/*.test.ts`, `tests/unit/`):
+- Pure logic: functions, hooks, state management, API handlers
+- No browser, no DOM rendering, no visual assertions
+- These run in `echelon verify` (Phase 1 — fast, deterministic)
+- Example: `expect(formatPrice(1000)).toBe("$1,000.00")`
+
+**Visual / E2E tests** (`e2e/**/*.spec.ts`):
+- Full page renders, component interactions, layout checks
+- Use `@playwright/test` with the Playwright Docker image
+- These run in the Phase 2 visual loop (separate, after unit tests pass)
+- Example: `await expect(page.locator('.hero')).toBeVisible()`
+- **Playwright config must include `webServer`** so the harness can start the
+  app headlessly without a separate serve step.
+
+**Never mix them.** A visual test that accidentally runs in Phase 1 will fail
+in Docker if the Playwright image is not the base image. A unit test that
+accidentally runs in Phase 2 wastes time — it already passed in Phase 1.
+
+**Minimal `playwright.config.ts` template:**
+
+```typescript
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  testDir: './e2e',
+  use: { headless: true },
+  webServer: {
+    command: 'npm run preview',
+    port: 4173,
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
 ### Step 6: Verify Constitution Compliance
 
 Check your code against every constitution rule:
