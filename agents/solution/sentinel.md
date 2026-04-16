@@ -51,6 +51,12 @@ Before designing any test strategy, detect the application type by reading `plan
 2. **Smoke test in verify.sh** — the build script MUST start the app and verify HTTP 200. A blank page with passing unit tests is a broken app.
 3. **VISUAL VALIDATOR dispatch** — COMMANDER must dispatch VISUAL VALIDATOR after each INTEGRATOR pass (enforced in echelon.build.md Step 7.2.1, but SENTINEL must create a task for this if no visual validation task exists in tasks.md).
 
+**E2E setup detection** — before recording, check whether Playwright infrastructure already exists:
+
+- E2E infrastructure exists if: `e2e/` directory exists OR `playwright.config.ts` / `playwright.config.js` exists at repo root
+- Package manager: read the repo root for `pnpm-lock.yaml` (→ pnpm), `yarn.lock` (→ yarn), `package-lock.json` (→ npm), `Pipfile` or `pyproject.toml` with no `package.json` (→ pip/none — JS-less backend). Default to `npm` when uncertain.
+- Set `requires_e2e_setup: true` when `is_browser_app = true` AND E2E infrastructure does not exist.
+
 Record in `test-strategy.md`:
 ```
 ## Stack Detection
@@ -58,7 +64,11 @@ Record in `test-strategy.md`:
 - Detected indicators: [list what triggered the classification]
 - E2E framework: Playwright (mandatory for browser apps)
 - Visual validation: VISUAL VALIDATOR (dispatched by COMMANDER)
+- requires_e2e_setup: true/false  ← set true when is_browser_app=true AND no e2e/ dir or playwright.config.* exists in the repo yet
+- package_manager: npm|pnpm|yarn|pip|cargo|none  ← detected from lockfile (package-lock.json→npm, pnpm-lock.yaml→pnpm, yarn.lock→yarn, Pipfile/pyproject.toml→pip, Cargo.toml→cargo, none if no JS project at all)
 ```
+
+**When `requires_e2e_setup: true`:** IMPLEMENTER must bootstrap E2E infrastructure before writing the first visual test. See IMPLEMENTER 5d for the bootstrap procedure.
 
 **If `is_browser_app = false`:** proceed normally. Step 0 adds no constraints.
 
