@@ -147,7 +147,7 @@ echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE}"
 Invoke the `codegen` skill with the feature spec files as input:
 
 ```
-/speckit.codegen specs/${FEATURE_PATH}/*.md "$(head -1 ${FEATURE_DIR}/spec.md | sed 's/^#* *//')"
+/speckit-codegen-build specs/${FEATURE_PATH}/*.md "$(head -1 ${FEATURE_DIR}/spec.md | sed 's/^#* *//')"
 ```
 
 The `codegen` pipeline reads `.codegen-harness-env` (written in Step 1.6) to locate
@@ -188,7 +188,7 @@ Then invoke the codegen pipeline in resume mode:
 ## 5. Error Handling
 
 | Error | Response |
-|---|---|
+|-------|----------|
 | Missing Phase A artifact | STOP — print which file is missing + hint to run `/echelon.run` |
 | SOAR binary not found | HARD STOP — print install instructions |
 | codegen CLI not found | HARD STOP — print install instructions |
