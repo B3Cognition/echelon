@@ -84,7 +84,8 @@ fi
 # ── 4. Type-specific checks ───────────────────────────────────────────────────
 if [ "${DEPLOY_TYPE}" = "http" ]; then
   # Traefik running
-  TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null || echo "missing")
+  TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+  [ -z "${TRAEFIK_STATUS}" ] && TRAEFIK_STATUS="missing"
   if [ "${TRAEFIK_STATUS}" != "running" ]; then
     _fail "Traefik not running (status: ${TRAEFIK_STATUS})"
     echo "     Fix:" >&2

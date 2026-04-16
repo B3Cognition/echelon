@@ -235,7 +235,11 @@ done
 ENTRYPOINT_FLAGS="${ENTRYPOINT_FLAGS} --entrypoints.${APP_NAME}.address=:${ACTIVE_PORT}"
 
 # Check if Traefik exists
-TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null || echo "missing")
+# Note: docker inspect exits non-zero when container doesn't exist, which combined
+# with set -euo pipefail would kill the script. || true suppresses that. The empty
+# string check then converts a missing container to "missing".
+TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+[ -z "${TRAEFIK_STATUS}" ] && TRAEFIK_STATUS="missing"
 
 if [ "${TRAEFIK_STATUS}" = "running" ]; then
   echo "deploy: Traefik running — recreating with updated entrypoints..."
