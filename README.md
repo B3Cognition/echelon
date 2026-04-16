@@ -309,21 +309,23 @@ Echelon includes built-in local continuous delivery. After `harness.run` merges 
 **Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
 
 The only difference between UI and CLI is how traffic is routed to the active slot:
-- **UI apps (`type: http`)** — Traefik reverse proxy routes HTTP traffic to the active container
+
+- **UI apps (`type: http`)** — single shared Traefik at `:80` routes by path prefix: `http://localhost/{app-name}/`
 - **CLI apps (`type: cli`)** — no long-lived containers; a wrapper script reads the active image tag at invocation time
 
 ### UI apps — `type: http` (blue/green via Traefik)
 
-Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
+Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic. All apps on a machine share one Traefik instance — adding a new app never restarts Traefik.
 
 **Config (`echelon.yml`):**
 
 ```yaml
 deploy:
   type: http
-  blue_port: 3000    # blue slot host port
-  green_port: 3001   # green slot host port
-  active_port: 80    # Traefik entry point (http://localhost)
+  blue_port: 3000    # health-check port only (unique per app)
+  green_port: 3001   # health-check port only (unique per app)
+  # Convention: App1=3000/3001, App2=3100/3101, AppN=3N00/3N01
+  # Live URL: http://localhost/{app-name}/  (all apps share Traefik at :80)
 ```
 
 **Dockerfile (minimal Vite/React example):**
@@ -334,15 +336,19 @@ COPY dist/ /usr/share/nginx/html/
 EXPOSE 80
 ```
 
+> **SPA base path:** `echelon.init` automatically sets `base` (Vite), `basePath` (Next.js), or `homepage` (CRA) to `/{app-name}/` in your framework config so assets load correctly under the path prefix. This is auto-corrected even if the value is wrong or computed — no manual step needed.
+
 **What happens on `echelon.init`:**
 - Docker network `speckit-deploy` created (shared across all apps on this machine)
-- `speckit-traefik` container started (one per machine, auto-discovers apps via Docker labels)
+- `speckit-traefik` container started at `:80` — one per machine, started once, never recreated
+- SPA framework config auto-corrected for path-prefix routing (Vite/Next.js/CRA)
 - `.git/hooks/post-merge` installed
 
 **Deploy flow (automatic after merge to main):**
-1. `docker build` → `{app}:candidate`
-2. Start inactive slot with Traefik labels, expose on its port
-3. `curl -sf http://localhost:{port}` — 5 attempts, 2s apart
+
+1. `docker build` → `{app}:candidate` (Dockerfile auto-generated if missing; `.env.local` injected as `--build-arg`)
+2. Start inactive slot with Traefik labels `PathPrefix(/{app})`, expose health-check port on host
+3. `curl -sf http://localhost:{blue_port|green_port}` — 5 attempts, 2s apart
 4. On success: stop old slot, tag image, update state
 5. On failure: stop new slot, old slot unchanged (automatic rollback)
 
@@ -378,7 +384,8 @@ ENTRYPOINT ["myapp"]
 - Wrapper script installed to `install_path/myapp` (if `install_path` set)
 
 **Deploy flow (automatic after merge to main):**
-1. `docker build` → `{app}:candidate`
+
+1. `docker build` → `{app}:candidate` (Dockerfile auto-generated if missing; `.env.local` injected as `--build-arg`)
 2. If `health_check` set: `docker run --rm {app}:candidate {health_check_cmd}` (exit 0 = healthy)
 3. On success: tag image → `{app}:{inactive_slot}`, update state pointer
 4. On failure: build discarded, active pointer unchanged
@@ -406,7 +413,7 @@ docker run --rm myapp:blue --help
 
 Deploy state lives in two locations (kept in sync on every deploy and rollback):
 - `.specify/squad/deploy-state.json` — project-local copy
-- `~/.speckit-deploy/{app}.json` — global registry (used for Traefik entrypoint aggregation and CLI wrapper scripts)
+- `~/.speckit-deploy/{app}.json` — global registry (used for port conflict detection and CLI wrapper scripts)
 
 ## Innovation Templates
 

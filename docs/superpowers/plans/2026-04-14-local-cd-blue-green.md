@@ -1,5 +1,7 @@
 # Local CD — Blue/Green Deployment Implementation Plan
 
+> **SUPERSEDED** — see README.md "Local CD" section for current architecture. Architecture change 2026-04-16: `active_port` removed, path-prefix routing, Traefik started once, SPA base-path auto-correction added.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add zero-downtime blue/green deployment to the echelon extension — after `harness.run` merges to main, a git hook fires `deploy.sh` which builds a Docker image and swaps the live slot via Traefik.

@@ -1,8 +1,10 @@
 # Local CD — Blue/Green Deployment via Traefik
 
 **Date:** 2026-04-14  
-**Status:** Approved  
+**Status:** Superseded — see README.md "Local CD" section for current architecture  
 **Scope:** echelon extension (`/Users/michalbachorik/work/evolution/echelon`)
+
+> **Architecture change (2026-04-16):** `active_port` removed. All apps now share a single Traefik at `:80` with `PathPrefix(/{app-name})` routing. Blue/green ports are health-check-only (not Traefik entrypoints). Traefik is started once and never recreated for new apps. SPA base paths are auto-corrected by `fix-spa-base.sh` during `echelon.init`.
 
 ---
 

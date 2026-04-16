@@ -57,7 +57,7 @@ else
 fi
 ```
 
-If the file was bootstrapped, tell the user to review and configure the `deploy:` block before continuing — particularly `type`, ports (http) or `install_path` (cli), and `dockerfile`.
+If the file was bootstrapped, tell the user to review and configure the `deploy:` block before continuing — particularly `type`, `blue_port`/`green_port` (http, must be unique per app on this machine), or `install_path` (cli), and `dockerfile`. All apps share Traefik at `:80` with path-prefix routing — `active_port` is not needed.
 
 ---
 
@@ -74,7 +74,7 @@ try:
         print(f'✗ deploy.type must be http or cli, got: {deploy_type}', file=sys.stderr)
         sys.exit(1)
     if deploy_type == 'http':
-        missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
+        missing = [k for k in ['blue_port','green_port'] if k not in d]
         if missing:
             print('✗ deploy config incomplete in echelon.yml.', file=sys.stderr)
             print(f'  HTTP type requires: {missing}', file=sys.stderr)
@@ -102,7 +102,7 @@ If exit code is non-zero, report the full output and stop. Common failures:
 | Error | Fix |
 |-------|-----|
 | Traefik not healthy | `docker rm -f speckit-traefik` then re-run `speckit.echelon.init` |
-| Port already claimed by another app | Change `blue_port`/`green_port`/`active_port` in `echelon.yml` |
+| Port already claimed by another app | Change `blue_port`/`green_port` in `echelon.yml` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
 | deploy config missing | Add `deploy:` block to `echelon.yml` (see `config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
 

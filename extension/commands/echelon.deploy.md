@@ -30,7 +30,8 @@ Parse `$ARGUMENTS`:
 ## Run Deploy
 
 ```bash
-bash .specify/scripts/deploy.sh
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/deploy.sh"
 ```
 
 Report the full output. If exit code is non-zero, report the error and stop.
@@ -40,7 +41,8 @@ Report the full output. If exit code is non-zero, report the error and stop.
 ## Show Status
 
 ```bash
-bash .specify/scripts/deploy-status.sh
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/deploy-status.sh"
 ```
 
 Report the full output.
@@ -149,9 +151,9 @@ os.makedirs(global_dir, exist_ok=True)
 with open(os.path.join(global_dir, f"{app}.json"), 'w') as f:
     json.dump(state, f, indent=2)
 
-active_port = state.get('active_port', '?')
+app = state['app']
 print(f"\n✓ Rolled back to {inactive}")
-print(f"  Live: http://localhost:{active_port}")
+print(f"  Live: http://localhost/{app}/")
 PYEOF
 ```
 

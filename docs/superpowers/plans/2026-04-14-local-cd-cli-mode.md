@@ -1,5 +1,7 @@
 # Local CD — CLI Mode (`type: cli`) Implementation Plan
 
+> **SUPERSEDED** — see README.md "Local CD" section for current architecture. Architecture change 2026-04-16: `active_port` removed from HTTP mode; CLI mode unchanged.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Extend the echelon blue/green deployment system with a `type: cli` mode for terminal apps running in Docker — no Traefik, no long-lived containers, just build → optional health check via `docker run --rm` → tag image → update state pointer → optional wrapper script.
