@@ -1056,17 +1056,23 @@ deploy:
   type: http
 
   # ── HTTP only ──────────────────────────────────────────────────────────────
-  # Host port for the blue slot container
-  # [range: 1024-65535] Must not conflict with other apps registered in deploy-state.json
+  # All apps share a single Traefik instance at :80 and are routed by path prefix:
+  #   http://localhost/{app-name}/
+  # Traefik auto-discovers containers via Docker labels — no restart needed for new apps.
+  #
+  # These are health-check ports (host-bound for curl). They must be unique across
+  # all registered apps. Convention: App1=3000/3001, App2=3100/3101, AppN=3N00/3N01.
+  # [range: 1024-65535] Must not conflict with other apps registered in ~/.speckit-deploy/
+
+  # Host port for the blue slot container (health check only)
   blue_port: 3000
 
-  # Host port for the green slot container
-  # [range: 1024-65535] Must not conflict with other apps registered in deploy-state.json
+  # Host port for the green slot container (health check only)
   green_port: 3001
 
-  # Traefik entry point port — the port Traefik binds on the host (e.g. 80 for http://localhost)
-  # [range: 1-65535] Typically 80, 81, 82... one per app
-  active_port: 80
+  # NOTE: active_port removed. All apps share Traefik at :80.
+  # SPA note: if your app is a Vite/React/Next.js SPA, echelon.init will automatically
+  # set base/basePath to '/{app-name}/' in your framework config so assets load correctly.
 
   # ── CLI only ───────────────────────────────────────────────────────────────
   # Command run inside the candidate container to verify the build is healthy.

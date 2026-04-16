@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # deploy-init.sh — one-time blue/green deploy infrastructure setup
-# Called from echelon.run section 1.0. Idempotent: exits 0 immediately if
-# .specify/squad/deploy-state.json already exists.
+# Called from speckit.echelon.init. Idempotent: exits 0 immediately if
+# .specify/squad/deploy-state.json already exists and is valid.
+#
+# HTTP mode: single shared Traefik at :80, apps routed by PathPrefix(/{app}).
+# Blue/green ports are health-check-only (host-bound for curl, not Traefik entrypoints).
 set -euo pipefail
 
 # ── Args ────────────────────────────────────────────────────────────────────
@@ -30,7 +33,7 @@ except Exception as e:
 " 2>&1)
   if [ "${VALID}" != "ok" ]; then
     echo "✗ deploy-state.json exists but is invalid (${VALID})." >&2
-    echo "  Delete it and re-run echelon.run to reinitialize:" >&2
+    echo "  Delete it and re-run echelon.init to reinitialize:" >&2
     echo "    rm ${STATE_FILE}" >&2
     exit 1
   fi
@@ -72,11 +75,9 @@ try:
     if deploy_type == 'http':
         print(d.get('blue_port', ''))
         print(d.get('green_port', ''))
-        print(d.get('active_port', ''))
         print('')
         print('')
     else:
-        print('')
         print('')
         print('')
         print(d.get('health_check', ''))
@@ -91,9 +92,8 @@ DEPLOY_TYPE=$(echo "${_config}"  | sed -n '1p')
 DOCKERFILE=$(echo "${_config}"   | sed -n '2p')
 BLUE_PORT=$(echo "${_config}"    | sed -n '3p')
 GREEN_PORT=$(echo "${_config}"   | sed -n '4p')
-ACTIVE_PORT=$(echo "${_config}"  | sed -n '5p')
-HEALTH_CHECK=$(echo "${_config}" | sed -n '6p')
-INSTALL_PATH=$(echo "${_config}" | sed -n '7p')
+HEALTH_CHECK=$(echo "${_config}" | sed -n '5p')
+INSTALL_PATH=$(echo "${_config}" | sed -n '6p')
 
 APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 
@@ -130,7 +130,6 @@ state = {
     "active": "blue",
     "blue_port": None,
     "green_port": None,
-    "active_port": None,
     "dockerfile": os.environ['DOCKERFILE'],
     "health_check": os.environ['HEALTH_CHECK'],
     "install_path": os.environ['INSTALL_PATH'],
@@ -199,21 +198,21 @@ PYEOF
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HTTP PATH (unchanged from original)
+# HTTP PATH — shared Traefik at :80, path-prefix routing per app
 # ══════════════════════════════════════════════════════════════════════════════
 
-# ── Port conflict check ──────────────────────────────────────────────────────
+# ── Port conflict check (blue/green only — active_port no longer per-app) ────
 for f in "${GLOBAL_STATE_DIR}"/*.json; do
   [ -f "${f}" ] || continue
   OTHER_APP=$(python3 -c "import json; d=json.load(open('${f}')); print(d.get('app','?'))")
+  [ "${OTHER_APP}" = "${APP_NAME}" ] && continue  # same app re-init is fine
   OTHER_BLUE=$(python3 -c "import json; d=json.load(open('${f}')); print(d.get('blue_port','') or '')")
   OTHER_GREEN=$(python3 -c "import json; d=json.load(open('${f}')); print(d.get('green_port','') or '')")
-  OTHER_ACTIVE=$(python3 -c "import json; d=json.load(open('${f}')); print(d.get('active_port','') or '')")
-  for CLAIMED in "${OTHER_BLUE}" "${OTHER_GREEN}" "${OTHER_ACTIVE}"; do
-    for WANTED in "${BLUE_PORT}" "${GREEN_PORT}" "${ACTIVE_PORT}"; do
+  for CLAIMED in "${OTHER_BLUE}" "${OTHER_GREEN}"; do
+    for WANTED in "${BLUE_PORT}" "${GREEN_PORT}"; do
       if [ "${CLAIMED}" = "${WANTED}" ] && [ -n "${CLAIMED}" ]; then
         echo "✗ Port ${WANTED} is already claimed by app '${OTHER_APP}' (${f})." >&2
-        echo "  Choose different ports in echelon.yml." >&2
+        echo "  Choose different blue_port/green_port in echelon.yml." >&2
         exit 1
       fi
     done
@@ -221,64 +220,42 @@ for f in "${GLOBAL_STATE_DIR}"/*.json; do
 done
 
 # ── Docker network ───────────────────────────────────────────────────────────
-echo "deploy: creating speckit-deploy network..."
+echo "deploy: ensuring speckit-deploy network exists..."
 docker network create speckit-deploy 2>/dev/null || echo "deploy: network already exists"
 
-# ── Traefik: build merged entrypoint flags from all registered apps ──────────
-ENTRYPOINT_FLAGS=""
-for f in "${GLOBAL_STATE_DIR}"/*.json; do
-  [ -f "${f}" ] || continue
-  EA=$(python3 -c "import json; d=json.load(open('${f}')); print(d.get('app',''))")
-  EP=$(python3 -c "import json; d=json.load(open('${f}')); print(d.get('active_port','') or '')")
-  [ -n "${EA}" ] && [ -n "${EP}" ] && ENTRYPOINT_FLAGS="${ENTRYPOINT_FLAGS} --entrypoints.${EA}.address=:${EP}"
-done
-ENTRYPOINT_FLAGS="${ENTRYPOINT_FLAGS} --entrypoints.${APP_NAME}.address=:${ACTIVE_PORT}"
-
-# Check if Traefik exists
-# Note: docker inspect exits non-zero when container doesn't exist, which combined
-# with set -euo pipefail would kill the script. || true suppresses that. The empty
-# string check then converts a missing container to "missing".
+# ── Traefik: start once, never recreated for new apps ────────────────────────
+# Traefik discovers new app containers automatically via Docker labels.
 TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
 [ -z "${TRAEFIK_STATUS}" ] && TRAEFIK_STATUS="missing"
 
 if [ "${TRAEFIK_STATUS}" = "running" ]; then
-  echo "deploy: Traefik running — recreating with updated entrypoints..."
-  docker stop speckit-traefik >/dev/null
-  docker rm speckit-traefik >/dev/null
-elif [ "${TRAEFIK_STATUS}" != "missing" ]; then
+  echo "deploy: Traefik already running — no restart needed (new apps auto-discovered via labels)"
+elif [ "${TRAEFIK_STATUS}" = "missing" ]; then
+  echo "deploy: starting speckit-traefik (single shared instance at :80)..."
+  docker run -d \
+    --name speckit-traefik \
+    --network speckit-deploy \
+    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+    -p 80:80 \
+    --restart unless-stopped \
+    traefik:v3 \
+      --providers.docker=true \
+      --providers.docker.network=speckit-deploy \
+      --entrypoints.web.address=:80
+
+  echo "deploy: waiting for Traefik health check..."
+  for i in 1 2 3 4 5; do
+    sleep 1
+    STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
+    [ "${STATUS}" = "running" ] && echo "deploy: Traefik is healthy" && break
+    [ "${i}" = "5" ] && echo "✗ Traefik failed to start. Check: docker logs speckit-traefik" >&2 && exit 1
+  done
+else
   echo "✗ speckit-traefik exists but is not healthy (status: ${TRAEFIK_STATUS})." >&2
   echo "  Run: docker rm speckit-traefik" >&2
-  echo "  Then re-run echelon.run to reinitialize." >&2
+  echo "  Then re-run echelon.init to reinitialize." >&2
   exit 1
 fi
-
-echo "deploy: starting speckit-traefik..."
-# shellcheck disable=SC2086
-docker run -d \
-  --name speckit-traefik \
-  --network speckit-deploy \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  --restart unless-stopped \
-  $(echo "${ENTRYPOINT_FLAGS}" | grep -oE ':[0-9]+' | tr -d ':' | sort -u | while IFS= read -r port; do echo "-p ${port}:${port}"; done) \
-  traefik:v3 \
-    --providers.docker=true \
-    --providers.docker.network=speckit-deploy \
-    ${ENTRYPOINT_FLAGS}
-
-# Verify Traefik healthy
-echo "deploy: waiting for Traefik health check..."
-for i in 1 2 3 4 5; do
-  sleep 1
-  STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null || echo "missing")
-  if [ "${STATUS}" = "running" ]; then
-    echo "deploy: Traefik is healthy"
-    break
-  fi
-  if [ "${i}" = "5" ]; then
-    echo "✗ Traefik failed to start. Check: docker logs speckit-traefik" >&2
-    exit 1
-  fi
-done
 
 # ── Git hook ─────────────────────────────────────────────────────────────────
 GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
@@ -294,7 +271,7 @@ echo "deploy: hook installed at ${GIT_HOOK}"
 
 # ── Global state registration ────────────────────────────────────────────────
 APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
-BLUE_PORT="${BLUE_PORT}" GREEN_PORT="${GREEN_PORT}" ACTIVE_PORT="${ACTIVE_PORT}" python3 - <<'PYEOF'
+BLUE_PORT="${BLUE_PORT}" GREEN_PORT="${GREEN_PORT}" python3 - <<'PYEOF'
 import json, os
 
 state = {
@@ -304,7 +281,6 @@ state = {
     "active": "blue",
     "blue_port": int(os.environ['BLUE_PORT']),
     "green_port": int(os.environ['GREEN_PORT']),
-    "active_port": int(os.environ['ACTIVE_PORT']),
     "dockerfile": os.environ['DOCKERFILE'],
     "health_check": "",
     "install_path": "",
@@ -325,11 +301,16 @@ mkdir -p "$(dirname "${STATE_FILE}")"
 cp "${GLOBAL_STATE_DIR}/${APP_NAME}.json" "${STATE_FILE}"
 echo "deploy: local state written to ${STATE_FILE}"
 
+# ── SPA base-path auto-correction ────────────────────────────────────────────
+if [ -f "${SCRIPTS_DIR}/fix-spa-base.sh" ]; then
+  bash "${SCRIPTS_DIR}/fix-spa-base.sh" "${PROJECT_ROOT}" "${APP_NAME}"
+fi
+
 echo ""
 echo "════════════════════════════════════════"
 echo "  Deploy initialized for ${APP_NAME}"
-echo "  Blue:    http://localhost:${BLUE_PORT}"
-echo "  Green:   http://localhost:${GREEN_PORT}"
-echo "  Active:  http://localhost:${ACTIVE_PORT}"
+echo "  Blue:    http://localhost:${BLUE_PORT}  (health check)"
+echo "  Green:   http://localhost:${GREEN_PORT}  (health check)"
+echo "  Live:    http://localhost/${APP_NAME}/"
 echo "  Hook:    ${GIT_HOOK}"
 echo "════════════════════════════════════════"

@@ -208,11 +208,11 @@ PYEOF
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# HTTP PATH (unchanged from original)
+# HTTP PATH — shared Traefik :80, PathPrefix(/{APP}) routing
 # ══════════════════════════════════════════════════════════════════════════════
 INACTIVE_PORT=$([ "${INACTIVE}" = "blue" ] && echo "${BLUE_PORT}" || echo "${GREEN_PORT}")
 
-echo "deploy: ${APP} ${ACTIVE} → ${INACTIVE} (port ${INACTIVE_PORT})"
+echo "deploy: ${APP} ${ACTIVE} → ${INACTIVE} (health-check port ${INACTIVE_PORT})"
 
 # ── Traefik health ────────────────────────────────────────────────────────────
 TRAEFIK_STATUS=$(docker inspect --format='{{.State.Status}}' speckit-traefik 2>/dev/null | tr -d '[:space:]' || true)
@@ -235,18 +235,19 @@ echo "deploy: building ${APP}:candidate..."
 docker build -t "${APP}:candidate" ${BUILD_ARGS} -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
 
 # ── Start inactive slot ───────────────────────────────────────────────────────
-echo "deploy: starting ${APP}-${INACTIVE} on port ${INACTIVE_PORT}..."
+# -p binds the health-check port to the host; Traefik routes via Docker network.
+echo "deploy: starting ${APP}-${INACTIVE} (Traefik: http://localhost/${APP}/, health: :${INACTIVE_PORT})..."
 docker run -d \
   --name "${APP}-${INACTIVE}" \
   --network speckit-deploy \
   --label "traefik.enable=true" \
-  --label "traefik.http.routers.${APP}.rule=PathPrefix(\`/\`)" \
-  --label "traefik.http.routers.${APP}.entrypoints=${APP}" \
+  --label "traefik.http.routers.${APP}.rule=PathPrefix(\`/${APP}\`)" \
+  --label "traefik.http.routers.${APP}.entrypoints=web" \
   --label "traefik.http.services.${APP}.loadbalancer.server.port=80" \
   -p "${INACTIVE_PORT}:80" \
   "${APP}:candidate"
 
-# ── Health check ──────────────────────────────────────────────────────────────
+# ── Health check (via host-bound port) ───────────────────────────────────────
 echo "deploy: health check on http://localhost:${INACTIVE_PORT}..."
 HEALTHY=0
 for i in 1 2 3 4 5; do
@@ -299,16 +300,9 @@ with open(global_state, 'w') as f:
     json.dump(state, f, indent=2)
 PYEOF
 
-ACTIVE_DISPLAY=$(STATE_FILE="${STATE_FILE}" python3 - <<'PYEOF'
-import os, json
-with open(os.environ['STATE_FILE']) as f:
-    d = json.load(f)
-print(d.get('active_port', '?'))
-PYEOF
-)
 echo ""
 echo "════════════════════════════════════════"
 echo "  ✓ ${APP} deployed"
 echo "  Slot:   ${INACTIVE} (was ${ACTIVE})"
-echo "  Live:   http://localhost:${ACTIVE_DISPLAY}"
+echo "  Live:   http://localhost/${APP}/"
 echo "════════════════════════════════════════"

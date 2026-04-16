@@ -537,6 +537,6 @@ endocrine:
 
 deploy:
   type: http             # http (default) | cli — see config-template.yml for full reference
-  blue_port: 3000        # blue slot
-  green_port: 3001       # green slot
-  active_port: 80        # Traefik entry point (http://localhost)
+  blue_port: 3000        # blue slot (health-check port, unique per app)
+  green_port: 3001       # green slot (health-check port, unique per app)
+  # Live URL: http://localhost/{app-name}/  (all apps share Traefik at :80)
