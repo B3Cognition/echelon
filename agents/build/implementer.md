@@ -159,6 +159,48 @@ For each acceptance criterion, write at least one test:
 
 #### 5d. Test Separation — Unit vs Visual
 
+**E2E bootstrap check (run once, on the first task that touches visual output):**
+
+Read `test-strategy.md`. If `requires_e2e_setup: true`:
+
+1. **Detect the project structure** — does a `package.json` exist at the repo root?
+
+2. **Install `@playwright/test`** based on what you find:
+
+   | Situation | Action |
+   |-----------|--------|
+   | `package.json` at root + `pnpm-lock.yaml` | `pnpm add -D @playwright/test` |
+   | `package.json` at root + `yarn.lock` | `yarn add -D @playwright/test` |
+   | `package.json` at root (npm or unknown) | `npm install --save-dev @playwright/test` |
+   | No `package.json` at root (Python/Go/Ruby backend) | Create `e2e/package.json` with `{"devDependencies":{"@playwright/test":"^1.42.0"}}`, then `npm install` inside `e2e/` |
+
+   The server language does not determine the test framework. Playwright JS always tests the browser, regardless of what runs the server.
+
+3. **Create `playwright.config.ts`** at repo root (or `e2e/playwright.config.ts` for JS-less backends). Set `webServer.command` to the app's dev/preview command and `webServer.port` to the port the app binds on.
+
+4. **Create `e2e/smoke.spec.ts`** as the first failing test:
+   ```typescript
+   import { test, expect } from '@playwright/test';
+   test('app loads', async ({ page }) => {
+     await page.goto('/');
+     await expect(page).not.toHaveTitle('Error');
+   });
+   ```
+
+5. **Install browser binaries** inside the sandbox (not on the host):
+   ```bash
+   sandbox-exec.sh "npx playwright install --with-deps chromium"
+   ```
+
+6. **Add a `test:e2e` script** to `package.json`:
+   ```json
+   "test:e2e": "playwright test"
+   ```
+
+After bootstrap, set `requires_e2e_setup: false` in `test-strategy.md` so subsequent tasks skip this block.
+
+---
+
 Write tests in two separate suites:
 
 **Unit tests** (`src/**/*.test.ts`, `tests/unit/`):
