@@ -28,12 +28,12 @@ with open(path) as f:
     content = f.read()
 
 # Already correct?
-if re.search(r"""\bbase\s*:\s*['"]""" + re.escape(expected) + r"""['"]""", content):
+if re.search(r"\bbase\s*:\s*" + "['\"]" + re.escape(expected) + "['\"]", content):
     print('ok')
     exit(0)
 
 # Literal base: present but wrong value → replace it
-lit = re.search(r"""(\bbase\s*:\s*)(['"])([^'"]*)\2""", content)
+lit = re.search(r"(\bbase\s*:\s*)" + "(['\"])" + "([^'\"]*)" + r"\2", content)
 if lit:
     old_val = lit.group(3)
     new_content = content[:lit.start()] + f"base: '{expected}'" + content[lit.end():]
@@ -123,12 +123,12 @@ with open(path) as f:
     content = f.read()
 
 # Already correct?
-if re.search(r"""\bbasePath\s*:\s*['"]""" + re.escape(expected) + r"""['"]""", content):
+if re.search(r"\bbasePath\s*:\s*" + "['\"]" + re.escape(expected) + "['\"]", content):
     print('ok')
     exit(0)
 
 # Literal basePath: present but wrong → replace
-lit = re.search(r"""(\bbasePath\s*:\s*)(['"])([^'"]*)\2""", content)
+lit = re.search(r"(\bbasePath\s*:\s*)" + "(['\"])" + "([^'\"]*)" + r"\2", content)
 if lit:
     old_val = lit.group(3)
     new_content = content[:lit.start()] + f"basePath: '{expected}'" + content[lit.end():]
