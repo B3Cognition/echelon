@@ -142,6 +142,28 @@ COMMANDER writes to the reasoning journal. Include `veteran_marketplace_scan` da
 
 ---
 
+## Global Storage
+
+Promoted entries sync to the global knowledge base at:
+
+```
+~/.specify/squad-global/
+├── patterns.yaml            # Patterns validated across multiple projects
+├── pitfalls.yaml            # Pitfalls seen across multiple projects
+├── calibration-profile.yaml # Domain accuracy across ALL projects
+├── technology-decisions.yaml # Tech choices that worked/failed across projects
+└── project-index.yaml       # Index of all projects with outcomes
+```
+
+At run start (INIT): read global KB, merge with local (local wins on conflicts), feed merged calibration to ASSESS and merged patterns to MIRROR/REFLECT.
+At run end (FINALIZE): promote qualified entries, update `calibration-profile.yaml` with actual accuracy from FEEDBACK.
+
+## CONSOLIDATOR Integration
+
+VETERAN exposes its episodic trace store to CONSOLIDATOR for schema consolidation (Mode 2) and online replay (Mode 1). When CONSOLIDATOR promotes a schema, VETERAN stores it in its schema registry alongside existing patterns. CONSOLIDATOR reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).
+
+---
+
 ## Constraints
 
 - Do NOT promote entries with `confidence < 0.7`. Low-confidence entries need more evidence first.

@@ -367,14 +367,6 @@ provides:
         capability: balanced
         tools: write         # writes pattern schemas
         color: yellow
-    - name: "speckit.echelon.global-memory"
-      file: "agents/learning/global-memory.md"
-      description: "GLOBAL-MEMORY — manages cross-project knowledge base across all runs"
-      behavior:
-        execution: agent
-        capability: balanced
-        tools: write         # writes ~/.specify/squad-global/ knowledge files
-        color: yellow
     # Build layer
     - name: "speckit.echelon.implementer"
       file: "agents/build/implementer.md"
