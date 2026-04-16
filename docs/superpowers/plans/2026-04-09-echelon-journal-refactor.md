@@ -1102,7 +1102,7 @@ This is a manual verification step. Do not proceed to Task 7 until this passes.
 
 - [ ] **Step 1: Run a Phase 1–3 squad run on a test project**
 
-Use an existing test fixture or a simple greenfield project. Invoke `/b3c.echelon.run` and let it run through Phase 1 (UNDERSTAND), Phase 2 (DECIDE), and Phase 3 (SOLUTION).
+Use an existing test fixture or a simple greenfield project. Invoke `/speckit.echelon.run` and let it run through Phase 1 (UNDERSTAND), Phase 2 (DECIDE), and Phase 3 (SOLUTION).
 
 - [ ] **Step 2: Verify journal index is being maintained**
 
@@ -1479,7 +1479,7 @@ git commit -m "feat: learning layer agents — echelon_result output blocks"
 
 - [ ] **Step 1: Run a full Phase 1–4 squad run**
 
-Invoke `/b3c.echelon.run` on a project that will go all the way through the build phase. Let it complete.
+Invoke `/speckit.echelon.run` on a project that will go all the way through the build phase. Let it complete.
 
 - [ ] **Step 2: Verify all 5 success criteria from the spec**
 

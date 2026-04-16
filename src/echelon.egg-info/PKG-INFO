@@ -1,3 +1,27 @@
+Metadata-Version: 2.4
+Name: echelon
+Version: 0.9.1
+Summary: Multi-agent cognitive system with SOAR-powered build pipeline and 31-metric requirements quality analysis
+Author: Ladislav Bihari
+Author-email: B3 Cognition <b3.cognition@gmail.com>
+License: MIT
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: mempalace @ https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz
+Requires-Dist: typer>=0.9.0
+Requires-Dist: rich>=13.0.0
+Requires-Dist: spacy>=3.0.0
+Requires-Dist: en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
+Requires-Dist: graphviz>=0.20.0
+Requires-Dist: transformers>=4.30.0
+Requires-Dist: torch>=2.0.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Dynamic: license-file
+
 # Echelon
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.

@@ -206,7 +206,7 @@ def _probe_skill_golddigger(
     """
     # Check skill manifest
     skill_paths = [
-        ext_dir.parent.parent.parent / ".claude" / "skills" / "b3c-echelon-run",
+        ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-echelon-run",
         ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-revenge-extract",
     ]
 

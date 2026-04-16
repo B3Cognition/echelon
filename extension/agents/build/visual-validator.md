@@ -102,7 +102,7 @@ For each component on the page:
 
 ## Step 6: Include Spec Behavioral Diagram
 
-If WHY generated a behavioral diagram via `b3c.understanding.diagram` (`spec-diagram.svg` or `.png`), include it in the visual report:
+If WHY generated a behavioral diagram via `speckit.echelon.understanding-diagram` (`spec-diagram.svg` or `.png`), include it in the visual report:
 
 ```markdown
 ## Spec Behavioral Diagram

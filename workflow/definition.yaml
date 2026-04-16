@@ -100,7 +100,7 @@ glossary:
   - term: "Run"
     senses:
       - sense: "Echelon run (squad run)"
-        detect: "when referring to a single b3c.echelon.run invocation (run_id: squad-N)"
+        detect: "when referring to a single speckit.echelon.run invocation (run_id: squad-N)"
         example: "This run produced 52 journal entries"
       - sense: "shell command execution"
         detect: "when used in bash/script context"
@@ -649,7 +649,7 @@ phases:
     description: >
       Collate all artifacts. Produce squad report.
       Run evolution signal review protocol.
-      User must explicitly invoke b3c.echelon.build to start build phase.
+      User must explicitly invoke speckit.echelon.build to start build phase.
     steps:
       - collate_artifacts
       - write_squad_report
@@ -673,11 +673,11 @@ phases:
     description: >
       Write escalation-request.md using templates/escalation-request.md.
       Set state.json status = blocked.
-      Resume with b3c.echelon.resume <answer>.
+      Resume with speckit.echelon.resume <answer>.
 
 # =============================================================================
 # BUILD WORKFLOW
-# Invoked separately via b3c.echelon.build
+# Invoked separately via speckit.echelon.build
 # COMMANDER reads this section when build phase is active.
 # =============================================================================
 
@@ -880,4 +880,4 @@ escalation:
     description: "Root cause known but unresolvable without human."
     template: templates/escalation-request.md
     state: blocked
-    resume_command: b3c.echelon.resume <answer>
+    resume_command: speckit.echelon.resume <answer>

@@ -1,0 +1,3 @@
+[console_scripts]
+codegen = codegen.cli.codegen_cli:main
+understanding = understanding.cli:main

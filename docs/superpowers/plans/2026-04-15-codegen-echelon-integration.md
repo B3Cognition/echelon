@@ -315,7 +315,7 @@ Create `~/work/evolution/echelon/commands/echelon.codegen.md`:
 
 ```markdown
 ---
-name: b3c.echelon.codegen
+name: speckit.echelon.codegen
 description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build with inviolable CQ-ISC quality gates"
 ---
 
@@ -431,7 +431,7 @@ STRATEGY_DIR="${PROJECT_ROOT}/.specify/harness/strategies/${FEATURE_PATH}"
 STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
 mkdir -p "$STRATEGY_DIR"
 
-EXPECTED_CONTENT="Invoke: /b3c.echelon.codegen ${FEATURE_PATH}"
+EXPECTED_CONTENT="Invoke: /speckit.echelon.codegen ${FEATURE_PATH}"
 if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "$EXPECTED_CONTENT" "$STRATEGY_FILE"; then
   cat > "$STRATEGY_FILE" << EOF
 # Codegen Strategy
@@ -513,7 +513,7 @@ head -5 ~/work/evolution/echelon/commands/echelon.codegen.md
 Expected:
 ```
 ---
-name: b3c.echelon.codegen
+name: speckit.echelon.codegen
 description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build with inviolable CQ-ISC quality gates"
 ---
 ```
@@ -859,14 +859,14 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Locate the insertion point**
 
-The new entry goes in `provides.commands`, after the last user-invocable command and before the `# ── Agent Definitions` comment block. That is after the `b3c.echelon.health` entry.
+The new entry goes in `provides.commands`, after the last user-invocable command and before the `# ── Agent Definitions` comment block. That is after the `speckit.echelon.health` entry.
 
 - [ ] **Step 2: Insert the new command entry**
 
 In `.specify/extensions/echelon/extension.yml`, find:
 
 ```yaml
-    - name: "b3c.echelon.health"
+    - name: "speckit.echelon.health"
       file: "commands/echelon.health.md"
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
 
@@ -876,10 +876,10 @@ In `.specify/extensions/echelon/extension.yml`, find:
 Replace with:
 
 ```yaml
-    - name: "b3c.echelon.health"
+    - name: "speckit.echelon.health"
       file: "commands/echelon.health.md"
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
-    - name: "b3c.echelon.codegen"
+    - name: "speckit.echelon.codegen"
       file: "commands/echelon.codegen.md"
       description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build"
       behavior:
@@ -904,14 +904,14 @@ print('Commands:', [c for c in cmds if 'echelon' in c and 'agent' not in c.lower
 "
 ```
 
-Expected output includes `b3c.echelon.codegen` in the list.
+Expected output includes `speckit.echelon.codegen` in the list.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 cd ~/work/spec-kit-skills-agents
 git add .specify/extensions/echelon/extension.yml
-git commit -m "feat(echelon-ext): register b3c.echelon.codegen command
+git commit -m "feat(echelon-ext): register speckit.echelon.codegen command
 
 Adds echelon.codegen to the echelon extension manifest with
 isolated execution, explicit invocation, strong capability.
@@ -943,8 +943,8 @@ print('codegen extension.yml ✓')
 # echelon extension
 ec = yaml.safe_load(open('/Users/michalbachorik/work/spec-kit-skills-agents/.specify/extensions/echelon/extension.yml'))
 names = [c['name'] for c in ec['provides']['commands']]
-assert 'b3c.echelon.codegen' in names
-ec_cmd = next(c for c in ec['provides']['commands'] if c['name'] == 'b3c.echelon.codegen')
+assert 'speckit.echelon.codegen' in names
+ec_cmd = next(c for c in ec['provides']['commands'] if c['name'] == 'speckit.echelon.codegen')
 assert ec_cmd['behavior']['execution'] == 'isolated'
 assert ec_cmd['behavior']['invocation'] == 'explicit'
 print('echelon extension.yml ✓')
@@ -963,7 +963,7 @@ echelon extension.yml ✓
 grep -n "^name:" ~/work/evolution/echelon/commands/echelon.codegen.md
 ```
 
-Expected: `name: b3c.echelon.codegen`
+Expected: `name: speckit.echelon.codegen`
 
 ```bash
 # Verify the file referenced in extension.yml exists

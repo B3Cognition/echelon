@@ -1,5 +1,5 @@
 ---
-name: b3c.echelon.codegenlight
+name: speckit.echelon.codegenlight
 description: SOAR-powered software development agent — brownfield RE + greenfield build with inviolable quality gates (CQ-ISC prohibit preferences via SOAR 9.6.4)
 tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---

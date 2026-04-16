@@ -88,7 +88,7 @@ if [[ "$VERDICT" == "POSITIVE" ]]; then
   bash "${REPO_ROOT}/scripts/ca/verify_gate.sh" --verbose
   echo ""
   echo "Next: build Phase 5 CA overlays (T-021 through T-026)."
-  echo "Run: /b3c.echelon.build phase 5"
+  echo "Run: /speckit.echelon.build phase 5"
 elif [[ "$VERDICT" == "NEGATIVE" ]]; then
   echo "NEGATIVE — CA overlay implementation is BLOCKED (P-020)."
   echo "See experiments/uca004-negative-report.md for details."

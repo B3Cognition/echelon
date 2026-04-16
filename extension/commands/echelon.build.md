@@ -1,6 +1,6 @@
 ---
-name: b3c.echelon.build
-description: "Execute building phase — implement tasks with role-based agents and quality gates. Run after b3c.echelon.run completes Phase A."
+name: speckit.echelon.build
+description: "Execute building phase — implement tasks with role-based agents and quality gates. Run after speckit.echelon.run completes Phase A."
 context: fork
 disable-model-invocation: true
 argument-hint: "...you will be assimilated"
@@ -99,7 +99,7 @@ Read and verify these files exist in `specs/{NNN}-{feature}/`:
 - `estimates.md` — Effort estimates per task
 - `calibration-profile.yaml` — Historical accuracy data
 
-If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `b3c.echelon.run` first."
+If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `speckit.echelon.run` first."
 
 ### 1.2 Parse Tasks
 
@@ -620,7 +620,7 @@ For each expert dispatch:
 
 Dispatch SAGE in post-build-validation mode:
 
-- **prompt:** Read `agents/exploration/sage.md`. You are SAGE in **post-build-validation mode**. Run `b3c.understanding.validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT. Produce `post-build-validation.md`.
+- **prompt:** Read `agents/exploration/sage.md`. You are SAGE in **post-build-validation mode**. Run `speckit.echelon.understanding-validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT. Produce `post-build-validation.md`.
 - **description:** "SAGE: post-build Understanding re-scan"
 
 **b) Intent alignment check:**

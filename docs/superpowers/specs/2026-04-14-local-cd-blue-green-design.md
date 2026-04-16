@@ -149,9 +149,9 @@ A lightweight command for visibility and manual control. Not part of the automat
 
 | Invocation | Action |
 |---|---|
-| `/b3c-echelon-deploy` | Trigger deploy manually (same as pushing to main) |
-| `/b3c-echelon-deploy status` | Show active slot, ports, container health, last deploy time |
-| `/b3c-echelon-deploy rollback` | Swap back to previous slot (`docker start {app}-{inactive}` + Traefik label update + state swap) |
+| `/speckit-echelon-deploy` | Trigger deploy manually (same as pushing to main) |
+| `/speckit-echelon-deploy status` | Show active slot, ports, container health, last deploy time |
+| `/speckit-echelon-deploy rollback` | Swap back to previous slot (`docker start {app}-{inactive}` + Traefik label update + state swap) |
 
 Rollback works because the inactive container is stopped, not removed — its image is still tagged `{app}:blue` or `{app}:green`.
 

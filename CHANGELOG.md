@@ -10,8 +10,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `understanding` CLI absorbed into echelon (`src/understanding/`) — 31-metric requirements quality analysis now bundled
 - `scripts/install.sh` — single installer: downloads SOAR 9.6.4, creates `~/.echelon/venv/`, installs both CLIs
 - `INSTALLATION.md` — prerequisites, verify, upgrade, uninstall instructions
-- 5 `b3c.understanding.*` commands added to extension (`scan`, `validate`, `energy`, `diagram`, `batch`)
-- `before_plan` hook: `b3c.understanding.scan` (runs quality scan before planning)
+- 5 `speckit.echelon.understanding-*` commands added to extension (`scan`, `validate`, `energy`, `diagram`, `batch`)
+- `before_plan` hook: `speckit.echelon.understanding-scan` (runs quality scan before planning)
 - Single extension registration: `specify extension add --dev ~/echelon/extension`
 
 ### Changed

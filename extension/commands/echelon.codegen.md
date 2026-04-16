@@ -1,5 +1,5 @@
 ---
-name: b3c.echelon.codegen
+name: speckit.echelon.codegen
 description: "SOAR-powered build pipeline for echelon — Phase A validation, MemPalace mining, strategy registration, then RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER"
 tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---
@@ -28,8 +28,8 @@ These invariants are constitutionally mandated and CANNOT be overridden by any p
 ## Invocation Forms
 
 ```
-b3c.echelon.codegen 001-feature-name    # run pipeline on echelon feature
-b3c.echelon.codegen --resume            # resume interrupted pipeline
+speckit.echelon.codegen 001-feature-name    # run pipeline on echelon feature
+speckit.echelon.codegen --resume            # resume interrupted pipeline
 ```
 
 ---
@@ -58,7 +58,7 @@ If not resume and `$ARGUMENTS` is empty or `SPEC_ID` is empty, stop:
 
 ```
 [ECHELON CODEGEN] ERROR: Feature path required.
-Usage: b3c.echelon.codegen 001-feature-name
+Usage: speckit.echelon.codegen 001-feature-name
 ```
 
 ### A.2 Validate Phase A artifacts (skip on resume)
@@ -71,7 +71,7 @@ if [ "$RESUME_MODE" -eq 0 ]; then
   done
   if [ -n "$MISSING" ]; then
     echo "[ECHELON CODEGEN] ERROR: Missing Phase A artifacts:${MISSING}"
-    echo "[ECHELON CODEGEN] Run b3c.echelon.run ${FEATURE_PATH} first."
+    echo "[ECHELON CODEGEN] Run speckit.echelon.run ${FEATURE_PATH} first."
     exit 1
   fi
   echo "[ECHELON CODEGEN] Phase A artifacts verified ✓"
@@ -118,10 +118,10 @@ if [ "$RESUME_MODE" -eq 0 ]; then
   STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
   mkdir -p "$STRATEGY_DIR"
 
-  if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "command: b3c.echelon.codegen" "$STRATEGY_FILE"; then
+  if [ ! -f "$STRATEGY_FILE" ] || ! grep -qF "command: speckit.echelon.codegen" "$STRATEGY_FILE"; then
     cat > "$STRATEGY_FILE" << EOF
 ---
-command: b3c.echelon.codegen
+command: speckit.echelon.codegen
 ---
 # Codegen Strategy
 
@@ -529,10 +529,10 @@ Jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
 
 | Error | Response |
 |-------|----------|
-| Missing Phase A artifact | STOP — print which file is missing + hint to run `b3c.echelon.run` |
+| Missing Phase A artifact | STOP — print which file is missing + hint to run `speckit.echelon.run` |
 | SOAR binary not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
 | codegen CLI not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
 | No test runner found | Warn, mark tier1 unavailable, generate CI config |
 | Impasse (exit 2) | Stop, report `codegen-impasse.md` — do NOT enter feedback loop |
-| Context window limit | Write state.json, print `[CODEGEN] Run b3c.echelon.codegen --resume to continue` |
+| Context window limit | Write state.json, print `[CODEGEN] Run speckit.echelon.codegen --resume to continue` |
 | Filesystem write outside target | BLOCK — `[CODEGEN SECURITY] Write outside target blocked` |

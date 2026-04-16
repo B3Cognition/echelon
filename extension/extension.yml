@@ -59,7 +59,7 @@ requires:
 
 provides:
   commands:
-    - name: "b3c.echelon.codegenlight"
+    - name: "speckit.echelon.codegenlight"
       file: "commands/echelon.codegenlight.md"
       description: "Standalone SOAR-powered build pipeline — RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER"
       behavior:
@@ -69,40 +69,40 @@ provides:
         effort: high
         tools: full
 
-    - name: "b3c.echelon.run"
+    - name: "speckit.echelon.run"
       file: "commands/echelon.run.md"
       description: "Full autonomous cognitive squad run"
-    - name: "b3c.echelon.build"
+    - name: "speckit.echelon.build"
       file: "commands/echelon.build.md"
       description: "Execute the building phase — implement tasks with role-based agents"
-    - name: "b3c.echelon.status"
+    - name: "speckit.echelon.status"
       file: "commands/echelon.status.md"
       description: "Check current squad state and progress"
-    - name: "b3c.echelon.innovate"
+    - name: "speckit.echelon.innovate"
       file: "commands/echelon.innovate.md"
       description: "Manually trigger INNOVATE specialist"
-    - name: "b3c.echelon.investigate"
+    - name: "speckit.echelon.investigate"
       file: "commands/echelon.investigate.md"
       description: "Manually trigger SCIENTIST for a specific question"
-    - name: "b3c.echelon.ground"
+    - name: "speckit.echelon.ground"
       file: "commands/echelon.ground.md"
       description: "Manually trigger reality check on artifacts"
-    - name: "b3c.echelon.feedback"
+    - name: "speckit.echelon.feedback"
       file: "commands/echelon.feedback.md"
       description: "Post-implementation feedback intake"
-    - name: "b3c.echelon.resume"
+    - name: "speckit.echelon.resume"
       file: "commands/echelon.resume.md"
       description: "Provide answer to human escalation"
-    - name: "b3c.echelon.change"
+    - name: "speckit.echelon.change"
       file: "commands/echelon.change.md"
       description: "Handle specification change during build phase"
-    - name: "b3c.echelon.verify"
+    - name: "speckit.echelon.verify"
       file: "commands/echelon.verify.md"
       description: "Run full backpropagation verification — 100% spec coverage check"
-    - name: "b3c.echelon.health"
+    - name: "speckit.echelon.health"
       file: "commands/echelon.health.md"
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
-    - name: "b3c.echelon.codegen"
+    - name: "speckit.echelon.codegen"
       file: "commands/echelon.codegen.md"
       description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build"
       behavior:
@@ -111,7 +111,7 @@ provides:
         capability: strong
         effort: high
         tools: full
-    - name: "b3c.echelon.deploy"
+    - name: "speckit.echelon.deploy"
       file: "commands/echelon.deploy.md"
       description: "Manual deploy trigger, status, and rollback for blue/green local CD"
       behavior:
@@ -122,7 +122,7 @@ provides:
 
     # ── Agent Definitions ──────────────────────────────────────────
     # Control layer
-    - name: "b3c.echelon.commander"
+    - name: "speckit.echelon.commander"
       file: "agents/control/commander.md"
       description: "COMMANDER — principal orchestrator for all echelon phases"
       behavior:
@@ -130,7 +130,7 @@ provides:
         capability: strong
         tools: full          # needs Bash (state-backup.sh) + Write (journal, state.json)
         color: blue
-    - name: "b3c.echelon.checkpoint"
+    - name: "speckit.echelon.checkpoint"
       file: "agents/control/checkpoint.md"
       description: "CHECKPOINT — internalization quality assessor"
       behavior:
@@ -138,7 +138,7 @@ provides:
         capability: strong
         tools: write         # writes internalization-report.md
         color: blue
-    - name: "b3c.echelon.scorekeeper"
+    - name: "speckit.echelon.scorekeeper"
       file: "agents/control/scorekeeper.md"
       description: "SCOREKEEPER — tracks and scores agent performance"
       behavior:
@@ -146,7 +146,7 @@ provides:
         capability: balanced
         tools: write         # writes agent-scorecard.md, agent-scores.yaml
         color: blue
-    - name: "b3c.echelon.strategist"
+    - name: "speckit.echelon.strategist"
       file: "agents/control/strategist.md"
       description: "STRATEGIST — risk-weighted alignment advisor for COMMANDER"
       behavior:
@@ -154,7 +154,7 @@ provides:
         capability: strong
         tools: write         # writes strategic-overview.md
         color: blue
-    - name: "b3c.echelon.tracker"
+    - name: "speckit.echelon.tracker"
       file: "agents/control/tracker.md"
       description: "TRACKER — intent analyst detecting scope drift"
       behavior:
@@ -163,7 +163,7 @@ provides:
         tools: write         # writes user-intent.md
         color: blue
     # Exploration layer
-    - name: "b3c.echelon.scout"
+    - name: "speckit.echelon.scout"
       file: "agents/exploration/scout.md"
       description: "SCOUT — reconnaissance analyst mapping domain territory"
       behavior:
@@ -171,7 +171,7 @@ provides:
         capability: strong
         tools: write         # writes glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md
         color: green
-    - name: "b3c.echelon.golddigger"
+    - name: "speckit.echelon.golddigger"
       file: "agents/exploration/golddigger.md"
       description: "GOLDDIGGER — brownfield extraction driver via revenge extension"
       behavior:
@@ -179,7 +179,7 @@ provides:
         capability: strong
         tools: full         # writes brownfield-index.md, golddigger-cache/
         color: green
-    - name: "b3c.echelon.synthesizer"
+    - name: "speckit.echelon.synthesizer"
       file: "agents/exploration/synthesizer.md"
       description: "SYNTHESIZER — fuses raw discovery outputs into unified knowledge base"
       behavior:
@@ -187,7 +187,7 @@ provides:
         capability: strong
         tools: write         # writes contradictions-and-gaps.md, risks.md, unified outputs
         color: green
-    - name: "b3c.echelon.cartographer"
+    - name: "speckit.echelon.cartographer"
       file: "agents/exploration/cartographer.md"
       description: "CARTOGRAPHER — transforms domain understanding into testable specifications"
       behavior:
@@ -195,7 +195,7 @@ provides:
         capability: strong
         tools: full         # writes spec.md, 00-overview.md (via Skill + direct)
         color: green
-    - name: "b3c.echelon.sage"
+    - name: "speckit.echelon.sage"
       file: "agents/exploration/sage.md"
       description: "SAGE — adversarial critic and requirements quality gatekeeper"
       behavior:
@@ -203,7 +203,7 @@ provides:
         capability: strong
         tools: full          # needs Bash to run `understanding` CLI in WHY2/WHY3
         color: green
-    - name: "b3c.echelon.modeler"
+    - name: "speckit.echelon.modeler"
       file: "agents/exploration/modeler.md"
       description: "MODELER — maintains living queryable map of the codebase"
       behavior:
@@ -212,7 +212,7 @@ provides:
         tools: write         # writes mental-model-code.md, invariant alerts
         color: green
     # Feasibility layer
-    - name: "b3c.echelon.gatekeeper"
+    - name: "speckit.echelon.gatekeeper"
       file: "agents/feasibility/gatekeeper.md"
       description: "GATEKEEPER — kill gate for project feasibility and RICE scoring"
       behavior:
@@ -220,7 +220,7 @@ provides:
         capability: strong
         tools: write         # writes feasibility.md, prioritization.md, estimates.md, mvp-scope.md
         color: orange
-    - name: "b3c.echelon.validator"
+    - name: "speckit.echelon.validator"
       file: "agents/feasibility/validator.md"
       description: "VALIDATOR — internalization gate ensuring comprehension before work"
       behavior:
@@ -229,7 +229,7 @@ provides:
         tools: write         # writes internalization-report.md
         color: orange
     # Solution layer
-    - name: "b3c.echelon.architect"
+    - name: "speckit.echelon.architect"
       file: "agents/solution/architect.md"
       description: "ARCHITECT — designs system structure and makes technology decisions"
       behavior:
@@ -237,7 +237,7 @@ provides:
         capability: strong
         tools: full         # writes plan.md, research.md, data-model.md, contracts/
         color: purple
-    - name: "b3c.echelon.orchestrator"
+    - name: "speckit.echelon.orchestrator"
       file: "agents/solution/orchestrator.md"
       description: "ORCHESTRATOR — decomposes projects into executable task sequences"
       behavior:
@@ -245,7 +245,7 @@ provides:
         capability: strong
         tools: full         # writes tasks.md, critical-path.md, risk-matrix.md, dependencies.md
         color: purple
-    - name: "b3c.echelon.sentinel"
+    - name: "speckit.echelon.sentinel"
       file: "agents/solution/sentinel.md"
       description: "SENTINEL — test architecture lead designing test strategies"
       behavior:
@@ -254,7 +254,7 @@ provides:
         tools: write         # writes test-strategy.md, test-architecture.md, coverage-map.md
         color: purple
     # Specialists layer
-    - name: "b3c.echelon.investigator"
+    - name: "speckit.echelon.investigator"
       file: "agents/specialists/investigator.md"
       description: "INVESTIGATOR — scientific researcher for unknowns and spike investigations"
       behavior:
@@ -262,7 +262,7 @@ provides:
         capability: strong
         tools: full          # needs Bash to run experiments in worktrees
         color: cyan
-    - name: "b3c.echelon.guardian"
+    - name: "speckit.echelon.guardian"
       file: "agents/specialists/guardian.md"
       description: "GUARDIAN — security architect conducting threat models"
       behavior:
@@ -270,7 +270,7 @@ provides:
         capability: strong
         tools: write         # writes threat-model.md, compliance-requirements.md, risk-acceptance-log.md
         color: cyan
-    - name: "b3c.echelon.benchmark"
+    - name: "speckit.echelon.benchmark"
       file: "agents/specialists/benchmark.md"
       description: "BENCHMARK — performance engineer modeling capacity and scalability"
       behavior:
@@ -278,7 +278,7 @@ provides:
         capability: strong
         tools: write         # writes performance-requirements.md, capacity-model.md
         color: cyan
-    - name: "b3c.echelon.advocate"
+    - name: "speckit.echelon.advocate"
       file: "agents/specialists/advocate.md"
       description: "ADVOCATE — accessibility specialist ensuring WCAG compliance"
       behavior:
@@ -286,7 +286,7 @@ provides:
         capability: strong
         tools: write         # writes accessibility-requirements.md, user-flow.md
         color: cyan
-    - name: "b3c.echelon.oracle"
+    - name: "speckit.echelon.oracle"
       file: "agents/specialists/oracle.md"
       description: "ORACLE — domain-specific knowledge specialist"
       behavior:
@@ -294,7 +294,7 @@ provides:
         capability: strong
         tools: write         # writes domain amendments to spec, plan, glossary
         color: cyan
-    - name: "b3c.echelon.maverick"
+    - name: "speckit.echelon.maverick"
       file: "agents/specialists/maverick.md"
       description: "MAVERICK — innovation consultant breaking assumptions via AutoTRIZ"
       behavior:
@@ -303,7 +303,7 @@ provides:
         tools: write         # writes alternatives.md, risk-opportunities.md
         color: cyan
     # Learning layer
-    - name: "b3c.echelon.auditor"
+    - name: "speckit.echelon.auditor"
       file: "agents/learning/auditor.md"
       description: "AUDITOR — calibration engineer tracking squad confidence profile"
       behavior:
@@ -311,7 +311,7 @@ provides:
         capability: balanced
         tools: full          # needs Bash to run `understanding` CLI in Mode 4 post-build self-assessment
         color: yellow
-    - name: "b3c.echelon.internalizer"
+    - name: "speckit.echelon.internalizer"
       file: "agents/learning/internalizer.md"
       description: "INTERNALIZER — computes 16 internalization metrics for comprehension measurement"
       behavior:
@@ -319,7 +319,7 @@ provides:
         capability: balanced
         tools: write         # writes internalization-metrics.md, internalization-log.yaml
         color: yellow
-    - name: "b3c.echelon.adaptive"
+    - name: "speckit.echelon.adaptive"
       file: "agents/learning/adaptive.md"
       description: "ADAPTIVE — quality trajectory analyst detecting stagnation and regression"
       behavior:
@@ -327,7 +327,7 @@ provides:
         capability: balanced
         tools: write         # writes evolution-report.md, stagnation-flags.md
         color: yellow
-    - name: "b3c.echelon.realist"
+    - name: "speckit.echelon.realist"
       file: "agents/learning/realist.md"
       description: "REALIST — connects squad artifacts to real-world data and historical outcomes"
       behavior:
@@ -335,7 +335,7 @@ provides:
         capability: balanced
         tools: write         # writes reality-check.md, cost-analysis.md, benchmark-data.md
         color: yellow
-    - name: "b3c.echelon.mirror"
+    - name: "speckit.echelon.mirror"
       file: "agents/learning/mirror.md"
       description: "MIRROR — post-mortem facilitator extracting patterns from retrospectives"
       behavior:
@@ -343,7 +343,7 @@ provides:
         capability: balanced
         tools: write         # writes patterns.yaml, pitfalls.yaml, knowledge-transfer-assessment.md
         color: yellow
-    - name: "b3c.echelon.monitor"
+    - name: "speckit.echelon.monitor"
       file: "agents/learning/monitor.md"
       description: "MONITOR — metacognition watchdog asking if the squad is still on track"
       behavior:
@@ -351,7 +351,7 @@ provides:
         capability: balanced
         tools: write         # writes metacognition-log.md
         color: yellow
-    - name: "b3c.echelon.veteran"
+    - name: "speckit.echelon.veteran"
       file: "agents/learning/veteran.md"
       description: "VETERAN — cross-project knowledge curator managing patterns and pitfalls"
       behavior:
@@ -359,7 +359,7 @@ provides:
         capability: balanced
         tools: write         # writes updated scope fields in patterns.yaml
         color: yellow
-    - name: "b3c.echelon.consolidator"
+    - name: "speckit.echelon.consolidator"
       file: "agents/learning/consolidator.md"
       description: "CONSOLIDATOR — transforms raw episodic experience into generalized schemas"
       behavior:
@@ -367,7 +367,7 @@ provides:
         capability: balanced
         tools: write         # writes pattern schemas
         color: yellow
-    - name: "b3c.echelon.global-memory"
+    - name: "speckit.echelon.global-memory"
       file: "agents/learning/global-memory.md"
       description: "GLOBAL-MEMORY — manages cross-project knowledge base across all runs"
       behavior:
@@ -376,7 +376,7 @@ provides:
         tools: write         # writes ~/.specify/squad-global/ knowledge files
         color: yellow
     # Build layer
-    - name: "b3c.echelon.implementer"
+    - name: "speckit.echelon.implementer"
       file: "agents/build/implementer.md"
       description: "IMPLEMENTER — senior developer writing production code following TDD"
       behavior:
@@ -384,7 +384,7 @@ provides:
         capability: strong
         tools: full          # needs Bash (run tests, git worktree) + Write (source + test files)
         color: red
-    - name: "b3c.echelon.spec-guard"
+    - name: "speckit.echelon.spec-guard"
       file: "agents/build/spec-guard.md"
       description: "SPEC GUARD — verifies implemented code matches specification requirements"
       behavior:
@@ -392,7 +392,7 @@ provides:
         capability: balanced
         tools: write         # writes spec-compliance-report.md, traceability-matrix.md
         color: red
-    - name: "b3c.echelon.code-reviewer"
+    - name: "speckit.echelon.code-reviewer"
       file: "agents/build/code-reviewer.md"
       description: "CODE REVIEWER — reviews code quality, patterns, security, and architecture"
       behavior:
@@ -400,7 +400,7 @@ provides:
         capability: strong
         tools: write         # writes code-review-report.md
         color: red
-    - name: "b3c.echelon.test-guardian"
+    - name: "speckit.echelon.test-guardian"
       file: "agents/build/test-guardian.md"
       description: "TEST GUARDIAN — audits test sufficiency and edge case coverage"
       behavior:
@@ -408,7 +408,7 @@ provides:
         capability: balanced
         tools: write         # writes test-quality-report.md, updated coverage-map.md
         color: red
-    - name: "b3c.echelon.engineering-manager"
+    - name: "speckit.echelon.engineering-manager"
       file: "agents/build/engineering-manager.md"
       description: "ENGINEERING MANAGER — orchestrates build phase convergence toward spec coverage"
       behavior:
@@ -416,7 +416,7 @@ provides:
         capability: strong
         tools: write         # writes workflow-compliance-report.md
         color: red
-    - name: "b3c.echelon.integrator"
+    - name: "speckit.echelon.integrator"
       file: "agents/build/integrator.md"
       description: "INTEGRATOR — verifies system integration after each build phase"
       behavior:
@@ -424,7 +424,7 @@ provides:
         capability: balanced
         tools: write         # writes integration-report.md
         color: red
-    - name: "b3c.echelon.progress-tracker"
+    - name: "speckit.echelon.progress-tracker"
       file: "agents/build/progress-tracker.md"
       description: "PROGRESS TRACKER — tracks effort vs estimates and warns on schedule drift"
       behavior:
@@ -432,7 +432,7 @@ provides:
         capability: balanced
         tools: write         # writes progress-report.md, process-metrics.md
         color: red
-    - name: "b3c.echelon.change-controller"
+    - name: "speckit.echelon.change-controller"
       file: "agents/build/change-controller.md"
       description: "CHANGE CONTROLLER — assesses blast radius of spec changes and plans propagation"
       behavior:
@@ -440,7 +440,7 @@ provides:
         capability: strong
         tools: write         # writes change-impact-report.md, updated tasks.md
         color: red
-    - name: "b3c.echelon.debugger"
+    - name: "speckit.echelon.debugger"
       file: "agents/build/debugger.md"
       description: "DEBUGGER — systematic root cause analyst for build failures"
       behavior:
@@ -448,7 +448,7 @@ provides:
         capability: strong
         tools: full          # needs Bash (reproduce failures, run tests) + Write (fixes)
         color: red
-    - name: "b3c.echelon.verification"
+    - name: "speckit.echelon.verification"
       file: "agents/build/verification.md"
       description: "VERIFICATION — backpropagation specialist tracing requirements to 100% coverage"
       behavior:
@@ -456,7 +456,7 @@ provides:
         capability: balanced
         tools: write         # writes gap-report.md, traceability-matrix.md, verification-summary.md
         color: red
-    - name: "b3c.echelon.visual-validator"
+    - name: "speckit.echelon.visual-validator"
       file: "agents/build/visual-validator.md"
       description: "VISUAL VALIDATOR — UI verification specialist using Playwright for visual checks"
       behavior:
@@ -466,10 +466,10 @@ provides:
         color: red
 
     # ── Understanding commands ─────────────────────────────────────────────────
-    - name: "b3c.understanding.scan"
-      file: "commands/understanding.scan.md"
+    - name: "speckit.echelon.understanding-scan"
+      file: "commands/echelon.understanding-scan.md"
       description: "Scan spec for 31 requirements quality metrics with quality gates"
-      aliases: ["b3c.understanding.run"]
+      aliases: ["speckit.echelon.understanding-run"]
       behavior:
         execution: command
         capability: balanced
@@ -478,8 +478,8 @@ provides:
         visibility: user
         color: green
 
-    - name: "b3c.understanding.validate"
-      file: "commands/understanding.validate.md"
+    - name: "speckit.echelon.understanding-validate"
+      file: "commands/echelon.understanding-validate.md"
       description: "Enforce quality gates on spec (exit code 1 on failure)"
       behavior:
         execution: command
@@ -489,8 +489,8 @@ provides:
         visibility: user
         color: green
 
-    - name: "b3c.understanding.energy"
-      file: "commands/understanding.energy.md"
+    - name: "speckit.echelon.understanding-energy"
+      file: "commands/echelon.understanding-energy.md"
       description: "[Experimental] Token-level ambiguity detection using energy metrics"
       behavior:
         execution: command
@@ -500,8 +500,8 @@ provides:
         visibility: user
         color: green
 
-    - name: "b3c.understanding.diagram"
-      file: "commands/understanding.diagram.md"
+    - name: "speckit.echelon.understanding-diagram"
+      file: "commands/echelon.understanding-diagram.md"
       description: "Generate entity relationship diagrams from spec requirements"
       behavior:
         execution: command
@@ -511,8 +511,8 @@ provides:
         visibility: user
         color: green
 
-    - name: "b3c.understanding.batch"
-      file: "commands/understanding.batch.md"
+    - name: "speckit.echelon.understanding-batch"
+      file: "commands/echelon.understanding-batch.md"
       description: "Batch-analyze all specs in a directory with summary report"
       behavior:
         execution: command
@@ -530,12 +530,12 @@ provides:
 
 hooks:
   before_plan:
-    command: "b3c.understanding.scan"
+    command: "speckit.echelon.understanding-scan"
     optional: true
     prompt: "Run requirements quality scan on the spec before planning?"
     description: "Scan spec quality before creating the plan"
   after_tasks:
-    command: "b3c.echelon.run"
+    command: "speckit.echelon.run"
     optional: true
     prompt: "Run echelon analysis on generated tasks?"
     description: "Automatically analyze tasks with the echelon cognitive system for insights and improvements"

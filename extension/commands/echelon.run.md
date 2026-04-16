@@ -1,5 +1,5 @@
 ---
-name: b3c.echelon.run
+name: speckit.echelon.run
 description: "Full autonomous cognitive squad run — DISCOVER through FINALIZE. 21-phase state machine. Set autonomy mode in echelon-config.yml (guided/semi/banzai)."
 disable-model-invocation: true
 argument-hint: "Resistance is futile..."
@@ -15,7 +15,7 @@ $ARGUMENTS
 
 ## COMMANDER Loading — MANDATORY FIRST STEP
 
-> **Note:** This skill is loaded via the slash command. Do NOT call `Skill("b3c-echelon-run")` — the content is already in your context. Proceed directly.
+> **Note:** This skill is loaded via the slash command. Do NOT call `Skill("speckit-echelon-run")` — the content is already in your context. Proceed directly.
 
 **Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the COMMANDER (MANAGER). The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and convergence thresholds. These govern ALL routing and iteration decisions throughout the run.
 
@@ -39,7 +39,7 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 ## Scope Boundary — ABSOLUTE RULE
 
-**`b3c.echelon.run` produces SPEC/PLAN/TASKS artifacts ONLY. It never implements.**
+**`speckit.echelon.run` produces SPEC/PLAN/TASKS artifacts ONLY. It never implements.**
 
 You must NEVER, under any circumstance:
 - Write, modify, or delete application source files in the target project
@@ -47,7 +47,7 @@ You must NEVER, under any circumstance:
 - Fix bugs, refactor code, or implement features directly
 - Use the Edit, Write, or Bash tools on target project source files
 
-The output of this command is a validated spec + architecture + plan + tasks, ready for `b3c.echelon.build` or `harness.run`. Implementation is the harness's job — it runs in a sandboxed worktree with full test feedback loops. Bypassing it produces unchecked results and skips all quality gates.
+The output of this command is a validated spec + architecture + plan + tasks, ready for `speckit.echelon.build` or `harness.run`. Implementation is the harness's job — it runs in a sandboxed worktree with full test feedback loops. Bypassing it produces unchecked results and skips all quality gates.
 
 If the user's input looks like a bug report or a feature request for an existing codebase: this is EXACTLY the right input for `echelon.run`. Analyse it, specify it, plan it. Do NOT fix it.
 
@@ -62,7 +62,7 @@ The run ends ONLY when one of these three conditions is reached:
 3. A **human checkpoint** is reached in `guided` or `semi` mode only
 
 These are NEVER stopping points:
-- A `Skill` tool returning with success (e.g. `speckit.specify`, `speckit.constitution`, `b3c.understanding.validate`) — continue to the next step immediately
+- A `Skill` tool returning with success (e.g. `speckit.specify`, `speckit.constitution`, `speckit.echelon.understanding-validate`) — continue to the next step immediately
 - An `Agent` subagent completing its dispatch — read its output and continue routing
 - A `Bash` command returning output — process it and continue
 - A phase completing successfully — update `state.json` and proceed to the next phase
@@ -851,9 +851,9 @@ Update state.json:
 
 ### Preflight: Understanding Extension Availability (HARD STOP)
 
-Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding is available. SAGE invokes Understanding via the Skill tool (`b3c.understanding.validate`), not as a CLI binary.
+Before dispatching SAGE for WHY2 (and WHY3), COMMANDER MUST verify Understanding is available. SAGE invokes Understanding via the Skill tool (`speckit.echelon.understanding-validate`), not as a CLI binary.
 
-If the `b3c.understanding.validate` skill invocation fails (Understanding extension unavailable):
+If the `speckit.echelon.understanding-validate` skill invocation fails (Understanding extension unavailable):
 
 1. Set `state.json.status` to `"blocked"`
 2. Set `state.json.blocked_reason` to `"Understanding extension unavailable — required for WHY2/WHY3 spec validation"`
@@ -865,7 +865,7 @@ If the `b3c.understanding.validate` skill invocation fails (Understanding extens
 ============================================
 
 Phase: WHY2 (spec-validation)
-Required: Understanding extension (b3c.understanding.validate)
+Required: Understanding extension (speckit.echelon.understanding-validate)
 
 Heuristic fallback is NOT permitted.
 Prior run (PAT-006) proved heuristic scoring is 15-29% overconfident,
@@ -884,7 +884,7 @@ Persist `state.json.dependency_checks.understanding` with `status`, `checked_at`
 Read and include in the subagent prompt:
 
 - All current artifacts in `specs/{feature}/`
-- Understanding access (via `b3c.understanding.validate` Skill tool)
+- Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 
@@ -1251,7 +1251,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 ### 11.1 WHY3 Context Pack
 
 - All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
-- Understanding access (via `b3c.understanding.validate` Skill tool)
+- Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `calibration-profile.yaml`
 - `reasoning-journal.json`
 
@@ -1520,13 +1520,13 @@ RISKS ACCEPTED AUTONOMOUSLY:
 ──────────────────────────────────────────
 
 Spec ID for feedback: {NNN}
-Run: b3c.echelon.feedback {NNN} after implementation
+Run: speckit.echelon.feedback {NNN} after implementation
 
 BRANCH: {NNN}-{feature}
-Ready for: b3c.echelon.build {NNN}-{feature}
+Ready for: speckit.echelon.build {NNN}-{feature}
 
 NOTE: No application source files were modified by this command.
-      Implementation is performed by b3c.echelon.build / harness.run.
+      Implementation is performed by speckit.echelon.build / harness.run.
 ============================================
 ```
 
@@ -1569,7 +1569,7 @@ When the user starts a new squad run while implementation of the current spec is
 2. Spec-kit handles branch stacking (new branch based on current feature branch)
 3. This allows parallel specification work while implementation continues
 
-**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `b3c.echelon.build`.
+**DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `speckit.echelon.build`.
 
 ---
 
@@ -1739,7 +1739,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 | Tool | Failure | Fallback |
 |------|---------|----------|
-| Understanding extension | `b3c.understanding.validate` skill invocation fails | **HARD STOP for WHY2/WHY3.** SAGE invokes `b3c.understanding.validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
+| Understanding extension | `speckit.echelon.understanding-validate` skill invocation fails | **HARD STOP for WHY2/WHY3.** SAGE invokes `speckit.echelon.understanding-validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
 | spec-kit-revenge | `speckit.revenge.extract` skill invocation fails | GOLDDIGGER reports failure; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
 | spec-kit skills | Skill invocation fails at runtime | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit skills (e.g. `speckit.specify`, `speckit.constitution`) are AI coding assistant skills, not CLI tools — validated at install time via `specify extension add echelon`. |
 
@@ -1808,11 +1808,11 @@ Escalation to human is triggered when:
 
    Recommended: {option}
 
-   Respond with: b3c.echelon.resume {your answer}
+   Respond with: speckit.echelon.resume {your answer}
    ============================================
    ```
 
-5. **STOP execution.** Do not proceed. The user must run `b3c.echelon.resume` to continue.
+5. **STOP execution.** Do not proceed. The user must run `speckit.echelon.resume` to continue.
 
 ---
 

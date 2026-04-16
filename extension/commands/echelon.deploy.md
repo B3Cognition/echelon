@@ -1,5 +1,5 @@
 ---
-name: b3c.echelon.deploy
+name: speckit.echelon.deploy
 description: "Manual deploy trigger, status, and rollback for blue/green and CLI local CD"
 behavior:
   invocation: explicit

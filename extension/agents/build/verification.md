@@ -42,7 +42,7 @@ Dispatched by the ENGINEERING MANAGER:
 
 1. After ALL build tasks are marked complete
 2. After rework tasks are completed (re-verification)
-3. On demand via `b3c.echelon.verify`
+3. On demand via `speckit.echelon.verify`
 
 ---
 
@@ -83,7 +83,7 @@ Count them. This is the denominator for coverage.
 
 ### Step 1b: Load Behavioral Diagram
 
-If WHY generated a spec behavioral diagram (via `b3c.understanding.diagram`), load it:
+If WHY generated a spec behavioral diagram (via `speckit.echelon.understanding-diagram`), load it:
 
 ```bash
 # Check if diagram exists

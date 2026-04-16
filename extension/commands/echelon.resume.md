@@ -24,7 +24,7 @@ Resume a blocked squad run by providing the human's answer to the escalation que
 
 ## Step 1: Validate Input
 
-If `$ARGUMENTS` is empty, report **"Please provide your answer. Usage: b3c.echelon.resume <your answer to the escalation question>"** and stop.
+If `$ARGUMENTS` is empty, report **"Please provide your answer. Usage: speckit.echelon.resume <your answer to the escalation question>"** and stop.
 
 ---
 

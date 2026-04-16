@@ -41,7 +41,7 @@ Two other options were considered and rejected:
 | Artifact | Location | Change |
 |---|---|---|
 | `commands/codegen.md` | codegen repo | Polished skill (argument parsing, state writes, resume sync, fail-fast SOAR init) |
-| `extension.yml` | echelon repo | One new command entry: `b3c.echelon.codegen` |
+| `extension.yml` | echelon repo | One new command entry: `speckit.echelon.codegen` |
 
 ### Unchanged
 
@@ -157,7 +157,7 @@ tags:
 ### echelon repo — addition to `extension.yml` `provides.commands`
 
 ```yaml
-    - name: "b3c.echelon.codegen"
+    - name: "speckit.echelon.codegen"
       file: "commands/echelon.codegen.md"
       description: "Execute building phase via SOAR-powered codegen pipeline — alternative to echelon.build"
       behavior:
@@ -210,7 +210,7 @@ After BUILD_INIT, before SOAR bridge init:
 3. Write .specify/harness/strategies/{spec_id}/codegen.md (idempotent):
    ---
    This strategy uses the SOAR-powered codegen pipeline.
-   Invoke: /b3c.echelon.codegen {spec_id}
+   Invoke: /speckit.echelon.codegen {spec_id}
    ---
 4. Continue to SOAR bridge init
 ```

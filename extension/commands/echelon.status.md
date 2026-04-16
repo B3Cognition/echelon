@@ -87,7 +87,7 @@ If `status` is `"blocked"`, prominently display:
 Question: {escalation_question}
 Reason:   {blocked_reason}
 
-Resume with: b3c.echelon.resume {your answer}
+Resume with: speckit.echelon.resume {your answer}
 ```
 
 Print all entries from `issues_log`:

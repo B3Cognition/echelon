@@ -92,11 +92,11 @@ This agent uses values from `squad-config.yml`:
 
 **Every agent dispatch uses the Agent tool.** There is no other dispatch method.
 
-- Agent name pattern: `b3c-echelon-<codename-lowercase>` (e.g., SCOUT → `b3c-echelon-scout`, GUARDIAN → `b3c-echelon-guardian`)
+- Agent name pattern: `speckit-echelon-<codename-lowercase>` (e.g., SCOUT → `speckit-echelon-scout`, GUARDIAN → `speckit-echelon-guardian`)
 - Include a `description:` field summarizing the dispatch (e.g., "SCOUT: domain reconnaissance")
 - Include the context pack in the `prompt:` field
 
-Example: dispatching SCOUT = `Agent(subagent_type="b3c-echelon-scout", prompt="<context pack>", description="SCOUT: domain mapping")`
+Example: dispatching SCOUT = `Agent(subagent_type="speckit-echelon-scout", prompt="<context pack>", description="SCOUT: domain mapping")`
 
 Never substitute the Agent tool with inline writing. If the Agent tool is unavailable, escalate to the human — do not produce the agent's work yourself.
 
@@ -488,7 +488,7 @@ For each file: if it exists, read and extract relevant fields. If absent, note a
   "type": "cold_start_warning",
   "agent": "COMMANDER",
   "timestamp": "<ISO 8601>",
-  "message": "COLD START: no real feedback data. calibration-profile.yaml values are proxy-estimated. Run b3c.echelon.feedback after this project completes to start improving calibration accuracy."
+  "message": "COLD START: no real feedback data. calibration-profile.yaml values are proxy-estimated. Run speckit.echelon.feedback after this project completes to start improving calibration accuracy."
 }
 ```
 

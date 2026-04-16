@@ -7,7 +7,7 @@ This directory closes the learning loop input side.
 After every project that used the cognitive squad, run:
 
 ```bash
-b3c.echelon.feedback {spec_id}
+speckit.echelon.feedback {spec_id}
 ```
 
 This command collects post-implementation outcome data and writes a feedback file here.
