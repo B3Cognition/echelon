@@ -148,6 +148,37 @@ fi
 
 If `RESUME_MODE=1`, skip to **Resume Mode** at the end of this document.
 
+### A.7 Load build lessons (skip on resume)
+
+```bash
+LESSONS_FILE="${FEATURE_DIR}/lessons.md"
+PITFALLS_FILE="${PROJECT_ROOT}/.specify/knowledge-base/pitfalls.yaml"
+
+LESSONS_CONTENT=""
+[ -f "${LESSONS_FILE}" ] && LESSONS_CONTENT=$(cat "${LESSONS_FILE}")
+[ -f "${PITFALLS_FILE}" ] && LESSONS_CONTENT="${LESSONS_CONTENT}
+$(cat ${PITFALLS_FILE})"
+
+echo "[ECHELON CODEGEN] Lessons loaded: $(echo "${LESSONS_CONTENT}" | grep -c '^## Lesson' || echo 0) entries"
+```
+
+If `LESSONS_CONTENT` is non-empty, translate each `INVARIANT:` line into a SOAR CQ-ISC prohibit preference in Phase 0. These are not advisory — they are enforced by the GATE phase the same as any other prohibit preference. Record in EPMEM that lessons were loaded.
+
+Also run the SPA base path fix and stage it before any SOAR phase starts:
+
+```bash
+DEPLOY_STATE=$(cat "${PROJECT_ROOT}/.specify/squad/deploy-state.json" 2>/dev/null || echo '')
+DEPLOY_APP=$(echo "${DEPLOY_STATE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('app',''))" 2>/dev/null || echo '')
+DEPLOY_TYPE=$(echo "${DEPLOY_STATE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('type',''))" 2>/dev/null || echo '')
+
+if [ "${DEPLOY_TYPE}" = "http" ] && [ -n "${DEPLOY_APP}" ]; then
+  echo "[ECHELON CODEGEN] Applying SPA base path for ${DEPLOY_APP}..."
+  bash "${ECHELON_EXT}/scripts/bash/fix-spa-base.sh" "${PROJECT_ROOT}" "${DEPLOY_APP}"
+  cd "${PROJECT_ROOT}" && git add -A && git commit -m "chore: apply SPA base path for ${DEPLOY_APP} [skip ci]" --allow-empty
+  echo "[ECHELON CODEGEN] SPA base path committed — safe from merge overwrites"
+fi
+```
+
 ---
 
 ## Phase 0: Pre-Flight
