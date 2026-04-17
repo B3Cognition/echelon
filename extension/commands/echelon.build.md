@@ -851,3 +851,27 @@ Before BUILD_DONE can succeed:
   ENGINEERING MANAGER → verifies workflow compliance and readiness
   VERIFICATION → proves 100% implemented coverage with zero open gaps
 ```
+
+---
+
+## 12. Harness Integration: Report Build Status
+
+If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build outcome so the Python harness can detect success or impasse:
+
+**On successful completion (BUILD_DONE reached):**
+
+```bash
+if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
+  printf '{"status":"done"}' > "$HARNESS_BUILD_STATUS_FILE"
+fi
+```
+
+**On unresolvable impasse (skill escalates after exhausting all retries):**
+
+```bash
+if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
+  printf '{"status":"impasse","reason":"gate escalation after retries"}' > "$HARNESS_BUILD_STATUS_FILE"
+fi
+```
+
+If `HARNESS_BUILD_STATUS_FILE` is not set (standalone invocation), skip this step entirely.
