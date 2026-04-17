@@ -576,3 +576,21 @@ Jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
 | Impasse (exit 2) | Stop, report `codegen-impasse.md` — do NOT enter feedback loop |
 | Context window limit | Write state.json, print `[CODEGEN] Run speckit.echelon.codegen --resume to continue` |
 | Filesystem write outside target | BLOCK — `[CODEGEN SECURITY] Write outside target blocked` |
+
+---
+
+## Harness Integration: Report Build Status
+
+If `$HARNESS_BUILD_STATUS_FILE` is set, write the outcome after the skill completes so the Python harness can detect success or impasse:
+
+```bash
+if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
+  if [ -f "codegen-impasse.md" ]; then
+    printf '{"status":"impasse","impasse_file":"codegen-impasse.md"}' > "$HARNESS_BUILD_STATUS_FILE"
+  else
+    printf '{"status":"done"}' > "$HARNESS_BUILD_STATUS_FILE"
+  fi
+fi
+```
+
+If `$HARNESS_BUILD_STATUS_FILE` is not set (standalone invocation), skip this step entirely.
