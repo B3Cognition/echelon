@@ -226,6 +226,8 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 | `speckit.echelon.run` | Start analysis (Phase 1-3) |
 | `speckit.echelon.build` | Execute build phase (agent-driven) |
 | `speckit.echelon.codegen` | Execute build phase via SOAR codegen pipeline (alternative to build) |
+| `speckit.echelon.bugfix` | Diagnose a bug or small enhancement — DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks → hand off to `harness.run` |
+| `speckit.echelon.review` | *(machine-invoked)* Automated PR review triage — fetches blocking comments, groups by proximity + reviewer, diagnoses per group → `review-fix-{n}.md` + tasks |
 | `speckit.echelon.verify` | Check 100% spec coverage |
 | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
 | `speckit.echelon.status` | Check progress |
