@@ -57,6 +57,39 @@ After any agent returns, immediately execute the next step without stopping. The
 
 ---
 
+## Step 0: Ensure on Default Branch
+
+Before reading any spec files, verify the project working directory is on the
+default branch (`main` or `master`). `echelon.bugfix` writes artifacts to the
+feature branch — it must start from a known base so the checkout is predictable.
+
+```bash
+DEFAULT_BRANCH=""
+for branch in main master; do
+  if git show-ref --quiet "refs/heads/$branch"; then
+    DEFAULT_BRANCH="$branch"
+    break
+  fi
+done
+DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"
+CURRENT=$(git branch --show-current)
+
+if [ "$CURRENT" != "$DEFAULT_BRANCH" ]; then
+  echo "Warning: working directory is on '$CURRENT', expected '$DEFAULT_BRANCH'. Switching."
+  # Stash any uncommitted changes so they are not lost
+  if [ -n "$(git status --porcelain)" ]; then
+    STASH_MSG="echelon-bugfix-auto-stash-$(date +%Y%m%d-%H%M%S)"
+    git stash push -u -m "$STASH_MSG"
+    echo "Uncommitted changes stashed as: $STASH_MSG (recover with: git stash pop)"
+  fi
+  git checkout "$DEFAULT_BRANCH"
+fi
+```
+
+Proceed only once the working directory is confirmed on the default branch.
+
+---
+
 ## Step 1: Parse Input
 
 Extract from `$ARGUMENTS`:
@@ -135,6 +168,16 @@ Store as `{spec_guard_report}`.
 
 ## Step 5: Write Bugfix Artifacts
 
+Switch to the feature branch so the bugfix artifacts are committed there (not
+on the default branch):
+
+```bash
+FEATURE_BRANCH="{spec_id}-{spec_name}"
+git checkout "$FEATURE_BRANCH"
+```
+
+If the feature branch does not exist, report **"Feature branch `{spec_id}-{spec_name}` not found. Has `echelon.run` been completed for this spec?"** and stop.
+
 Determine the next bugfix index:
 
 ```bash
@@ -177,6 +220,14 @@ Then append the bugfix tasks to `specs/{spec_id}-{spec_name}/tasks.md`. Add a cl
 - [ ] BF{n}-T2: Fix {file} — {what changes from DEBUGGER}
 - [ ] BF{n}-T3: Verify test passes and all prior tests still pass
 - [ ] BF{n}-T4: Update coverage-map.md if coverage changed
+```
+
+After writing the artifacts, switch back to the default branch so harness.run
+finds a clean starting state:
+
+```bash
+git checkout "$DEFAULT_BRANCH"
+echo "Returned to $DEFAULT_BRANCH — feature branch $FEATURE_BRANCH preserved with bugfix artifacts."
 ```
 
 ---

@@ -1553,7 +1553,34 @@ rm -rf .specify/squad/staging
 - `feedback/` — post-implementation outcome data
 - `agent-scores.yaml` — agent performance history
 
-### 12.10 Branch Stacking (Next Spec)
+### 12.10 Return to Default Branch
+
+After archiving, switch the working directory back to the default branch so
+harness.run can create clean worktrees without hitting a "branch already checked
+out" conflict:
+
+```bash
+DEFAULT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+# Resolve canonical default — prefer 'main', fall back to 'master', then HEAD
+for branch in main master; do
+  if git show-ref --quiet "refs/heads/$branch"; then
+    DEFAULT_BRANCH="$branch"
+    break
+  fi
+done
+CURRENT=$(git branch --show-current)
+if [ "$CURRENT" != "$DEFAULT_BRANCH" ]; then
+  git checkout "$DEFAULT_BRANCH"
+  echo "Switched from $CURRENT → $DEFAULT_BRANCH (harness handoff)"
+fi
+```
+
+This is a non-destructive operation — all spec artifacts are committed on the
+feature branch, and the staging area was already archived in step 12.9. The
+feature branch remains intact; the working directory simply moves back to the
+default branch so the next harness invocation finds a clean starting state.
+
+### 12.11 Branch Stacking (Next Spec)
 
 When the user starts a new squad run while implementation of the current spec is in progress:
 
