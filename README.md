@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.9.1** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop, terminal CLI entry points
+**Version 0.9.2** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
 
 ## Quick Start
 
@@ -52,16 +52,28 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 ```bash
 cd ~/my-project
 
+# Claude Code (default)
+specify init --here --offline
+specify extension add --dev ~/echelon/extension
+
+# GitHub Copilot
+specify init --integration copilot --here --offline
+specify extension add --dev ~/echelon/extension
+
+# Opencode
+specify init --integration opencode --here --offline
+specify extension add --dev ~/echelon/extension
+
 echelon init    # bootstrap echelon.yml, set up Docker/Traefik or CLI wrapper, install git hook
 harness init    # write harness-config.yml, mirror-clone target repo, detect language + image
 ```
 
-Both commands are pure Python — no Claude session required.
+Both `echelon init` and `harness init` are pure Python — no AI session required.
 
 ### Typical workflow
 
 ```bash
-# Phase A — spec authoring (runs claude -p internally, subscription billing)
+# Phase A — spec authoring (default: Claude)
 echelon run "Build a photo album app with sharing and tagging"
 echelon bugfix 001 "upload button does nothing on mobile Safari"
 
@@ -73,6 +85,8 @@ harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
 # but can also be invoked directly:
 echelon review 001 pr_url=https://github.com/org/repo/pull/42
 ```
+
+Set `ECHELON_LLM` to switch AI provider for any command above — see [AI Provider Support](#ai-provider-support) below.
 
 ### Other echelon commands
 
@@ -96,6 +110,29 @@ speckit.echelon.verify
 speckit.echelon.feedback 001
 ./scripts/bash/dry-run.sh    # validate extension setup without running agents
 ```
+
+## AI Provider Support
+
+All `echelon` and `harness` CLI commands are provider-agnostic. Set the `ECHELON_LLM` environment variable to select which AI tool runs the skills:
+
+| Value | AI tool | Skill location |
+| ----- | ------- | -------------- |
+| `claude` | Claude CLI (default) | `.claude/skills/speckit-echelon-<cmd>/skill.md` |
+| `copilot` | GitHub Copilot CLI | `.github/agents/speckit.echelon.<cmd>.agent.md` |
+| `opencode` | Opencode | `.opencode/command/speckit.echelon.<cmd>.md` |
+
+```bash
+# Use Copilot for all echelon commands
+export ECHELON_LLM=copilot
+echelon run "Build a photo album app"
+
+# Use Opencode for a single command
+ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
+```
+
+Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
+
+The `harness` build loop (`harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `harness-config.yml` (`llm.cli`).
 
 ## How It Works
 
