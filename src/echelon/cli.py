@@ -7,8 +7,9 @@ and invoke the configured LLM CLI so the LLM only executes the skill.
 `init` is pure Python — no LLM involved.
 
 Skill file locations by AI tool:
-  Claude  : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-  Copilot : .github/agents/speckit.echelon.<cmd>.agent.md
+  Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
+  Copilot  : .github/agents/speckit.echelon.<cmd>.agent.md
+  Opencode : .opencode/command/speckit.echelon.<cmd>.md
 Auto-detected from ECHELON_LLM (default: claude).
 """
 
@@ -43,8 +44,9 @@ Commands:
   codegen <spec_id>                   Run SOAR codegen pipeline
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
-  Claude  : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-  Copilot : .github/agents/speckit.echelon.<cmd>.agent.md
+  Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
+  Copilot  : .github/agents/speckit.echelon.<cmd>.agent.md
+  Opencode : .opencode/command/speckit.echelon.<cmd>.md
 """
 
 
@@ -150,12 +152,17 @@ def _cmd_init(project_dir: Path) -> None:
 def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
     """Locate the skill file for the given LLM CLI tool.
 
-    Claude  : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-    Copilot : .github/agents/speckit.<skill_base>.agent.md
+    Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
+    Copilot  : .github/agents/speckit.<skill_base>.agent.md
+    Opencode : .opencode/command/speckit.<skill_base>.md
     """
     if cli == "copilot":
         candidates = [
             project_dir / ".github" / "agents" / f"speckit.{skill_base}.agent.md",
+        ]
+    elif cli == "opencode":
+        candidates = [
+            project_dir / ".opencode" / "command" / f"speckit.{skill_base}.md",
         ]
     else:
         # claude (default) — dash-separated directory name
@@ -186,6 +193,13 @@ def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
             f"echelon: skill 'speckit.{skill_base}' not found.\n"
             f"Expected at:\n"
             f"  {project_dir / '.github' / 'agents' / f'speckit.{skill_base}.agent.md'}\n"
+            f"Run: specify extension add echelon"
+        )
+    if cli == "opencode":
+        return (
+            f"echelon: skill 'speckit.{skill_base}' not found.\n"
+            f"Expected at:\n"
+            f"  {project_dir / '.opencode' / 'command' / f'speckit.{skill_base}.md'}\n"
             f"Run: specify extension add echelon"
         )
     dash_name = "speckit-" + skill_base.replace(".", "-")
@@ -234,11 +248,16 @@ def main() -> None:
         print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
         sys.exit(1)
 
-    prompt = _build_prompt(skill_path, arguments)
-
-    cmd = [shutil.which(cli) or cli, "-p", prompt]
-    if cli == "copilot":
-        cmd += ["--allow-all-tools"]
+    bin_ = shutil.which(cli) or cli
+    if cli == "opencode":
+        # Use native --command mode; opencode resolves the skill file itself.
+        cmd = [bin_, "run", "--dangerously-skip-permissions",
+               "--command", f"speckit.{skill_base}", arguments]
+    else:
+        prompt = _build_prompt(skill_path, arguments)
+        cmd = [bin_, "-p", prompt]
+        if cli == "copilot":
+            cmd += ["--allow-all-tools"]
 
     result = subprocess.run(cmd, cwd=str(project_dir))
     sys.exit(result.returncode)
