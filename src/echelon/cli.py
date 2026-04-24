@@ -180,11 +180,40 @@ def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
     return None
 
 
+def _strip_frontmatter(text: str) -> str:
+    """Remove YAML frontmatter from a skill file.
+
+    Skill files have frontmatter for the spec-kit skill invocation system
+    (disable-model-invocation, user-invocable, etc.). When the content is
+    passed directly to an LLM via -p, the frontmatter is meaningless and
+    causes the model to treat the file as a document to narrate rather than
+    instructions to execute.
+    """
+    if not text.startswith("---\n"):
+        return text
+    end = text.find("\n---\n", 4)
+    if end == -1:
+        return text
+    return text[end + 5:].lstrip()
+
+
 def _build_prompt(skill_path: Path, arguments: str) -> str:
-    template = skill_path.read_text(encoding="utf-8")
-    if "$ARGUMENTS" in template:
-        return template.replace("$ARGUMENTS", arguments)
-    return f"{template}\n\n## Arguments\n{arguments}"
+    raw = skill_path.read_text(encoding="utf-8")
+    content = _strip_frontmatter(raw)
+    if "$ARGUMENTS" in content:
+        content = content.replace("$ARGUMENTS", arguments)
+    else:
+        content = f"{content}\n\n## Arguments\n{arguments}"
+
+    # Preamble that tells Claude to execute the instructions rather than narrate them.
+    # Without this, Claude treats the skill markdown as a document and outputs it.
+    preamble = (
+        "You are COMMANDER running non-interactively via `claude -p`. "
+        "The text below is your complete operating instruction set for this session. "
+        "Execute every step immediately using your tools. "
+        "Write files, dispatch agents, run scripts — do not output or narrate the instructions.\n\n"
+    )
+    return preamble + content
 
 
 def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
