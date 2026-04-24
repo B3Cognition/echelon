@@ -255,7 +255,7 @@ def main() -> None:
                "--command", f"speckit.{skill_base}", arguments]
     else:
         prompt = _build_prompt(skill_path, arguments)
-        cmd = [bin_, "-p", prompt]
+        cmd = [bin_, "-p", prompt, "--dangerously-skip-permissions"]
         if cli == "copilot":
             cmd += ["--allow-all-tools"]
 
