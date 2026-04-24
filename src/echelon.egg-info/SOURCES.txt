@@ -99,6 +99,8 @@ src/codegen/testing/harness.py
 src/codegen/tests/l3/__init__.py
 src/codegen/tests/l3/mock_soar_bridge.py
 src/codegen/tests/l3/test_seed_library.py
+src/echelon/__init__.py
+src/echelon/cli.py
 src/echelon.egg-info/PKG-INFO
 src/echelon.egg-info/SOURCES.txt
 src/echelon.egg-info/dependency_links.txt

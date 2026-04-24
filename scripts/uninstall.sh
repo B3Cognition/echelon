@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# uninstall.sh — Remove echelon runtime: SOAR, venv, memory, config, PATH entries
+# uninstall.sh — Remove echelon + harness runtime: SOAR, venv, memory, config, PATH entries
 # Usage: bash scripts/uninstall.sh [--purge-memory]
 #   --purge-memory  also deletes ~/.echelon/memory/ and ~/.mempalace/
+# Note: harness is installed into the same venv — removing the venv removes both.
 set -e
 
 SOAR_DIR="$HOME/.echelon/soar"
@@ -41,8 +42,8 @@ else
   echo "  ✓ $SOAR_DIR not found — skipping"
 fi
 
-# ── 2. echelon venv (codegen + understanding) ────────────────────────────────
-echo "▶ Removing echelon venv..."
+# ── 2. echelon + harness venv ────────────────────────────────────────────────
+echo "▶ Removing echelon + harness venv..."
 if [ -d "$VENV_DIR" ]; then
   rm -rf "$VENV_DIR"
   echo "  ✓ Removed $VENV_DIR"

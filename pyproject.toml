@@ -35,7 +35,8 @@ dev = [
 ]
 
 [project.scripts]
-codegen     = "codegen.cli.codegen_cli:main"
+echelon       = "echelon.cli:main"
+codegen       = "codegen.cli.codegen_cli:main"
 understanding = "understanding.cli:main"
 
 [tool.setuptools.packages.find]

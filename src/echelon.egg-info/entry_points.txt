@@ -1,3 +1,4 @@
 [console_scripts]
 codegen = codegen.cli.codegen_cli:main
+echelon = echelon.cli:main
 understanding = understanding.cli:main

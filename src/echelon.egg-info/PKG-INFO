@@ -26,7 +26,7 @@ Dynamic: license-file
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.9.0** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop
+**Version 0.9.1** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop, terminal CLI entry points
 
 ## Quick Start
 
@@ -36,48 +36,89 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 # 1. Install spec-kit
 uv tool install specify-cli --force --from "git+https://github.com/Testimonial/qag-spec-kit.git@35bc7c7"
 
-# 2. Clone echelon
+# 2. Clone echelon and echelon-harness as siblings
 git clone https://github.com/B3Cognition/echelon.git ~/echelon
+git clone https://github.com/B3Cognition/echelon-harness.git ~/echelon-harness
 
-# 3. Install Python CLIs + SOAR (codegen pipeline + understanding metrics)
+# 3. Install all CLI tools + SOAR into a shared venv
 bash ~/echelon/scripts/install.sh
+source ~/.zshrc   # or restart terminal
 
-# 4. Register the spec-kit extension
+# 4. Register the spec-kit extension (covers echelon + harness skills)
 specify extension add --dev ~/echelon/extension
 ```
+
+`install.sh` installs four CLI tools into `~/.echelon/venv/bin/` and adds that directory to your PATH:
+
+| Tool | Purpose |
+| ---- | ------- |
+| `echelon` | Main CLI — init, run, bugfix, build, review, change, codegen |
+| `harness` | Build harness CLI — init, run |
+| `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
+| `understanding` | Requirements quality metrics |
+
+`echelon-harness` is installed from the sibling directory automatically. If it is not present, the harness step is skipped with a message.
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
 
 ### Update to latest version
 
 ```bash
-cd ~/echelon && git pull
+cd ~/echelon && git pull && cd ~/echelon-harness && git pull
 bash ~/echelon/scripts/install.sh   # re-run to pick up dependency updates
 specify extension update --dev ~/echelon/extension
 ```
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
 
-### Usage
+### Per-project setup (once per repo)
 
 ```bash
-# Run analysis on your project idea
-speckit.echelon.run "Build a photo album app with sharing and tagging"
+cd ~/my-project
 
-# Build with quality gates (agent-driven)
-speckit.echelon.build 001-photo-album
+echelon init    # bootstrap echelon.yml, set up Docker/Traefik or CLI wrapper, install git hook
+harness init    # write harness-config.yml, mirror-clone target repo, detect language + image
+```
 
-# Build via SOAR codegen pipeline (alternative — see Codegen Integration below)
-speckit.echelon.codegen 001-photo-album
+Both commands are pure Python — no Claude session required.
 
-# Verify 100% spec coverage
+### Typical workflow
+
+```bash
+# Phase A — spec authoring (runs claude -p internally, subscription billing)
+echelon run "Build a photo album app with sharing and tagging"
+echelon bugfix 001 "upload button does nothing on mobile Safari"
+
+# Phase B — build, verify in Docker, open PR
+harness run 001                    # echelon squad build (default)
+harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
+
+# After PR is open — review triage runs automatically via harness Phase 3
+# but can also be invoked directly:
+echelon review 001 pr_url=https://github.com/org/repo/pull/42
+```
+
+### Other echelon commands
+
+```bash
+echelon change  001 "scope change description"   # mid-build spec change
+echelon codegen 001                              # SOAR pipeline directly (no harness)
+echelon build   001                              # agent-driven build (no harness)
+```
+
+### Spec-kit skills (Claude session)
+
+All of the above are also available as spec-kit slash commands inside a Claude Code session:
+
+```bash
+speckit.echelon.init
+speckit.echelon.run "Build a photo album app"
+speckit.echelon.bugfix 001 "upload button does nothing"
+speckit.harness.run 001
+speckit.harness.run 001 strategy=codegen
 speckit.echelon.verify
-
-# Close the learning loop after implementation
 speckit.echelon.feedback 001
-
-# Validate the extension setup
-./scripts/bash/dry-run.sh
+./scripts/bash/dry-run.sh    # validate extension setup without running agents
 ```
 
 ## How It Works
@@ -241,21 +282,38 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 ## Commands
 
-| Command | Purpose |
-|---------|---------|
-| `speckit.echelon.run` | Start analysis (Phase 1-3) |
-| `speckit.echelon.build` | Execute build phase (agent-driven) |
-| `speckit.echelon.codegen` | Execute build phase via SOAR codegen pipeline (alternative to build) |
-| `speckit.echelon.verify` | Check 100% spec coverage |
-| `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
-| `speckit.echelon.status` | Check progress |
-| `speckit.echelon.resume` | Answer squad's question |
-| `speckit.echelon.change` | Handle spec change during build |
-| `speckit.echelon.investigate` | Trigger INVESTIGATOR |
-| `speckit.echelon.innovate` | Trigger MAVERICK |
-| `speckit.echelon.ground` | Trigger REALIST |
-| `speckit.echelon.feedback` | Post-implementation feedback |
-| `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
+Each command is available two ways: as a terminal CLI tool (no Claude session needed) and as a spec-kit skill inside a Claude Code session.
+
+### echelon — spec authoring
+
+| Terminal | Spec-kit skill | Purpose |
+| -------- | -------------- | ------- |
+| `echelon init` | `speckit.echelon.init` | One-time project setup — `echelon.yml`, deploy infra, git hook |
+| `echelon run "<description>"` | `speckit.echelon.run` | Phase A: full squad run → spec.md, tasks.md, feature branch |
+| `echelon bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
+| `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
+| `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
+| `echelon review <id> [pr_url=…]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
+| `echelon change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
+| *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
+| *(spec-kit only)* | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
+| *(spec-kit only)* | `speckit.echelon.status` | Check progress |
+| *(spec-kit only)* | `speckit.echelon.resume` | Answer squad's question |
+| *(spec-kit only)* | `speckit.echelon.investigate` | Trigger INVESTIGATOR |
+| *(spec-kit only)* | `speckit.echelon.innovate` | Trigger MAVERICK |
+| *(spec-kit only)* | `speckit.echelon.ground` | Trigger REALIST |
+| *(spec-kit only)* | `speckit.echelon.feedback` | Post-implementation feedback |
+| *(spec-kit only)* | `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
+
+### harness — build, verify, PR
+
+| Terminal | Spec-kit skill | Purpose |
+| -------- | -------------- | ------- |
+| `harness init [<repo>]` | `speckit.harness.init` | One-time harness setup — config, mirror clone, image fingerprint |
+| `harness run <id>` | `speckit.harness.run <id>` | Build → Docker verify → PR (echelon squad strategy) |
+| `harness run <id> strategy=codegen` | `speckit.harness.run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| *(spec-kit only)* | `speckit.harness.status [<id>]` | Show active loop status, iterations, token usage, PR URL |
+| *(spec-kit only)* | `speckit.harness.resume <id> <answer>` | Resume a loop blocked on a human escalation question |
 
 ## Codegen Pipeline
 
@@ -302,6 +360,40 @@ On impasse, `codegen-impasse.md` is written with the exact conflict. Resume:
 speckit.echelon.codegen 001-photo-album --resume
 ```
 
+## PR Review Loop
+
+When `harness.run` creates a PR and reviewers comment, the harness can automatically triage those comments and re-run Phase 1 to address them. `echelon.review` is the diagnostic half of this cycle — it is never called directly by users.
+
+**Flow:**
+
+```text
+Reviewer leaves comments on PR
+        │
+        ▼
+harness Phase 3 (ReviewLoopController)
+  fetches blocking comments via GitHub/GitLab API
+        │
+        ▼
+echelon.review skill (claude -p)
+  groups comments by file proximity + reviewer
+  per group: DEBUGGER → root cause
+             SENTINEL → failing test spec
+             SPEC GUARD → scope check
+  writes specs/{id}-*/review-fix-{n}.md
+  writes RF{n}-T* tasks to tasks.md
+  commits to feature branch
+        │
+        ▼
+harness re-enters Phase 1
+  review-fix-{n}.md content injected into build prompt
+  Claude addresses reviewer feedback
+        │
+        ▼
+verify → push → re-request review
+```
+
+**What counts as blocking:** comments containing `must`, `needs to`, `fix`, `change`, `remove`, `refactor`, etc. Nits, pure questions, and already-processed comment IDs are skipped.
+
 ## Configuration
 
 ```bash
@@ -329,21 +421,23 @@ Echelon includes built-in local continuous delivery. After `harness.run` merges 
 **Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
 
 The only difference between UI and CLI is how traffic is routed to the active slot:
-- **UI apps (`type: http`)** — Traefik reverse proxy routes HTTP traffic to the active container
+
+- **UI apps (`type: http`)** — single shared Traefik at `:80` routes by path prefix: `http://localhost/{app-name}/`
 - **CLI apps (`type: cli`)** — no long-lived containers; a wrapper script reads the active image tag at invocation time
 
 ### UI apps — `type: http` (blue/green via Traefik)
 
-Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
+Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic. All apps on a machine share one Traefik instance — adding a new app never restarts Traefik.
 
 **Config (`echelon.yml`):**
 
 ```yaml
 deploy:
   type: http
-  blue_port: 3000    # blue slot host port
-  green_port: 3001   # green slot host port
-  active_port: 80    # Traefik entry point (http://localhost)
+  blue_port: 3000    # health-check port only (unique per app)
+  green_port: 3001   # health-check port only (unique per app)
+  # Convention: App1=3000/3001, App2=3100/3101, AppN=3N00/3N01
+  # Live URL: http://localhost/{app-name}/  (all apps share Traefik at :80)
 ```
 
 **Dockerfile (minimal Vite/React example):**
@@ -354,15 +448,19 @@ COPY dist/ /usr/share/nginx/html/
 EXPOSE 80
 ```
 
-**What happens on first `echelon.run`:**
+> **SPA base path:** `echelon.init` automatically sets `base` (Vite), `basePath` (Next.js), or `homepage` (CRA) to `/{app-name}/` in your framework config so assets load correctly under the path prefix. This is auto-corrected even if the value is wrong or computed — no manual step needed.
+
+**What happens on `echelon.init`:**
 - Docker network `speckit-deploy` created (shared across all apps on this machine)
-- `speckit-traefik` container started (one per machine, auto-discovers apps via Docker labels)
+- `speckit-traefik` container started at `:80` — one per machine, started once, never recreated
+- SPA framework config auto-corrected for path-prefix routing (Vite/Next.js/CRA)
 - `.git/hooks/post-merge` installed
 
 **Deploy flow (automatic after merge to main):**
-1. `docker build` → `{app}:candidate`
-2. Start inactive slot with Traefik labels, expose on its port
-3. `curl -sf http://localhost:{port}` — 5 attempts, 2s apart
+
+1. `docker build` → `{app}:candidate` (Dockerfile auto-generated if missing; `.env.local` injected as `--build-arg`)
+2. Start inactive slot with Traefik labels `PathPrefix(/{app})`, expose health-check port on host
+3. `curl -sf http://localhost:{blue_port|green_port}` — 5 attempts, 2s apart
 4. On success: stop old slot, tag image, update state
 5. On failure: stop new slot, old slot unchanged (automatic rollback)
 
@@ -393,12 +491,13 @@ RUN pip install -e .
 ENTRYPOINT ["myapp"]
 ```
 
-**What happens on first `echelon.run`:**
+**What happens on `echelon.init`:**
 - `.git/hooks/post-merge` installed
 - Wrapper script installed to `install_path/myapp` (if `install_path` set)
 
 **Deploy flow (automatic after merge to main):**
-1. `docker build` → `{app}:candidate`
+
+1. `docker build` → `{app}:candidate` (Dockerfile auto-generated if missing; `.env.local` injected as `--build-arg`)
 2. If `health_check` set: `docker run --rm {app}:candidate {health_check_cmd}` (exit 0 = healthy)
 3. On success: tag image → `{app}:{inactive_slot}`, update state pointer
 4. On failure: build discarded, active pointer unchanged
@@ -426,7 +525,7 @@ docker run --rm myapp:blue --help
 
 Deploy state lives in two locations (kept in sync on every deploy and rollback):
 - `.specify/squad/deploy-state.json` — project-local copy
-- `~/.speckit-deploy/{app}.json` — global registry (used for Traefik entrypoint aggregation and CLI wrapper scripts)
+- `~/.speckit-deploy/{app}.json` — global registry (used for port conflict detection and CLI wrapper scripts)
 
 ## Innovation Templates
 
@@ -509,17 +608,20 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 ## Requirements
 
 - **spec-kit** >= 0.4.2 (required)
+- **Claude CLI** (`claude`) — required for `echelon run`, `echelon bugfix`, and other LLM commands
 - **uv** (required — install via `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- **Docker** (required for `harness run` — sandbox verification runs in Docker)
 - **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
 - **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
 - **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)
+- **echelon-harness** (optional — installed by `scripts/install.sh` from sibling directory; provides `harness` CLI)
 - **revenge** >= 3.0.0 (optional — brownfield extraction via GOLDDIGGER)
 
 ## Directory Structure
 
 ```text
 extension/
-├── extension.yml        # Single merged extension manifest
+├── extension.yml        # Single merged extension manifest (covers echelon + harness skills)
 ├── agents/
 │   ├── control/         # COMMANDER, CHECKPOINT, TRACKER, STRATEGIST, SCOREKEEPER
 │   ├── exploration/     # SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER
@@ -534,16 +636,22 @@ extension/
     ├── echelon.build.md        # Build phase (agent-driven)
     ├── echelon.codegen.md      # Build phase (SOAR pipeline)
     ├── echelon.*.md            # Other echelon commands (10 more)
+    ├── harness.init.md         # Harness initialization
+    ├── harness.run.md          # Build → verify → PR loop
+    ├── harness.status.md       # Loop status
+    ├── harness.resume.md       # Resume blocked loop
     ├── understanding.scan.md   # 31-metric spec quality scan
     ├── understanding.validate.md
     ├── understanding.energy.md
     ├── understanding.diagram.md
     └── understanding.batch.md
 src/
+├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
 ├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
 └── understanding/       # Requirements quality metrics CLI (entry point: understanding)
 scripts/
-└── install.sh           # Downloads SOAR, creates ~/.echelon/venv/, installs both CLIs
+├── install.sh           # Downloads SOAR, creates ~/.echelon/venv/, installs echelon + harness + codegen + understanding
+└── uninstall.sh         # Removes venv, SOAR, memory, PATH entries
 docs/
 └── fallback-mode.md
 knowledge-base/

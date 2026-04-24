@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# install.sh — One-command setup for echelon (codegen CLI + understanding CLI + SOAR)
+# install.sh — One-command setup for echelon + harness
 # Usage: bash scripts/install.sh
 set -e
 
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HARNESS_DIR="$(cd "$ECHELON_DIR/../echelon-harness" 2>/dev/null && pwd || true)"
 SOAR_VERSION="9.6.4"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
@@ -94,13 +95,25 @@ else
   echo "  ✓ SOAR on PATH"
 fi
 
-# ── 2. echelon venv (codegen + understanding + all deps) ─────────────────────
-echo "▶ Installing echelon (codegen + understanding) into $VENV_DIR..."
+# ── 2. echelon venv (echelon + codegen + understanding + all deps) ───────────
+echo "▶ Installing echelon into $VENV_DIR..."
 uv venv "$VENV_DIR" -q 2>/dev/null || true
 uv pip install -q --python "$VENV_DIR" -e "$ECHELON_DIR"
 echo "  ✓ echelon installed"
-echo "    codegen     → $VENV_DIR/bin/codegen"
+echo "    echelon       → $VENV_DIR/bin/echelon"
+echo "    codegen       → $VENV_DIR/bin/codegen"
 echo "    understanding → $VENV_DIR/bin/understanding"
+
+# ── 2b. harness (optional — skipped if echelon-harness not found) ─────────────
+echo "▶ Installing harness..."
+if [ -n "$HARNESS_DIR" ] && [ -f "$HARNESS_DIR/pyproject.toml" ]; then
+  uv pip install -q --python "$VENV_DIR" -e "$HARNESS_DIR"
+  echo "  ✓ harness installed"
+  echo "    harness → $VENV_DIR/bin/harness"
+else
+  echo "  ℹ  echelon-harness not found at $ECHELON_DIR/../echelon-harness — skipping"
+  echo "     To install later: uv pip install -e /path/to/echelon-harness --python $VENV_DIR"
+fi
 
 # Add venv/bin to PATH if needed (idempotent)
 if ! grep -qF "$VENV_DIR/bin" "$SHELL_RC"; then
@@ -161,15 +174,23 @@ echo "║              Install complete            ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
 echo "  SOAR          → $SOAR_DIR/bin/soar"
+echo "  echelon       → $VENV_DIR/bin/echelon"
 echo "  codegen       → $VENV_DIR/bin/codegen"
 echo "  understanding → $VENV_DIR/bin/understanding"
+if [ -n "$HARNESS_DIR" ] && [ -f "$HARNESS_DIR/pyproject.toml" ]; then
+echo "  harness       → $VENV_DIR/bin/harness"
+fi
 echo "  Memory        → $MEMORY_DIR"
 echo "  Config        → $CONFIG_FILE"
 echo ""
-echo "  Register the spec-kit extension:"
+echo "  Register the spec-kit extension (covers echelon + harness skills):"
 echo "    specify extension add --dev $ECHELON_DIR/extension"
 echo ""
-echo "  Run a pipeline:"
-echo "    codegen run --intent \"build a REST API with auth\""
-echo "    understanding version"
+echo "  Per-project setup:"
+echo "    echelon init    # deploy infra (echelon.yml, Docker/Traefik, git hook)"
+echo "    harness init    # harness config, mirror clone, image fingerprint"
+echo ""
+echo "  Run a feature:"
+echo "    echelon run \"add user notifications\""
+echo "    harness run 001"
 echo ""
