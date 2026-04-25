@@ -329,13 +329,15 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     else:
         content = f"{content}\n\n## Arguments\n{arguments}"
 
-    # Preamble that tells Claude to execute the instructions rather than narrate them.
-    # Without this, Claude treats the skill markdown as a document and outputs it.
+    # Preamble: tells Claude to execute the skill, not narrate it, but still emit
+    # progress lines so the user can follow along in the terminal.
     preamble = (
         "You are COMMANDER running non-interactively via `claude -p`. "
         "The text below is your complete operating instruction set for this session. "
         "Execute every step immediately using your tools. "
-        "Write files, dispatch agents, run scripts — do not output or narrate the instructions.\n\n"
+        "Print a short status line before each major phase (e.g. '▶ Phase 1: SCOUT running…') "
+        "so the user can see progress in the terminal. "
+        "Do not narrate or repeat the instructions back — just execute them and report status.\n\n"
     )
     return preamble + content
 
