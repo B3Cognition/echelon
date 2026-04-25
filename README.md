@@ -62,7 +62,7 @@ specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
 echelon init    # bootstrap echelon.yml, set up Docker/Traefik or CLI wrapper, install git hook
-harness init    # write harness-config.yml, mirror-clone target repo, detect language + image
+harness init    # write harness: section into echelon.yml, mirror-clone target repo, detect language + image
 ```
 
 Both `echelon init` and `harness init` are pure Python — no AI session required.
@@ -127,7 +127,7 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
 4. Invokes the LLM CLI subprocess (`claude -p <prompt> --dangerously-skip-permissions`, or the equivalent for Copilot/Opencode)
 
-This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `llm.cli` in `harness-config.yml`) selects the provider.
+This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon.yml`) selects the provider.
 
 The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
 
@@ -152,7 +152,7 @@ ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
 
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
 
-The `harness` build loop (`harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `harness-config.yml` (`llm.cli`).
+The `harness` build loop (`harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon.yml` (`harness.llm.cli`).
 
 ## Harness
 
@@ -198,7 +198,7 @@ Both strategies follow the same outer loop: build → Docker verify → feedback
 
 ### Review Loop (Phase 3)
 
-After Phase 1 converges and a PR is open, the harness optionally enters a review loop. Enable in `harness-config.yml`:
+After Phase 1 converges and a PR is open, the harness optionally enters a review loop. Enable in `echelon.yml` under `harness:`:
 
 ```yaml
 pr_host: github
@@ -453,7 +453,7 @@ speckit.echelon.codegen 001-photo-album
 
 This runs `RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER` and writes `.specify/squad/state.json` after every phase transition — same schema as `echelon.build`, so all status commands work unchanged.
 
-### Parallel strategy run (with echelon-harness)
+### Parallel strategy run (with harness)
 
 On the first `echelon.codegen` run, a strategy file is auto-registered at `.specify/harness/strategies/001-photo-album/codegen.md`. No manual setup required. Once registered, run both build strategies in parallel:
 
@@ -732,7 +732,7 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 - **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
 - **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
 - **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)
-- **echelon-harness** (optional — installed by `scripts/install.sh` from sibling directory; provides `harness` CLI)
+- **harness** (bundled — installed by `scripts/install.sh`; provides `harness` CLI for sandbox build/verify/PR)
 - **revenge** >= 3.0.0 (optional — brownfield extraction via GOLDDIGGER)
 
 ## Directory Structure

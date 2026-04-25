@@ -24,7 +24,7 @@ The installer does five things automatically:
 
 1. Downloads `SoarSuite_9.6.4-Multiplatform.zip` from GitHub and extracts the SOAR binary for your platform into `~/.echelon/soar/bin/`
 2. Adds `~/.echelon/soar/bin` to your PATH
-3. Creates a venv at `~/.echelon/venv/` and installs both CLIs (`codegen` and `understanding`) into it
+3. Creates a venv at `~/.echelon/venv/` and installs all four CLIs (`echelon`, `harness`, `codegen`, `understanding`) into it
 4. Adds `~/.echelon/venv/bin` to your PATH
 5. Creates `~/.echelon/memory/` and caches the AI embedding model (~80MB, one time)
 
@@ -42,6 +42,8 @@ specify extension add --dev ~/echelon/extension
 
 ```bash
 # Check CLIs are on PATH (may need a terminal restart after install)
+echelon --help
+harness --help
 codegen --help
 understanding version
 
@@ -98,7 +100,7 @@ specify extension remove echelon
 
 ## Troubleshooting
 
-### `codegen` or `understanding` not found after install
+### `echelon`, `harness`, `codegen` or `understanding` not found after install
 
 The venv bin directory may not be in your PATH yet:
 
