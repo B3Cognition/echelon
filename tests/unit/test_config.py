@@ -163,6 +163,12 @@ class TestConfigDefaults:
 
 @pytest.mark.unit
 class TestLoadConfigCascade:
+    @pytest.fixture(autouse=True)
+    def _force_fallback_config_loader(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # ConfigManager.get_config() reads the globally registered extension config,
+        # not the project-level file under tmp_path — force the inline fallback so
+        # these unit tests exercise the real merge logic against the temp fixtures.
+        monkeypatch.setattr("harness.config._SpecKitConfigManager", None)
     def test_project_config_applied(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)
         _write_yaml(ext / "echelon.yml", {"harness": {
