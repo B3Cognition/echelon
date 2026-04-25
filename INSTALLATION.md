@@ -81,19 +81,14 @@ To upgrade the MemPalace or understanding model versions, update the relevant UR
 ## Uninstall
 
 ```bash
-# Remove all echelon runtime data (SOAR, venv, memory, config)
-rm -rf ~/.echelon ~/.mempalace
+# Remove all echelon runtime data (SOAR, venv, memory, config) and PATH entries
+bash ~/echelon/scripts/uninstall.sh
 
-# Remove Claude Code skill (if installed)
-rm ~/.claude/commands/codegen.md
+# To also delete memory stores (~/.echelon/memory/ and ~/.mempalace/)
+bash ~/echelon/scripts/uninstall.sh --purge-memory
 
 # Remove the spec-kit extension
 specify extension remove echelon
-
-# Remove PATH entries added to your shell RC
-# Open ~/.zshrc (or ~/.bashrc) and delete the blocks added by the installer:
-#   # SOAR binary (echelon dependency)
-#   # echelon CLI tools
 ```
 
 ---
