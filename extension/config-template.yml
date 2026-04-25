@@ -1092,3 +1092,99 @@ deploy:
   #   COPY dist/ /usr/share/nginx/html/
   #   EXPOSE 80
   # dockerfile: Dockerfile
+
+# =============================================================================
+# HARNESS — Sandbox execution substrate (harness run / harness init)
+# =============================================================================
+#
+# Environment variables override all file settings:
+#   SPECKIT_HARNESS_<SECTION>_<KEY>=value
+#   e.g. SPECKIT_HARNESS_RESOURCE_LIMITS_MEMORY=8g
+
+harness:
+  # --- Required (set by `harness init`) ---
+
+  # URL or path of the target repository to build/test/verify inside the sandbox.
+  # Use "." for single-repo (harness installed in the same repo you are building).
+  # Use a remote URL for the two-repo model (separate control-plane repo).
+  target_repo: "https://github.com/your-org/your-repo"
+
+  # Default branch of the target repository
+  target_default_branch: "main"
+
+  # Sandbox provider
+  # Phase 1: "docker" (production-ready)
+  # Phase 3 (planned): "e2b", "modal", "daytona"
+  provider: "docker"
+
+  # --- Docker Image ---
+
+  # Base image for the sandbox container.
+  # Unset = auto-resolve from target repo's devcontainer.json (recommended).
+  # base_image: "ubuntu:22.04"
+
+  # Pin the image to a specific digest for reproducibility.
+  # image_digest_pin: "sha256:abc123..."
+
+  # --- LLM Provider ---
+
+  # LLM CLI used by `harness run` for build and review steps.
+  # Overrides ECHELON_LLM env var when set.
+  # Options: claude (default) | copilot | opencode
+  # llm:
+  #   cli: claude
+  #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
+  #   timeout_ms: 1200000              # 20 minutes
+
+  # --- Resource Limits ---
+
+  resource_limits:
+    memory: "4g"
+    cpu: 2.0
+    pids: 256
+    storage: "10g"
+
+  # --- Network Policy (Squid proxy) ---
+
+  network:
+    allowlist:
+      - "registry.npmjs.org"
+      - "pypi.org"
+      - "files.pythonhosted.org"
+      - "proxy.golang.org"
+      - "crates.io"
+      - "static.crates.io"
+      - "repo1.maven.org"
+      - "playwright.azureedge.net"
+      - "cdn.playwright.dev"
+    proxy_image: "ubuntu/squid:latest"
+
+  # Max bytes captured from sandbox stdout/stderr per command (10 MB)
+  buffer_limit_bytes: 10485760
+
+  # --- GitOps ---
+
+  ci_skip_tag: "[skip ci]"
+  ci_skip_enabled: true
+  # secrets_env_file: "secrets.env"
+  bind_mount_ack: false
+
+  # PR integration host: "github" | "gitlab" | "none"
+  pr_host: "none"
+
+  # --- Garbage Collection ---
+
+  gc:
+    worktree_max_age_hours: 24
+    container_max_age_hours: 1
+    backup_max_age_days: 7
+
+  # --- Visual Tests (Phase 2, Playwright) ---
+
+  visual_tests:
+    enabled: false
+    test_command: "npx playwright test --reporter=json"
+    serve_command: "npm run preview"
+    timeout_ms: 300000
+    screenshot_dir: "playwright-report"
+    max_iterations: 3
