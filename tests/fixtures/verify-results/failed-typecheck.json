@@ -1,0 +1,12 @@
+{
+  "passed": false,
+  "failures": [
+    {
+      "category": "typecheck",
+      "id": "src/calculator.py:15",
+      "error": "Incompatible return type: expected float, got str"
+    }
+  ],
+  "duration_s": 3.5,
+  "token_usage": 200
+}

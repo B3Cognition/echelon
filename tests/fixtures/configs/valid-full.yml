@@ -1,0 +1,38 @@
+target_repo: "git@github.com:example/payments.git"
+target_default_branch: "main"
+provider: "docker"
+base_image: "node:20-slim"
+image_digest_pin: "sha256:abc123"
+resource_limits:
+  memory: "8g"
+  cpu: 4.0
+  pids: 512
+  storage: "20g"
+network:
+  allowlist:
+    - "registry.npmjs.org"
+    - "pypi.org"
+    - "files.pythonhosted.org"
+    - "proxy.golang.org"
+    - "crates.io"
+    - "static.crates.io"
+    - "repo1.maven.org"
+    - "playwright.azureedge.net"
+    - "cdn.playwright.dev"
+    - "custom.registry.io"
+  proxy_image: "ubuntu/squid:6.9"
+buffer_limit_bytes: 20971520
+gc:
+  worktree_max_age_hours: 48
+  container_max_age_hours: 2
+  backup_max_age_days: 14
+ci_skip_tag: "[ci skip]"
+ci_skip_enabled: true
+echelon_version_range: ">=0.4.0 <1.0.0"
+secrets_env_file: "custom-secrets.env"
+devcontainer_subset:
+  - "image"
+  - "build.dockerfile"
+  - "features"
+bind_mount_ack: true
+pr_host: "github"

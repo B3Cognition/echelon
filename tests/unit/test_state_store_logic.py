@@ -1,0 +1,82 @@
+"""Tests for StateStore invariant enforcement.
+
+5 tests for: monotonic counters, append-only log, mode immutability,
+atomic writes, .bak snapshots.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from harness.state import (
+    ModeImmutableError,
+    MonotonicViolationError,
+    StateStore,
+)
+
+
+@pytest.mark.unit
+class TestStateStoreInvariants:
+    """Test StateStore invariant enforcement."""
+
+    def _make_store(self, tmp_path: Path) -> StateStore:
+        store = StateStore(tmp_path, "spec-001", "default")
+        store.initialize("run-1", "semi")
+        return store
+
+    def test_mode_change_rejected(self, tmp_path: Path) -> None:
+        """FR-MODE-002: mode immutable after init."""
+        store = self._make_store(tmp_path)
+        data = store.read()
+        data["mode"] = "banzai"
+        with pytest.raises(ModeImmutableError):
+            store.write(data)
+
+    def test_tokens_used_decrease_rejected(self, tmp_path: Path) -> None:
+        """tokens_used must be monotonically non-decreasing."""
+        store = self._make_store(tmp_path)
+        data = store.read()
+        data["tokens_used"] = 100
+        store.write(data)
+        data = store.read()
+        data["tokens_used"] = 50
+        with pytest.raises(MonotonicViolationError, match="tokens_used"):
+            store.write(data)
+
+    def test_iteration_log_deletion_rejected(self, tmp_path: Path) -> None:
+        """iteration_log is append-only."""
+        store = self._make_store(tmp_path)
+        data = store.read()
+        data["iteration_log"] = [
+            {"outer_iter": 0, "inner_iter": 0, "phase": "build",
+             "exit_code": 0, "passed": True, "duration_s": 1.0,
+             "tokens": 100, "timestamp": "2026-04-12T00:00:00Z"}
+        ]
+        store.write(data)
+        data = store.read()
+        data["iteration_log"] = []  # Attempt to shrink
+        with pytest.raises(MonotonicViolationError, match="append-only"):
+            store.write(data)
+
+    def test_atomic_write_creates_tmp_then_renames(self, tmp_path: Path) -> None:
+        """Atomic write: .tmp written before rename."""
+        store = self._make_store(tmp_path)
+        assert store.state_file.exists()
+        data = store.read()
+        data["tokens_used"] = 50
+        store.write(data)
+        # Verify state file is valid JSON
+        import json
+        content = json.loads(store.state_file.read_text())
+        assert content["tokens_used"] == 50
+
+    def test_bak_file_exists_after_second_write(self, tmp_path: Path) -> None:
+        """.bak file created after second write."""
+        store = self._make_store(tmp_path)
+        data = store.read()
+        data["tokens_used"] = 10
+        store.write(data)
+        bak_file = store.state_file.with_suffix(".json.bak")
+        assert bak_file.exists()

@@ -32,12 +32,15 @@ dependencies = [
 dev = [
   "pytest>=8.0",
   "pytest-cov",
+  "pytest-mock>=3.14",
+  "freezegun>=1.4",
 ]
 
 [project.scripts]
 echelon       = "echelon.cli:main"
 codegen       = "codegen.cli.codegen_cli:main"
 understanding = "understanding.cli:main"
+harness       = "harness.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -47,6 +50,17 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+norecursedirs = ["tests/fixtures"]
+markers = [
+  "unit: Unit tests (no external deps)",
+  "contract: Contract tests (provider interface)",
+  "integration: Integration tests (may need Docker/git)",
+  "system: System tests (full Docker + fixture repos)",
+  "e2e: End-to-end smoke tests",
+  "docker: Tests that require Docker daemon",
+  "slow: Tests that take > 30s",
+]
 
 [tool.hatch.metadata]
 allow-direct-references = true

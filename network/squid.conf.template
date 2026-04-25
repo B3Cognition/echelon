@@ -1,0 +1,70 @@
+# squid.conf.template — Squid proxy ACL configuration for spec-kit-harness.
+#
+# Per ADR-003: Squid forward proxy on internal Docker network.
+# Per FR-NETWORK-001a: default deny-all except allowlist.
+# Per FR-NETWORK-001b: default allowlist includes package registries.
+# Per FR-SANDBOX-004: LLM API endpoints explicitly blocked.
+# Per FR-NETWORK-002: loopback allowed.
+
+# --- Ports ---
+http_port 3128
+
+# --- ACLs ---
+
+# Loopback is always allowed (FR-NETWORK-002: Playwright test server support)
+acl loopback dst 127.0.0.0/8
+acl loopback dst ::1
+
+# Default package registry allowlist (FR-NETWORK-001b)
+acl allowlist dstdomain registry.npmjs.org
+acl allowlist dstdomain pypi.org
+acl allowlist dstdomain files.pythonhosted.org
+acl allowlist dstdomain proxy.golang.org
+acl allowlist dstdomain crates.io
+acl allowlist dstdomain static.crates.io
+acl allowlist dstdomain repo1.maven.org
+acl allowlist dstdomain playwright.azureedge.net
+acl allowlist dstdomain cdn.playwright.dev
+
+# PLACEHOLDER: Additional FQDNs injected from config.yml
+# {{ADDITIONAL_ALLOWLIST}}
+
+# Explicit deny for LLM API endpoints (FR-SANDBOX-004)
+acl llm_apis dstdomain api.anthropic.com
+acl llm_apis dstdomain api.openai.com
+
+# SSL ports for CONNECT method
+acl SSL_ports port 443
+acl Safe_ports port 80
+acl Safe_ports port 443
+acl CONNECT method CONNECT
+
+# --- Access Rules ---
+
+# Block LLM APIs explicitly (FR-SANDBOX-004) — must be before allow rules
+http_access deny llm_apis
+
+# Allow loopback (FR-NETWORK-002)
+http_access allow loopback
+
+# Allow allowlisted domains
+http_access allow allowlist
+
+# Allow CONNECT to SSL ports only
+http_access deny CONNECT !SSL_ports
+
+# Default deny all (FR-NETWORK-001a)
+http_access deny all
+
+# --- Logging ---
+
+# Log blocked requests for debugging (FR-NETWORK-001b)
+access_log daemon:/var/log/squid/access.log squid
+
+# Log denials explicitly
+deny_info TCP_DENIED/403 all
+
+# --- Performance ---
+cache_mem 64 MB
+maximum_object_size 256 MB
+shutdown_lifetime 3 seconds
