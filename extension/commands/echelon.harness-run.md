@@ -32,7 +32,7 @@ test -f .specify/extensions/echelon/echelon.yml && echo "ok" || echo "missing"
 
 If the output is `missing`, report:
 
-**"Harness not initialized. Run `speckit.harness.init` first."** and stop immediately.
+**"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop immediately.
 
 **ABSOLUTE RULE: Do NOT create, recreate, or bootstrap `echelon.yml` (harness: section) yourself.** Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The only valid action when the config is absent is to stop with the message above. The config is owned by `harness.init` — any other path corrupts harness state.
 
@@ -389,7 +389,7 @@ Print a single formatted block:
 
   What's next
     Run a new feature:  speckit.echelon.run <description>
-    Then build it:      speckit.harness.run <spec_id>
+    Then build it:      speckit.echelon.harness-run <spec_id>
 ════════════════════════════════════════════════
 ```
 

@@ -22,7 +22,7 @@ If `$ARGUMENTS` is non-empty, use it as `{target}`.
 
 Otherwise, check whether `.git` exists in the current directory:
 - If yes: set `{target}` to `.` (single-repo model — harness is installed in the target repo itself).
-- If no: report **"No target provided and no .git found in current directory. Usage: speckit.harness.init <repo-url-or-path>"** and stop.
+- If no: report **"No target provided and no .git found in current directory. Usage: speckit.echelon.harness-init <repo-url-or-path>"** and stop.
 
 ---
 
@@ -62,7 +62,7 @@ Harness initialized.
   Image:    {detected_image}  (source: {detected_image_source})
   Provider: {provider}
 
-Next: speckit.harness.run <spec_id>
+Next: speckit.echelon.harness-run <spec_id>
 ```
 
 If `bind_mount_ack` is `false` in the config, append:

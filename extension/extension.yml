@@ -58,12 +58,12 @@ requires:
       # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
     - name: "docker"
       required: true
-      required_for: "speckit.harness.run — DockerWorktreeProvider sandbox isolation for build/test/verify"
+      required_for: "speckit.echelon.harness-run — DockerWorktreeProvider sandbox isolation for build/test/verify"
       hard_stop: true
       note: "Docker daemon must be running. Required only when using harness commands."
     - name: "git"
       required: true
-      required_for: "speckit.harness.run — GitOpsManager two-repo gitops and worktree creation"
+      required_for: "speckit.echelon.harness-run — GitOpsManager two-repo gitops and worktree creation"
       hard_stop: true
 
 provides:
@@ -540,8 +540,8 @@ provides:
         visibility: user
         color: green
 
-    - name: "speckit.harness.init"
-      file: "commands/harness.init.md"
+    - name: "speckit.echelon.harness-init"
+      file: "commands/echelon.harness-init.md"
       description: "Initialize harness for a target repository — clone, config, Docker image build"
       behavior:
         invocation: explicit
@@ -550,8 +550,8 @@ provides:
         tools: full
         color: blue
 
-    - name: "speckit.harness.run"
-      file: "commands/harness.run.md"
+    - name: "speckit.echelon.harness-run"
+      file: "commands/echelon.harness-run.md"
       description: "Run the ralph-loop (build/verify/feedback) for a spec against the target repository"
       behavior:
         invocation: explicit
@@ -560,8 +560,8 @@ provides:
         tools: full
         color: blue
 
-    - name: "speckit.harness.status"
-      file: "commands/harness.status.md"
+    - name: "speckit.echelon.harness-status"
+      file: "commands/echelon.harness-status.md"
       description: "Show current harness state — active sandbox, phase progress, GC status"
       behavior:
         invocation: explicit
@@ -570,8 +570,8 @@ provides:
         tools: write
         color: blue
 
-    - name: "speckit.harness.resume"
-      file: "commands/harness.resume.md"
+    - name: "speckit.echelon.harness-resume"
+      file: "commands/echelon.harness-resume.md"
       description: "Resume a paused or escalated ralph-loop run"
       behavior:
         invocation: explicit

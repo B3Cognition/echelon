@@ -18,7 +18,7 @@ $ARGUMENTS
 | Command | Does | Produces |
 | ------- | ---- | -------- |
 | `speckit.echelon.bugfix` | Diagnoses the issue, designs the test strategy, validates spec compliance | `bugfix-{n}.md` + updated `tasks.md` |
-| `speckit.harness.run {spec_id}` | Builds the fix, verifies in Docker, deploys | Working code in production |
+| `speckit.echelon.harness-run {spec_id}` | Builds the fix, verifies in Docker, deploys | Working code in production |
 
 **`echelon.bugfix` never implements.** It produces the analysis and plan. The user then runs `harness.run` with their chosen strategy (`default` or `codegen`).
 
@@ -252,10 +252,10 @@ Print the handoff block and stop:
   Next step — choose your build strategy:
 
     Default (LLM implements directly):
-      speckit.harness.run {spec_id} strategy=default
+      speckit.echelon.harness-run {spec_id} strategy=default
 
     Codegen (SOAR pipeline):
-      speckit.harness.run {spec_id} strategy=codegen
+      speckit.echelon.harness-run {spec_id} strategy=codegen
 ════════════════════════════════════════════════
 ```
 

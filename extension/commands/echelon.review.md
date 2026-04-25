@@ -18,7 +18,7 @@ $ARGUMENTS
 | Command | Input | Produces |
 | ------- | ----- | -------- |
 | `speckit.echelon.review` | PR URL + blocking comments fetched from API | `review-fix-{n}.md` + `RF{n}-T*` tasks |
-| `speckit.harness.run` Phase 3 | review-fix tasks | Fixed code pushed, threads resolved, re-review requested |
+| `speckit.echelon.harness-run` Phase 3 | review-fix tasks | Fixed code pushed, threads resolved, re-review requested |
 
 **`echelon.review` never implements.** It diagnoses and plans. The `ReviewLoopController` re-enters Phase 1 with the new tasks.
 
