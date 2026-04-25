@@ -40,7 +40,6 @@ dev = [
 echelon       = "echelon.cli:main"
 codegen       = "codegen.cli.codegen_cli:main"
 understanding = "understanding.cli:main"
-harness       = "harness.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

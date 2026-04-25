@@ -43,7 +43,7 @@ specify extension add --dev ~/echelon/extension
 ```bash
 # Check CLIs are on PATH (may need a terminal restart after install)
 echelon --help
-harness --help
+echelon harness --help
 codegen --help
 understanding version
 

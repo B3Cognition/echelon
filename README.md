@@ -28,7 +28,7 @@ specify extension add --dev ~/echelon/extension
 | Tool | Purpose |
 | ---- | ------- |
 | `echelon` | Main CLI — init, run, bugfix, build, review, change, codegen |
-| `harness` | Build harness CLI — init, run, status, resume |
+| `echelon harness` | Build harness subcommands — init, run |
 | `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
 | `understanding` | Requirements quality metrics |
 
@@ -62,10 +62,10 @@ specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
 echelon init    # bootstrap echelon.yml, set up Docker/Traefik or CLI wrapper, install git hook
-harness init    # write harness: section into echelon.yml, mirror-clone target repo, detect language + image
+echelon harness init    # write harness: section into echelon.yml, mirror-clone target repo, detect language + image
 ```
 
-Both `echelon init` and `harness init` are pure Python — no AI session required.
+Both `echelon init` and `echelon harness init` are pure Python — no AI session required.
 
 ### Typical workflow
 
@@ -75,8 +75,8 @@ echelon run "Build a photo album app with sharing and tagging"
 echelon bugfix 001 "upload button does nothing on mobile Safari"
 
 # Phase B — build, verify in Docker, open PR
-harness run 001                    # echelon squad build (default)
-harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
+echelon harness run 001                    # echelon squad build (default)
+echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
 # After PR is open — review triage runs automatically via harness Phase 3
 # but can also be invoked directly:
@@ -101,8 +101,8 @@ All of the above are also available as spec-kit slash commands inside a Claude C
 speckit.echelon.init
 speckit.echelon.run "Build a photo album app"
 speckit.echelon.bugfix 001 "upload button does nothing"
-speckit.harness.run 001
-speckit.harness.run 001 strategy=codegen
+speckit.echelon.harness-run 001
+speckit.echelon.harness-run 001 strategy=codegen
 speckit.echelon.verify
 speckit.echelon.feedback 001
 ./scripts/bash/dry-run.sh    # validate extension setup without running agents
@@ -152,7 +152,7 @@ ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
 
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
 
-The `harness` build loop (`harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon.yml` (`harness.llm.cli`).
+The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon.yml` (`harness.llm.cli`).
 
 ## Harness
 
@@ -182,7 +182,7 @@ my-project/
 
 ### Build Strategies
 
-`harness run` accepts a `strategy` argument that controls which build engine Phase 1 uses:
+`echelon harness run` accepts a `strategy` argument that controls which build engine Phase 1 uses:
 
 | Strategy | Build engine | When to use |
 | -------- | ------------ | ----------- |
@@ -190,8 +190,8 @@ my-project/
 | `codegen` | `echelon.codegen` — SOAR CQ-ISC pipeline | Inviolable quality gates instead of agent review |
 
 ```bash
-harness run 001                    # default — echelon squad build
-harness run 001 strategy=codegen   # SOAR pipeline build
+echelon harness run 001                    # default — echelon squad build
+echelon harness run 001 strategy=codegen   # SOAR pipeline build
 ```
 
 Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
@@ -427,11 +427,11 @@ Each command is available two ways: as a terminal CLI tool (no Claude session ne
 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
-| `harness init [<repo>]` | `speckit.harness.init` | One-time harness setup — config, mirror clone, image fingerprint |
-| `harness run <id>` | `speckit.harness.run <id>` | Build → Docker verify → PR (echelon squad strategy) |
-| `harness run <id> strategy=codegen` | `speckit.harness.run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| *(spec-kit only)* | `speckit.harness.status [<id>]` | Show active loop status, iterations, token usage, PR URL |
-| *(spec-kit only)* | `speckit.harness.resume <id> <answer>` | Resume a loop blocked on a human escalation question |
+| `echelon harness init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
+| `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy) |
+| `echelon harness run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
+| *(spec-kit only)* | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on a human escalation question |
 
 ## Codegen Pipeline
 
@@ -728,7 +728,7 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 - **spec-kit** >= 0.4.2 (required)
 - **Claude CLI** (`claude`) — required for `echelon run`, `echelon bugfix`, and other LLM commands
 - **uv** (required — install via `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- **Docker** (required for `harness run` — sandbox verification runs in Docker)
+- **Docker** (required for `echelon harness run` — sandbox verification runs in Docker)
 - **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
 - **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
 - **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)
@@ -767,7 +767,7 @@ src/
 ├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
 ├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
 ├── understanding/       # Requirements quality metrics CLI (entry point: understanding)
-└── harness/             # Build harness library (entry point: harness)
+└── harness/             # Build harness library (invoked via: echelon harness)
     ├── provider.py        SandboxProvider abstract interface
     ├── docker_provider.py DockerWorktreeProvider — Docker sandbox lifecycle
     ├── llm_provider.py    ClaudeCliProvider — claude -p subprocess for LLM build

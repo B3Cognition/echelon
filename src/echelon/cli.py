@@ -35,13 +35,15 @@ USAGE = """\
 Usage: echelon <command> [args...]
 
 Commands:
-  init                                One-time project setup (no LLM)
-  run     <description>               Run echelon for a new feature
-  bugfix  <spec_id> <description>     Diagnose and plan a bugfix
-  build   <spec_id>                   Build implementation for a spec
-  review  <spec_id> [pr_url=<url>]    Triage PR review comments
-  change  <spec_id> <description>     Plan a scope change
-  codegen <spec_id>                   Run SOAR codegen pipeline
+  init                                      One-time project setup (no LLM)
+  run     <description>                     Run echelon for a new feature
+  bugfix  <spec_id> <description>           Diagnose and plan a bugfix
+  build   <spec_id>                         Build implementation for a spec
+  review  <spec_id> [pr_url=<url>]          Triage PR review comments
+  change  <spec_id> <description>           Plan a scope change
+  codegen <spec_id>                         Run SOAR codegen pipeline
+  harness init [<target_repo>]              Initialize harness (no LLM)
+  harness run  <spec_id> [strategy=<s>]     Run build→verify→PR loop
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
@@ -145,6 +147,128 @@ def _cmd_init(project_dir: Path) -> None:
         f"Next step:\n"
         f"  echelon run <description>\n"
     )
+
+
+# ── harness subcommands (pure Python, no LLM) ────────────────────────────
+
+def _cmd_harness(args: list[str]) -> None:
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon harness <subcommand> [args...]\n\n"
+            "Subcommands:\n"
+            "  init [<target_repo>]              Initialize harness — config, mirror clone, image fingerprint\n"
+            "  run  <spec_id> [strategy=<s>]     Run build→verify→PR loop\n"
+            "                                    strategy: default (echelon squad) or codegen (SOAR)\n"
+            "                                    mode:     semi (default) | banzai | guided\n\n"
+            "Examples:\n"
+            "  echelon harness init\n"
+            "  echelon harness init https://github.com/org/repo\n"
+            "  echelon harness run 001\n"
+            "  echelon harness run 001 strategy=codegen\n"
+            "  echelon harness run 001 strategy=default mode=banzai\n"
+        )
+        return
+
+    subcmd = args[0]
+    if subcmd == "init":
+        _cmd_harness_init(args[1:])
+    elif subcmd == "run":
+        _cmd_harness_run(args[1:])
+    else:
+        print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_harness_init(args: list[str]) -> None:
+    import logging
+    import os
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    target_repo = args[0] if args else "."
+    base_dir = str(Path.cwd())
+    bind_mount_ack = os.environ.get("HARNESS_BIND_MOUNT_ACK", "").lower() in ("true", "1", "yes")
+
+    from harness.init import init_harness, InitError
+    try:
+        config = init_harness(
+            target_repo=target_repo,
+            base_dir=base_dir,
+            bind_mount_ack=bind_mount_ack,
+        )
+    except InitError as e:
+        print(f"✗ echelon harness init failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    config_file = Path(base_dir) / ".specify" / "extensions" / "echelon" / "echelon.yml"
+    mirror_dir = Path(base_dir) / ".specify" / "harness" / "mirror.git"
+
+    image_note = ""
+    if config.base_image is None:
+        try:
+            import yaml as _yaml
+            raw = _yaml.safe_load(config_file.read_text())
+            harness_raw = raw.get("harness", raw)
+            detected = harness_raw.get("detected_image", "ubuntu:22.04")
+            source = harness_raw.get("detected_image_source", "fallback")
+            if source == "fallback":
+                image_note = (
+                    f"\n  ⚠  base_image not detected — using ubuntu:22.04 as fallback.\n"
+                    f"     Set base_image in {config_file}\n"
+                    f"     once you know your stack (e.g. node:20, python:3.12-slim).\n"
+                )
+            else:
+                image_note = f"\n  base_image    → {detected} (auto-detected: {source})\n"
+        except Exception:
+            pass
+
+    print(
+        f"\n"
+        f"╔══════════════════════════════════════════╗\n"
+        f"║      echelon harness init — complete     ║\n"
+        f"╚══════════════════════════════════════════╝\n"
+        f"\n"
+        f"  target_repo  → {config.target_repo}\n"
+        f"  config       → {config_file}\n"
+        f"  mirror       → {mirror_dir}\n"
+        f"  provider     → {config.provider}\n"
+        f"  pr_host      → {config.pr_host}\n"
+        f"{image_note}"
+        f"\n"
+        f"Next step:\n"
+        f"  echelon run \"<feature description>\"\n"
+        f"  echelon harness run <spec_id>\n"
+    )
+
+
+def _cmd_harness_run(args: list[str]) -> None:
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not args:
+        print("echelon harness run: missing spec_id\n", file=sys.stderr)
+        sys.exit(1)
+
+    spec_id = args[0]
+    kv: dict[str, str] = {}
+    for arg in args[1:]:
+        if "=" in arg:
+            k, _, v = arg.partition("=")
+            kv[k.strip()] = v.strip()
+    strategy = kv.get("strategy", "default")
+    mode = kv.get("mode", "semi")
+
+    user_message = " ".join([f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"])
+
+    from harness.config import load_config
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.skills.run_skill import run
+
+    config = load_config()
+    gitops = GitOpsManager(config)
+    provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+
+    run(user_message, provider, gitops)
 
 
 # ── Skill resolution ──────────────────────────────────────────────────────
@@ -254,6 +378,10 @@ def main() -> None:
 
     if command == "init":
         _cmd_init(Path.cwd())
+        return
+
+    if command == "harness":
+        _cmd_harness(args[1:])
         return
 
     if command not in SKILL_MAP:

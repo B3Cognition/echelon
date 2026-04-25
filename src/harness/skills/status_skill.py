@@ -69,7 +69,7 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
 
     for sid, info in strategies.items():
         if info.get("status") == "corrupted":
-            print(f"  {sid}: STATE CORRUPTED -- run speckit.harness.resume to recover",
+            print(f"  {sid}: STATE CORRUPTED -- run speckit.echelon.harness-resume to recover",
                   file=sys.stderr)
             continue
 

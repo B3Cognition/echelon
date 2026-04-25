@@ -14,9 +14,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `network/` — Squid proxy config assets for sandbox network policy
   - `scripts/docker-{gc,network,sandbox}.sh`, `sandbox-exec.sh` — sandbox lifecycle helpers
   - All harness tests migrated: unit (33), integration (11), contract (1), shim (5), e2e (6), fixtures
-  - `harness = "harness.cli:main"` entry point in `pyproject.toml`
+  - `echelon harness init/run` — harness subcommands merged into the `echelon` CLI; `harness` binary removed
 - **Single config file** — `harness:` section added to `echelon.yml`; `harness-config.yml` eliminated
-  - `harness init` writes into the `harness:` section of `echelon.yml` (merging with existing squad settings)
+  - `echelon harness init` writes into the `harness:` section of `echelon.yml` (merging with existing squad settings)
   - `harness.llm.config_dir` — sets `CLAUDE_CONFIG_DIR` for Claude invocations (persistent alternative to env var)
 - `docs/soar-delivery.md` — FR-019-001 SOAR state delivery documentation (delivery gate)
 - `codegen` CLI absorbed into echelon (`src/codegen/`) — SOAR-powered build pipeline now bundled

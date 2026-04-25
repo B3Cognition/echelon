@@ -1094,7 +1094,7 @@ deploy:
   # dockerfile: Dockerfile
 
 # =============================================================================
-# HARNESS — Sandbox execution substrate (harness run / harness init)
+# HARNESS — Sandbox execution substrate (echelon harness run / echelon harness init)
 # =============================================================================
 #
 # Environment variables override all file settings:
@@ -1102,7 +1102,7 @@ deploy:
 #   e.g. SPECKIT_HARNESS_RESOURCE_LIMITS_MEMORY=8g
 
 harness:
-  # --- Required (set by `harness init`) ---
+  # --- Required (set by `echelon harness init`) ---
 
   # URL or path of the target repository to build/test/verify inside the sandbox.
   # Use "." for single-repo (harness installed in the same repo you are building).
@@ -1128,7 +1128,7 @@ harness:
 
   # --- LLM Provider ---
 
-  # LLM CLI used by `harness run` for build and review steps.
+  # LLM CLI used by `echelon harness run` for build and review steps.
   # Overrides ECHELON_LLM env var when set.
   # Options: claude (default) | copilot | opencode
   # llm:
