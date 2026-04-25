@@ -532,7 +532,7 @@ endocrine:
     norepinephrine: 0.70
 
 # =============================================================================
-# DEPLOY — test-echelon-refactor local deployment
+# DEPLOY — Blue/green local CD
 # =============================================================================
 
 deploy:
