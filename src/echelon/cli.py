@@ -329,17 +329,85 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     else:
         content = f"{content}\n\n## Arguments\n{arguments}"
 
-    # Preamble: tells Claude to execute the skill, not narrate it, but still emit
-    # progress lines so the user can follow along in the terminal.
     preamble = (
         "You are COMMANDER running non-interactively via `claude -p`. "
         "The text below is your complete operating instruction set for this session. "
         "Execute every step immediately using your tools. "
-        "Print a short status line before each major phase (e.g. '▶ Phase 1: SCOUT running…') "
-        "so the user can see progress in the terminal. "
-        "Do not narrate or repeat the instructions back — just execute them and report status.\n\n"
+        "Do not narrate or repeat the instructions back — just execute them.\n\n"
     )
     return preamble + content
+
+
+def _print_event(event: dict) -> None:
+    """Print a human-readable line for each meaningful stream-json event."""
+    import json as _json
+    etype = event.get("type")
+
+    if etype == "assistant":
+        for block in event.get("message", {}).get("content", []):
+            btype = block.get("type")
+            if btype == "text":
+                text = block.get("text", "").strip()
+                if text:
+                    print(text, flush=True)
+            elif btype == "tool_use":
+                name = block.get("name", "")
+                inp = block.get("input", {})
+                hint = (
+                    inp.get("description")
+                    or inp.get("command", "")[:80]
+                    or inp.get("prompt", "")[:80]
+                    or inp.get("file_path", "")
+                    or inp.get("path", "")
+                    or inp.get("subagent_type", "")
+                    or ""
+                )
+                print(f"  ▷ {name}: {hint}" if hint else f"  ▷ {name}", flush=True)
+
+    elif etype == "result":
+        cost = event.get("total_cost_usd", 0)
+        ms = event.get("duration_ms", 0)
+        turns = event.get("num_turns", 0)
+        if event.get("is_error"):
+            print(f"\n✗ failed after {turns} turns · {ms/1000:.0f}s: {event.get('result', '')}", flush=True)
+        else:
+            print(f"\n── done  {turns} turns · {ms/1000:.0f}s · ${cost:.4f} ──", flush=True)
+
+
+def _run_claude_streaming(bin_: str, prompt: str, project_dir: Path, extra_args: list[str] | None = None) -> None:
+    """Invoke claude -p with stream-json output and print live progress to stdout."""
+    import json as _json
+
+    cmd = [
+        bin_, "-p",
+        "--dangerously-skip-permissions",
+        "--output-format", "stream-json",
+        "--verbose",
+    ] + (extra_args or [])
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=None,  # inherit so errors are visible
+        cwd=str(project_dir),
+    )
+    assert proc.stdin and proc.stdout
+    proc.stdin.write(prompt.encode("utf-8"))
+    proc.stdin.close()
+
+    for raw in proc.stdout:
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            _print_event(_json.loads(line))
+        except _json.JSONDecodeError:
+            print(line, flush=True)
+
+    proc.stdout.close()
+    proc.wait()
+    sys.exit(proc.returncode)
 
 
 def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
@@ -412,11 +480,14 @@ def main() -> None:
         # Use native --command mode; opencode resolves the skill file itself.
         cmd = [bin_, "run", "--dangerously-skip-permissions",
                "--command", f"speckit.{skill_base}", arguments]
-    else:
+        result = subprocess.run(cmd, cwd=str(project_dir))
+    elif cli == "copilot":
         prompt = _build_prompt(skill_path, arguments)
-        cmd = [bin_, "-p", prompt, "--dangerously-skip-permissions"]
-        if cli == "copilot":
-            cmd += ["--allow-all-tools"]
-
-    result = subprocess.run(cmd, cwd=str(project_dir))
+        cmd = [bin_, "-p", prompt, "--dangerously-skip-permissions", "--allow-all-tools"]
+        result = subprocess.run(cmd, cwd=str(project_dir))
+    else:
+        # claude: use stream-json for live tool-call progress in the terminal
+        prompt = _build_prompt(skill_path, arguments)
+        _run_claude_streaming(bin_, prompt, project_dir)
+        return  # _run_claude_streaming calls sys.exit
     sys.exit(result.returncode)
