@@ -1,0 +1,12 @@
+{
+  "exit_code": 0,
+  "stdout": "All 42 tests passed.\n",
+  "stderr": "",
+  "duration_ms": 12345,
+  "resource_stats": {
+    "peak_memory_bytes": 104857600,
+    "cpu_time_ms": 8000,
+    "wall_time_ms": 12345
+  },
+  "truncated": false
+}

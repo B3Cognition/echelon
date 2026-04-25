@@ -32,8 +32,8 @@ limits:
 
   # @belief(
   #   claim: "30 day warning window is sufficient for expiry notice"
-  #   verified: 2026-03-10
-  #   expires: 2026-04-15
+  #   verified: 2026-04-25
+  #   expires: 2026-05-15
   #   confidence: 0.65
   #   severity: low
   # )

@@ -12,15 +12,14 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 # 1. Install spec-kit
 uv tool install specify-cli --force --from "git+git@github.com:mbachorik/spec-kit.git"
 
-# 2. Clone echelon and echelon-harness as siblings
+# 2. Clone echelon
 git clone https://github.com/B3Cognition/echelon.git ~/echelon
-git clone https://github.com/B3Cognition/echelon-harness.git ~/echelon-harness
 
 # 3. Install all CLI tools + SOAR into a shared venv
 bash ~/echelon/scripts/install.sh
 source ~/.zshrc   # or restart terminal
 
-# 4. Register the spec-kit extension (covers echelon + harness skills)
+# 4. Register the spec-kit extension
 specify extension add --dev ~/echelon/extension
 ```
 
@@ -29,18 +28,16 @@ specify extension add --dev ~/echelon/extension
 | Tool | Purpose |
 | ---- | ------- |
 | `echelon` | Main CLI — init, run, bugfix, build, review, change, codegen |
-| `harness` | Build harness CLI — init, run |
+| `harness` | Build harness CLI — init, run, status, resume |
 | `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
 | `understanding` | Requirements quality metrics |
-
-`echelon-harness` is installed from the sibling directory automatically. If it is not present, the harness step is skipped with a message.
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
 
 ### Update to latest version
 
 ```bash
-cd ~/echelon && git pull && cd ~/echelon-harness && git pull
+cd ~/echelon && git pull
 bash ~/echelon/scripts/install.sh   # re-run to pick up dependency updates
 specify extension update --dev ~/echelon/extension
 ```
@@ -156,6 +153,91 @@ ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
 
 The `harness` build loop (`harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `harness-config.yml` (`llm.cli`).
+
+## Harness
+
+The harness is the Phase B execution substrate: it takes echelon's Phase A output (spec.md, tasks.md, feature branch) and runs build → Docker verify → PR in an isolated sandbox. LLM reasoning stays on the host; deterministic work (build, test, verify) runs inside Docker.
+
+### Deployment Models
+
+**Single-repo (recommended):** Install harness in the same repo you are building. Specs, code, and harness config all live together.
+
+```
+my-project/
+  .git
+  src/
+  specs/
+    001-feature/           ← echelon Phase A artifacts
+      spec.md
+      tasks.md
+  .specify/
+    extensions/
+      echelon/             ← echelon config
+      harness/
+        config.yml         ← target_repo: "."
+        mirror.git/        ← local bare clone of this repo
+```
+
+**Two-repo (advanced):** A dedicated control-plane repo manages one or more target repos. Useful when build infrastructure should be separate from product code, or when managing multiple products from one place.
+
+### Build Strategies
+
+`harness run` accepts a `strategy` argument that controls which build engine Phase 1 uses:
+
+| Strategy | Build engine | When to use |
+| -------- | ------------ | ----------- |
+| `default` (omit) | `echelon.build` — multi-agent squad | General use |
+| `codegen` | `echelon.codegen` — SOAR CQ-ISC pipeline | Inviolable quality gates instead of agent review |
+
+```bash
+harness run 001                    # default — echelon squad build
+harness run 001 strategy=codegen   # SOAR pipeline build
+```
+
+Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
+
+### Review Loop (Phase 3)
+
+After Phase 1 converges and a PR is open, the harness optionally enters a review loop. Enable in `harness-config.yml`:
+
+```yaml
+pr_host: github
+review_loop:
+  enabled: true
+  poll_interval_minutes: 1
+  merge_timeout_hours: 1
+  max_fix_iterations: 3
+```
+
+The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER → SENTINEL → SPEC GUARD per comment group), writes `review-fix-{n}.md` tasks to the branch, then re-enters Phase 1 with the review content injected into the build prompt.
+
+### Harness Architecture
+
+```
++-------------------------------+       +---------------------------+
+|        HOST (LLM side)        |       |    DOCKER SANDBOX         |
+|                               |       |                           |
+|  StrategyCoordinator          |       |  deterministic execution  |
+|    |                          |       |    - build (fallback)     |
+|    ├── Phase 1: RalphController|       |    - test                 |
+|    │     ├── ClaudeCliProvider |------>|    - verify               |
+|    │     └── DockerProvider   |       |      (npm ci/test/build)  |
+|    ├── Phase 2: VisualRalph   |       |                           |
+|    │     (Playwright, optional)|       |  network: squid proxy     |
+|    └── Phase 3: ReviewLoop    |       +---------------------------+
+|          (gh api + echelon.review)
+|
+|  GitOpsManager
+|    - mirror.git / state store / GC
++-------------------------------+
+```
+
+| Step | Executor |
+| ---- | -------- |
+| Build (Phase 1) | `claude -p` on host (or `echelon build`/`echelon codegen`) |
+| Verify | Docker sandbox — always |
+| Visual tests (Phase 2) | Docker sandbox — Playwright; disabled by default |
+| Review skill (Phase 3) | `claude -p` on host via `echelon.review` |
 
 ## How It Works
 
@@ -684,10 +766,30 @@ extension/
 src/
 ├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
 ├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
-└── understanding/       # Requirements quality metrics CLI (entry point: understanding)
+├── understanding/       # Requirements quality metrics CLI (entry point: understanding)
+└── harness/             # Build harness library (entry point: harness)
+    ├── provider.py        SandboxProvider abstract interface
+    ├── docker_provider.py DockerWorktreeProvider — Docker sandbox lifecycle
+    ├── llm_provider.py    ClaudeCliProvider — claude -p subprocess for LLM build
+    ├── build_prompt.py    BuildPromptBuilder — self-contained prompt construction
+    ├── gitops.py          GitOpsManager — mirror, worktrees, push, PR creation
+    ├── state.py           State store (per-strategy JSON, atomic writes)
+    ├── config.py          Configuration (4-level cascade)
+    ├── ralph.py           RalphController — Phase 1 outer/inner loop
+    ├── visual_ralph.py    VisualRalphController — Phase 2 Playwright loop
+    ├── review_loop.py     ReviewLoopController — Phase 3 PR review cycle
+    ├── coordinator.py     StrategyCoordinator — fans out strategies, owns Phase 1→3 loop
+    └── skills/            CLI skill entry points
+network/
+├── generate-squid-conf.sh   # Generate Squid proxy config for sandbox network policy
+└── squid.conf.template      # Squid config template with egress allowlist
 scripts/
-├── install.sh           # Downloads SOAR, creates ~/.echelon/venv/, installs echelon + harness + codegen + understanding
-└── uninstall.sh         # Removes venv, SOAR, memory, PATH entries
+├── install.sh               # Downloads SOAR, creates ~/.echelon/venv/, installs all CLIs
+├── uninstall.sh             # Removes venv, SOAR, memory, PATH entries
+├── docker-gc.sh             # Garbage-collect stale sandbox containers and worktrees
+├── docker-network.sh        # Create/teardown the Docker bridge network + Squid proxy
+├── docker-sandbox.sh        # Lifecycle helpers for the Docker sandbox container
+└── sandbox-exec.sh          # Run a command inside the active sandbox
 docs/
 └── fallback-mode.md
 knowledge-base/

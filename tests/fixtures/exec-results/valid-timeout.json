@@ -1,0 +1,8 @@
+{
+  "exit_code": 124,
+  "stdout": "Running tests...",
+  "stderr": "Timeout after 20 minutes",
+  "duration_ms": 1200000,
+  "resource_stats": null,
+  "truncated": false
+}

@@ -1,0 +1,12 @@
+{
+  "exit_code": 139,
+  "stdout": "",
+  "stderr": "Killed: out of memory",
+  "duration_ms": 5000,
+  "resource_stats": {
+    "peak_memory_bytes": 4294967296,
+    "cpu_time_ms": 4500,
+    "wall_time_ms": 5000
+  },
+  "truncated": false
+}

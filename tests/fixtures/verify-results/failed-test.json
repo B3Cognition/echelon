@@ -1,0 +1,12 @@
+{
+  "passed": false,
+  "failures": [
+    {
+      "category": "test",
+      "id": "test_calculator::test_divide",
+      "error": "AssertionError: expected 5.0, got 10.0"
+    }
+  ],
+  "duration_s": 12.1,
+  "token_usage": 800
+}

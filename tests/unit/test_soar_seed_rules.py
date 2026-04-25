@@ -313,14 +313,14 @@ def test_soar_prior_overlay_keys_preserved(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_soar_delivery_mechanism_documented():
-    """COMMANDER.md must document soar_state serialization into agent prompts (FR-019-001).
+    """docs/soar-delivery.md must document soar_state serialization into agent prompts (FR-019-001).
 
     This test verifies the Q1 delivery gap identified in investigation.md is closed.
-    It FAILS if the injection block was never added to COMMANDER.md.
+    It FAILS if the injection block was never added to docs/soar-delivery.md.
     """
-    commander_path = os.path.join(REPO_ROOT, "COMMANDER.md")
+    commander_path = os.path.join(REPO_ROOT, "docs", "soar-delivery.md")
     assert os.path.exists(commander_path), (
-        f"COMMANDER.md not found at {commander_path}"
+        f"docs/soar-delivery.md not found at {commander_path}"
     )
 
     with open(commander_path, encoding="utf-8") as f:

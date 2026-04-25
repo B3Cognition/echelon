@@ -1,0 +1,3 @@
+target_repo: "git@github.com:example/payments.git"
+target_default_branch: "main"
+provider: "docker"
