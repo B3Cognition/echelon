@@ -11,7 +11,7 @@ SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
 KB_DIR="$REPO_ROOT/knowledge-base"
 
-AGENTS_YAML="$REPO_ROOT/agents.yaml"
+AGENTS_YAML="$REPO_ROOT/extension/agents.yaml"
 PROMPT_VERSIONS="$KB_DIR/prompt-versions.yaml"
 INTERNALIZATION_LOG="$KB_DIR/internalization-log.yaml"
 EVOLUTION_SIGNALS="$KB_DIR/evolution-signals.yaml"

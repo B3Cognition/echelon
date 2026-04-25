@@ -61,11 +61,11 @@ echo "  Agent files found: $AGENT_COUNT"
 header "2. AGENTS.YAML REGISTRY"
 # ═══════════════════════════════════════════
 
-if [ -f "$ROOT/agents.yaml" ]; then
+if [ -f "$ROOT/extension/agents.yaml" ]; then
   green "agents.yaml exists"
 
   # Validate YAML
-  if python3 -c "import yaml; yaml.safe_load(open('$ROOT/agents.yaml'))" 2>/dev/null; then
+  if python3 -c "import yaml; yaml.safe_load(open('$ROOT/extension/agents.yaml'))" 2>/dev/null; then
     green "agents.yaml is valid YAML"
   else
     red "agents.yaml has YAML syntax errors"
@@ -74,7 +74,7 @@ if [ -f "$ROOT/agents.yaml" ]; then
   # Count agents in registry
   REG_COUNT=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 agents = data.get('agents', {})
 print(len(agents))
 " 2>/dev/null || echo "0")
@@ -89,7 +89,7 @@ print(len(agents))
   # Check every agent file reference exists
   python3 -c "
 import yaml, os, sys
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 missing = []
 for name, agent in data.get('agents', {}).items():
     f = agent.get('file', '')
@@ -112,7 +112,7 @@ else:
   # Check NEVER rules
   NEVER_COUNT=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 count = sum(len(a.get('never', [])) for a in data.get('agents', {}).values())
 print(count)
 " 2>/dev/null || echo "0")
@@ -126,7 +126,7 @@ print(count)
   # Check routing rules
   python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 routing = data.get('routing', {})
 agents = set(data.get('agents', {}).keys())
 issues = []
@@ -297,7 +297,7 @@ for i in "${!FLOW[@]}"; do
   label="${FLOW_LABELS[$i]}"
   file=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 agent = data.get('agents', {}).get('$agent', {})
 print(agent.get('file', 'NOT_FOUND'))
 " 2>/dev/null || echo "NOT_FOUND")
@@ -314,7 +314,7 @@ echo "  Build sequence:"
 for agent in IMPLEMENTER SPEC_GUARD CODE_REVIEWER TEST_GUARDIAN; do
   file=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 agent = data.get('agents', {}).get('$agent', {})
 print(agent.get('file', 'NOT_FOUND'))
 " 2>/dev/null || echo "NOT_FOUND")
@@ -331,7 +331,7 @@ echo "  Learning sequence:"
 for agent in MIRROR ADAPTIVE AUDITOR REALIST; do
   file=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/agents.yaml'))
+data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
 agent = data.get('agents', {}).get('$agent', {})
 print(agent.get('file', 'NOT_FOUND'))
 " 2>/dev/null || echo "NOT_FOUND")
