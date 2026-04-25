@@ -10,7 +10,7 @@ A multi-agent system for AI-assisted software development. Instead of one AI doi
 
 ```bash
 # 1. Install spec-kit
-uv tool install specify-cli --force --from "git+https://github.com/Testimonial/qag-spec-kit.git@35bc7c7"
+uv tool install specify-cli --force --from "git+git@github.com:mbachorik/spec-kit.git"
 
 # 2. Clone echelon and echelon-harness as siblings
 git clone https://github.com/B3Cognition/echelon.git ~/echelon
@@ -110,6 +110,29 @@ speckit.echelon.verify
 speckit.echelon.feedback 001
 ./scripts/bash/dry-run.sh    # validate extension setup without running agents
 ```
+
+## Execution Paths
+
+Echelon commands can be invoked two ways. Both paths are fully supported and run independently of each other.
+
+### Interactive Claude Code session (spec-kit skill system)
+
+When you type a slash command inside a Claude Code session (e.g. `speckit.echelon.run`), spec-kit reads the skill file directly and injects its content into the current conversation context. The `disable-model-invocation: true` frontmatter in each skill file is honoured — Claude executes the instructions in-context rather than spawning a subprocess.
+
+This path has no dependency on the `echelon` CLI tool or the `ECHELON_LLM` env var. It always uses the Claude instance already running your session.
+
+### Terminal CLI (`echelon` / `harness` commands)
+
+When you run `echelon run "..."` from the terminal, the `echelon` CLI:
+
+1. Locates the skill file for the selected provider (Claude, Copilot, or Opencode)
+2. Strips the YAML frontmatter (which is meaningful only to spec-kit, not to the LLM)
+3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
+4. Invokes the LLM CLI subprocess (`claude -p <prompt> --dangerously-skip-permissions`, or the equivalent for Copilot/Opencode)
+
+This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `llm.cli` in `harness-config.yml`) selects the provider.
+
+The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
 
 ## AI Provider Support
 
