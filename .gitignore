@@ -1,6 +1,7 @@
 *-config.local.yml
 __pycache__/
 *.py[cod]
+*.egg-info/
 .DS_Store
 .superpowers/
 Thumbs.db
