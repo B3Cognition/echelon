@@ -260,14 +260,13 @@ def init_harness(
     # Enable visual tests when Playwright is detected
     config.visual_tests.enabled = has_playwright
 
-    # Step 13: Write harness-config.yml to the location load_config() expects.
-    # load_config() reads from .specify/extensions/harness/harness-config.yml
-    # (the spec-kit 4-level cascade "project" layer).
-    config_dir = base / ".specify" / "extensions" / "harness"
+    # Step 13: Write harness section into echelon.yml (unified config file).
+    # load_config() reads .specify/extensions/echelon/echelon.yml, harness: key.
+    config_dir = base / ".specify" / "extensions" / "echelon"
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_file = config_dir / "harness-config.yml"
+    config_file = config_dir / "echelon.yml"
 
-    config_data = {
+    harness_data = {
         "target_repo": config.target_repo,
         "target_default_branch": config.target_default_branch,
         "provider": config.provider,
@@ -299,19 +298,27 @@ def init_harness(
     }
 
     if yaml is not None:
+        # Merge into existing echelon.yml (preserves echelon squad settings)
+        existing: dict = {}
+        if config_file.exists():
+            existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+        existing["harness"] = harness_data
         config_file.write_text(
-            yaml.dump(config_data, default_flow_style=False, sort_keys=False),
+            yaml.dump(existing, default_flow_style=False, sort_keys=False),
             encoding="utf-8",
         )
     else:
-        # Fallback: write as simple key-value format
         import json
-        config_file.write_text(
-            json.dumps(config_data, indent=2),
-            encoding="utf-8",
-        )
+        existing = {}
+        if config_file.exists():
+            try:
+                existing = json.loads(config_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        existing["harness"] = harness_data
+        config_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
-    logger.info("Config written to %s", config_file)
+    logger.info("Harness config written to %s (harness: section)", config_file)
 
     # Step 14: Bind-mount acknowledgement
     if not bind_mount_ack:

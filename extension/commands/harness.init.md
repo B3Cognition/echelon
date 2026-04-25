@@ -12,7 +12,7 @@ $ARGUMENTS
 
 ## Overview
 
-One-time setup that clones a mirror of the target repository, detects its language and Docker base image, and writes `.specify/extensions/harness/harness-config.yml`. Run this before any `harness.run` invocations.
+One-time setup that clones a mirror of the target repository, detects its language and Docker base image, and writes `.specify/extensions/echelon/echelon.yml`. Run this before any `harness.run` invocations.
 
 ---
 
@@ -28,7 +28,7 @@ Otherwise, check whether `.git` exists in the current directory:
 
 ## Step 2: Check for Existing Init
 
-If `.specify/extensions/harness/harness-config.yml` exists:
+If `.specify/extensions/echelon/echelon.yml` exists:
 1. Read `target_repo` from it.
 2. Ask: **"Harness already initialized for `{existing_target}`. Re-initialize for `{target}`? (yes/no)"**
 3. If no: stop.
@@ -38,7 +38,7 @@ If `.specify/extensions/harness/harness-config.yml` exists:
 ## Step 3: Run Init
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python3 -c "
+PYTHONPATH=.specify/extensions/echelon python3 -c "
 from harness.init import init_harness
 config = init_harness('{target}')
 print('target_repo:', config.target_repo)
@@ -52,7 +52,7 @@ If the command exits non-zero, report the full error output and stop.
 
 ## Step 4: Display Result
 
-Read `.specify/extensions/harness/harness-config.yml` and display:
+Read `.specify/extensions/echelon/echelon.yml` and display:
 
 ```
 Harness initialized.
@@ -69,5 +69,5 @@ If `bind_mount_ack` is `false` in the config, append:
 
 ```
   WARNING: bind_mount_ack is false — the sandbox CAN modify your worktree.
-  Set bind_mount_ack: true in .specify/extensions/harness/harness-config.yml to acknowledge.
+  Set bind_mount_ack: true in .specify/extensions/echelon/echelon.yml to acknowledge.
 ```

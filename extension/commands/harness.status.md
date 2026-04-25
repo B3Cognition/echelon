@@ -18,7 +18,7 @@ Read-only command. Displays per-strategy status for all running, blocked, or rec
 
 ## Step 1: Check Initialized
 
-If `.specify/extensions/harness/harness-config.yml` does not exist, report:
+If `.specify/extensions/echelon/echelon.yml` does not exist, report:
 
 **"Harness not initialized. Run `speckit.harness.init` first."** and stop.
 
@@ -27,7 +27,7 @@ If `.specify/extensions/harness/harness-config.yml` does not exist, report:
 ## Step 2: Run Status
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python3 -c "from harness.skills.status_skill import show_status; show_status()"
+PYTHONPATH=.specify/extensions/echelon python3 -c "from harness.skills.status_skill import show_status; show_status()"
 ```
 
 ---

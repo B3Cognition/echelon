@@ -73,7 +73,7 @@ FULL = {
 
 
 def _ext_dir(project_root: Path) -> Path:
-    d = project_root / ".specify" / "extensions" / "harness"
+    d = project_root / ".specify" / "extensions" / "echelon"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -165,10 +165,10 @@ class TestConfigDefaults:
 class TestLoadConfigCascade:
     def test_project_config_applied(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "harness-config.yml", {
+        _write_yaml(ext / "echelon.yml", {"harness": {
             **MINIMAL,
             "resource_limits": {"memory": "8g"},
-        })
+        }})
         config = load_config(tmp_path)
         assert config.resource_limits.memory == "8g"
         # Defaults still fill unspecified sub-fields
@@ -176,8 +176,8 @@ class TestLoadConfigCascade:
 
     def test_local_config_overrides_project(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "harness-config.yml", {**MINIMAL, "buffer_limit_bytes": 5_000_000})
-        _write_yaml(ext / "local-config.yml", {"buffer_limit_bytes": 1_000_000})
+        _write_yaml(ext / "echelon.yml", {"harness": {**MINIMAL, "buffer_limit_bytes": 5_000_000}})
+        _write_yaml(ext / "local-config.yml", {"harness": {"buffer_limit_bytes": 1_000_000}})
         config = load_config(tmp_path)
         assert config.buffer_limit_bytes == 1_000_000
 
@@ -186,8 +186,8 @@ class TestLoadConfigCascade:
         # so only single-word top-level keys round-trip cleanly via env vars.
         # SPECKIT_HARNESS_PROVIDER → {"provider": "e2b"}
         ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "harness-config.yml", MINIMAL)
-        _write_yaml(ext / "local-config.yml", {"provider": "docker"})
+        _write_yaml(ext / "echelon.yml", {"harness": MINIMAL})
+        _write_yaml(ext / "local-config.yml", {"harness": {"provider": "docker"}})
         monkeypatch.setenv("SPECKIT_HARNESS_PROVIDER", "e2b")
         config = load_config(tmp_path)
         assert config.provider == "e2b"
@@ -195,13 +195,13 @@ class TestLoadConfigCascade:
     def test_missing_optional_files_are_skipped(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)
         # Only project config — no local, no env vars
-        _write_yaml(ext / "harness-config.yml", MINIMAL)
+        _write_yaml(ext / "echelon.yml", {"harness": MINIMAL})
         config = load_config(tmp_path)
         assert config.provider == "docker"
 
     def test_defaults_cwd_used_when_no_project_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         ext = _ext_dir(tmp_path)
-        _write_yaml(ext / "harness-config.yml", MINIMAL)
+        _write_yaml(ext / "echelon.yml", {"harness": MINIMAL})
         monkeypatch.chdir(tmp_path)
         config = load_config()  # no project_root — falls back to cwd
         assert config.target_repo == MINIMAL["target_repo"]

@@ -27,14 +27,14 @@ Requires `harness.init` to have been run first.
 ## Step 1: Check Initialized
 
 ```bash
-test -f .specify/extensions/harness/harness-config.yml && echo "ok" || echo "missing"
+test -f .specify/extensions/echelon/echelon.yml && echo "ok" || echo "missing"
 ```
 
 If the output is `missing`, report:
 
 **"Harness not initialized. Run `speckit.harness.init` first."** and stop immediately.
 
-**ABSOLUTE RULE: Do NOT create, recreate, or bootstrap `harness-config.yml` yourself.** Do NOT create `.specify/extensions/harness/` or any subdirectory. Do NOT work around the missing config in any way. The only valid action when the config is absent is to stop with the message above. The config is owned by `harness.init` — any other path corrupts harness state.
+**ABSOLUTE RULE: Do NOT create, recreate, or bootstrap `echelon.yml` (harness: section) yourself.** Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The only valid action when the config is absent is to stop with the message above. The config is owned by `harness.init` — any other path corrupts harness state.
 
 ---
 
@@ -65,7 +65,7 @@ Extract `{spec_name}` from the directory name (e.g., `weather-dashboard` from `0
 Find the echelon feature branch for this spec. The feature branch was created by `speckit.echelon.run` and is named after the spec directory (e.g., `001-weather-dashboard`).
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python -m harness gitops find-branch '{spec_id}'
+PYTHONPATH=.specify/extensions/echelon python -m harness gitops find-branch '{spec_id}'
 ```
 
 - If a feature branch is found (e.g., `001-weather-dashboard`): use it as `{feature_branch}`. The worktree will be checked out on this branch, and all commits will land here.
@@ -76,7 +76,7 @@ PYTHONPATH=.specify/extensions/harness python -m harness gitops find-branch '{sp
 ## Step 4: Create Harness Worktree
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python -m harness gitops create-worktree \
+PYTHONPATH=.specify/extensions/echelon python -m harness gitops create-worktree \
   '{spec_id}' '{strategy}' 0 --base-branch '{feature_branch}'
 ```
 
@@ -107,7 +107,7 @@ This ensures the worktree has the full spec context without any git cherry-pick.
 Before building, read the deployment configuration from CWD (not the worktree) to understand the app's subpath:
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python3 -c "
+PYTHONPATH=.specify/extensions/echelon python3 -c "
 import json, pathlib, sys
 p = pathlib.Path('.specify/squad/deploy-state.json')
 if not p.exists():
@@ -209,7 +209,7 @@ Track the outer iteration count (`outer_iter`, starting at 0). After each build,
 ## Step 6: Verify (in Docker)
 
 Determine the Docker image to use:
-- Read `detected_image` from `.specify/extensions/harness/harness-config.yml`
+- Read `detected_image` from `.specify/extensions/echelon/echelon.yml`
 - Fallback: `ubuntu:24.04`
 
 ```bash
@@ -332,7 +332,7 @@ Resolve `{push_branch}`:
 - Legacy mode (no feature branch): `{push_branch}` = `harness/{spec_id}/{strategy}/iter-{outer_iter}`
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python -m harness gitops commit-push \
+PYTHONPATH=.specify/extensions/echelon python -m harness gitops commit-push \
   '{worktree_path}' '{push_branch}' 'harness: {spec_id} build iter-{outer_iter} [skip ci]'
 ```
 
@@ -345,10 +345,10 @@ After verification passes, merge the feature branch to main.
 **Option A — PR tool available (gh/glab):**
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python -m harness gitops open-pr \
+PYTHONPATH=.specify/extensions/echelon python -m harness gitops open-pr \
   '{push_branch}' '{spec_id}' '{strategy}' '{spec_name}'
 
-PYTHONPATH=.specify/extensions/harness python -m harness gitops merge-pr '{pr_url}'
+PYTHONPATH=.specify/extensions/echelon python -m harness gitops merge-pr '{pr_url}'
 ```
 
 `open-pr` prints `pr_url: <url>` — capture it for the `merge-pr` call and for Step 10.
@@ -358,7 +358,7 @@ PYTHONPATH=.specify/extensions/harness python -m harness gitops merge-pr '{pr_ur
 If no PR tool is available, merge directly:
 
 ```bash
-PYTHONPATH=.specify/extensions/harness python -m harness gitops local-merge \
+PYTHONPATH=.specify/extensions/echelon python -m harness gitops local-merge \
   '{push_branch}' '{spec_id}' '{spec_name}'
 ```
 

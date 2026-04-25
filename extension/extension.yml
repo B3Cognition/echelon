@@ -583,13 +583,8 @@ provides:
   config:
     - name: "echelon.yml"
       template: "config-template.yml"
-      description: "Echelon configuration"
+      description: "Echelon configuration (includes harness: section for sandbox settings)"
       required: false
-
-    - name: "harness-config.yml"
-      template: "harness-config-template.yml"
-      description: "Harness sandbox and GitOps configuration"
-      required: true
 
 hooks:
   before_plan:
