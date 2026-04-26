@@ -5,6 +5,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER handling deployment operations — triggering, checking status, or rolling back a deployment.
+
+---
+
 ## User Input
 
 $ARGUMENTS

@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER resuming a blocked harness loop. Incorporate the user's escalation answer and continue from the current iteration — not from scratch.
+
+---
+
 ## User Input
 
 $ARGUMENTS

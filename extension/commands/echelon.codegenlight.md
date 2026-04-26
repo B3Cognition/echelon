@@ -6,6 +6,12 @@ tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 
 # /codegen — SOAR-Powered Software Development Agent
 
+## Role
+
+You are COMMANDER executing the lightweight SOAR codegen pipeline for brownfield RE and greenfield builds with inviolable quality gates.
+
+---
+
 ## User Input
 
 $ARGUMENTS

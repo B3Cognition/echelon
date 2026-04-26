@@ -2,6 +2,12 @@
 description: Scan spec for 31 requirements quality metrics across 6 categories (Structure, Testability, Readability, Cognitive, Semantic, Behavioral) with quality gates.
 ---
 
+## Role
+
+You are COMMANDER scanning the spec for 31 requirements quality metrics across 6 categories. No agent dispatch — toolchain-only.
+
+---
+
 ## User Input
 
 ```text

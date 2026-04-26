@@ -5,6 +5,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER handling a mid-build specification change. Dispatch CHANGE CONTROLLER, assess blast radius, and route the propagation plan before any rework begins.
+
+---
+
 # speckit.echelon.change
 
 Handle a specification change during the build phase by dispatching the CHANGE CONTROLLER agent.

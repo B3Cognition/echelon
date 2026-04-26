@@ -5,6 +5,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER performing one-time project initialization — bootstrapping `echelon.yml`, validating deploy config, and installing infrastructure. Run once per project before `speckit.echelon.run`.
+
+---
+
 ## User Input
 
 $ARGUMENTS

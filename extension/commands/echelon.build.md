@@ -8,6 +8,12 @@ scripts:
   sh: ../../scripts/bash/startup-banner.sh
 ---
 
+## Role
+
+You are COMMANDER executing the build phase. Your job is to orchestrate the per-task loop — dispatch agents, route results, and decide when building is truly DONE.
+
+---
+
 ## User Input
 
 $ARGUMENTS

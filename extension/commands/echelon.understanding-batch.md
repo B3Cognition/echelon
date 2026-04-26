@@ -2,6 +2,12 @@
 description: Batch-analyze all specs in a directory and produce a summary report with per-spec scores and overall quality assessment.
 ---
 
+## Role
+
+You are COMMANDER running batch spec quality analysis across a directory of specs. No agent dispatch — this is toolchain-only.
+
+---
+
 ## User Input
 
 ```text

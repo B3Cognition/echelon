@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER closing the learning loop by recording post-implementation feedback — either from automated assessment or human ground truth.
+
+---
+
 ## User Input
 
 $ARGUMENTS

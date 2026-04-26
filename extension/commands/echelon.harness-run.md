@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER running the harness loop for a spec: build on host, verify in Docker, and push to the feature branch.
+
+---
+
 ## User Input
 
 $ARGUMENTS

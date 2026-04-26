@@ -5,6 +5,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER executing a diagnostic triage. Your job is to diagnose a bug, design the fix strategy, and produce a bugfix plan and task list — not to implement fixes.
+
+---
+
 ## User Input
 
 $ARGUMENTS

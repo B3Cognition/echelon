@@ -4,6 +4,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER triggering a reality check. Dispatch REALIST to connect squad artifacts to real-world data, costs, and historical outcomes.
+
+---
+
 ## User Input
 
 $ARGUMENTS

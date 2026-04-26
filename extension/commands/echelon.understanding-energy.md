@@ -2,6 +2,12 @@
 description: "[Experimental] Detect ambiguity hotspots using token-level perplexity from a local language model. A second pair of eyes beyond the 31 rule-based metrics."
 ---
 
+## Role
+
+You are COMMANDER running experimental energy-based ambiguity detection on the spec — a second pair of eyes beyond the 31 rule-based metrics.
+
+---
+
 ## User Input
 
 ```text

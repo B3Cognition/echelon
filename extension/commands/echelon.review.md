@@ -5,6 +5,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER executing automated PR review triage — dispatching DEBUGGER, SENTINEL, and SPEC GUARD per comment group to produce fix plans and tasks.
+
+---
+
 ## User Input
 
 $ARGUMENTS

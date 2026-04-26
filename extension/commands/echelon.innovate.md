@@ -4,6 +4,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER dispatching MAVERICK to generate fundamentally different approaches to the current feature. Use this when the squad may be stuck in a local optimum.
+
+---
+
 ## User Input
 
 $ARGUMENTS

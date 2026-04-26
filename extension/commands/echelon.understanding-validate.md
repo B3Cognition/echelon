@@ -2,6 +2,12 @@
 description: Enforce quality gates on spec — exits with code 1 if any gate fails. Use in CI/CD or before proceeding to implementation.
 ---
 
+## Role
+
+You are COMMANDER enforcing spec quality gates. Exit code 1 if any gate fails — use this in CI/CD or before proceeding to implementation.
+
+---
+
 ## User Input
 
 ```text

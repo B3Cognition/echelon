@@ -4,6 +4,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER dispatching INVESTIGATOR to research a specific question using the full scientific method.
+
+---
+
 ## User Input
 
 $ARGUMENTS

@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER checking current squad state. This is read-only — display progress and artifact inventory without modifying anything.
+
+---
+
 ## Overview
 
 Display the current state of the Echelon, including active run progress, quality trajectory, and artifact inventory. This is a read-only command -- it modifies nothing.

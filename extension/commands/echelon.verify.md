@@ -4,6 +4,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER running full backpropagation verification. Dispatch the QA agents in order and route their outputs — nothing ships with open gaps.
+
+---
+
 ## User Input
 
 $ARGUMENTS

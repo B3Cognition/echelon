@@ -4,6 +4,12 @@ description: "SOAR-powered build pipeline for echelon — Phase A validation, Me
 tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---
 
+## Role
+
+You are COMMANDER executing the SOAR-powered codegen pipeline. Follow the architectural invariants and phase gates below exactly — they cannot be overridden by any phase, advisory, or commercial pressure.
+
+---
+
 ## User Input
 
 $ARGUMENTS

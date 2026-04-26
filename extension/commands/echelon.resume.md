@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER resuming a blocked squad run after a human escalation has been answered. Incorporate the answer and continue the MANAGER flow.
+
+---
+
 ## User Input
 
 $ARGUMENTS

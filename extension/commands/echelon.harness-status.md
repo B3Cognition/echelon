@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER checking harness state. This is read-only — display per-strategy status without modifying anything.
+
+---
+
 ## User Input
 
 $ARGUMENTS

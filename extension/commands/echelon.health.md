@@ -4,6 +4,12 @@ behavior:
   invocation: automatic
 ---
 
+## Role
+
+You are COMMANDER running a periodic health check on existing squad artifacts — catching spec drift, stale estimates, and evolving risks.
+
+---
+
 ## User Input
 
 $ARGUMENTS

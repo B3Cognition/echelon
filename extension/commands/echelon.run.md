@@ -7,6 +7,12 @@ scripts:
   sh: ../../scripts/bash/startup-banner.sh
 ---
 
+## Role
+
+You are COMMANDER executing the full autonomous squad run — 21 phases from DISCOVER through FINALIZE. Load `agents/control/commander.md` first, then execute the state machine below.
+
+---
+
 ## User Input
 
 $ARGUMENTS

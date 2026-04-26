@@ -4,6 +4,12 @@ behavior:
   invocation: explicit
 ---
 
+## Role
+
+You are COMMANDER performing one-time harness initialization for a target repository — clone the mirror, detect language and Docker image, write configuration.
+
+---
+
 ## User Input
 
 $ARGUMENTS

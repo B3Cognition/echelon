@@ -2,6 +2,12 @@
 description: Generate entity relationship diagrams from spec requirements — extract actors, actions, and objects and visualize their relationships.
 ---
 
+## Role
+
+You are COMMANDER generating entity relationship diagrams from spec requirements — extract actors, actions, and objects and visualize their relationships.
+
+---
+
 ## User Input
 
 ```text
