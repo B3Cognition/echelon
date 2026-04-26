@@ -218,7 +218,20 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/implementer.md` for your complete instructions. You are the IMPLEMENTER. Build task {task_id}: {task_description}. Here is your context pack: [include files]. Write code and tests. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are IMPLEMENTER. Read agents/build/implementer.md for your complete protocol.
+  Build task {task_id}: {task_description}
+  Write code and tests. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "IMPLEMENTER: {task_id} — {task_title}"
 
 ### 2.4 Handle IMPLEMENTER Result
@@ -257,7 +270,20 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/spec-guard.md` for your complete instructions. You are the SPEC GUARD. Verify task {task_id} implementation against spec requirements. Here is your context pack: [include files]. Append to `spec-compliance-report.md`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are SPEC GUARD. Read agents/build/spec-guard.md for your complete protocol.
+  Verify task {task_id} implementation against spec requirements.
+  Append to `spec-compliance-report.md`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "SPEC GUARD: {task_id} — spec compliance check"
 
 ### 3.2 Handle Result
@@ -291,7 +317,20 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/code-reviewer.md` for your complete instructions. You are the CODE REVIEWER. Review task {task_id} implementation. Here is your context pack: [include files]. Append to `code-review-report.md`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are CODE REVIEWER. Read agents/build/code-reviewer.md for your complete protocol.
+  Review task {task_id} implementation.
+  Append to `code-review-report.md`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "CODE REVIEWER: {task_id} — quality review"
 
 ### 4.2 Handle Result
@@ -316,7 +355,20 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/test-guardian.md` for your complete instructions. You are the TEST GUARDIAN. Validate test quality for task {task_id}. Here is your context pack: [include files]. Append to `test-quality-report.md`. Update `coverage-map.md`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are TEST GUARDIAN. Read agents/build/test-guardian.md for your complete protocol.
+  Validate test quality for task {task_id}.
+  Append to `test-quality-report.md`. Update `coverage-map.md`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "TEST GUARDIAN: {task_id} — test quality validation"
 
 ### 5.2 Handle Result
@@ -342,7 +394,20 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/progress-tracker.md` for your complete instructions. You are the PROGRESS TRACKER. Record completion of task {task_id}. Update running totals and check for drift. Here is your context pack: [include files]. Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`. Also update `state.json.build.completed_tasks` (increment by 1) and `state.json.build.task_results` with the task's gate results.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are PROGRESS TRACKER. Read agents/build/progress-tracker.md for your complete protocol.
+  Record completion of task {task_id}. Update running totals and check for drift.
+  Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`. Also update `state.json.build.completed_tasks` (increment by 1) and `state.json.build.task_results` with the task's gate results.
+  </instructions>
+  ```
+
 - **description:** "PROGRESS TRACKER: {task_id} — effort tracking"
 
 ### 6.2 Handle Alerts
@@ -397,7 +462,20 @@ Compile context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/integrator.md` for your complete instructions. You are the INTEGRATOR. Verify system integration after phase "{phase_group}". Here is your context pack: [include files]. Write `integration-report.md`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are INTEGRATOR. Read agents/build/integrator.md for your complete protocol.
+  Verify system integration after phase "{phase_group}".
+  Write `integration-report.md`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "INTEGRATOR: phase '{phase_group}' — system integration check"
 
 ### 7.2 Handle Result
@@ -413,7 +491,20 @@ Use the Agent tool:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/build/visual-validator.md` for your complete instructions. You are the VISUAL VALIDATOR. Verify that the browser application renders correctly after phase "{phase_group}". Build the app, serve it, use Playwright to screenshot every page/view, and verify nothing is blank. Here is your context pack: [include spec.md, plan.md, code from this phase]. Write or append to `visual-validation-report.md`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, plan.md, code from this phase]
+  </context>
+
+  <instructions>
+  You are VISUAL VALIDATOR. Read agents/build/visual-validator.md for your complete protocol.
+  Verify that the browser application renders correctly after phase "{phase_group}". Build the app, serve it, use Playwright to screenshot every page/view, and verify nothing is blank.
+  Write or append to `visual-validation-report.md`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "VISUAL VALIDATOR: phase '{phase_group}' — browser render check"
 
 Handle result:
@@ -464,7 +555,19 @@ Before completion, dispatch ENGINEERING MANAGER with:
 
 Use the Agent tool:
 
-- **prompt:** Read `agents/build/engineering-manager.md` for your complete instructions. You are the ENGINEERING MANAGER. Validate workflow compliance, report consistency, and readiness for final verification using the provided context pack.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, all build gate reports, state.json, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are ENGINEERING MANAGER. Read agents/build/engineering-manager.md for your complete protocol.
+  Validate workflow compliance, report consistency, and readiness for final verification.
+  </instructions>
+  ```
+
 - **description:** "ENGINEERING MANAGER: final pre-verification sign-off"
 
 ENGINEERING MANAGER must confirm:
@@ -513,7 +616,20 @@ Dispatch VERIFICATION after final integration and EM pre-check.
 
 Use the Agent tool:
 
-- **prompt:** Read `agents/build/verification.md` for your complete instructions. You are the VERIFICATION agent. Run full backpropagation verification against spec requirements using the provided context pack. Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, all implemented code, all gate reports, traceability-matrix.md, coverage-map.md, state.json, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are VERIFICATION agent. Read agents/build/verification.md for your complete protocol.
+  Run full backpropagation verification against spec requirements.
+  Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
+  </instructions>
+  ```
+
 - **description:** "VERIFICATION: final backpropagation check"
 
 VERIFICATION must:
@@ -563,7 +679,19 @@ After all build tasks complete, dispatch SCOREKEEPER to produce the build phase 
 
 Use the Agent tool:
 
-- **prompt:** Read `agents/control/scorekeeper.md`. Score all build agents: IMPLEMENTER (first-pass approvals vs rework), SPEC GUARD (gaps caught vs missed by VERIFICATION), CODE REVIEWER (issues found), TEST GUARDIAN (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include state.json, progress-report.md, all gate reports, reasoning-journal.json, knowledge-base/agent-scores.yaml]
+  </context>
+
+  <instructions>
+  You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
+  Score all build agents: IMPLEMENTER (first-pass approvals vs rework), SPEC GUARD (gaps caught vs missed by VERIFICATION), CODE REVIEWER (issues found), TEST GUARDIAN (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+  </instructions>
+  ```
+
 - **description:** "SCOREKEEPER: build phase scoring and badges"
 
 Build-specific scoring:
@@ -598,7 +726,20 @@ After SCOREKEEPER and before final summary, COMMANDER runs the autonomous feedba
 
 Use the Agent tool:
 
-- **prompt:** Read `agents/learning/auditor.md`. You are AUDITOR in **Mode 4: Post-Build Self-Assessment**. Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.json (risks), test-strategy.md + test-quality-report.md (tests). Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for COMMANDER triage.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all build artifacts, spec artifacts, state.json, reasoning-journal.json, knowledge-base/]
+  </context>
+
+  <instructions>
+  You are AUDITOR. Read agents/learning/auditor.md for your complete protocol. Operate in **Mode 4: Post-Build Self-Assessment**.
+  Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.json (risks), test-strategy.md + test-quality-report.md (tests).
+  Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for COMMANDER triage.
+  </instructions>
+  ```
+
 - **description:** "AUDITOR: post-build self-assessment — auto-feedback generation"
 
 Context pack: all build artifacts + spec artifacts + state.json + reasoning-journal.json + knowledge-base/
@@ -631,7 +772,20 @@ For each expert dispatch:
 
 Dispatch SAGE in post-build-validation mode:
 
-- **prompt:** Read `agents/exploration/sage.md`. You are SAGE in **post-build-validation mode**. Run `speckit.echelon.understanding-validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT. Produce `post-build-validation.md`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, quality-gates.md from WHY3, auto-feedback.yaml, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **post-build-validation mode**.
+  Run `speckit.echelon.understanding-validate` against the final `spec.md`. Compare scores against the last WHY3 `quality-gates.md`. If any category dropped > 0.05: flag as REGRESSION. If overall improved: log as IMPROVEMENT.
+  Produce `post-build-validation.md`.
+  </instructions>
+  ```
+
 - **description:** "SAGE: post-build Understanding re-scan"
 
 **b) Intent alignment check:**
@@ -640,7 +794,20 @@ Dispatch SAGE in post-build-validation mode:
 
 Dispatch TRACKER in post-build-alignment mode:
 
-- **prompt:** Read `agents/control/tracker.md`. You are TRACKER in **post-build-alignment mode**. Read `user-intent.md` (original user request) and the build output (verification-summary.md, gap-report.md, implemented code). Answer: "Does what was built match what the user asked for?" If MISALIGNED, describe the divergence. Produce `intent-alignment-final.md`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **post-build-alignment mode**.
+  Read `user-intent.md` (original user request) and the build output (verification-summary.md, gap-report.md, implemented code). Answer: "Does what was built match what the user asked for?" If MISALIGNED, describe the divergence.
+  Produce `intent-alignment-final.md`.
+  </instructions>
+  ```
+
 - **description:** "TRACKER: post-build intent alignment check"
 
 If TRACKER reports MISALIGNED: flag as CRITICAL in feedback-report.md. COMMANDER logs but does NOT block — build is already done.

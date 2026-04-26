@@ -491,7 +491,18 @@ If `detected_mode` is `brownfield`:
 
 1. Dispatch GOLDDIGGER in Mode 1 (Survey) before DISCOVER:
    - Use the Agent tool
-   - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
+   - **prompt:**
+
+     ```xml
+     <context>
+     [include state.json.golddigger_artifacts paths if available]
+     </context>
+
+     <instructions>
+     You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
+     Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
+     </instructions>
+     ```
 2. Block until GOLDDIGGER completes.
 3. Read `state.json.golddigger_status`:
    - `complete`: proceed — SCOUT will read artifact paths from `state.json.golddigger_artifacts`
@@ -509,7 +520,19 @@ After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, 
    a. Compute the cache key: if `repo` is non-null → `"{repo}--{domain}"`, if `repo` is null → `"{domain}"`
    b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
    c. Otherwise: dispatch GOLDDIGGER in Mode 2 (Deep Dive) for that domain
-      - **prompt:** Read the file `agents/exploration/golddigger.md` for your complete instructions. You are the GOLDDIGGER agent. Run **Mode 2 (Deep Dive)** for domain `"{domain}"` in repo `"{repo}"` at target path `"{target_path}"`. If repo is null, target path is `"{target_path}"` (single-repo mode).
+      - **prompt:**
+
+        ```xml
+        <context>
+        [include golddigger-cache/{cache-key}.md if available, state.json.golddigger_artifacts paths]
+        </context>
+
+        <instructions>
+        You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
+        Run **Mode 2 (Deep Dive)** for domain `"{domain}"` in repo `"{repo}"` at target path `"{target_path}"`. If repo is null, target path is `"{target_path}"` (single-repo mode).
+        </instructions>
+        ```
+
    d. After GOLDDIGGER completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
 3. Continue to next Phase 1 agent dispatch.
 
@@ -537,7 +560,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/scout.md` for your complete instructions. You are the SCOUT agent. Your mode is `{greenfield|brownfield}`. Here is your context pack: [include context pack files listed above]. Produce all outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include user input, knowledge-base/calibration-profile.yaml, previous run's evolution-report.md if re-run, state.json.golddigger_artifacts paths if available]
+  </context>
+
+  <instructions>
+  You are SCOUT. Read agents/exploration/scout.md for your complete protocol.
+  Your mode is `{greenfield|brownfield}`. Produce all outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
+  </instructions>
+  ```
+
 - **description:** "SCOUT: reconnaissance and domain mapping ({mode})"
 
 ### Expected Outputs
@@ -576,7 +611,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/synthesizer.md` for your complete instructions. You are the SYNTHESIZER agent. Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Here is your context pack: [include all DISCOVER outputs]. Produce unified outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all DISCOVER outputs, reasoning-journal.json (DISCOVER entries)]
+  </context>
+
+  <instructions>
+  You are SYNTHESIZER. Read agents/exploration/synthesizer.md for your complete protocol.
+  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "SYNTHESIZER: fuse discovery outputs into unified knowledge base"
 
 ### Expected Outputs
@@ -616,7 +663,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/control/tracker.md` for your complete instructions. You are the TRACKER agent. Read the user's original request and SCOUT's discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include user input (the original request), all DISCOVER outputs from .specify/squad/staging/, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are TRACKER. Read agents/control/tracker.md for your complete protocol.
+  Read the user's original request and SCOUT's discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "TRACKER: capture user intent model before requirements formalization"
 
 ### Expected Outputs
@@ -644,7 +703,19 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the SAGE agent operating in **assumption-challenge mode** (WHY1 — pre-WHAT). Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing INVESTIGATOR investigation. Here is your context pack: [include files]. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, calibration-profile.yaml, reasoning-journal.json — all from .specify/squad/staging/]
+  </context>
+
+  <instructions>
+  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
+  Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing INVESTIGATOR investigation. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "SAGE (WHY1): assumption challenge and pre-mortem analysis"
 
 ### Expected Outputs
@@ -767,7 +838,19 @@ CARTOGRAPHER calls `speckit.specify` itself (via Skill tool) — just like GOLDD
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/cartographer.md` for your complete instructions. You are the CARTOGRAPHER agent — requirements definer. You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Here is your context pack: [include staging files]. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, reasoning-journal.json — all from .specify/squad/staging/, user input]
+  </context>
+
+  <instructions>
+  You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
+  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "CARTOGRAPHER: spec creation and requirements definition"
 
 #### CARTOGRAPHER Fallback (if CARTOGRAPHER signals BLOCKED on speckit.specify)
@@ -884,7 +967,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/exploration/sage.md` for your complete instructions. You are the SAGE agent operating in **spec-validation mode** (WHY2 — post-WHAT). Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for CARTOGRAPHER consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all current artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY2 — post-WHAT).
+  Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for CARTOGRAPHER consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "SAGE (WHY2): spec validation with Understanding quality gates + per-requirement analysis"
 
 ### Expected Outputs
@@ -921,7 +1016,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/feasibility/gatekeeper.md` for your complete instructions. You are the GATEKEEPER agent — strategic PM and kill gate. Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `templates/kill-report.md`. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, glossary.md, assumptions.md, issues.md from WHY2, calibration-profile.yaml, estimates-log.yaml, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol.
+  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `templates/kill-report.md`. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "GATEKEEPER: feasibility, estimation, prioritization, kill gate"
 
 ### Expected Outputs
@@ -962,7 +1069,20 @@ After ASSESS passes, dispatch STRATEGIC OVERVIEW to build the initial risk-weigh
 
 Use the Agent tool:
 
-- **prompt:** Read `agents/control/strategist.md`. Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated. Here is your context pack: [spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]. Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]
+  </context>
+
+  <instructions>
+  You are STRATEGIST. Read agents/control/strategist.md for your complete protocol.
+  Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated.
+  Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
+  </instructions>
+  ```
+
 - **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
 
 Read the strategic overview. Use it to prioritize specialist allocation: spend INVESTIGATOR time on high-blast-radius decisions, not low-risk areas.
@@ -983,7 +1103,19 @@ After GATEKEEPER passes, dispatch TRACKER to verify intent alignment:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/control/tracker.md`. You are the TRACKER in **alignment-check mode**. Read `user-intent.md` and GATEKEEPER's outputs (`feasibility.md`, `mvp-scope.md`). Check whether GATEKEEPER's scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include user-intent.md, feasibility.md, mvp-scope.md, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **alignment-check mode**.
+  Read `user-intent.md` and GATEKEEPER's outputs (`feasibility.md`, `mvp-scope.md`). Check whether GATEKEEPER's scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "TRACKER: verify GATEKEEPER scope aligns with user intent"
 
 If TRACKER reports MISALIGNED:
@@ -1048,7 +1180,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/investigator.md` for your complete instructions. You are the INVESTIGATOR agent. Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include specific unknowns from unknowns.md, relevant artifacts based on the question, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are INVESTIGATOR. Read agents/specialists/investigator.md for your complete protocol.
+  Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "INVESTIGATOR: investigating unknowns — {topic summary}"
 
 #### SECURITY Dispatch (GUARDIAN codename) — always-on by default
@@ -1065,7 +1209,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/guardian.md`. You are the GUARDIAN agent. Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, boundaries.md, domain-relevant artifacts, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are GUARDIAN. Read agents/specialists/guardian.md for your complete protocol.
+  Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "GUARDIAN: security analysis (mode: {guardian.mode})"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
@@ -1077,7 +1233,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/oracle.md`. You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include domain-relevant artifacts from specs/{feature}/, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are ORACLE. Read agents/specialists/oracle.md for your complete protocol.
+  You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "ORACLE: {domain} domain analysis"
 
 #### PERFORMANCE Dispatch (if summoned)
@@ -1089,7 +1257,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/benchmark.md`. You are the BENCHMARK agent. Perform load modeling, capacity planning, identify bottleneck risks. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, boundaries.md, performance-relevant requirements, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are BENCHMARK. Read agents/specialists/benchmark.md for your complete protocol.
+  Perform load modeling, capacity planning, identify bottleneck risks. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "BENCHMARK: load modeling and capacity analysis"
 
 #### UX / A11Y Dispatch (if summoned)
@@ -1101,7 +1281,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/advocate.md`. You are the ADVOCATE agent. Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, user-facing requirements, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are ADVOCATE. Read agents/specialists/advocate.md for your complete protocol.
+  Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "ADVOCATE: accessibility and usability analysis"
 
 #### INNOVATE Dispatch (if summoned)
@@ -1114,7 +1306,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/specialists/maverick.md`. You are the MAVERICK agent. Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all current artifacts, prior run's evolution-report.md, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are MAVERICK. Read agents/specialists/maverick.md for your complete protocol.
+  Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "MAVERICK: alternative approaches and assumption challenges"
 
 ### Post-Specialist
@@ -1147,7 +1351,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/solution/architect.md` for your complete instructions. You are the ARCHITECT agent. Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Document every decision in ADR format. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include spec.md, feasibility.md, prioritization.md, constitution.md if available, all specialist outputs, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are ARCHITECT. Read agents/solution/architect.md for your complete protocol.
+  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Document every decision in ADR format. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "ARCHITECT: architecture design and technology decisions"
 
 ### Expected Outputs
@@ -1178,7 +1394,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/solution/sentinel.md` for your complete instructions. You are the SENTINEL agent. Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to CARTOGRAPHER. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include plan.md, data-model.md, spec.md, contracts/, quality-gates.md, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol.
+  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to CARTOGRAPHER. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "SENTINEL: testability-informed test strategy and coverage mapping"
 
 ### Expected Outputs
@@ -1216,7 +1444,19 @@ Read and include in the subagent prompt:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/solution/orchestrator.md` for your complete instructions. You are the ORCHESTRATOR agent — operational PM. Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
+  Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "ORCHESTRATOR: task breakdown, critical path, dependencies, risk"
 
 ### Expected Outputs
@@ -1267,19 +1507,55 @@ Dispatch WHY3 and ASSESS2 in parallel (single message, two Agent tool calls):
 
 **WHY3:**
 
-- **prompt:** Read the file `agents/exploration/sage.md`. You are WHY operating in **spec-validation mode** (WHY3 — consensus). Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
+  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "WHY3: final quality validation and cross-artifact consistency"
 
 **ASSESS2:**
 
-- **prompt:** Read the file `agents/feasibility/gatekeeper.md`. You are ASSESS2 — consensus-phase re-evaluation. Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include plan.md, data-model.md, contracts/, tasks.md, estimates.md, constitution.md, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
+  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "ASSESS2: implementability check and effort re-estimation"
 
 After WHY3 and ASSESS2 complete, dispatch PLAN2:
 
 **PLAN2:**
 
-- **prompt:** Read the file `agents/solution/orchestrator.md`. You are PLAN2 — consensus-phase plan revision. Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Here is your context pack: [include files — include ASSESS2's implementability-report.md]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include updated plan.md, test-strategy.md, all specialist outputs, implementability-report.md from ASSESS2, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
+  Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "PLAN2: plan revision incorporating implementability feedback"
 
 ### Consensus Gate Check
@@ -1322,7 +1598,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/learning/realist.md`. You are the REALIST agent. Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all artifacts in specs/{feature}/, calibration-profile.yaml, estimates-log.yaml, reasoning-journal.json]
+  </context>
+
+  <instructions>
+  You are REALIST. Read agents/learning/realist.md for your complete protocol.
+  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "REALIST: reality check and reference class forecasting"
 
 Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
@@ -1337,7 +1625,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/learning/mirror.md`. You are the MIRROR agent. Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Here is your context pack: [include files]. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all artifacts in specs/{feature}/, reasoning-journal.json, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml]
+  </context>
+
+  <instructions>
+  You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
+  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "MIRROR: post-run learning extraction"
 
 ### 12.3 EVOLVE Agent (if re-run)
@@ -1353,7 +1653,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/learning/adaptive.md`. You are the ADAPTIVE agent. Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Here is your context pack: [include files]. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.json, knowledge-base/ files]
+  </context>
+
+  <instructions>
+  You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
+  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "ADAPTIVE: cross-run diffing and improvement measurement"
 
 Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-alerts.md`
@@ -1370,7 +1682,19 @@ Context pack:
 
 Use the Agent tool:
 
-- **prompt:** Read the file `agents/learning/auditor.md`. You are the AUDITOR agent. Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or INVESTIGATOR investigation. Here is your context pack: [include files]. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.json, quality scores from all WHY passes in state.json]
+  </context>
+
+  <instructions>
+  You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
+  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or INVESTIGATOR investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  </instructions>
+  ```
+
 - **description:** "AUDITOR: accuracy tracking and confidence profiling"
 
 ### 12.5 CALIBRATE Confidence Check
@@ -1649,7 +1973,19 @@ After GROUND + REFLECT + EVOLVE + CALIBRATE, dispatch SCOREKEEPER:
 
 Use the Agent tool to dispatch a subagent with:
 
-- **prompt:** Read the file `agents/control/scorekeeper.md` for your complete instructions. You are the SCOREKEEPER. Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
+- **prompt:**
+
+  ```xml
+  <context>
+  [include state.json with agent_scores array, reasoning-journal.json with peer_appreciation entries, knowledge-base/agent-scores.yaml, config-template.yml scoring section]
+  </context>
+
+  <instructions>
+  You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
+  Read `state.json.agent_scores` for all points accumulated during this run. Read `reasoning-journal.json` for peer appreciation entries. Read `knowledge-base/agent-scores.yaml` for lifetime scores. Calculate final run scores per agent. Check badge criteria. Produce `agent-scorecard.md`. Check self-healing triggers. Update `knowledge-base/agent-scores.yaml` with run history.
+  </instructions>
+  ```
+
 - **description:** "SCOREKEEPER: final scoring, badges, self-healing recommendations"
 
 Context pack:
