@@ -478,6 +478,79 @@ On impasse, `codegen-impasse.md` is written with the exact conflict. Resume:
 speckit.echelon.codegen 001-photo-album --resume
 ```
 
+### MemPalace requirements memory
+
+`codegen` uses MemPalace — a ChromaDB-backed semantic memory store — to retrieve project requirements during the RE phase and record pipeline decisions across runs. All projects share one backing database at `~/.mempalace/palace/`, scoped by a per-project **wing** identifier.
+
+#### Wing
+
+The wing is your project's stable identity in MemPalace. It is set once during `echelon init` and written to `echelon.yml`:
+
+```yaml
+mempalace:
+  wing: my-app   # set by echelon init — do not change
+```
+
+`echelon init` auto-suggests a wing name from your git remote URL (e.g. `my-app` from `github.com/org/my-app`), falling back to `{dirname}-{hash6}` if no remote exists. It checks for collision with other projects before writing.
+
+**Wing portability:** all clones of the same repo should use the same wing name so they share mined requirements across machines and teammates. The wing is committed in `echelon.yml` — clones inherit it automatically.
+
+#### Mine requirements into MemPalace
+
+Before running `echelon codegen`, mine your spec files so the RE phase can retrieve them semantically:
+
+```bash
+# Mine a single spec file
+codegen requirements mine specs/spec.md
+
+# Mine all specs in a directory
+codegen requirements mine specs/*.md
+
+# Override wing (useful for testing)
+codegen requirements mine spec.md --wing my-app
+```
+
+Requirements are parsed by ID (`FR-xxx`, `NFR-xxx`, `AC-xxx`, `ADR-xxx`, `US-xxx`) and written as drawers with their actual source file paths — enabling collision detection and targeted cleanup.
+
+#### Search requirements
+
+```bash
+codegen requirements search "OAuth2 authentication" --wing my-app
+codegen requirements search "payment processing" --wing my-app --n 10
+```
+
+#### Clean up old drawers
+
+When switching projects or after re-specifying requirements, remove stale drawers:
+
+```bash
+# Preview what would be deleted
+codegen requirements clean --from-wing my-app --project-dir . --dry-run
+
+# Delete drawers belonging to this project
+codegen requirements clean --from-wing my-app --project-dir .
+```
+
+`clean` filters by `source_file` prefix — only drawers whose spec file path is under `--project-dir` are removed, leaving other projects' drawers in the shared database untouched.
+
+#### Data flow
+
+```text
+echelon.yml (mempalace.wing)
+        │
+        ▼
+codegen run  ──► codegen-state.json (wing field)
+        │                │
+        ▼                ▼
+  RE phase          phase_gate
+  (semantic          (traceability
+   retrieval)         citations,
+                       bug mining,
+                       respecify)
+```
+
+`codegen run` reads `wing` from `echelon.yml`, writes it to `codegen-state.json`, and all subsequent phase gate operations read it back from the state file — no config file needed at gate time.
+
 ## PR Review Loop
 
 When `harness.run` creates a PR and reviewers comment, the harness can automatically triage those comments and re-run Phase 1 to address them. `echelon.review` is the diagnostic half of this cycle — it is never called directly by users.
