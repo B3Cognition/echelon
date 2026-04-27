@@ -204,10 +204,57 @@ Rename `_mcp_write` → `_write_drawer` and `_mcp_update_metadata` → `_update_
 | `extension/commands/echelon.codegenlight.md` | Replace `WING=$(basename $(pwd))` with `MemPalaceContext`-compatible wing read from `echelon.yml` |
 | `extension/commands/echelon.codegen.md` | Same — replace `WING` derivation |
 
+| `src/codegen/cli/codegen_cli.py` | Add `requirements migrate` subcommand |
+
+---
+
+## Migration path
+
+Existing users have two categories of drawers under the broken `"codegen"` wing:
+
+| Category | `source_file` in metadata | Migratable? |
+|---|---|---|
+| Requirements drawers (from `codegen requirements mine`) | Real file path: `/Users/.../project/spec.md` | Yes — path identifies owner |
+| Pipeline decision drawers (from `MemPalaceWriter` during IMPLEMENT/GATE) | Synthetic: `"codegen/RE"`, `"codegen/IMPLEMENT"` | No — unattributable to any project |
+
+Pipeline decision drawers are also corrupt (Bug 1 meant their `run_outcome` metadata was never written), so abandoning them is correct.
+
+### Recommended migration: re-mine
+
+The simplest and most reliable path. Requirements drawers are regenerated from the spec files that still exist on disk — the source of truth hasn't changed.
+
+**Steps for existing projects:**
+
+```
+1. echelon init               # sets wing in echelon.yml (idempotent for other config)
+2. codegen requirements mine <spec-glob> --wing <new-wing>
+   # creates fresh drawers under the correct wing
+3. codegen requirements clean --from-wing codegen
+   # optional: removes old "codegen" wing drawers whose source_file is in this project
+```
+
+Step 3 is optional but keeps MemPalace tidy. Without it, old drawers are unreachable (no pipeline will query wing="codegen" after the fix) and will eventually age out.
+
+### `codegen requirements clean` (new subcommand)
+
+**New file:** handled in `src/codegen/cli/codegen_cli.py`
+
+```
+codegen requirements clean --from-wing <wing> [--project-dir <dir>] [--dry-run]
+```
+
+- Fetches all drawers under `--from-wing` where `source_file` starts with `project-dir` (defaults to CWD)
+- Prints a list of drawer IDs + source files to be deleted
+- With `--dry-run`: prints only, no deletes
+- Without `--dry-run`: deletes via `collection.delete(ids=[...])`
+- Prints count: `✓ Removed 42 drawers from wing 'codegen' for this project`
+
+This subcommand is safe to run multiple times (deleting already-absent IDs is a no-op in ChromaDB).
+
 ---
 
 ## Non-goals
 
-- Migration of existing MemPalace data — drawers written under `"codegen"` wing are left in place; new runs write under the project wing
-- Deduplication of legacy data
+- Auto-migration on `echelon init` (re-mine is intentional user action, not silent background work)
+- Deduplication of legacy data across wings
 - UI for browsing wings or drawers
