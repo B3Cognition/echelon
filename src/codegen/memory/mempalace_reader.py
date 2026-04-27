@@ -17,6 +17,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# Module-level import of get_collection to allow mocking in tests.
+try:
+    from mempalace.miner import get_collection  # type: ignore[import]
+except ImportError:
+    get_collection = None  # type: ignore[assignment]
+
 # Default number of results to return per search
 DEFAULT_N_RESULTS = 5
 
@@ -70,34 +76,34 @@ class MemPalaceReader:
     - IMPLEMENT phase: retrieve past impasse resolutions for similar conflicts
 
     Usage:
-        reader = MemPalaceReader(wing="my-project")
+        ctx = MemPalaceContext.from_wing(wing="my-project", run_id="run-123")
+        reader = MemPalaceReader(ctx)
         result = reader.search("user authentication OAuth2", room="functional-requirements")
         for drawer in result.drawers:
             print(drawer.req_id, drawer.content)
     """
 
-    def __init__(self, wing: str) -> None:
-        self.wing = wing
+    def __init__(self, ctx: "MemPalaceContext") -> None:
+        from codegen.memory.context import MemPalaceContext as _Ctx  # noqa: F401 (for type check)
+        self.wing = ctx.wing
+        self._palace_path = ctx.palace_path
         self._collection = None
         self._available: Optional[bool] = None
 
     def _get_collection(self):
-        """Lazy-load MemPalace collection. Returns None if unavailable."""
+        """Lazy-load MemPalace collection using ctx.palace_path."""
         if self._available is False:
             return None
         if self._collection is not None:
             return self._collection
-        try:
-            from mempalace.miner import get_collection  # type: ignore[import]
-            from mempalace.config import MempalaceConfig  # type: ignore[import]
-            palace_path = MempalaceConfig().palace_path
-            self._collection = get_collection(palace_path)
-            self._available = True
-            return self._collection
-        except ImportError:
+        if get_collection is None:
             logger.debug("[MemPalaceReader] mempalace not installed — search disabled")
             self._available = False
             return None
+        try:
+            self._collection = get_collection(self._palace_path)
+            self._available = True
+            return self._collection
         except Exception as exc:
             logger.warning("[MemPalaceReader] Cannot connect to MemPalace: %s", exc)
             self._available = False
