@@ -25,8 +25,6 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 
 (Field name: `quality_score` — the actual field in agent-scores.yaml. Do NOT use `scorekeeper_accuracy`.)
 
-# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
-
 ## NEVER Rules
 
 1. **NEVER write implementation code.**

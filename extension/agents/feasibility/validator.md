@@ -42,8 +42,6 @@ Cache key = SHA-256(concatenation of all seven components) + ":" + agent_codenam
 **NEVER rule amendment:**
 NEVER accept partial coverage — AMENDED: NEVER accept partial coverage unless a valid session cache verdict exists for the agent and all seven hash components match exactly (see Cache HIT conditions above). The cache verdict must be PASS; a cached FAIL does not satisfy partial coverage.
 
-# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
-
 ## Configuration
 
 This agent uses values from `squad-config.yml`:

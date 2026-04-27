@@ -104,12 +104,6 @@ Uses values from `squad-config.yml`:
 | VETERAN | Write notification | Schema promotion events → VETERAN syncs cross-run knowledge |
 | COMMANDER | Receives dispatch | All three modes triggered by COMMANDER |
 
-## B4 Compatibility Note
-
-CONSOLIDATOR is a new agent (Tier 3A). B4 benchmark Tier 1 tests agent file presence and role-section completeness for registered agents. CONSOLIDATOR is not yet registered in `b4-config.yaml`. To activate B4 coverage for CONSOLIDATOR, add it to `b4-config.yaml` in a follow-up task.
-
-# B4-INVISIBLE (until registered in b4-config.yaml): new agent not yet covered by B4 Tier 1 scoring pipeline.
-
 Return this entry in the `echelon_result` block at the end of your response.
 
 ```echelon_result

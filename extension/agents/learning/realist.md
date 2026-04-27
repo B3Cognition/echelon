@@ -28,8 +28,6 @@ Produce a scoped feasibility note referencing the calibration confidence and dom
 
 (The 30-day recency gate applies even when `confidence_brier > 0.85`. A domain with high Brier confidence but a stale benchmark always triggers full analysis.)
 
-# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
-
 ## Inputs
 
 - All current run artifacts: `plan.md`, `estimates.md`, `research.md`, `tasks.md`, `data-model.md`, `contracts/`, `test-strategy.md`

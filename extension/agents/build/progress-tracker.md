@@ -22,8 +22,6 @@ Record task completion and perform a drift-threshold check only. Do NOT execute 
 
 (`task_complexity` label values: `trivial`, `standard`, `complex` — sourced from ORCHESTRATOR's task output. The `complex` label always overrides the 3-task bypass window.)
 
-# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
-
 ## Configuration
 
 This agent uses values from `squad-config.yml`:

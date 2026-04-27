@@ -22,8 +22,6 @@ Perform constitution NEVER-rule check + all ADR compliance checks only. Do NOT e
 - `prior_compliance_rate ≤ 0.95`, OR
 - No SCOREKEEPER history exists for this spec
 
-# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
-
 ## Prime Directive
 
 **Verify that what was built is what was specified — no more, no less.**

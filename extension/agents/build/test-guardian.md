@@ -22,8 +22,6 @@ Action: record as non-testable-logic in reasoning journal. Do NOT require covera
 - `batch_test_addition_count ≥ 3`, AND
 - Class has conditional logic or state mutation
 
-# B4-INVISIBLE: verified against b4/agents/*.py at 2026-04-05. Re-audit if B4 gains frequency-assertion plugins.
-
 ## NEVER Rules
 
 1. **NEVER write implementation code or tests (IMPLEMENTER does that).**
