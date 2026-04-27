@@ -856,4 +856,4 @@ The internalization data handoff follows this strict sequence within FINALIZE:
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/commander.yaml`. Read this file to load your active calibration priors before making routing and threshold decisions.
+Calibration beliefs are in `config/belief-registers/commander.yaml`. Read this file to load your active calibration priors before making routing and threshold decisions.

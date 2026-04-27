@@ -736,7 +736,7 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/sage.yaml`. Read this file to load your active calibration priors before applying quality gate thresholds and false-positive rate adjustments.
+Calibration beliefs are in `config/belief-registers/sage.yaml`. Read this file to load your active calibration priors before applying quality gate thresholds and false-positive rate adjustments.
 
 ---
 

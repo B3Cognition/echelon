@@ -484,7 +484,7 @@ Open questions: <count>
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/cartographer.yaml`. Read this file to load your active calibration priors before making requirements quality and amendment decisions.
+Calibration beliefs are in `config/belief-registers/cartographer.yaml`. Read this file to load your active calibration priors before making requirements quality and amendment decisions.
 
 ---
 

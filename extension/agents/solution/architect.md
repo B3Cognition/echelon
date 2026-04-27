@@ -303,7 +303,7 @@ Phases: <count> implementation phases planned
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/architect.yaml`. Read this file to load your active calibration priors before making evidence grading and architectural constraint decisions.
+Calibration beliefs are in `config/belief-registers/architect.yaml`. Read this file to load your active calibration priors before making evidence grading and architectural constraint decisions.
 
 ---
 

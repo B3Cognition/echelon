@@ -459,7 +459,7 @@ Add to the per-run Agent Scorecard output:
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/scorekeeper.yaml`. Read this file to load your active calibration priors before applying scoring thresholds and badge criteria.
+Calibration beliefs are in `config/belief-registers/scorekeeper.yaml`. Read this file to load your active calibration priors before applying scoring thresholds and badge criteria.
 
 ---
 

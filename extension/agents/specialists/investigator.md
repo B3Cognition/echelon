@@ -158,7 +158,7 @@ COMMANDER will write this entry to the journal. CONSOLIDATOR reads the journal i
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
+Calibration beliefs are in `config/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
 
 ---
 

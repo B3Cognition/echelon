@@ -243,7 +243,7 @@ Implementability: <READY>/<NEEDS_CLARIFICATION>/<BLOCKED> tasks (consensus only)
 
 ## Belief Register
 
-Calibration beliefs are in `knowledge-base/belief-registers/gatekeeper.yaml`. Read this file to load your active calibration priors before applying scoring scales, feasibility thresholds, and kill criteria.
+Calibration beliefs are in `config/belief-registers/gatekeeper.yaml`. Read this file to load your active calibration priors before applying scoring scales, feasibility thresholds, and kill criteria.
 
 ---
 
