@@ -72,29 +72,54 @@ deployment.
 </task>
 
 <analysis_steps>
-Think through the following before generating any files:
+Think through the following before generating any files.
+The examples given in each step are illustrative, not exhaustive.
+For any ecosystem not listed, read its build manifests and apply the same
+reasoning. If a stack is genuinely unfamiliar, state what you found and ask
+before generating a Dockerfile.
 
-1. Package manager — detect npm / pnpm / yarn / bun from lockfile presence.
-   For pnpm: use `pnpm install --frozen-lockfile`, not `npm ci`.
+1. Package manager — read all build manifests and lockfiles to identify the
+   package manager (e.g. pnpm-lock.yaml → pnpm, package-lock.json → npm,
+   yarn.lock → yarn, bun.lockb → bun, Cargo.lock → cargo, go.sum → go modules,
+   requirements.txt / pyproject.toml → pip/poetry/uv, Gemfile.lock → bundler,
+   pom.xml / build.gradle → maven/gradle, mix.lock → mix).
+   Use each ecosystem's frozen-install command, never a generic fallback.
 
 2. Project shape — single app vs monorepo. For monorepos:
-   - Identify deployable apps (apps/ or packages/ with their own start script)
+   - Identify deployable apps (apps/ or packages/ with their own entry point)
    - Determine build context and target per app
    - One Dockerfile per deployable app
 
-3. Framework — detect Vite/React (static → nginx), Next.js (SSR → node),
-   Express/Fastify (node server), FastAPI/Django (python), Go binary.
-   Choose the correct base image and build pipeline for each.
+3. Framework and runtime — read entry points, dependencies, and config files to
+   determine the correct base image and build pipeline. Examples: static SPA
+   (Vite, CRA) → multi-stage + nginx; SSR (Next.js, Nuxt, SvelteKit) → node;
+   API server (Express, Fastify, FastAPI, Django, Rails, Spring, Gin) → runtime
+   image; compiled binary (Go, Rust, Elixir release) → multi-stage + minimal
+   runtime image. For any other framework, derive the correct pattern from its
+   documentation conventions.
 
 4. Existing Dockerfiles — if a Dockerfile already exists, preserve its
    structure; only patch what is wrong (e.g. wrong package manager command).
 
-5. Deploy type — http (web server, needs ports) vs cli (binary, needs
+5. Database dependencies — inspect dependency manifests for database drivers
+   and ORMs (e.g. pg, mysql2, prisma, sequelize, typeorm, sqlalchemy, ecto,
+   gorm, mongoose, redis, etc.) to identify required backing services.
+   For each detected database:
+   - Add a `services:` block to echelon.yml listing the container image,
+     network alias, volume mount for persistence, and environment variables.
+   - Generate a `scripts/bash/db-start.sh` script that starts each service
+     container on the speckit-deploy Docker network (idempotent: skip if
+     already running). Database containers are not blue/green — they run
+     continuously alongside the app.
+   - Inject the correct DATABASE_URL / connection env vars into the app
+     container at deploy time via the deploy block.
+
+6. Deploy type — http (web server, needs ports) vs cli (binary, needs
    health_check command). Infer from project type; confirm against existing
    echelon.yml deploy block if present.
 
-6. Test setup — detect test runner (jest, vitest, pytest, go test) and
-   existing test scripts for the CI workflow.
+7. Test setup — detect test runner and existing test scripts for the CI
+   workflow (e.g. jest, vitest, pytest, go test, cargo test, rspec, mix test).
 </analysis_steps>
 
 <deliverables>
@@ -106,9 +131,14 @@ Generate exactly these artifacts:
 
 2. **echelon.yml deploy block** — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
-   (HTTP) or health_check / install_path (CLI). Do not touch other sections.
+   (HTTP) or health_check / install_path (CLI). If databases were detected, add
+   a services: block. Do not touch other sections.
 
-3. **.github/workflows/ci.yml** — runs on every push and pull_request to main.
+3. **scripts/bash/db-start.sh** — only if database services were detected.
+   Starts each backing service container on the speckit-deploy network.
+   Idempotent: skips containers that are already running.
+
+4. **.github/workflows/ci.yml** — runs on every push and pull_request to main.
    Jobs: install dependencies, lint (if configured), run tests.
    No remote deploy step. echelon-deploy handles local CD via git post-merge hook.
 </deliverables>
@@ -121,6 +151,8 @@ Generate exactly these artifacts:
 - Do not generate a docker-compose.yml — echelon-deploy uses plain Docker + Traefik.
 - Do not add a deploy job to the CI workflow — local CD is handled by the
   post-merge git hook installed by echelon.init.
+- Database containers run on the speckit-deploy network alongside the app —
+  they are not managed by Traefik and do not get blue/green slots.
 </constraints>
 ```
 
@@ -128,11 +160,12 @@ Generate exactly these artifacts:
 
 ## Output Artifacts
 
-| Artifact | Created / Updated |
-|---|---|
-| `Dockerfile` or `apps/*/Dockerfile` | Created if absent; patched if wrong |
-| `echelon.yml` `deploy:` block | Updated in-place |
-| `.github/workflows/ci.yml` | Created if absent; updated if present |
+| Artifact | Condition | Created / Updated |
+| --- | --- | --- |
+| `Dockerfile` or `apps/*/Dockerfile` | always | Created if absent; patched if wrong |
+| `echelon.yml` `deploy:` block | always | Updated in-place |
+| `scripts/bash/db-start.sh` | database detected | Created if absent; updated if present |
+| `.github/workflows/ci.yml` | always | Created if absent; updated if present |
 
 ---
 
@@ -143,6 +176,8 @@ Generate exactly these artifacts:
 - docker-compose setup
 - Multi-environment config (staging, production)
 - Self-hosted runner configuration
+- Database migrations (app concern, not CI/CD concern)
+- CI services block for test databases (addressed with remote CI separately)
 
 ---
 
