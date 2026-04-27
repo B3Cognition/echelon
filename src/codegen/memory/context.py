@@ -42,7 +42,7 @@ def _read_wing_from_echelon_yml(project_dir: Path) -> str:
     return wing
 
 
-@dataclass
+@dataclass(frozen=True)
 class MemPalaceContext:
     """Immutable per-run memory context. Single source of truth for wing/run_id/palace_path."""
     wing: str
@@ -57,7 +57,7 @@ class MemPalaceContext:
         wing_override: Optional[str] = None,
     ) -> "MemPalaceContext":
         """Build context from echelon.yml. wing_override (--wing CLI arg) takes precedence."""
-        wing = wing_override if wing_override else _read_wing_from_echelon_yml(project_dir)
+        wing = wing_override if wing_override is not None else _read_wing_from_echelon_yml(project_dir)
         return cls(wing=wing, run_id=run_id, palace_path=_get_palace_path())
 
     @classmethod
