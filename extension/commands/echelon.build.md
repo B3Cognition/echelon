@@ -616,6 +616,46 @@ Adapt for other stacks:
 
 If `verify.sh` does not contain a smoke test, ENGINEERING MANAGER must request IMPLEMENTER add one before sign-off. This is not optional.
 
+### 8.1b.2 verify.sh Security and License Gate (MANDATORY)
+
+Every `verify.sh` must also run a security scan and dependency license check
+after the smoke test. These run inside the same Docker sandbox — no extra
+infrastructure required.
+
+**Security scan** — detect known vulnerabilities in dependencies:
+
+| Ecosystem | Command |
+| --- | --- |
+| Node.js (npm/pnpm/yarn/bun) | `npm audit --audit-level=high 2>&1 \| tee /tmp/audit.txt; grep -q "found 0" /tmp/audit.txt \|\| { echo "✗ Security audit failed"; exit 1; }` |
+| Python | `pip install pip-audit --quiet && pip-audit --severity high 2>&1 \| tee /tmp/audit.txt; grep -q "No known vulnerabilities" /tmp/audit.txt \|\| { echo "✗ pip-audit failed"; exit 1; }` |
+| Go | `go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null && govulncheck ./... 2>&1 \| tee /tmp/audit.txt; grep -q "No vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ govulncheck failed"; exit 1; }` |
+| Rust | `cargo audit 2>&1 \| tee /tmp/audit.txt; grep -q "0 vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ cargo audit failed"; exit 1; }` |
+| Ruby | `gem install bundler-audit --quiet && bundle-audit check --update 2>&1 \| tee /tmp/audit.txt; grep -q "No vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ bundle-audit failed"; exit 1; }` |
+
+**License check** — verify all dependencies use permissive licenses:
+
+Permitted: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
+`Unlicense`, `CC0-1.0`, `Python-2.0`, `BlueOak-1.0.0`.
+
+| Ecosystem | Command |
+| --- | --- |
+| Node.js | `npx --yes license-checker --onlyAllow "MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;Unlicense;CC0-1.0;BlueOak-1.0.0" 2>&1 \| tee /tmp/licenses.txt \|\| { echo "✗ License check failed — review /tmp/licenses.txt"; exit 1; }` |
+| Python | `pip install pip-licenses --quiet && pip-licenses --allow-only="MIT;Apache Software License;BSD License;ISC License (ISCL);Public Domain;Python Software Foundation License" 2>&1 \|\| { echo "✗ pip-licenses check failed"; exit 1; }` |
+| Go | `go install github.com/google/go-licenses@latest 2>/dev/null && go-licenses check ./... 2>&1 \|\| { echo "✗ go-licenses check failed"; exit 1; }` |
+| Rust | `cargo install cargo-license 2>/dev/null; cargo license 2>&1 \| grep -vE "MIT\|Apache\|BSD\|ISC\|Unlicense\|CC0" \| grep -v "^name" && { echo "✗ Non-permissive license detected"; exit 1; } \|\| true` |
+
+IMPLEMENTER must select the correct commands for the detected ecosystem and add
+them to `verify.sh` after the smoke test block. If the audit or license check
+fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
+
+If a security vulnerability or non-permissive license is found:
+
+- Print the finding clearly
+- Exit 1 — do not suppress or work around the failure
+- The squad must address the finding (update dependency, get license exception
+  documented in `specs/{NNN}-{feature}/license-exceptions.md`) before the
+  build can proceed
+
 ### 8.1c Final Verification
 
 Dispatch VERIFICATION after final integration and EM pre-check.
