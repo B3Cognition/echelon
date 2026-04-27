@@ -76,7 +76,7 @@ def _derive_wing_suggestion(project_dir: Path) -> str:
         )
         if result.returncode == 0 and result.stdout.strip():
             url = result.stdout.strip()
-            slug = url.rstrip("/").rstrip(".git").rsplit("/", 1)[-1]
+            slug = url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1]
             if slug:
                 return slug
     except Exception:
