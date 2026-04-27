@@ -94,8 +94,12 @@ before generating a Dockerfile.
    For each detected database:
    - Add a services: block to echelon.yml listing the container image,
      network alias, volume mount for persistence, and environment variables.
-   - Generate scripts/bash/db-start.sh at the project root (not inside
-     .specify/) that starts each service container on the speckit-deploy Docker
+   - Generate the file at `$(git rev-parse --show-toplevel)/scripts/bash/db-start.sh`
+     — this is a project-owned script, NOT an echelon extension file. It must
+     never be written inside `.specify/`. The correct path looks like
+     `myproject/scripts/bash/db-start.sh`, not
+     `myproject/.specify/extensions/echelon/scripts/bash/db-start.sh`.
+     The script starts each service container on the speckit-deploy Docker
      network (idempotent: skip if already running). Database containers are not
      blue/green — they run continuously alongside the app.
    - Inject the correct DATABASE_URL / connection env vars into the app
@@ -128,10 +132,11 @@ Generate exactly these artifacts:
    (HTTP) or health_check / install_path (CLI). If databases were detected, add
    a services: block. Do not touch other sections. If `echelon.yml` does not exist, create it with a minimal skeleton containing only the `deploy:` block with detected values.
 
-3. scripts/bash/db-start.sh at the project root (not inside .specify/) — only
-   if database services were detected. Starts each backing service container on
-   the speckit-deploy network. Idempotent: skips containers that are already
-   running.
+3. `$(git rev-parse --show-toplevel)/scripts/bash/db-start.sh` — only if
+   database services were detected. This is a project-owned script; write it
+   at the git repository root under `scripts/bash/`, never inside `.specify/`.
+   Starts each backing service container on the speckit-deploy network.
+   Idempotent: skips containers that are already running.
 
 4. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
    Jobs: install dependencies, lint (if configured), run tests.
