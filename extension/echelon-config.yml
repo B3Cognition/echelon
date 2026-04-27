@@ -532,6 +532,16 @@ endocrine:
     norepinephrine: 0.70
 
 # =============================================================================
+# MEMPALACE — Per-project memory identity
+# Set by 'echelon init'. Never change once set for a given repo.
+# Two clones of the same repo should share the same wing name so they share
+# memory across test environments.
+# =============================================================================
+
+mempalace:
+  wing: ""   # Set by 'echelon init' — do not edit manually
+
+# =============================================================================
 # DEPLOY — Blue/green local CD
 # =============================================================================
 

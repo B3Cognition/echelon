@@ -61,8 +61,23 @@ Before entering any pipeline phase, run ALL of these checks via Bash tool.
 ### 0.1 — Parse arguments and derive WING
 
 ```bash
-# Derive project wing from current directory name
-WING=$(basename $(pwd))
+WING=$(python3 -c "
+import sys, yaml
+try:
+    c = yaml.safe_load(open('echelon.yml'))
+    w = (c or {}).get('mempalace', {}).get('wing', '')
+    if not w:
+        print('ERROR: wing not set in echelon.yml — run: echelon init', file=sys.stderr)
+        sys.exit(1)
+    print(w)
+except FileNotFoundError:
+    print('ERROR: echelon.yml not found — run: echelon init', file=sys.stderr)
+    sys.exit(1)
+" 2>&1) || exit 1
+if echo "$WING" | grep -q "^ERROR:"; then
+    echo "$WING" >&2
+    exit 1
+fi
 echo "WING=${WING}"
 ```
 

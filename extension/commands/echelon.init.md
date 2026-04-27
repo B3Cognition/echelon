@@ -97,6 +97,26 @@ If exit code is non-zero, stop. User must fix `echelon.yml` before proceeding.
 
 ---
 
+## Step 3b: Provision MemPalace wing
+
+The wing is this project's stable identity in the shared MemPalace memory store. Once set, it should never change — all clones of this repo share the same wing so they share memory.
+
+```bash
+python3 -c "
+import sys
+try:
+    from echelon.cli import _provision_wing
+    from pathlib import Path
+    _provision_wing(Path('${PROJECT_ROOT}'), Path('${PROJECT_ROOT}/echelon.yml'))
+except ImportError:
+    print('  ℹ  echelon not installed — wing provisioning skipped')
+"
+```
+
+If the wing is already set in `echelon.yml`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes `mempalace.wing` to `echelon.yml`.
+
+---
+
 ## Step 4: Run deploy-init.sh
 
 ```bash
