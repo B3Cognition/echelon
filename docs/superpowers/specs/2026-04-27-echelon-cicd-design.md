@@ -43,11 +43,13 @@ post-merge hook    — auto-deploy on git merge
 ## What the Command Does
 
 1. **Anchor** project root and extension path
-2. **Gather context** — snapshot of key project signals (directory tree depth-2, `package.json` / `pyproject.toml` / `go.mod` presence, existing Dockerfiles, `echelon.yml` deploy block, git remote)
-3. **Construct prompt** — assemble the feature description using the gathered context and the prompt template below
-4. **Delegate** — pass the prompt to `echelon.run` as the feature description
+2. **Construct prompt** — the static prompt template below (no pre-scraping)
+3. **Delegate** — pass the prompt to `echelon.run` as the feature description
 
-The command contains no heuristics. All reasoning lives in the squad.
+The command contains no heuristics and no context pre-gathering. SCOUT explores
+the project as part of Tier 1 discovery, guided by `<analysis_steps>` in the
+prompt. Pre-injecting a bash-scraped context block is redundant and fragile —
+SCOUT finds what it needs more reliably than bash pattern matching.
 
 ---
 
@@ -68,10 +70,6 @@ Analyze this project and implement a CI/CD pipeline that integrates with the
 installed echelon-deploy system for local blue/green (HTTP) or tag-pointer (CLI)
 deployment.
 </task>
-
-<project_context>
-{{CONTEXT_BLOCK}}
-</project_context>
 
 <analysis_steps>
 Think through the following before generating any files:
@@ -124,31 +122,6 @@ Generate exactly these artifacts:
 - Do not add a deploy job to the CI workflow — local CD is handled by the
   post-merge git hook installed by echelon.init.
 </constraints>
-```
-
----
-
-## Context Block Construction
-
-The command gathers this context before injecting `{{CONTEXT_BLOCK}}`:
-
-```bash
-# Directory tree (depth 2, excluding node_modules/.git/.specify)
-find . -maxdepth 2 -not -path '*/.git/*' -not -path '*/node_modules/*' \
-       -not -path '*/.specify/*' | sort
-
-# Package manager signals
-ls package.json pnpm-lock.yaml package-lock.json yarn.lock bun.lockb \
-   pyproject.toml requirements.txt go.mod 2>/dev/null
-
-# Existing Dockerfiles
-find . -name 'Dockerfile*' -not -path '*/.git/*' 2>/dev/null
-
-# Existing echelon.yml deploy block
-grep -A 10 '^deploy:' echelon.yml 2>/dev/null || echo "(no deploy block)"
-
-# Git remote
-git remote get-url origin 2>/dev/null || echo "(no remote)"
 ```
 
 ---
