@@ -136,6 +136,26 @@ Generate exactly these artifacts:
 4. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
    Jobs: install dependencies, lint (if configured), run tests.
    No remote deploy step. echelon-deploy handles local CD via git post-merge hook.
+
+   The generated workflow MUST include the following at the top of the file as a
+   YAML comment block, and as the first step of the first job:
+
+   Comment block (top of file, after the `on:` trigger):
+   ```yaml
+   # NOTE: echelon harness already builds and verifies this project in a clean
+   # Docker sandbox (build + tests + security scan + license check) before the
+   # PR is opened. This CI workflow may be replaceable with a lightweight
+   # verification flow (security scan + license check only).
+   # See: echelon.cicd spec — docs/superpowers/specs/2026-04-27-echelon-cicd-design.md
+   ```
+
+   First step of the first job:
+   ```yaml
+   - name: ⚠ CI scope note
+     run: |
+       echo "NOTE: echelon harness already verified this build in Docker (tests + security + licenses)."
+       echo "Consider replacing this workflow with a lightweight verification flow."
+   ```
 </deliverables>
 
 <constraints>
