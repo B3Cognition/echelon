@@ -49,13 +49,12 @@ logger = logging.getLogger(__name__)
 
 
 def _get_palace_path() -> str:
-    """Resolve MemPalace palace path from mempalace config or default."""
+    """Resolve MemPalace palace path. Delegates to MemPalaceContext's canonical resolver."""
     try:
-        from mempalace.config import MempalaceConfig  # type: ignore[import]
-        return MempalaceConfig().palace_path
+        from codegen.memory.context import _get_palace_path as _ctx_palace_path
     except ImportError:
-        import os
-        return os.path.expanduser("~/.mempalace/palace")
+        from src.codegen.memory.context import _get_palace_path as _ctx_palace_path  # type: ignore
+    return _ctx_palace_path()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -660,7 +659,6 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
         print(f"ERROR: Source not found: {source}", file=sys.stderr)
         sys.exit(1)
 
-    wing = args.wing or (source.stem if source.is_file() else source.name)
     try:
         from codegen.memory.context import MemPalaceContext
     except ImportError:
@@ -673,7 +671,7 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
     miner = RequirementsMiner(ctx, project_dir=Path.cwd())
 
     print(f"[codegen] Mining requirements from: {source}")
-    print(f"[codegen] MemPalace wing: {wing}")
+    print(f"[codegen] MemPalace wing: {ctx.wing}")
 
     if source.is_file():
         result = miner.mine_file(source)
@@ -685,7 +683,7 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
     print(" Requirements Mine — Complete")
     print("=" * 52)
     print(f"  Source   : {source}")
-    print(f"  Wing     : {wing}")
+    print(f"  Wing     : {ctx.wing}")
     print(f"  Total    : {result.total} requirements found")
     print(f"  Written  : {result.written} drawers written to MemPalace")
     print(f"  Skipped  : {result.skipped} (MemPalace write returned None)")
@@ -698,7 +696,7 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
     print("=" * 52)
     print()
     print("  Next step:")
-    print(f"    codegen run --intent \"your intent\" --wing {wing}")
+    print(f"    codegen run --intent \"your intent\" --wing {ctx.wing}")
     print("    # Pipeline will retrieve relevant requirements at RE phase")
 
     sys.exit(0 if result.failed == 0 else 1)
