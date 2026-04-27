@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -309,9 +310,9 @@ class RequirementsMiner:
       - Confluence page text (treated as markdown)
 
     Usage:
-        miner = RequirementsMiner(wing="my-project")
+        ctx = MemPalaceContext.from_project(project_dir, run_id="mine-run")
+        miner = RequirementsMiner(ctx, project_dir=project_dir)
         result = miner.mine_file(Path("spec.md"))
-        result = miner.mine_jira_issues(issues_list)
     """
 
     def __init__(self, ctx: MemPalaceContext, project_dir: Path = Path(".")) -> None:
@@ -436,16 +437,15 @@ class RequirementsMiner:
             self._collision_checked = True
             foreign = check_wing_collision(self.ctx.wing, self.project_dir, self.ctx.palace_path)
             if foreign:
-                import sys as _sys
                 print(
                     f"\n⚠  Wing '{self.ctx.wing}' already has drawers from a different project:",
-                    file=_sys.stderr,
+                    file=sys.stderr,
                 )
                 for path in foreign[:5]:
-                    print(f"     {path}", file=_sys.stderr)
+                    print(f"     {path}", file=sys.stderr)
                 print(
                     "   Mining continues — shared memory is intentional or choose a different wing.\n",
-                    file=_sys.stderr,
+                    file=sys.stderr,
                 )
         writer = self._get_writer()
         for req in reqs:
