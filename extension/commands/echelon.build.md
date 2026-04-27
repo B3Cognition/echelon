@@ -626,8 +626,8 @@ infrastructure required.
 
 | Ecosystem | Command |
 | --- | --- |
-| Node.js (npm/pnpm/yarn/bun) | `npm audit --audit-level=high 2>&1 \| tee /tmp/audit.txt; grep -q "found 0" /tmp/audit.txt \|\| { echo "✗ Security audit failed"; exit 1; }` |
-| Python | `pip install pip-audit --quiet && pip-audit --severity high 2>&1 \| tee /tmp/audit.txt; grep -q "No known vulnerabilities" /tmp/audit.txt \|\| { echo "✗ pip-audit failed"; exit 1; }` |
+| Node.js (npm/pnpm/yarn/bun) | `npm audit --audit-level=high 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ Security audit failed — see /tmp/audit.txt"; exit 1; }` |
+| Python | `pip install pip-audit --quiet && pip-audit 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ pip-audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
 | Go | `go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null && govulncheck ./... 2>&1 \| tee /tmp/audit.txt; grep -q "No vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ govulncheck failed"; exit 1; }` |
 | Rust | `cargo audit 2>&1 \| tee /tmp/audit.txt; grep -q "0 vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ cargo audit failed"; exit 1; }` |
 | Ruby | `gem install bundler-audit --quiet && bundle-audit check --update 2>&1 \| tee /tmp/audit.txt; grep -q "No vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ bundle-audit failed"; exit 1; }` |
@@ -641,8 +641,14 @@ Permitted: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
 | --- | --- |
 | Node.js | `npx --yes license-checker --onlyAllow "MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;Unlicense;CC0-1.0;BlueOak-1.0.0" 2>&1 \| tee /tmp/licenses.txt \|\| { echo "✗ License check failed — review /tmp/licenses.txt"; exit 1; }` |
 | Python | `pip install pip-licenses --quiet && pip-licenses --allow-only="MIT;Apache Software License;BSD License;ISC License (ISCL);Public Domain;Python Software Foundation License" 2>&1 \|\| { echo "✗ pip-licenses check failed"; exit 1; }` |
-| Go | `go install github.com/google/go-licenses@latest 2>/dev/null && go-licenses check ./... 2>&1 \|\| { echo "✗ go-licenses check failed"; exit 1; }` |
-| Rust | `cargo install cargo-license 2>/dev/null; cargo license 2>&1 \| grep -vE "MIT\|Apache\|BSD\|ISC\|Unlicense\|CC0" \| grep -v "^name" && { echo "✗ Non-permissive license detected"; exit 1; } \|\| true` |
+| Go | `go install github.com/google/go-licenses@latest 2>/dev/null && go-licenses check --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,Unlicense,CC0-1.0 ./... 2>&1 \| tee /tmp/licenses.txt \|\| { echo "✗ go-licenses check failed — see /tmp/licenses.txt"; exit 1; }` |
+| Rust | `cargo install cargo-license --quiet 2>/dev/null; cargo license 2>&1 \| grep -vE "^(name\|MIT\|Apache-2.0\|BSD-2-Clause\|BSD-3-Clause\|ISC\|Unlicense\|CC0-1.0)" \| grep -v "^$" > /tmp/licenses.txt; [ ! -s /tmp/licenses.txt ] \|\| { echo "✗ Non-permissive license detected — see /tmp/licenses.txt"; exit 1; }` |
+| Ruby | `gem install license_finder --quiet 2>/dev/null && license_finder 2>&1 \| tee /tmp/licenses.txt; license_finder --decisions-file=doc/dependency_decisions.yml 2>/dev/null \|\| { echo "✗ License check failed — see /tmp/licenses.txt"; exit 1; }` |
+
+> Note: `pip-licenses` reports license names in its own format (e.g. "Apache Software License", "BSD License") rather than SPDX identifiers. The `--allow-only` list must use pip-licenses' display names, not SPDX IDs.
+
+For polyglot projects (e.g., both `package.json` and `requirements.txt` present),
+run the checks for every detected ecosystem — not just the primary one.
 
 IMPLEMENTER must select the correct commands for the detected ecosystem and add
 them to `verify.sh` after the smoke test block. If the audit or license check
