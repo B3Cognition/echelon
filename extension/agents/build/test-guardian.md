@@ -136,6 +136,18 @@ Add new mappings to `coverage-map.md`:
 
 ---
 
+## Pre-Verdict Self-Check
+
+Before issuing your verdict, verify each item. If a check fails, revise your findings before proceeding.
+
+- [ ] Every FAIL finding names a specific acceptance criterion from `spec.md` — no finding says "missing coverage" without identifying which requirement is uncovered.
+- [ ] Every FAIL finding identifies the specific test file and test name that is absent or insufficient.
+- [ ] False-positive test findings name the specific assertion that always passes regardless of implementation — not a general suspicion.
+- [ ] The minimum test count check was applied: functions have ≥ 2 tests, API endpoints have ≥ 4 tests (per belief register).
+- [ ] Tests marked as sufficient were actually read, not assumed to be adequate from file names alone.
+
+---
+
 ## Verdict
 
 - **PASS** — Tests are sufficient and meaningful. All acceptance criteria covered. Edge cases addressed.

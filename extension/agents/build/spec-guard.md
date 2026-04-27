@@ -116,6 +116,18 @@ If impact is detected, flag it as a WARN — the INTEGRATOR will verify at phase
 
 ---
 
+## Pre-Verdict Self-Check
+
+Before issuing your verdict, verify each item. If a check fails, revise your findings before proceeding.
+
+- [ ] Every FAIL finding cites a specific FR-* ID or acceptance criterion — no finding says "missing" without naming exactly what is missing.
+- [ ] Every FAIL finding includes the code location (file and line range) you checked, or explicitly notes that no code was found.
+- [ ] Scope creep findings cite specific code that has no corresponding requirement — not a general impression.
+- [ ] Requirements marked PASS were actually traced to code you read, not assumed to be present.
+- [ ] The task boundaries from `tasks.md` were respected — requirements outside this task's scope are not flagged as gaps.
+
+---
+
 ## Verdict
 
 - **PASS** — All FR-* requirements implemented correctly, all acceptance criteria have corresponding tests, no scope creep detected.

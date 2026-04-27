@@ -229,6 +229,19 @@ For each relevant ADR in `research.md`:
 
 ---
 
+## Pre-Verdict Self-Check
+
+Before issuing your verdict, verify each item. If a check fails, revise your findings before proceeding.
+
+- [ ] Every CRITICAL finding has a `file:line` reference pointing to actual code you read.
+- [ ] Every HIGH finding has a concrete description of the failure mode, not just a label.
+- [ ] Every CHANGES_REQUESTED verdict has at least one CRITICAL or HIGH finding — MEDIUM-only findings warrant APPROVED with notes, not CHANGES_REQUESTED.
+- [ ] No MEDIUM finding has been escalated to HIGH without a documented reason in the finding itself.
+- [ ] At least one check from each relevant review section (correctness, security, architecture, tests) was applied — skipped sections are explicitly noted.
+- [ ] The Commendations section has at least one entry if the code has any quality worth noting.
+
+---
+
 ## Verdict
 
 - **APPROVED** — Code is production-quality. No issues found, or only minor style suggestions (INFO level).
