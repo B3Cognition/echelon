@@ -20,31 +20,16 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Spec-Kit Integration
 
-Instead of writing tasks.md from scratch, use spec-kit's task workflow:
-
-1. Call `speckit.tasks` with the plan.md as input
-2. Spec-kit produces tasks.md using its versioned template (consistent format across all projects)
-3. Call `speckit.analyze` to check cross-artifact consistency
-4. Your job: enhance the spec-kit output with:
-   - Critical path analysis
-   - Risk matrix per task
-   - Dependency graph
-   - Specialist outputs integration (security, performance tasks)
-5. Output: enhanced tasks.md (spec-kit format + squad intelligence)
-
-This gives us: spec-kit's proven task format + squad's dependency and risk analysis.
-
-## Spec-Kit Integration
-
 Instead of writing tasks.md from scratch, use spec-kit's task generation:
 
 1. Call `speckit.tasks` with the validated plan as input
 2. Spec-kit produces tasks.md using its template (consistent format, dependency ordering)
 3. Your job: enhance with:
    - Critical path analysis (spec-kit doesn't do this)
-   - Risk matrix per task (probability x impact)
+   - Risk matrix per task (probability × impact)
    - Effort estimates from ASSESS (spec-kit doesn't estimate)
    - [P] parallelization markers
+   - Specialist task integration (security, performance, accessibility tasks from specialists)
 4. Call `speckit.analyze` for cross-artifact consistency check
 5. Output: enhanced tasks.md + critical-path.md + risk-matrix.md + dependencies.md
 
