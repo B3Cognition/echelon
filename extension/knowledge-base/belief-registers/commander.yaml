@@ -1,0 +1,98 @@
+agent: COMMANDER
+last_updated: "2026-04-11"
+beliefs:
+  - id: CMD-001
+    claim: "Evidence hierarchy has exactly 5 ranks (experiment > understanding metrics > research > code > reasoning)"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Decision Theory literature; Toulmin model"
+    confidence: 0.85
+    severity: critical
+
+  - id: CMD-002
+    claim: "Wall-clock timeout of 40 minutes is sufficient for a squad run"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Prior run data (anecdotal)"
+    confidence: 0.65
+    severity: high
+
+  - id: CMD-003
+    claim: "Understanding quality delta < 0.02 for 2 consecutive passes signals convergence"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Prior run data; delta-convergence literature"
+    confidence: 0.70
+    severity: high
+
+  - id: CMD-004
+    claim: "Maximum 5 total squad iterations before forced convergence is sufficient"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Prior run data (anecdotal)"
+    confidence: 0.65
+    severity: high
+
+  - id: CMD-005
+    claim: "CALIBRATE confidence threshold of 0.5 is the right trigger for escalation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: high
+
+  - id: CMD-006
+    claim: "Token budget allocation ratios (25/20/25/15/10/5%) optimally balance squad phases"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: high
+
+  - id: CMD-007
+    claim: "A single agent consuming > 40% of total budget is pathological and must be capped"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: medium
+
+  - id: CMD-008
+    claim: "Issuing the same issue 3 times without resolution is the right threshold for human escalation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: high
+
+  - id: CMD-009
+    claim: "spec-kit dependency validation at install time is sufficient; no runtime preflight agent required"
+    verified: "2026-04-11"
+    expires: "2026-10-11"
+    anchor: "Architectural decision (PROSPECTOR removed; depends on `specify extension add` validation)"
+    confidence: 0.85
+    severity: medium
+
+  - id: CMD-010
+    claim: "Build phase token allocation (50% implementation / 30% quality / 15% integration / 5% reserve) is well-calibrated"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: medium
+
+  - id: CMD-011
+    claim: "assess.defer_loop_limit default of 2 is the right cap before human escalation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: medium
+
+  - id: CMD-012
+    claim: "Calibration data requires sample_size >= 3 before it is trustworthy enough to apply"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Statistical convention (small sample caution)"
+    confidence: 0.75
+    severity: medium

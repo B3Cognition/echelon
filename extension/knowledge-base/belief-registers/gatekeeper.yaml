@@ -1,0 +1,74 @@
+agent: GATEKEEPER
+last_updated: "2026-03-28"
+beliefs:
+  - id: GTK-001
+    claim: "RICE scoring dimensions (Reach 1-10, Impact 0.25-3, Confidence 0.5/0.8/1.0, Effort person-weeks) correctly rank feature priority"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "RICE scoring methodology (Intercom)"
+    confidence: 0.75
+    severity: high
+
+  - id: GTK-002
+    claim: "Kano must-be / performance / delighter classification is sufficient to distinguish MVP from post-MVP features"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Kano Model (Kano 1984)"
+    confidence: 0.80
+    severity: high
+
+  - id: GTK-003
+    claim: "A single-developer baseline is the correct fallback when no team size or budget constraints are stated"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: medium
+
+  - id: GTK-004
+    claim: "The 6-point implementability check (self-sufficiency, reference validity, parallelism integrity, skill match, containment, testability) covers all critical task-readiness dimensions"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: high
+
+  - id: GTK-005
+    claim: "A task scoring 3+ check failures (or any single critical failure) correctly classifies as BLOCKED"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: high
+
+  - id: GTK-006
+    claim: "Function Point Analysis with IFPUG weights is an appropriate estimation method at pre-architecture stage"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "COCOMO II (Barry Boehm); IFPUG standard"
+    confidence: 0.75
+    severity: high
+
+  - id: GTK-007
+    claim: "KILL requires UNFEASIBLE on at least one dimension — FEASIBLE_WITH_RISKS is insufficient to kill"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "NEVER rule; design choice; no empirical validation"
+    confidence: 0.80
+    severity: critical
+
+  - id: GTK-008
+    claim: "assess.defer_loop_limit (default 2) is the right cap on scope-reduction cycles before human escalation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: high
+
+  - id: GTK-009
+    claim: "Constitution-mandated capabilities must never be dropped during scope reduction — any such drop is an escalation trigger"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Constitution immutability principle"
+    confidence: 0.90
+    severity: critical

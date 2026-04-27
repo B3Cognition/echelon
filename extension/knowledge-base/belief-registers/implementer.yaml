@@ -1,0 +1,82 @@
+agent: IMPLEMENTER
+last_updated: "2026-03-28"
+beliefs:
+  - id: IMP-001
+    claim: "TDD (test-first) produces higher quality code than test-after — writing failing tests before implementation is the correct order"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Test-Driven Development (Kent Beck); empirical studies on TDD"
+    confidence: 0.80
+    severity: high
+
+  - id: IMP-002
+    claim: "Every function/method needs at least 2 tests (happy path + error/edge) to be minimally covered"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Clean Code (Robert Martin); design choice"
+    confidence: 0.75
+    severity: high
+
+  - id: IMP-003
+    claim: "Every API endpoint needs at least 4 tests (success, validation error, auth error, not found) to be minimally covered"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: high
+
+  - id: IMP-004
+    claim: "Functions longer than 30 lines are an indicator of excessive complexity and should be extracted"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Clean Code (Robert Martin) — heuristic, not law"
+    confidence: 0.70
+    severity: medium
+
+  - id: IMP-005
+    claim: "Nesting deeper than 3 levels is an indicator of excessive complexity and should be refactored"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Clean Code (Robert Martin) — heuristic, not law"
+    confidence: 0.70
+    severity: medium
+
+  - id: IMP-006
+    claim: "pass@1 success with pass@3 failure correctly classifies an implementation as unstable"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Eval-Driven Development methodology"
+    confidence: 0.75
+    severity: high
+
+  - id: IMP-007
+    claim: "3 attempts is the right cap for rework before a task is flagged to MANAGER"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; aligned with build phase orchestration limits"
+    confidence: 0.70
+    severity: high
+
+  - id: IMP-008
+    claim: "Git worktree isolation prevents broken code from contaminating subsequent tasks — zero contamination is achievable"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Git worktree design; architectural decision"
+    confidence: 0.85
+    severity: high
+
+  - id: IMP-009
+    claim: "Composition over inheritance is the correct default unless an ADR explicitly prescribes inheritance"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Clean Code (Robert Martin); GoF design patterns"
+    confidence: 0.80
+    severity: medium
+
+  - id: IMP-010
+    claim: "No TODO comments without a task ID is a sufficient rule to prevent orphaned technical debt"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.70
+    severity: medium

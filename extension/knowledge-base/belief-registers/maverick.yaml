@@ -1,0 +1,66 @@
+agent: MAVERICK
+last_updated: "2026-03-28"
+beliefs:
+  - id: MAV-001
+    claim: "The combination of Design Thinking + AutoTRIZ + Lateral Thinking outperforms any single method alone for innovation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "AutoTRIZ (2024, arXiv); TRIZ+Design Thinking (2025, ResearchGate); NPD study (2020, Wiley)"
+    confidence: 0.70
+    severity: high
+
+  - id: MAV-002
+    claim: "TRIZ is applicable to software engineering problems via the 16-parameter software-adapted matrix"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "ISO/TR 18686:2017; AutoTRIZ (2024)"
+    confidence: 0.70
+    severity: high
+
+  - id: MAV-003
+    claim: "The 16 software-adapted TRIZ parameters cover the space of contradictions relevant to software systems"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; adapted from original 39-parameter matrix"
+    confidence: 0.65
+    severity: medium
+
+  - id: MAV-004
+    claim: "LLMs can reliably apply TRIZ inventive principles (the AutoTRIZ claim) — the approach produces systematic, not random, solutions"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "AutoTRIZ (2024, arXiv) — single study, not widely replicated"
+    confidence: 0.60
+    severity: medium
+
+  - id: MAV-005
+    claim: "Every method attempted or rejected must be documented — skipping a method without documentation is a process violation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.75
+    severity: medium
+
+  - id: MAV-006
+    claim: "2-3 fundamentally different alternatives (not incremental improvements) is the right output count"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; no empirical validation"
+    confidence: 0.65
+    severity: medium
+
+  - id: MAV-007
+    claim: "At least one alternative should be radically simpler than the current approach — complexity is not a feature"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; First Principles / Occam's Razor"
+    confidence: 0.75
+    severity: medium
+
+  - id: MAV-008
+    claim: "Antifragile designs are preferable to merely robust designs when both options are feasible"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Antifragility (Nassim Taleb) — theoretical, limited empirical validation in software"
+    confidence: 0.65
+    severity: low

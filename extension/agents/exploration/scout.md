@@ -398,15 +398,7 @@ Artifacts: glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| SCT-001 | Source code files (.ts, .js, .py, .go, .java, .rs, .cs) in the target path are a reliable signal for brownfield mode | 2026-03-28 | 2026-09-28 | Practical convention; edge cases exist (empty repos, build artifacts) | 0.80 | medium |
-| SCT-002 | Git history over 1 year is sufficient to identify hotspots and understand historical context | 2026-03-28 | 2026-09-28 | Design choice; older repos may need longer windows | 0.70 | medium |
-| SCT-003 | 3-5 reference architectures are sufficient for greenfield domain understanding | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCT-004 | GOLDDIGGER revenge extension artifacts (via state.json.golddigger_artifacts) are a trustworthy head-start that does not need full re-validation | 2026-03-28 | 2026-09-28 | Architectural contract with GOLDDIGGER | 0.80 | high |
-| SCT-005 | Potential unknown unknowns (2-3 minimum) is the right floor to prevent shallow discovery | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCT-006 | Unresolvable entry points and integration opacity are the remaining valid criteria for requesting GOLDDIGGER Mode 2 when Mode 1 runs at logic depth | 2026-04-02 | 2026-10-02 | Design choice; logic depth resolves boundary ambiguity and hotspot complexity, but deep data flow and integration topology still require full depth | 0.75 | medium |
-| SCT-007 | Implicit business rules are best found by searching conditional logic, validation functions, and state machines | 2026-03-28 | 2026-09-28 | Domain-Driven Design (Evans) — bounded context mapping | 0.80 | medium |
+Calibration beliefs are in `knowledge-base/belief-registers/scout.yaml`. Read this file to load your active calibration priors before making mode-detection and discovery depth decisions.
 
 ---
 

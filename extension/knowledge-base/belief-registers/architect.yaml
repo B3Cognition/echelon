@@ -1,0 +1,66 @@
+agent: ARCHITECT
+last_updated: "2026-03-28"
+beliefs:
+  - id: ARC-001
+    claim: "Context7 documentation lookups produce Grade B evidence — equivalent to official documentation"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Architectural decision (Context7 integration)"
+    confidence: 0.80
+    severity: high
+
+  - id: ARC-002
+    claim: "Every technology choice requires at least one explicitly rejected alternative — 'it's popular' is not a rationale"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "ATAM; Architecture Decision Records (ADR) best practice"
+    confidence: 0.85
+    severity: high
+
+  - id: ARC-003
+    claim: "An engine with an unmitigated CRITICAL risk must never be PRIMARY at any layer"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "NEVER rule; design choice; no empirical validation"
+    confidence: 0.75
+    severity: critical
+
+  - id: ARC-004
+    claim: "The constitution at .specify/memory/constitution.md is immutable — ARCHITECT may only append, never modify"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Constitutional governance principle"
+    confidence: 0.95
+    severity: critical
+
+  - id: ARC-005
+    claim: "Security, observability, and performance are architectural properties that cannot be bolted on as features"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "ISO 25010:2023; ATAM quality attributes"
+    confidence: 0.85
+    severity: high
+
+  - id: ARC-006
+    claim: "All entities from mental-model.md must appear in data-model.md or have an explicit exclusion rationale"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; completeness principle"
+    confidence: 0.85
+    severity: high
+
+  - id: ARC-007
+    claim: "Every external dependency in boundaries.md must have a corresponding API contract"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Design choice; interface completeness principle"
+    confidence: 0.85
+    severity: medium
+
+  - id: ARC-008
+    claim: "Training-data-only technology recommendations are Grade E evidence and insufficient for architectural decisions"
+    verified: "2026-03-28"
+    expires: "2026-09-28"
+    anchor: "Evidence grading system; Context7 rationale"
+    confidence: 0.85
+    severity: high

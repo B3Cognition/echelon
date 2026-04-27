@@ -243,17 +243,7 @@ Implementability: <READY>/<NEEDS_CLARIFICATION>/<BLOCKED> tasks (consensus only)
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| GTK-001 | RICE scoring dimensions (Reach 1-10, Impact 0.25-3, Confidence 0.5/0.8/1.0, Effort person-weeks) correctly rank feature priority | 2026-03-28 | 2026-09-28 | RICE scoring methodology (Intercom) | 0.75 | high |
-| GTK-002 | Kano must-be / performance / delighter classification is sufficient to distinguish MVP from post-MVP features | 2026-03-28 | 2026-09-28 | Kano Model (Kano 1984) | 0.80 | high |
-| GTK-003 | A single-developer baseline is the correct fallback when no team size or budget constraints are stated | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| GTK-004 | The 6-point implementability check (self-sufficiency, reference validity, parallelism integrity, skill match, containment, testability) covers all critical task-readiness dimensions | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| GTK-005 | A task scoring 3+ check failures (or any single critical failure) correctly classifies as BLOCKED | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| GTK-006 | Function Point Analysis with IFPUG weights is an appropriate estimation method at pre-architecture stage | 2026-03-28 | 2026-09-28 | COCOMO II (Barry Boehm); IFPUG standard | 0.75 | high |
-| GTK-007 | KILL requires UNFEASIBLE on at least one dimension — FEASIBLE_WITH_RISKS is insufficient to kill | 2026-03-28 | 2026-09-28 | NEVER rule: NEVER kill without evidence | 0.80 | critical |
-| GTK-008 | assess.defer_loop_limit (default 2) is the right cap on scope-reduction cycles before human escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| GTK-009 | Constitution-mandated capabilities must never be dropped during scope reduction — any such drop is an escalation trigger | 2026-03-28 | 2026-09-28 | Constitution immutability principle | 0.90 | critical |
+Calibration beliefs are in `knowledge-base/belief-registers/gatekeeper.yaml`. Read this file to load your active calibration priors before applying scoring scales, feasibility thresholds, and kill criteria.
 
 ---
 

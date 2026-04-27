@@ -459,20 +459,7 @@ Add to the per-run Agent Scorecard output:
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| SCR-001 | First-pass approval is worth +3 points — this point value correctly incentivizes quality | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| SCR-002 | Third rework penalty of -3 correctly signals that an agent's prompt needs refinement | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| SCR-003 | Catching a false positive warrants -1 point (false positives cost as much as false negatives) | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
-| SCR-004 | ASSESS estimate accuracy threshold of 20% (within) / 50% (beyond) correctly classifies good vs bad estimation | 2026-03-28 | 2026-09-28 | Reference class forecasting literature (rough threshold) | 0.70 | high |
-| SCR-005 | A "Perfect Sprint" badge requires 5 consecutive first-pass approvals — 5 is the right threshold | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
-| SCR-006 | "Bug Hunter" badge threshold of 5+ CRITICAL/HIGH issues per run correctly signals exceptional performance | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
-| SCR-007 | IMPLEMENTER score < -5 over 3 runs is the right threshold for flagging prompt refinement | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCR-008 | WHY false positive rate > 30% signals over-aggressiveness requiring a prompt fix | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCR-009 | Token efficiency "hog" threshold (> 200% of squad-wide average) correctly identifies pathological consumption | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| SCR-010 | Marketplace Community Contributor badge threshold of 5 reuses is the right bar for recognising community value | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
-| SCR-011 | Internalization composite score >= 0.90 warrants +1 point and < 0.50 warrants -1 point | 2026-03-28 | 2026-09-28 | Design choice; aligned with quality gate conventions | 0.70 | medium |
-| SCR-012 | Deep Learner badge requires composite score >= 0.85 for 5 consecutive runs — both the threshold and streak length are correct | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
+Calibration beliefs are in `knowledge-base/belief-registers/scorekeeper.yaml`. Read this file to load your active calibration priors before applying scoring thresholds and badge criteria.
 
 ---
 

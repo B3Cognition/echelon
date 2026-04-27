@@ -376,16 +376,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| MAV-001 | The combination of Design Thinking + AutoTRIZ + Lateral Thinking outperforms any single method alone for innovation | 2026-03-28 | 2026-09-28 | AutoTRIZ (2024, arXiv); TRIZ+Design Thinking (2025, ResearchGate); NPD study (2020, Wiley) | 0.70 | high |
-| MAV-002 | TRIZ is applicable to software engineering problems via the 16-parameter software-adapted matrix | 2026-03-28 | 2026-09-28 | ISO/TR 18686:2017; AutoTRIZ (2024) | 0.70 | high |
-| MAV-003 | The 16 software-adapted TRIZ parameters cover the space of contradictions relevant to software systems | 2026-03-28 | 2026-09-28 | Design choice; adapted from original 39-parameter matrix | 0.65 | medium |
-| MAV-004 | LLMs can reliably apply TRIZ inventive principles (the AutoTRIZ claim) — the approach produces systematic, not random, solutions | 2026-03-28 | 2026-09-28 | AutoTRIZ (2024, arXiv) — single study, not widely replicated | 0.60 | medium |
-| MAV-005 | Every method attempted or rejected must be documented — skipping a method without documentation is a process violation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.75 | medium |
-| MAV-006 | 2-3 fundamentally different alternatives (not incremental improvements) is the right output count | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
-| MAV-007 | At least one alternative should be radically simpler than the current approach — complexity is not a feature | 2026-03-28 | 2026-09-28 | Design choice; First Principles / Occam's Razor | 0.75 | medium |
-| MAV-008 | Antifragile designs are preferable to merely robust designs when both options are feasible | 2026-03-28 | 2026-09-28 | Antifragility (Nassim Taleb) — theoretical, limited empirical validation in software | 0.65 | low |
+Calibration beliefs are in `knowledge-base/belief-registers/maverick.yaml`. Read this file to load your active calibration priors before selecting innovation methods and evaluating alternative quality.
 
 ---
 

@@ -856,17 +856,4 @@ The internalization data handoff follows this strict sequence within FINALIZE:
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| CMD-001 | Evidence hierarchy has exactly 5 ranks (experiment > understanding metrics > research > code > reasoning) | 2026-03-28 | 2026-09-28 | Decision Theory literature; Toulmin model | 0.85 | critical |
-| CMD-002 | Wall-clock timeout of 40 minutes is sufficient for a squad run | 2026-03-28 | 2026-09-28 | Prior run data (anecdotal) | 0.65 | high |
-| CMD-003 | Understanding quality delta < 0.02 for 2 consecutive passes signals convergence | 2026-03-28 | 2026-09-28 | Prior run data; delta-convergence literature | 0.70 | high |
-| CMD-004 | Maximum 5 total squad iterations before forced convergence is sufficient | 2026-03-28 | 2026-09-28 | Prior run data (anecdotal) | 0.65 | high |
-| CMD-005 | CALIBRATE confidence threshold of 0.5 is the right trigger for escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| CMD-006 | Token budget allocation ratios (25/20/25/15/10/5%) optimally balance squad phases | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | high |
-| CMD-007 | A single agent consuming > 40% of total budget is pathological and must be capped | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| CMD-008 | Issuing the same issue 3 times without resolution is the right threshold for human escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| CMD-009 | spec-kit dependency validation at install time is sufficient; no runtime preflight agent required | 2026-04-11 | 2026-10-11 | Architectural decision (PROSPECTOR removed; depends on `specify extension add` validation) | 0.85 | medium |
-| CMD-010 | Build phase token allocation (50% implementation / 30% quality / 15% integration / 5% reserve) is well-calibrated | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
-| CMD-011 | assess.defer_loop_limit default of 2 is the right cap before human escalation | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | medium |
-| CMD-012 | Calibration data requires sample_size >= 3 before it is trustworthy enough to apply | 2026-03-28 | 2026-09-28 | Statistical convention (small sample caution) | 0.75 | medium |
+Calibration beliefs are in `knowledge-base/belief-registers/commander.yaml`. Read this file to load your active calibration priors before making routing and threshold decisions.

@@ -242,17 +242,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| SNT-001 | The default test pyramid ratio (~70% unit / ~20% integration / ~10% e2e) is the right starting distribution for most architectures | 2026-03-28 | 2026-09-28 | Testing pyramid (Mike Cohn); widely adopted practice | 0.75 | high |
-| SNT-002 | Microservices architectures need proportionally more integration tests than the default pyramid | 2026-03-28 | 2026-09-28 | Distributed systems testing literature; practical convention | 0.75 | medium |
-| SNT-003 | Running new tests with --repeat-each=5 before merge is sufficient to detect flakiness | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | high |
-| SNT-004 | Flaky rate < 5% of total test suite is an acceptable stability target | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | high |
-| SNT-005 | Tests quarantined for more than 2 weeks without a fix attempt must be escalated — this cadence is appropriate | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
-| SNT-006 | Re-running a fixed test with --repeat-each=10 (double the detection run) is sufficient to validate stability | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | medium |
-| SNT-007 | hard_constraint_ratio, constraint_density, and negative_space_coverage below 0.50 are the right testability deficiency signals | 2026-03-28 | 2026-09-28 | FR-005 spec; Understanding tooling definitions | 0.75 | high |
-| SNT-008 | Pre-commit unit tests should complete in < 30s — this is a reasonable developer-experience target | 2026-03-28 | 2026-09-28 | Industry convention; no empirical validation for this codebase | 0.70 | medium |
-| SNT-009 | PR/Merge full test suite should complete in < 5 minutes — this is a reasonable CI target | 2026-03-28 | 2026-09-28 | Industry convention; no empirical validation for this codebase | 0.70 | medium |
+Calibration beliefs are in `knowledge-base/belief-registers/sentinel.yaml`. Read this file to load your active calibration priors before applying test pyramid ratios, flakiness thresholds, and timing targets.
 
 ---
 

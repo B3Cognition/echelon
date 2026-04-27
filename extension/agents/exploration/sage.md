@@ -736,17 +736,7 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ## Belief Register
 
-| Belief ID | Claim | Verified | Expires | Anchor | Confidence | Severity |
-|-----------|-------|----------|---------|--------|------------|----------|
-| SAG-001 | Quality gate thresholds (Overall/Structure/Testability >= 0.70, Semantic/Cognitive >= 0.60, Readability >= 0.50, Depth >= 0.30) are correctly calibrated for production-quality specs | 2026-03-28 | 2026-09-28 | ISO 29148:2018; IEEE 830; Lucassen 2017; Sweller 1988 | 0.80 | critical |
-| SAG-002 | Heuristic quality reviews are 15-29% overconfident compared to Understanding CLI results (PAT-006) | 2026-03-28 | 2026-09-28 | Internal pattern PAT-006; limited sample | 0.70 | critical |
-| SAG-003 | 3+ compounding HIGH issues is the right threshold to escalate to FAIL (vs a single HIGH issue) | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| SAG-004 | False-positive rate > 30% (4+ of last 10) correctly triggers blocking threshold adjustment | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.70 | high |
-| SAG-005 | Self-calibration requires at least 10 history entries to be meaningful — fewer entries mean the rate is unreliable | 2026-03-28 | 2026-09-28 | Statistical convention (small-N instability) | 0.75 | medium |
-| SAG-006 | Internalization composite score >= 0.85 warrants "Light" scrutiny and < 0.50 warrants "Deep" scrutiny | 2026-03-28 | 2026-09-28 | Design choice; thresholds aligned with internalization quality gates | 0.70 | medium |
-| SAG-007 | sage-decisions.yaml max_entries cap of 100 is sufficient to preserve a meaningful calibration history | 2026-03-28 | 2026-09-28 | Design choice; no empirical validation | 0.65 | low |
-| SAG-008 | LOC claims citing a single file (not a full directory + cloc command) are reliably misleading and warrant HIGH severity | 2026-03-28 | 2026-09-28 | Design choice based on observed misuse patterns | 0.75 | medium |
-| SAG-009 | A resolution that names technologies only (without integration protocol, code example, or failure mode analysis) is not a real resolution and warrants CRITICAL severity | 2026-03-28 | 2026-09-28 | Design choice based on observed failure patterns | 0.75 | high |
+Calibration beliefs are in `knowledge-base/belief-registers/sage.yaml`. Read this file to load your active calibration priors before applying quality gate thresholds and false-positive rate adjustments.
 
 ---
 
