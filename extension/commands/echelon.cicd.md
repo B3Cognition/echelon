@@ -132,7 +132,7 @@ Generate exactly these artifacts:
    Starts each backing service container on the speckit-deploy network.
    Idempotent: skips containers that are already running.
 
-4. .github/workflows/ci.yml — runs on every push and pull_request to main.
+4. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
    Jobs: install dependencies, lint (if configured), run tests.
    No remote deploy step. echelon-deploy handles local CD via git post-merge hook.
 </deliverables>
