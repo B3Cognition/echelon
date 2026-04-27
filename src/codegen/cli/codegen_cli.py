@@ -749,7 +749,13 @@ def _run_requirements_mark_delivered(args: argparse.Namespace) -> None:
     status = getattr(args, "status", "delivered")
     room = "functional-requirements"
 
-    reader = MemPalaceReader(wing=wing)
+    try:
+        from codegen.memory.context import MemPalaceContext
+    except ImportError:
+        from src.codegen.memory.context import MemPalaceContext  # type: ignore
+
+    ctx = MemPalaceContext(wing=wing, run_id="mark-delivered", palace_path=_get_palace_path())
+    reader = MemPalaceReader(ctx)
     drawer = reader.lookup_drawer_by_req_id(req_id, room=room)
 
     if drawer is None:
@@ -759,7 +765,9 @@ def _run_requirements_mark_delivered(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    writer = MemPalaceWriter(wing=wing, run_id=str(_uuid.uuid4()))
+    _run_id = str(_uuid.uuid4())
+    ctx_w = MemPalaceContext(wing=wing, run_id=_run_id, palace_path=_get_palace_path())
+    writer = MemPalaceWriter(ctx_w)
     updated = writer.backfill_status(drawer_ids=[drawer.drawer_id], status=status)
 
     if updated == 0:
