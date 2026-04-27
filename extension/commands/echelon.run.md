@@ -2122,14 +2122,7 @@ Every artifact produced in degraded mode (fallback was used) must have this bann
 
 ## 16. Human Escalation Protocol
 
-### When Triggered
-
-Escalation to human is triggered when:
-
-1. Same issue appears 3x without resolution (after INNOVATE attempt)
-2. CALIBRATE confidence < 0.5 after INVESTIGATOR investigation
-3. Unresolvable conflict between agents (evidence hierarchy cannot resolve)
-4. ASSESS DEFER loop >= 2 with no scope stabilization
+**Trigger decision:** See `agents/control/commander.md` → "Human Escalation vs Autonomous Resolution". COMMANDER's decision framework is the authoritative source — it includes the autonomy-first pre-flight (try GUARDIAN → INVESTIGATOR → MAVERICK before escalating) and the full list of conditions where autonomous resolution is preferred.
 
 ### Escalation Procedure
 
