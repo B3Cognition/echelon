@@ -29,7 +29,7 @@ def test_drawer_id_uses_sha256_matching_add_drawer():
     mock_col = MagicMock()
     mock_col.update = MagicMock()
 
-    with patch.object(writer, "_get_collection", return_value=(mock_col, "/fake/palace")):
+    with patch.object(writer, "_get_collection", return_value=mock_col):
         with patch("codegen.memory.mempalace_writer.add_drawer", return_value=True):
             drawer_id = writer._write_drawer(
                 wing="proj",
@@ -61,7 +61,7 @@ def test_chunk_index_is_deterministic():
         f"{hashlib.sha256((source_file + str(idx1)).encode()).hexdigest()[:24]}"
     )
     mock_col = MagicMock()
-    with patch.object(writer, "_get_collection", return_value=(mock_col, "/fake/palace")):
+    with patch.object(writer, "_get_collection", return_value=mock_col):
         with patch("codegen.memory.mempalace_writer.add_drawer", return_value=True):
             drawer_id = writer._write_drawer(
                 wing="my-app", room="bugs", content="BUG-001: x",
@@ -71,15 +71,17 @@ def test_chunk_index_is_deterministic():
 
 
 def test_write_returns_none_when_add_drawer_is_none():
-    """When mempalace not installed (add_drawer is None), write returns None silently."""
+    """When mempalace not installed, write returns None without calling _get_collection."""
     ctx = _make_ctx()
     writer = MemPalaceWriter(ctx)
 
     with patch("codegen.memory.mempalace_writer.add_drawer", None):
-        result = writer.write(room="functional-requirements", content="FR-001: x", phase="RE")
+        with patch.object(writer, "_get_collection") as mock_get_col:
+            result = writer.write(room="functional-requirements", content="FR-001: x", phase="RE")
 
     assert result is None
     assert writer.write_failures == 0
+    mock_get_col.assert_not_called()
 
 
 def test_write_uses_wing_from_ctx():
@@ -87,7 +89,7 @@ def test_write_uses_wing_from_ctx():
     writer = MemPalaceWriter(ctx)
 
     mock_col = MagicMock()
-    with patch.object(writer, "_get_collection", return_value=(mock_col, "/fake/palace")):
+    with patch.object(writer, "_get_collection", return_value=mock_col):
         with patch("codegen.memory.mempalace_writer.add_drawer", return_value=True) as mock_add:
             writer.write(room="bugs", content="BUG-001: crash", phase="GATE")
 
@@ -101,7 +103,7 @@ def test_backfill_run_outcome_calls_update_drawer_metadata():
     writer.drawers_written = ["drawer_my-app_bugs_abc123456789012345678901"]
 
     mock_col = MagicMock()
-    with patch.object(writer, "_get_collection", return_value=(mock_col, "/fake/palace")):
+    with patch.object(writer, "_get_collection", return_value=mock_col):
         updated = writer.backfill_run_outcome("passed")
 
     assert updated == 1
@@ -115,8 +117,31 @@ def test_write_increments_failure_count_on_exception():
     ctx = _make_ctx()
     writer = MemPalaceWriter(ctx)
 
-    with patch.object(writer, "_get_collection", side_effect=RuntimeError("db error")):
-        result = writer.write(room="bugs", content="x", phase="RE")
+    with patch("codegen.memory.mempalace_writer.add_drawer", return_value=True):
+        with patch.object(writer, "_get_collection", side_effect=RuntimeError("db error")):
+            result = writer.write(room="bugs", content="x", phase="RE")
 
     assert result is None
     assert writer.write_failures == 1
+
+
+def test_backfill_status_updates_drawer_metadata():
+    ctx = _make_ctx()
+    writer = MemPalaceWriter(ctx)
+
+    mock_col = MagicMock()
+    with patch.object(writer, "_get_collection", return_value=mock_col):
+        result = writer.backfill_status(["drawer-id-abc"], "delivered")
+
+    assert result == 1
+    mock_col.update.assert_called_once_with(
+        ids=["drawer-id-abc"],
+        metadatas=[{"status": "delivered"}],
+    )
+
+
+def test_backfill_status_rejects_invalid_status():
+    ctx = _make_ctx()
+    writer = MemPalaceWriter(ctx)
+    result = writer.backfill_status(["drawer-id-abc"], "invalid-status")
+    assert result == 0

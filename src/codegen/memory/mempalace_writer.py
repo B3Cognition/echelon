@@ -151,9 +151,9 @@ class MemPalaceWriter:
     # ------------------------------------------------------------------
 
     def _get_collection(self):
-        """Get or create the MemPalace ChromaDB collection."""
+        """Get the MemPalace ChromaDB collection."""
         from mempalace.miner import get_collection  # type: ignore[import]
-        return get_collection(self.ctx.palace_path), self.ctx.palace_path
+        return get_collection(self.ctx.palace_path)
 
     def _write_drawer(
         self,
@@ -168,11 +168,11 @@ class MemPalaceWriter:
         The drawer_id is deterministic: same wing+room+phase+run_id always
         produces the same ID, enabling correct collection.update() and backfill.
         """
-        collection, _ = self._get_collection()
-
         if add_drawer is None:
             logger.debug("[MemPalaceWriter] mempalace not installed; skipping write")
             return None
+
+        collection = self._get_collection()
         source_file = f"codegen/{metadata.get('phase', 'unknown')}"
         chunk_index = int(hashlib.sha256(self.ctx.run_id.encode()).hexdigest(), 16) & 0xFFFF
 
@@ -202,7 +202,7 @@ class MemPalaceWriter:
     def _update_drawer_metadata(self, drawer_id: str, metadata: dict) -> None:
         """Update metadata on an existing drawer."""
         try:
-            collection, _ = self._get_collection()
+            collection = self._get_collection()
             collection.update(ids=[drawer_id], metadatas=[metadata])
         except ImportError:
             pass
