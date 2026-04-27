@@ -84,7 +84,6 @@ class MemPalaceReader:
     """
 
     def __init__(self, ctx: "MemPalaceContext") -> None:
-        from codegen.memory.context import MemPalaceContext as _Ctx  # noqa: F401 (for type check)
         self.wing = ctx.wing
         self._palace_path = ctx.palace_path
         self._collection = None
