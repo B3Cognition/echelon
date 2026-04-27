@@ -184,7 +184,7 @@ Adjust your analysis to address these specific weaknesses.
 3. If no data exists (cold start): prepend `## Calibration: COLD START — no prior data. Defaults apply.`
 4. Log to `reasoning-journal.json` entry type `calibration_injection` with fields: `agent`, `prior_score`, `failure_modes[]`, `correction_factor`
 
-**If endocrine is enabled**, also call `endocrine.sh get_full_prompt_modifier {AGENT_CODENAME}` and append the `[CALIBRATION]` section from its output.
+Also call `endocrine.sh get_full_prompt_modifier {AGENT_CODENAME}` and append the `[CALIBRATION]` section from its output. (Endocrine is enabled by default; it no-ops silently if explicitly disabled via `echelon.yml`.)
 
 After EVERY agent dispatch completes, COMMANDER SHOULD run the post-execution audit:
 
