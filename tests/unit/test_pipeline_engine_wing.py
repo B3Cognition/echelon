@@ -67,3 +67,51 @@ def test_initialize_without_ctx_sets_empty_wing(tmp_path):
 
     state = json.loads(state_file.read_text())
     assert state.get("wing", "") == ""
+
+
+def test_run_re_phase_constructs_reader_with_ctx(tmp_path):
+    """run_re_phase passes MemPalaceContext to MemPalaceReader, not bare wing string."""
+    state_file = tmp_path / "codegen-state.json"
+    engine = PipelineEngine(state_file=state_file)
+    ctx = _make_ctx(wing="re-wing")
+    engine.set_context(ctx)
+
+    # Bootstrap a minimal state file so _write_re_context can write
+    state_file.write_text(json.dumps({"pipeline_id": "p1", "wing": "re-wing",
+                                       "current_phase": "RE", "phases_completed": [],
+                                       "mode": "greenfield", "intent": "test",
+                                       "target_path": None, "retry_count": 0,
+                                       "max_retries": 3, "psi_score": 0.0,
+                                       "tier1_gate": "pending", "soar_model": "B",
+                                       "soar_pid": None, "violations_blocked": 0,
+                                       "impasse_count": 0, "created_at": "", "updated_at": ""}))
+
+    with patch("codegen.memory.mempalace_reader.MemPalaceReader") as mock_reader_cls:
+        mock_reader = MagicMock()
+        mock_reader.search_requirements.return_value = []
+        mock_reader_cls.return_value = mock_reader
+
+        with patch.object(engine.gate_runner, "_get_bridge") as mock_bridge:
+            mock_bridge.return_value.inject_wme = MagicMock()
+            mock_bridge.return_value.record_phase_transition = MagicMock()
+            engine.run_re_phase(intent="build REST API", ctx=ctx)
+
+    # MemPalaceReader must be constructed with ctx, not wing= kwarg
+    mock_reader_cls.assert_called_once_with(ctx)
+
+
+def test_resume_preserves_wing_from_state_file(tmp_path):
+    """resume() must return PipelineState with wing read from codegen-state.json."""
+    state_file = tmp_path / "codegen-state.json"
+    state_file.write_text(json.dumps({
+        "pipeline_id": "p-abc", "wing": "saved-wing",
+        "current_phase": "IMPLEMENT", "phases_completed": ["RE"],
+        "mode": "greenfield", "intent": "test", "target_path": None,
+        "retry_count": 0, "max_retries": 3, "psi_score": 0.0,
+        "tier1_gate": "pending", "soar_model": "B", "soar_pid": None,
+        "violations_blocked": 0, "impasse_count": 0,
+        "created_at": "", "updated_at": "",
+    }))
+    engine = PipelineEngine(state_file=state_file)
+    state = engine.resume()
+    assert state.wing == "saved-wing"

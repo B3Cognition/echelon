@@ -477,6 +477,7 @@ class PipelineEngine:
             soar_pid=raw.get("soar_pid"),
             violations_blocked=raw.get("cq_isc_violations_blocked", 0),
             impasse_count=raw.get("impasse_count", 0),
+            wing=raw.get("wing", ""),
             created_at=raw.get("created_at", ""),
             updated_at=raw.get("updated_at", ""),
         )
