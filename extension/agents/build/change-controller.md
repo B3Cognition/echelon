@@ -95,6 +95,8 @@ Produce a sequenced plan for executing the change:
 5. **New task list** — New tasks required by added requirements
 6. **Sequence** — The order in which rework and new tasks should execute, respecting dependencies
 
+**Proceed to Step 5b before continuing to Step 6.** Step 5b is mandatory — do not mark any finding as complete without a mapped rework task.
+
 ### Step 5b: Finding-to-Rework Traceability
 
 For each unresolved QA finding, produce explicit mapping:
@@ -106,6 +108,8 @@ For each unresolved QA finding, produce explicit mapping:
 A finding without at least one mapped rework task is invalid and must be rejected.
 
 ### Step 6: Mark Affected Tasks
+
+**Prerequisite: Step 5b complete** — all findings mapped to rework tasks before updating task statuses.
 
 Update tasks.md:
 
