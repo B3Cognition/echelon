@@ -14,7 +14,10 @@ import logging
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from codegen.memory.context import MemPalaceContext
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,7 @@ class PipelineState:
     soar_pid: int | None = None
     violations_blocked: int = 0
     impasse_count: int = 0
+    wing: str = ""
     created_at: str = ""
     updated_at: str = ""
 
@@ -75,8 +79,13 @@ class PipelineEngine:
         self.state_file = state_file
         self.gate_runner = PhaseGateRunner(state_file=state_file, verbose=verbose)
         self._mempalace_writer = None  # Initialized lazily by _get_mempalace_writer()
+        self._ctx: "Optional[MemPalaceContext]" = None
 
-    def run_re_phase(self, intent: str, wing: str, n_results: int = 10) -> str:
+    def set_context(self, ctx: "MemPalaceContext") -> None:
+        """Store MemPalaceContext for use by writer and RE phase."""
+        self._ctx = ctx
+
+    def run_re_phase(self, intent: str, ctx: "MemPalaceContext", n_results: int = 10) -> str:
         """
         Execute the RE phase requirement lookup.
 
@@ -86,24 +95,24 @@ class PipelineEngine:
 
         Args:
             intent: The pipeline intent.
-            wing: MemPalace wing (project name).
+            ctx: MemPalaceContext for this run.
             n_results: Maximum requirements to retrieve.
 
         Returns:
             Formatted requirements context block (markdown string), or "" if none found.
         """
-        context = self.search_requirements(intent=intent, wing=wing, n_results=n_results)
+        context = self.search_requirements(intent=intent, ctx=ctx, n_results=n_results)
 
         # Inject RE context into SOAR WM so DECOMPOSE phase can see it
         bridge = self.gate_runner._get_bridge()
         bridge.inject_wme(
             "re-requirements-context",
-            f"retrieved:{n_results}:wing={wing}",
+            f"retrieved:{n_results}:wing={ctx.wing}",
         )
 
         # Write retrieved requirements to state file for DECOMPOSE to consume
         state = self._read_state()
-        self._write_re_context(state, context, wing)
+        self._write_re_context(state, context, ctx.wing)
 
         # EPMEM (INV-004) — record RE phase retrieval event
         try:
@@ -120,7 +129,7 @@ class PipelineEngine:
 
         logger.info(
             "[PipelineEngine] RE phase complete — wing=%s requirements_retrieved=%s",
-            wing, "yes" if context else "no",
+            ctx.wing, "yes" if context else "no",
         )
         return context
 
@@ -144,7 +153,7 @@ class PipelineEngine:
         except OSError as exc:
             logger.warning("[PipelineEngine] Could not write RE context to state: %s", exc)
 
-    def search_requirements(self, intent: str, wing: str, n_results: int = 10) -> str:
+    def search_requirements(self, intent: str, ctx: "MemPalaceContext", n_results: int = 10) -> str:
         """
         RE phase hook (FR-RM-005): search MemPalace for requirements relevant
         to the intent and return a formatted context block.
@@ -155,7 +164,7 @@ class PipelineEngine:
 
         Args:
             intent: The pipeline intent (user's goal).
-            wing: MemPalace wing (project name).
+            ctx: MemPalaceContext for this run.
             n_results: Maximum requirements to retrieve.
 
         Returns:
@@ -166,7 +175,7 @@ class PipelineEngine:
         except ImportError:
             from src.codegen.memory.mempalace_reader import MemPalaceReader  # type: ignore
 
-        reader = MemPalaceReader(wing=wing)
+        reader = MemPalaceReader(ctx)
         drawers = reader.search_requirements(intent=intent, n_results=n_results)
 
         # FR-022: Exclude delivered FRs from task decomposition context.
@@ -178,14 +187,14 @@ class PipelineEngine:
 
         if not drawers:
             logger.info(
-                "[PipelineEngine] RE hook: no requirements found in MemPalace for wing=%s", wing
+                "[PipelineEngine] RE hook: no requirements found in MemPalace for wing=%s", ctx.wing
             )
             return ""
 
         context = reader.format_for_context(drawers)
         logger.info(
             "[PipelineEngine] RE hook: retrieved %d requirements from MemPalace for wing=%s",
-            len(drawers), wing,
+            len(drawers), ctx.wing,
         )
         return context
 
@@ -225,6 +234,9 @@ class PipelineEngine:
             created_at=now,
             updated_at=now,
         )
+
+        if self._ctx is not None:
+            state.wing = self._ctx.wing
 
         # Start SOAR bridge (to detect Model A/B early)
         bridge = self.gate_runner._get_bridge()
@@ -398,12 +410,25 @@ class PipelineEngine:
     def _get_mempalace_writer(self, pipeline_id: str):
         """Lazily initialize MemPalaceWriter for this run."""
         if self._mempalace_writer is None:
+            if self._ctx is None:
+                raise RuntimeError(
+                    "[PipelineEngine] set_context() must be called before writing to MemPalace. "
+                    "Call engine.set_context(MemPalaceContext.from_project(...)) after initialize()."
+                )
             try:
                 from codegen.memory.mempalace_writer import MemPalaceWriter
             except ImportError:
                 from src.codegen.memory.mempalace_writer import MemPalaceWriter  # type: ignore
-            wing = self.state_file.parent.name or "codegen"
-            self._mempalace_writer = MemPalaceWriter(wing=wing, run_id=pipeline_id)
+            try:
+                from codegen.memory.context import MemPalaceContext
+            except ImportError:
+                from src.codegen.memory.context import MemPalaceContext  # type: ignore
+            ctx = MemPalaceContext(
+                wing=self._ctx.wing,
+                run_id=pipeline_id,
+                palace_path=self._ctx.palace_path,
+            )
+            self._mempalace_writer = MemPalaceWriter(ctx)
         return self._mempalace_writer
 
     def _backfill_mempalace_run_outcome(self, pipeline_id: str, outcome: str) -> None:
