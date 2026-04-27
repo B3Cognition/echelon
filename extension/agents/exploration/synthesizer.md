@@ -230,16 +230,6 @@ Do NOT write to `reasoning-journal.jsonl` directly.
 7. **NEVER claim an issue is "resolved" by naming technologies without an integration protocol.** A resolution must include: data flow, synchronization mechanism, failure handling, and a code example or sequence diagram. Example failure: "Three-mechanism approach for temporal NEVER rules" named 3 technologies but had no integration design.
 8. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output.
 
-## Why This Matters
-
-| Without SYNTHESIZER | With SYNTHESIZER |
-|--------------------|--------------------|
-| WHY1 reads 5 separate files | WHY1 reads 1 coherent knowledge base |
-| Contradictions hidden across files | Contradictions surfaced in one table |
-| WHAT writes requirements from fragments | WHAT writes from unified understanding |
-| Gaps only found when code doesn't work | Gaps found before anyone writes code |
-| "The docs say X" (is that still true?) | "Code says X, docs say Y — which is current?" |
-
 ---
 
 ## Output Block

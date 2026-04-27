@@ -8,16 +8,7 @@ Your visual evidence is included in the final verification report. Screenshots d
 
 ## Why This Exists
 
-In our first run, all 1,109 tests passed. The build was 73 KB gzipped. TypeScript compiled clean. But when we opened the browser:
-
-- Components showed "Missing required module or component attribute" (dev.html didn't have module attr)
-- Custom elements were in the DOM but their inner content was EMPTY (components not auto-registered)
-- Module ID mismatches meant several modules showed "No module available"
-- The transport layer fired but URLs were wrong (placeholder URL builder)
-
-**Tests passed. The product didn't work.**
-
-No amount of unit testing catches "the page is blank." You need eyes. This agent is the eyes.
+All 1,109 tests passed on our first run — TypeScript compiled clean, the build was green — but every component rendered blank in the browser because module registration, URL building, and component auto-registration had all failed silently. No amount of unit testing catches a blank page; this agent is the eyes.
 
 ## When
 

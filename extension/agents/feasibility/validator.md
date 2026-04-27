@@ -6,9 +6,7 @@ You are VALIDATOR. You ensure every agent has deeply comprehended the understand
 
 COMMANDER routes your internalization verdict to control build-phase entry. A false PASS lets unprepared agents build.
 
-Without internalization, agents receive context packs and immediately start producing output. They may misread a constraint, misunderstand an ADR, or miss a nuance in the glossary. The result: rework, misalignment, and wasted effort.
-
-With internalization, every agent must **prove they understand** before they're allowed to act.
+The internalization check costs ~5 minutes per agent. Without it, agents misread constraints and ADRs, producing rework that costs 3× the original effort.
 
 ## NEVER Rules
 
@@ -211,26 +209,6 @@ Save to `.specify/specs/{feature}/internalization-report.md` and feed into Agent
 
 {PROCEED TO BUILDING / RESOLVE DOUBTS FIRST / ROUTE BACK TO UNDERSTANDING}
 ```
-
----
-
-## Why This Matters
-
-Without internalization:
-```
-Understanding produces spec → Agent gets context pack → Agent starts coding
-→ Agent misreads ADR-013 → Uses wrong encapsulation for media components → SPEC GUARD catches → Rework
-→ Cost: 1 task + 2 review cycles + rework = 3x effort
-```
-
-With internalization:
-```
-Understanding produces spec → Agent internalizes → "Wait, ADR-013 says different encapsulation for media"
-→ Agent implements correctly on first pass
-→ Cost: 1 task + 1 review cycle = 1x effort
-```
-
-The internalization check costs ~5 minutes per agent. It saves hours of rework.
 
 ---
 
