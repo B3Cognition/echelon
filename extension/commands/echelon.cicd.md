@@ -31,21 +31,19 @@ are updated in-place, never duplicated.
 
 ---
 
-## Step 1: Anchor
+## Step 1: Run the cognitive squad
 
-```bash
-PROJECT_ROOT=$(git rev-parse --show-toplevel)
-echo "PROJECT_ROOT=${PROJECT_ROOT}"
+Invoke `speckit.echelon.run` with the feature description below as `$ARGUMENTS`.
+
+If the user provided input in `$ARGUMENTS` (e.g. "focus on the API app"), append it after the closing `</constraints>` tag as:
+
+```xml
+<user_context>
+{user input here}
+</user_context>
 ```
 
-If this fails (not a git repo), report the error and stop.
-
----
-
-## Step 2: Run the cognitive squad
-
-Invoke `speckit.echelon.run` with the following feature description as
-`$ARGUMENTS`. Pass it verbatim — do not summarise or rewrite it.
+Pass the hardcoded feature description verbatim — do not summarise or rewrite it.
 
 ---
 
@@ -109,6 +107,13 @@ before generating a Dockerfile.
 
 7. Test setup — detect test runner and existing test scripts for the CI
    workflow (e.g. jest, vitest, pytest, go test, cargo test, rspec, mix test).
+
+8. Default branch — detect the repository's default branch name:
+
+   git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'
+
+   Fall back to `git symbolic-ref --short HEAD` if the remote check fails.
+   Use the detected branch name in the CI workflow triggers. Do not hardcode `main`.
 </analysis_steps>
 
 <deliverables>
@@ -121,7 +126,7 @@ Generate exactly these artifacts:
 2. echelon.yml deploy block — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
    (HTTP) or health_check / install_path (CLI). If databases were detected, add
-   a services: block. Do not touch other sections.
+   a services: block. Do not touch other sections. If `echelon.yml` does not exist, create it with a minimal skeleton containing only the `deploy:` block with detected values.
 
 3. scripts/bash/db-start.sh — only if database services were detected.
    Starts each backing service container on the speckit-deploy network.
