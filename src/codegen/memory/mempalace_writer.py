@@ -49,6 +49,7 @@ class MemPalaceWriter:
         provenance_type: str = "agent_generated",
         embedding_model: str = "all-MiniLM-L6-v2@1.0",
         status: str = "pending",
+        source_file: Optional[str] = None,
     ) -> Optional[str]:
         """Write a drawer. Returns drawer_id on success, None on failure."""
         if self.mempalace_disabled:
@@ -61,6 +62,7 @@ class MemPalaceWriter:
             "provenance_type": provenance_type,
             "embedding_model": embedding_model,
             "status": status,
+            "source_file": source_file,
         }
 
         start = time.monotonic()
@@ -173,7 +175,7 @@ class MemPalaceWriter:
             return None
 
         collection = self._get_collection()
-        source_file = f"codegen/{metadata.get('phase', 'unknown')}"
+        source_file = metadata.get("source_file") or f"codegen/{metadata.get('phase', 'unknown')}"
         chunk_index = int(hashlib.sha256(self.ctx.run_id.encode()).hexdigest(), 16) & 0xFFFF
 
         ok = add_drawer(
@@ -193,8 +195,11 @@ class MemPalaceWriter:
             f"drawer_{wing}_{room}_"
             f"{hashlib.sha256((source_file + str(chunk_index)).encode()).hexdigest()[:24]}"
         )
+        # Strip source_file from the metadata update — add_drawer already stores it natively.
+        # Also filter out None values to avoid ChromaDB type errors.
+        update_metadata = {k: v for k, v in metadata.items() if k != "source_file" and v is not None}
         try:
-            collection.update(ids=[drawer_id], metadatas=[metadata])
+            collection.update(ids=[drawer_id], metadatas=[update_metadata])
         except Exception as exc:
             logger.debug("[MemPalaceWriter] metadata update failed for %s: %s", drawer_id, exc)
         return drawer_id

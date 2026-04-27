@@ -455,6 +455,7 @@ class RequirementsMiner:
                     content=scrub_secrets(req.content),
                     phase="RE",
                     provenance_type="requirements_mine",
+                    source_file=req.source,
                 )
                 if drawer_id:
                     result.written += 1

@@ -165,14 +165,12 @@ class TestCLISubprocess:
             f"Expected distance metadata in output.\nSTDOUT: {search.stdout}"
         )
 
-    def test_requirements_clean_dry_run_no_matching_drawers(self, project_dir, isolated_palace):
+    def test_requirements_clean_dry_run_lists_drawers(self, project_dir, isolated_palace):
         """
-        codegen requirements clean --dry-run exits 0.
+        codegen requirements clean --dry-run exits 0 and reports drawers found.
 
-        Note: The clean command matches drawers by source_file prefix against
-        project_dir. Drawers mined via CLI have source_file='codegen/RE' (set
-        by MemPalaceWriter), not the project path, so they are excluded from
-        the project-scoped delete. This is expected behaviour.
+        After the source_file fix, miner drawers have real project-dir paths, so
+        requirements clean should now find and list them in --dry-run mode.
         """
         env = _isolated_env(isolated_palace)
 
@@ -190,9 +188,45 @@ class TestCLISubprocess:
             cwd=project_dir, env=env,
         )
         assert result.returncode == 0, f"Clean dry-run failed: {result.stderr}"
-        # Either no drawers match (clean says "No drawers found") or it lists them
-        assert result.returncode == 0, (
-            f"Expected zero exit from clean --dry-run.\nSTDERR: {result.stderr}"
+        # Drawers now have real source_file paths — clean should find them
+        assert "delete" in result.stdout.lower() or "would remove" in result.stdout.lower() or "found" in result.stdout.lower(), (
+            f"Expected clean --dry-run to find miner drawers.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+
+    def test_requirements_clean_removes_drawers(self, project_dir, isolated_palace):
+        """
+        After mine, requirements clean (no --dry-run) removes miner drawers and
+        a subsequent search returns no results for that wing.
+        """
+        env = _isolated_env(isolated_palace)
+
+        mine = _run_codegen(
+            "requirements", "mine", str(project_dir / "spec.md"),
+            "--wing", "api-project",
+            cwd=project_dir, env=env,
+        )
+        assert mine.returncode == 0, f"Mine failed: {mine.stderr}"
+
+        clean = _run_codegen(
+            "requirements", "clean",
+            "--from-wing", "api-project",
+            "--project-dir", str(project_dir),
+            cwd=project_dir, env=env,
+        )
+        assert clean.returncode == 0, f"Clean failed: {clean.stderr}"
+        assert "Removed" in clean.stdout or "removed" in clean.stdout.lower(), (
+            f"Expected 'Removed' in clean output.\nSTDOUT: {clean.stdout}\nSTDERR: {clean.stderr}"
+        )
+
+        # After clean, search should return no results
+        search = _run_codegen(
+            "requirements", "search", "OAuth2 authentication token",
+            "--wing", "api-project",
+            cwd=project_dir, env=env,
+        )
+        assert search.returncode == 0, f"Search failed: {search.stderr}"
+        assert "FR-AUTH" not in search.stdout, (
+            f"Expected no FR-AUTH after clean.\nSTDOUT: {search.stdout}"
         )
 
     def test_requirements_clean_exits_zero_for_empty_wing(self, project_dir, isolated_palace):

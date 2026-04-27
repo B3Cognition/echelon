@@ -150,37 +150,60 @@ def test_drawer_id_uses_sha256_not_md5(project_alpha, isolated_palace):
 
 
 def test_collision_detection_finds_foreign_drawers(project_alpha, project_beta, isolated_palace):
-    """Pre-populate wing 'shared' with project-B's real file paths, check collision from project-A.
-
-    The RequirementsMiner stores source_file as 'codegen/RE' (a synthetic path) which
-    collision detection intentionally ignores. To test the collision detector we must
-    write a drawer with the real filesystem path directly via the mempalace SDK — this
-    is what happens when files are ingested by other tools (e.g. git-hooks, file watchers)
-    that do pass the real path.
-    """
-    from mempalace.miner import add_drawer, get_collection
+    """Mine project-B's spec under wing 'shared', verify collision detected from project-A."""
+    from codegen.memory.requirements_miner import RequirementsMiner
     from codegen.memory.collision import check_wing_collision
 
-    # Write a drawer under wing "shared" with project-beta's real file path as source
-    collection = get_collection(str(isolated_palace))
-    beta_spec_path = str(project_beta / "spec.md")
-    add_drawer(
-        collection=collection,
-        wing="shared",
-        room="functional-requirements",
-        content="FR-PAY-001: The payment system must support Stripe and PayPal.",
-        source_file=beta_spec_path,
-        chunk_index=0,
-        agent="test",
-    )
+    ctx_polluted = _ctx("shared", str(isolated_palace))
+    # Mine project-B's spec under wing "shared" — source_file will be project-B path
+    RequirementsMiner(ctx_polluted, project_dir=project_beta).mine_file(project_beta / "spec.md")
 
-    # From project-A's perspective, wing "shared" must show a collision
     foreign = check_wing_collision("shared", project_alpha, str(isolated_palace))
 
-    assert len(foreign) > 0, "Expected collision to be detected"
+    assert len(foreign) > 0, "Expected collision detected via miner-written drawers"
     assert all(str(project_beta) in p for p in foreign), (
-        f"Expected foreign paths to be under project-beta, got: {foreign}"
+        f"Expected foreign paths under project-beta, got: {foreign}"
     )
+
+
+def test_requirements_clean_removes_miner_drawers(project_alpha, isolated_palace):
+    """requirements clean correctly removes drawers written by RequirementsMiner (real source_file)."""
+    from codegen.memory.requirements_miner import RequirementsMiner
+    from codegen.memory.collision import check_wing_collision
+
+    ctx = _ctx("alpha", str(isolated_palace))
+    miner = RequirementsMiner(ctx, project_dir=project_alpha)
+    mine_result = miner.mine_file(project_alpha / "spec.md")
+    assert mine_result.written > 0
+
+    # Import collection directly to simulate what requirements clean does
+    from mempalace.miner import get_collection
+    collection = get_collection(str(isolated_palace))
+
+    results = collection.get(
+        where={"wing": {"$eq": "alpha"}},
+        limit=1000,
+        include=["metadatas"],
+    )
+    project_prefix = str(project_alpha)
+    ids_to_delete = [
+        drawer_id for drawer_id, meta in zip(results["ids"], results["metadatas"] or [])
+        if (meta or {}).get("source_file", "").startswith(project_prefix)
+    ]
+
+    assert len(ids_to_delete) > 0, (
+        "Expected miner drawers to have real source_file paths — "
+        "requirements clean would find nothing to delete if source_file is still 'codegen/RE'"
+    )
+    collection.delete(ids=ids_to_delete)
+
+    # Verify they're gone
+    after = collection.get(where={"wing": {"$eq": "alpha"}}, limit=1000, include=["metadatas"])
+    remaining = [
+        m for m in (after.get("metadatas") or [])
+        if (m or {}).get("source_file", "").startswith(project_prefix)
+    ]
+    assert len(remaining) == 0, f"Expected all project drawers deleted, {len(remaining)} remain"
 
 
 def test_provision_wing_full_lifecycle(tmp_path, isolated_palace):
