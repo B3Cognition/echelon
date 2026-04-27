@@ -8,7 +8,6 @@ SOAR_VERSION="9.6.4"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
-CONFIG_FILE="$HOME/.echelon/memory-config.yml"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -120,27 +119,7 @@ mkdir -p "$MEMORY_DIR"
 chmod 700 "$MEMORY_DIR"
 echo "  ✓ $MEMORY_DIR (permissions 700)"
 
-# ── 4. memory-config.yml ─────────────────────────────────────────────────────
-echo "▶ Writing memory-config.yml..."
-if [ -f "$CONFIG_FILE" ]; then
-  echo "  ℹ  $CONFIG_FILE already exists — skipping (delete to regenerate)"
-else
-  cat > "$CONFIG_FILE" <<EOF
-# echelon persistent memory configuration (codegen pipeline)
-
-epmem_db_path: ~/.echelon/memory/epmem.db
-smem_db_path: ~/.echelon/memory/smem.db
-mempalace_palace_path: ~/.mempalace/palace
-embedding_model_name: all-MiniLM-L6-v2
-embedding_model_version: "1.0"
-max_epmem_episodes: 10000
-smem_accumulation_min_psi: 0.70
-epmem_impasse_min_match_score: 0.80
-EOF
-  echo "  ✓ $CONFIG_FILE written"
-fi
-
-# ── 5. Warm up embedding model ───────────────────────────────────────────────
+# ── 4. Warm up embedding model ───────────────────────────────────────────────
 echo "▶ Warming up embedding model (downloads ~80MB on first run)..."
 "$VENV_DIR/bin/python" -c "
 import chromadb, os
@@ -168,7 +147,6 @@ echo "  codegen       → $VENV_DIR/bin/codegen"
 echo "  understanding → $VENV_DIR/bin/understanding"
 echo "  harness       → $VENV_DIR/bin/harness"
 echo "  Memory        → $MEMORY_DIR"
-echo "  Config        → $CONFIG_FILE"
 echo ""
 echo "  Register the spec-kit extension:"
 echo "    specify extension add --dev $ECHELON_DIR/extension"

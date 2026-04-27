@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -24,6 +25,13 @@ try:
     from codegen.security.secret_scrubber import scrub_secrets
 except ImportError:
     from src.codegen.security.secret_scrubber import scrub_secrets  # type: ignore
+
+try:
+    from codegen.memory.collision import check_wing_collision
+    from codegen.memory.context import MemPalaceContext
+except ImportError:
+    from src.codegen.memory.collision import check_wing_collision  # type: ignore
+    from src.codegen.memory.context import MemPalaceContext  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -302,15 +310,18 @@ class RequirementsMiner:
       - Confluence page text (treated as markdown)
 
     Usage:
-        miner = RequirementsMiner(wing="my-project")
+        ctx = MemPalaceContext.from_project(project_dir, run_id="mine-run")
+        miner = RequirementsMiner(ctx, project_dir=project_dir)
         result = miner.mine_file(Path("spec.md"))
-        result = miner.mine_jira_issues(issues_list)
     """
 
-    def __init__(self, wing: str, run_id: str = "manual") -> None:
-        self.wing = wing
-        self.run_id = run_id
+    def __init__(self, ctx: MemPalaceContext, project_dir: Path = Path(".")) -> None:
+        self.ctx = ctx
+        self.wing = ctx.wing
+        self.run_id = ctx.run_id
+        self.project_dir = project_dir
         self._writer: Optional[object] = None  # MemPalaceWriter, lazy-loaded
+        self._collision_checked: bool = False
 
     def _get_writer(self):
         if self._writer is None:
@@ -318,7 +329,7 @@ class RequirementsMiner:
                 from codegen.memory.mempalace_writer import MemPalaceWriter
             except ImportError:
                 from src.codegen.memory.mempalace_writer import MemPalaceWriter  # type: ignore
-            self._writer = MemPalaceWriter(wing=self.wing, run_id=self.run_id)
+            self._writer = MemPalaceWriter(self.ctx)
         return self._writer
 
     def mine_file(self, path: Path) -> MineResult:
@@ -422,6 +433,20 @@ class RequirementsMiner:
         SEC-025 FIX-1: All content fields are scrubbed of credentials before
         any ChromaDB write, on every code path (FR-001, FR-002).
         """
+        if not self._collision_checked:
+            self._collision_checked = True
+            foreign = check_wing_collision(self.ctx.wing, self.project_dir, self.ctx.palace_path)
+            if foreign:
+                print(
+                    f"\n⚠  Wing '{self.ctx.wing}' already has drawers from a different project:",
+                    file=sys.stderr,
+                )
+                for path in foreign[:5]:
+                    print(f"     {path}", file=sys.stderr)
+                print(
+                    "   Mining continues — shared memory is intentional or choose a different wing.\n",
+                    file=sys.stderr,
+                )
         writer = self._get_writer()
         for req in reqs:
             try:
@@ -430,6 +455,7 @@ class RequirementsMiner:
                     content=scrub_secrets(req.content),
                     phase="RE",
                     provenance_type="requirements_mine",
+                    source_file=req.source,
                 )
                 if drawer_id:
                     result.written += 1

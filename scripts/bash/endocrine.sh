@@ -98,10 +98,10 @@ hormone_name_by_index() {
 
 get_enabled() {
   local val
-  val=$(yaml_get "$CONFIG_FILE" "enabled" | head -1)
-  # The endocrine.enabled is nested — find it more precisely
+  # The endocrine.enabled is nested — read from the endocrine: block specifically
   val=$(awk '/^endocrine:/{found=1} found && /^\s+enabled:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
-  echo "${val:-false}"
+  # Default to "true" — opt-out model: endocrine is on unless explicitly disabled
+  echo "${val:-true}"
 }
 
 get_phase() {
@@ -1010,8 +1010,8 @@ USAGE
 cmd="${1:-}"
 shift || true
 
-# Enforce kill switch — if endocrine.enabled is not true, no-op silently and exit.
-# get_enabled() reads the value from config; default is "false" when key is absent.
+# Enforce kill switch — if endocrine.enabled is explicitly false, no-op silently and exit.
+# Default is enabled (opt-out model): endocrine runs unless echelon.yml sets enabled: false.
 if [[ "$(get_enabled)" != "true" ]]; then
   exit 0
 fi

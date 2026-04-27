@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 0.9.2** — 42-agent, 7-layer architecture with echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), install-time dependency validation, internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 1.5.0** — 42-agent, 7-layer architecture with MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
 
 ## Quick Start
 
@@ -477,6 +477,79 @@ On impasse, `codegen-impasse.md` is written with the exact conflict. Resume:
 ```bash
 speckit.echelon.codegen 001-photo-album --resume
 ```
+
+### MemPalace requirements memory
+
+`codegen` uses MemPalace — a ChromaDB-backed semantic memory store — to retrieve project requirements during the RE phase and record pipeline decisions across runs. All projects share one backing database at `~/.mempalace/palace/`, scoped by a per-project **wing** identifier.
+
+#### Wing
+
+The wing is your project's stable identity in MemPalace. It is set once during `echelon init` and written to `echelon.yml`:
+
+```yaml
+mempalace:
+  wing: my-app   # set by echelon init — do not change
+```
+
+`echelon init` auto-suggests a wing name from your git remote URL (e.g. `my-app` from `github.com/org/my-app`), falling back to `{dirname}-{hash6}` if no remote exists. It checks for collision with other projects before writing.
+
+**Wing portability:** all clones of the same repo should use the same wing name so they share mined requirements across machines and teammates. The wing is committed in `echelon.yml` — clones inherit it automatically.
+
+#### Mine requirements into MemPalace
+
+Before running `echelon codegen`, mine your spec files so the RE phase can retrieve them semantically:
+
+```bash
+# Mine a single spec file
+codegen requirements mine specs/spec.md
+
+# Mine all specs in a directory
+codegen requirements mine specs/*.md
+
+# Override wing (useful for testing)
+codegen requirements mine spec.md --wing my-app
+```
+
+Requirements are parsed by ID (`FR-xxx`, `NFR-xxx`, `AC-xxx`, `ADR-xxx`, `US-xxx`) and written as drawers with their actual source file paths — enabling collision detection and targeted cleanup.
+
+#### Search requirements
+
+```bash
+codegen requirements search "OAuth2 authentication" --wing my-app
+codegen requirements search "payment processing" --wing my-app --n 10
+```
+
+#### Clean up old drawers
+
+When switching projects or after re-specifying requirements, remove stale drawers:
+
+```bash
+# Preview what would be deleted
+codegen requirements clean --from-wing my-app --project-dir . --dry-run
+
+# Delete drawers belonging to this project
+codegen requirements clean --from-wing my-app --project-dir .
+```
+
+`clean` filters by `source_file` prefix — only drawers whose spec file path is under `--project-dir` are removed, leaving other projects' drawers in the shared database untouched.
+
+#### Data flow
+
+```text
+echelon.yml (mempalace.wing)
+        │
+        ▼
+codegen run  ──► codegen-state.json (wing field)
+        │                │
+        ▼                ▼
+  RE phase          phase_gate
+  (semantic          (traceability
+   retrieval)         citations,
+                       bug mining,
+                       respecify)
+```
+
+`codegen run` reads `wing` from `echelon.yml`, writes it to `codegen-state.json`, and all subsequent phase gate operations read it back from the state file — no config file needed at gate time.
 
 ## PR Review Loop
 

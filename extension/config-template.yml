@@ -983,7 +983,7 @@ banzai:
 endocrine:
   # @belief(claim: "Endocrine system provides measurable behavior modulation benefit that justifies its complexity overhead", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.50, severity: medium)
   enabled: true  # Enabled by default; set to false to disable all endocrine mutations
-  # @belief(claim: "Phase 1 (adrenaline only) is the right default while the system is being validated — more hormones before validation adds complexity risk", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.55, severity: medium)
+  # @belief(claim: "Phase 3 (all 6 hormones) is the right default — the system has been validated across multiple runs and full endocrine modulation provides measurable behavior differentiation", verified: 2026-04-27, expires: 2026-10-27, confidence: 0.70, severity: low)
   phase: 3  # 1=adrenaline only, 2=four neuromodulators, 3=full 6, 4=adaptive
 
   # Adrenaline triggers (Phase 1)
@@ -1042,6 +1042,16 @@ endocrine:
     oxytocin: 0.9
     # @belief(claim: "Norepinephrine decays at 0.75 — attention/focus signals are second-fastest to decay after adrenaline", verified: 2026-03-28, expires: 2026-06-28, confidence: 0.45, severity: low)
     norepinephrine: 0.75
+
+# =============================================================================
+# MEMPALACE — Per-project memory identity
+# Set by 'echelon init'. Never change once set for a given repo.
+# Two clones of the same repo should share the same wing name so they share
+# memory across test environments.
+# =============================================================================
+
+mempalace:
+  wing: ""   # Set by 'echelon init' — do not edit manually
 
 # =============================================================================
 # =============================================================================

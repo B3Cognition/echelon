@@ -7,9 +7,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+from pathlib import Path
 from typing import Optional
 
 import pytest
+
+# Add src/ to path so codegen module is importable
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
 def _docker_available() -> bool:

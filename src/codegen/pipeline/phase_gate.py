@@ -27,6 +27,7 @@ try:
     from codegen.memory.mempalace_reader import MemPalaceReader
     from codegen.memory.mempalace_writer import MemPalaceWriter
     from codegen.memory.requirements_miner import RequirementsMiner
+    from codegen.memory.context import MemPalaceContext
     from codegen.decompose.cartographer import (
         CartographerDispatcher,
         CONFIDENCE_THRESHOLD_AUTO,
@@ -39,6 +40,7 @@ except ImportError:
     from src.codegen.memory.mempalace_reader import MemPalaceReader  # type: ignore[no-redef]
     from src.codegen.memory.mempalace_writer import MemPalaceWriter  # type: ignore[no-redef]
     from src.codegen.memory.requirements_miner import RequirementsMiner  # type: ignore[no-redef]
+    from src.codegen.memory.context import MemPalaceContext  # type: ignore[no-redef]
     from src.codegen.decompose.cartographer import (  # type: ignore[no-redef]
         CartographerDispatcher,
         CONFIDENCE_THRESHOLD_AUTO,
@@ -367,8 +369,17 @@ class PhaseGateRunner:
         citations: list[RequirementCitation] = []
         seen_drawer_ids: set[str] = set()
 
-        wing = getattr(self._memory_config, "wing", None) or "codegen"
-        reader = MemPalaceReader(wing=wing)
+        # Read wing from state file (same pattern as _mine_bug_on_retry)
+        _state: dict = {}
+        if self.state_file.exists():
+            try:
+                _state = json.loads(self.state_file.read_text())
+            except Exception:
+                pass
+        wing = _state.get("wing") or "codegen"
+        pipeline_id = _state.get("pipeline_id", "gate")
+        ctx = MemPalaceContext.from_wing(wing=wing, run_id=pipeline_id)
+        reader = MemPalaceReader(ctx)
 
         for v in violations[:5]:  # Cap at 5 to avoid latency explosion
             query = f"{v.cq_isc_id} {getattr(v, 'rule_text', '')} phase:{phase}"
@@ -472,7 +483,8 @@ class PhaseGateRunner:
                 "pipeline_id": pipeline_id,
             }
 
-            miner = RequirementsMiner(wing=wing)
+            ctx = MemPalaceContext.from_wing(wing=wing, run_id=pipeline_id)
+            miner = RequirementsMiner(ctx, project_dir=Path("."))
             mine_result = miner.mine_bug(bug)
             logger.info(
                 "[PhaseGate] Bug mined: phase=%s retry=%d fr_id=%s drawer_ids=%s",
@@ -566,7 +578,8 @@ class PhaseGateRunner:
         wd = working_dir or Path(".")
         ts = datetime.datetime.utcnow().isoformat() + "Z"
 
-        reader = MemPalaceReader(wing=wing)
+        ctx = MemPalaceContext.from_wing(wing=wing, run_id=pipeline_id)
+        reader = MemPalaceReader(ctx)
 
         # Retrieve original FR
         fr_drawer = reader.lookup_drawer_by_req_id(fr_id, room="functional-requirements")
@@ -630,7 +643,9 @@ class PhaseGateRunner:
         # FR-018: Apply revision — update FR drawer + write revised drawer
         if fr_drawer and new_status:
             try:
-                writer = MemPalaceWriter(wing=wing, run_id=str(_uuid.uuid4()))
+                _run_id = str(_uuid.uuid4())
+                ctx_w = MemPalaceContext.from_wing(wing=wing, run_id=_run_id)
+                writer = MemPalaceWriter(ctx_w)
                 writer.backfill_status([fr_drawer.drawer_id], new_status)
                 if cart_result.revised_fr:
                     writer.write(

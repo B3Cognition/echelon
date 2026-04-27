@@ -48,6 +48,15 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _get_palace_path() -> str:
+    """Resolve MemPalace palace path. Delegates to MemPalaceContext's canonical resolver."""
+    try:
+        from codegen.memory.context import _get_palace_path as _ctx_palace_path
+    except ImportError:
+        from src.codegen.memory.context import _get_palace_path as _ctx_palace_path  # type: ignore
+    return _ctx_palace_path()
+
+
 def main(argv: list[str] | None = None) -> None:
     """
     Main entry point for the codegen CLI.
@@ -247,6 +256,11 @@ def main(argv: list[str] | None = None) -> None:
         default="delivered",
         help="Status to set (default: delivered)",
     )
+
+    req_clean = req_sub.add_parser("clean", help="Remove old drawers from a wing for this project")
+    req_clean.add_argument("--from-wing", metavar="WING", required=True)
+    req_clean.add_argument("--project-dir", metavar="DIR", default=".")
+    req_clean.add_argument("--dry-run", action="store_true")
 
     # memory subcommand group (T-032, T-035)
     mem_cmd = sub.add_parser("memory", help="Memory store management")
@@ -535,16 +549,25 @@ def _run_pipeline(args: argparse.Namespace) -> None:
             f"mode={mode} soar_model={state.soar_model}"
         )
 
-    # RE phase — search MemPalace for relevant requirements (if wing provided)
-    wing = getattr(args, "wing", None)
-    if wing and state.current_phase == "RE" and not args.resume:
-        print(f"[codegen RE] Searching MemPalace for requirements — wing={wing}...")
-        re_context = engine.run_re_phase(intent=args.intent or "", wing=wing)
+    try:
+        from codegen.memory.context import MemPalaceContext
+    except ImportError:
+        from src.codegen.memory.context import MemPalaceContext  # type: ignore
+    ctx = MemPalaceContext.from_project(
+        Path.cwd(),
+        run_id=state.pipeline_id,
+        wing_override=getattr(args, "wing", None) or None,
+    )
+    engine.set_context(ctx)
+
+    if state.current_phase == "RE" and not args.resume:
+        print(f"[codegen RE] Searching MemPalace for requirements — wing={ctx.wing}...")
+        re_context = engine.run_re_phase(intent=args.intent or "", ctx=ctx)
         if re_context:
             print(re_context)
         else:
-            print(f"[codegen RE] No requirements found in MemPalace for wing={wing}.")
-            print(f"[codegen RE] Run: codegen requirements mine <spec> --wing {wing}")
+            print(f"[codegen RE] No requirements found in MemPalace for wing={ctx.wing}.")
+            print(f"[codegen RE] Run: codegen requirements mine <spec> --wing {ctx.wing}")
 
     print(f"[codegen run] Current phase: {state.current_phase}")
     print(f"[codegen run] Phases completed: {state.phases_completed}")
@@ -609,10 +632,13 @@ def _run_requirements(args: argparse.Namespace) -> None:
         _run_requirements_search(args)
     elif cmd == "mark-delivered":
         _run_requirements_mark_delivered(args)
+    elif cmd == "clean":
+        _run_requirements_clean(args)
     else:
         print("Usage: codegen requirements mine <source> [--wing WING] [--glob PATTERN]")
         print("       codegen requirements search <query> --wing WING [--room ROOM] [--n N]")
         print("       codegen requirements mark-delivered <REQ_ID> --wing WING [--status STATUS]")
+        print("       codegen requirements clean --from-wing WING [--project-dir DIR] [--dry-run]")
 
 
 def _run_requirements_mine(args: argparse.Namespace) -> None:
@@ -633,11 +659,19 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
         print(f"ERROR: Source not found: {source}", file=sys.stderr)
         sys.exit(1)
 
-    wing = args.wing or (source.stem if source.is_file() else source.name)
-    miner = RequirementsMiner(wing=wing)
+    try:
+        from codegen.memory.context import MemPalaceContext
+    except ImportError:
+        from src.codegen.memory.context import MemPalaceContext  # type: ignore
+    ctx = MemPalaceContext.from_project(
+        Path.cwd(),
+        run_id="manual",
+        wing_override=getattr(args, "wing", None) or None,
+    )
+    miner = RequirementsMiner(ctx, project_dir=Path.cwd())
 
     print(f"[codegen] Mining requirements from: {source}")
-    print(f"[codegen] MemPalace wing: {wing}")
+    print(f"[codegen] MemPalace wing: {ctx.wing}")
 
     if source.is_file():
         result = miner.mine_file(source)
@@ -649,7 +683,7 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
     print(" Requirements Mine — Complete")
     print("=" * 52)
     print(f"  Source   : {source}")
-    print(f"  Wing     : {wing}")
+    print(f"  Wing     : {ctx.wing}")
     print(f"  Total    : {result.total} requirements found")
     print(f"  Written  : {result.written} drawers written to MemPalace")
     print(f"  Skipped  : {result.skipped} (MemPalace write returned None)")
@@ -662,7 +696,7 @@ def _run_requirements_mine(args: argparse.Namespace) -> None:
     print("=" * 52)
     print()
     print("  Next step:")
-    print(f"    codegen run --intent \"your intent\" --wing {wing}")
+    print(f"    codegen run --intent \"your intent\" --wing {ctx.wing}")
     print("    # Pipeline will retrieve relevant requirements at RE phase")
 
     sys.exit(0 if result.failed == 0 else 1)
@@ -673,7 +707,12 @@ def _run_requirements_search(args: argparse.Namespace) -> None:
     Search mined requirements in MemPalace.
     FR-RM-005: Search by semantic query filtered by wing/room.
     """
-    reader = MemPalaceReader(wing=args.wing)
+    try:
+        from codegen.memory.context import MemPalaceContext
+    except ImportError:
+        from src.codegen.memory.context import MemPalaceContext  # type: ignore
+    ctx = MemPalaceContext(wing=args.wing, run_id="search", palace_path=_get_palace_path())
+    reader = MemPalaceReader(ctx)
     result = reader.search(query=args.query, room=args.room, n_results=args.n)
 
     if not result.available:
@@ -708,7 +747,13 @@ def _run_requirements_mark_delivered(args: argparse.Namespace) -> None:
     status = getattr(args, "status", "delivered")
     room = "functional-requirements"
 
-    reader = MemPalaceReader(wing=wing)
+    try:
+        from codegen.memory.context import MemPalaceContext
+    except ImportError:
+        from src.codegen.memory.context import MemPalaceContext  # type: ignore
+
+    ctx = MemPalaceContext(wing=wing, run_id="mark-delivered", palace_path=_get_palace_path())
+    reader = MemPalaceReader(ctx)
     drawer = reader.lookup_drawer_by_req_id(req_id, room=room)
 
     if drawer is None:
@@ -718,7 +763,9 @@ def _run_requirements_mark_delivered(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    writer = MemPalaceWriter(wing=wing, run_id=str(_uuid.uuid4()))
+    _run_id = str(_uuid.uuid4())
+    ctx_w = MemPalaceContext(wing=wing, run_id=_run_id, palace_path=_get_palace_path())
+    writer = MemPalaceWriter(ctx_w)
     updated = writer.backfill_status(drawer_ids=[drawer.drawer_id], status=status)
 
     if updated == 0:
@@ -732,6 +779,52 @@ def _run_requirements_mark_delivered(args: argparse.Namespace) -> None:
     print(f"  drawer_id : {drawer.drawer_id}")
     print(f"  wing      : {wing}")
     print(f"  room      : {room}")
+
+
+def _run_requirements_clean(args: argparse.Namespace) -> None:
+    """Remove drawers from a wing that belong to this project."""
+    import sys as _sys
+    project_dir = Path(getattr(args, "project_dir", ".")).resolve()
+    from_wing = args.from_wing
+    dry_run = getattr(args, "dry_run", False)
+    palace_path = _get_palace_path()
+
+    try:
+        from mempalace.miner import get_collection  # type: ignore[import]
+        collection = get_collection(palace_path)
+    except ImportError:
+        print("✗ mempalace not installed", file=_sys.stderr)
+        sys.exit(1)
+
+    try:
+        results = collection.get(
+            where={"wing": {"$eq": from_wing}},
+            limit=10000,
+            include=["metadatas"],
+        )
+    except Exception as exc:
+        print(f"✗ Failed to query MemPalace: {exc}", file=_sys.stderr)
+        sys.exit(1)
+
+    ids_to_delete = []
+    project_prefix = str(project_dir)
+    for drawer_id, meta in zip(results.get("ids", []), results.get("metadatas") or []):
+        source = (meta or {}).get("source_file", "")
+        if source and source.startswith(project_prefix):
+            ids_to_delete.append(drawer_id)
+
+    if not ids_to_delete:
+        print(f"✓ No drawers found for wing='{from_wing}' in {project_dir}")
+        return
+
+    for drawer_id in ids_to_delete:
+        print(f"  {'[dry-run] ' if dry_run else ''}delete {drawer_id}")
+
+    if not dry_run:
+        collection.delete(ids=ids_to_delete)
+        print(f"✓ Removed {len(ids_to_delete)} drawers from wing '{from_wing}'")
+    else:
+        print(f"  (dry-run) would remove {len(ids_to_delete)} drawers")
 
 
 def _run_memory(args: argparse.Namespace) -> None:

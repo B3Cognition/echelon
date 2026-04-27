@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "1.0.0"
+  version: "1.5.0"
   description: "Multi-agent cognitive system: 7-layer, 40-agent architecture with adversarial critic (SAGE), kill gate (GATEKEEPER), role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 31-metric requirements quality analysis (understanding), expert persona prompts, and brownfield support via GOLDDIGGER"
   author: "B3Cognition"
   repository: "https://github.com/B3Cognition/echelon"
@@ -48,7 +48,7 @@ requires:
       hard_stop: true
       note: "Bundled — installed via scripts/install.sh into ~/.echelon/venv/. HARD STOP if unavailable for WHY2/WHY3 — heuristic fallback proven 15-29% overconfident (PAT-006)."
     - name: "codegen"
-      version: ">=0.9.1"
+      version: ">=1.5.0"
       required_for: "echelon.codegen — SOAR build pipeline"
       hard_stop: true
       note: "Bundled — installed via scripts/install.sh into ~/.echelon/venv/."

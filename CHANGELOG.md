@@ -4,6 +4,68 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-04-27
+
+### Added
+
+- **MemPalace requirements memory** — wing-scoped, per-project semantic memory store backed by ChromaDB
+  - `MemPalaceContext` dataclass — single source of truth for `wing`, `run_id`, and `palace_path` across the entire memory subsystem
+  - `codegen requirements mine <spec>` — parse spec files (FR/NFR/AC/ADR/US IDs) and write drawers with real `source_file` paths for traceability
+  - `codegen requirements search <query> --wing <name>` — semantic retrieval from mined requirements
+  - `codegen requirements clean --from-wing <name>` — remove stale drawers by project path prefix; `--dry-run` preview support
+  - `check_wing_collision()` — detects when a wing name is already used by a different project (checked at init time and mine time)
+- **`echelon init` wing provisioning** — new step added to `echelon init` flow
+  - Auto-suggests wing name from `git remote get-url origin` slug (fallback: `{dirname}-{hash6}`)
+  - Interactive confirm with collision check; force-accept by entering same name twice
+  - Idempotent: skips if `mempalace.wing` already set in `echelon.yml`
+  - Wing written to `echelon.yml` and committed with the project — all clones inherit it automatically
+- **Endocrine system fully enabled by default** — opt-out model (was opt-in)
+  - `endocrine.sh get_enabled()` defaults to `"true"` when key absent; explicitly disable with `enabled: false`
+  - `echelon.run.md` endocrine call is now unconditional
+  - `config-template.yml` updated belief: phase 3 (all 6 hormones) is the validated default
+- Integration tests: 7 tests covering MemPalace mine/search round-trip, wing isolation, SHA256 drawer ID format, collision detection, requirements clean
+- E2E tests: 17 tests covering CLI subprocess mine/search/clean and PipelineEngine wing threading with mocked SOAR bridge
+- `docs/superpowers/specs/2026-04-27-mempalace-integration-fix-design.md` — design doc
+- `docs/superpowers/plans/2026-04-27-mempalace-integration-fix.md` — implementation plan
+- `tests/fixtures/mempalace/spec-alpha.md`, `spec-beta.md` — fixture specs for integration/e2e tests
+
+### Fixed
+
+- **SHA256 drawer_id** (Critical) — `MemPalaceWriter._write_drawer()` was using MD5[:16] while `add_drawer` uses SHA256[:24]; drawer IDs never matched, making `backfill_run_outcome()` and `backfill_status()` completely broken
+- **Deterministic chunk_index** (Medium) — replaced `hash(run_id) & 0xFFFF` (non-deterministic across process restarts due to Python hash randomisation) with `int(sha256(run_id).hexdigest(), 16) & 0xFFFF`
+- **Wing collision** (Critical) — `PipelineEngine._get_mempalace_writer()` was deriving wing from `state_file.parent.name` which returns `""` for a relative path, falling back to `"codegen"` — all projects shared the same wing
+- **Dead memory-config.yml** (Low) — `install.sh` was writing `~/.echelon/memory-config.yml` which `MempalaceConfig()` never read (reads `~/.mempalace/config.json`); dead write removed
+- `PhaseGateRunner` wing derivation via dead `_memory_config.wing` replaced with state-file read (`state.get("wing")`)
+- `MemPalaceReader`, `MemPalaceWriter`, `RequirementsMiner`, `PipelineEngine`, `PhaseGateRunner`, `codegen CLI` all use `MemPalaceContext` — no more scattered `wing=` / `run_id=` kwargs
+- `_read_state()` in `PipelineEngine` now deserialises `wing` field from `codegen-state.json` (resume preserves wing)
+- `RequirementsMiner` now passes actual `source_file` path to `MemPalaceWriter.write()` — enables `requirements clean` to correctly identify and delete project-specific drawers
+
+### Changed
+
+- `MemPalaceReader.__init__` — takes `ctx: MemPalaceContext` instead of `wing: str`; uses `ctx.palace_path` directly
+- `MemPalaceWriter.__init__` — takes `ctx: MemPalaceContext` instead of `(wing, run_id)`; methods renamed `_mcp_write` → `_write_drawer`, `_mcp_update_metadata` → `_update_drawer_metadata`
+- `RequirementsMiner.__init__` — takes `(ctx: MemPalaceContext, project_dir: Path)` instead of `(wing, run_id)`
+- `PipelineEngine` — new `set_context(ctx)` method; `wing` field added to `PipelineState`; `run_re_phase` and `search_requirements` take `ctx` instead of `wing`
+- `echelon.codegenlight.md` — `WING=$(basename $(pwd))` replaced with python snippet reading `mempalace.wing` from `echelon.yml`
+- `extension/echelon-config.yml`, `extension/config-template.yml` — `mempalace: { wing: "" }` block added
+- `README.md` — new `### MemPalace requirements memory` subsection under Codegen Pipeline
+- `INSTALLATION.md` — new `Per-project setup: wing provisioning` and `Mine requirements into MemPalace` sections
+
+### Migration
+
+Existing projects with drawers stored under wing `"codegen"` (the broken default):
+
+```bash
+# 1. Set wing in echelon.yml
+echelon init
+
+# 2. Re-mine specs under correct wing
+codegen requirements mine specs/*.md
+
+# 3. Optional: remove old "codegen" wing drawers
+codegen requirements clean --from-wing codegen --project-dir .
+```
+
 ## [1.0.0] - 2026-04-25
 
 ### Added

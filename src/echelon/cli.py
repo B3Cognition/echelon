@@ -15,11 +15,21 @@ Auto-detected from ECHELON_LLM (default: claude).
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+try:
+    from codegen.memory.collision import check_wing_collision
+except ImportError:
+    try:
+        from src.codegen.memory.collision import check_wing_collision  # type: ignore
+    except ImportError:
+        def check_wing_collision(*a, **k):  # type: ignore[assignment]
+            return []
 
 # Maps CLI command → spec-kit skill base name (used to derive file paths)
 SKILL_MAP = {
@@ -53,6 +63,81 @@ Skill file locations (auto-detected from ECHELON_LLM env var):
 
 
 # ── init (pure Python, no LLM) ────────────────────────────────────────────
+
+def _derive_wing_suggestion(project_dir: Path) -> str:
+    """Suggest a wing name: git remote slug if available, else dirname-hash6."""
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            cwd=str(project_dir),
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            url = result.stdout.strip()
+            slug = url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1]
+            if slug:
+                return slug
+    except Exception:
+        pass
+    abs_hash = hashlib.sha256(str(project_dir.resolve()).encode()).hexdigest()[:6]
+    return f"{project_dir.name}-{abs_hash}"
+
+
+def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
+    """
+    Interactively provision wing name into echelon.yml.
+    Idempotent: if wing already set, returns existing value immediately.
+    Returns the confirmed wing name.
+    """
+    try:
+        import yaml as _yaml
+    except ImportError:
+        print("✗ PyYAML not installed. Run: pip install pyyaml", file=sys.stderr)
+        sys.exit(1)
+
+    config = _yaml.safe_load(echelon_yml.read_text()) or {}
+    existing_wing = config.get("mempalace", {}).get("wing", "")
+    if existing_wing:
+        print(f"✓ wing: {existing_wing!r} already configured")
+        return existing_wing
+
+    try:
+        from mempalace.config import MempalaceConfig  # type: ignore[import]
+        palace_path = MempalaceConfig().palace_path
+    except ImportError:
+        palace_path = os.path.expanduser("~/.mempalace/palace")
+
+    suggestion = _derive_wing_suggestion(project_dir)
+    last_entered: str = ""
+
+    while True:
+        raw = input(f"Wing name for MemPalace memory [{suggestion}]: ").strip()
+        chosen = raw or suggestion
+
+        foreign = check_wing_collision(chosen, project_dir, palace_path)
+        if foreign:
+            if chosen == last_entered:
+                print(f"  ⚠  Sharing memory with other project intentionally — wing: {chosen!r}")
+                break
+            print(f"\n  ⚠  Wing {chosen!r} already has drawers from a different project:")
+            for path in foreign[:5]:
+                print(f"       {path}")
+            print("  Enter a different name, or re-enter the same name to share memory intentionally.\n")
+            last_entered = chosen
+            suggestion = chosen
+            continue
+
+        break
+
+    if "mempalace" not in config:
+        config["mempalace"] = {}
+    config["mempalace"]["wing"] = chosen
+    echelon_yml.write_text(_yaml.dump(config, default_flow_style=False, allow_unicode=True))
+    print(f"✓ wing: {chosen!r} written to echelon.yml")
+    return chosen
+
 
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
@@ -113,6 +198,10 @@ def _cmd_init(project_dir: Path) -> None:
             )
             sys.exit(1)
     print(f"✓ deploy config valid (type={deploy_type})")
+
+    # Step 2b: Provision MemPalace wing
+    print("\n▶ Configuring MemPalace wing...")
+    _provision_wing(project_dir, echelon_yml)
 
     # Step 3: Run deploy-init.sh
     init_script = ext_dir / "scripts" / "bash" / "deploy-init.sh"
