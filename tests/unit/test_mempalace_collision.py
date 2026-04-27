@@ -60,3 +60,16 @@ def test_deduplicates_foreign_paths(tmp_path):
     with patch("codegen.memory.collision._get_collection", return_value=col):
         result = check_wing_collision("my-app", tmp_path, "/fake/palace")
     assert result == [foreign]
+
+
+def test_query_uses_correct_shape(tmp_path):
+    """col.get must be called with wing filter, limit=20, metadata-only include."""
+    col = _make_collection([])
+    with patch("codegen.memory.collision._get_collection", return_value=col):
+        check_wing_collision("my-app", tmp_path, "/fake/palace")
+
+    col.get.assert_called_once_with(
+        where={"wing": {"$eq": "my-app"}},
+        limit=20,
+        include=["metadatas"],
+    )

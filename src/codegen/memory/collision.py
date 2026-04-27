@@ -22,8 +22,8 @@ def check_wing_collision(wing: str, project_dir: Path, palace_path: str) -> list
     """
     try:
         collection = _get_collection(palace_path)
-    except (ImportError, Exception) as exc:
-        logger.debug("[collision] MemPalace unavailable, skipping collision check: %s", exc)
+    except ImportError:
+        logger.debug("[collision] mempalace not installed, skipping collision check")
         return []
 
     try:
