@@ -629,7 +629,7 @@ infrastructure required.
 | Node.js (npm/pnpm/yarn/bun) | `npm audit --audit-level=high 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ Security audit failed — see /tmp/audit.txt"; exit 1; }` |
 | Python | `pip install pip-audit --quiet && pip-audit 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ pip-audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
 | Go | `go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null && govulncheck ./... 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ govulncheck found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
-| Rust | `cargo audit 2>&1 \| tee /tmp/audit.txt; grep -q "0 vulnerabilities found" /tmp/audit.txt \|\| { echo "✗ cargo audit failed"; exit 1; }` |
+| Rust | `cargo install cargo-audit --quiet 2>/dev/null && cargo audit 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ cargo audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
 | Ruby | `gem install bundler-audit --quiet 2>/dev/null && bundle-audit check --update 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ bundle-audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
 
 **License check** — verify all dependencies use permissive licenses:
