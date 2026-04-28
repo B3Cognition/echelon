@@ -187,11 +187,11 @@ Read from the **worktree path** (synced in Step 4 — this is the single source 
 
 **`strategy = default`** — follow the `echelon.build` instructions directly (you are the LLM, reasoning on the host). Write all implementation files to the **worktree path** — never to CWD.
 
-**`strategy = codegen`** — invoke `speckit.echelon.codegen {spec_id}-{spec_name}`. The codegen pipeline manages its own quality gates (SOAR CQ-ISC, Ψ ≥ 0.70, Tier 1 tests). Write all implementation files to the **worktree path** — never to CWD. On impasse (`codegen-impasse.md` written), stop and report the impasse to the human instead of entering the feedback loop.
+**`strategy = codegen`** — invoke the `speckit-echelon-codegen` skill with argument `{spec_id}-{spec_name}`. The codegen pipeline manages its own quality gates (SOAR CQ-ISC, Ψ ≥ 0.70, Tier 1 tests). Write all implementation files to the **worktree path** — never to CWD. On impasse (`codegen-impasse.md` written), stop and report the impasse to the human instead of entering the feedback loop.
 
 **ABSOLUTE RULE — codegen skill failures are HARD STOPS. No fallback, no substitution:**
 
-If the `speckit.echelon.codegen` skill invocation fails for any reason — `disable-model-invocation`, skill not found, error returned, timeout — stop immediately and report:
+If the `speckit-echelon-codegen` skill invocation fails for any reason — `disable-model-invocation`, skill not found, error returned, timeout — stop immediately and report:
 
 ```text
 ✗ strategy=codegen failed: {exact error from skill tool}
@@ -378,9 +378,9 @@ If merge fails (branch protection, conflicts), report the error and stop — do 
 
 Runs only when `auto_merge=true` and the merge in Step 9 succeeded.
 
-Invoke `speckit.echelon.deploy` now. This will:
+Invoke the `speckit-echelon-deploy` skill now. This will:
 
-1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `speckit.echelon.cicd` first
+1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `speckit-echelon-cicd` first
 2. Run the blue/green (HTTP) or tag-pointer (CLI) deploy
 
 If `speckit.echelon.deploy` exits with an error, report it clearly but **do not fail the harness run** — the build and merge succeeded. The user can re-run `speckit.echelon.deploy` manually to retry the deploy.

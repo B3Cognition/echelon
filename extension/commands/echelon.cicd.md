@@ -33,7 +33,7 @@ are updated in-place, never duplicated.
 
 ## Step 1: Run the cognitive squad
 
-Invoke `speckit.echelon.run` with the feature description below as `$ARGUMENTS`.
+Invoke the `speckit-echelon-run` skill with the feature description below as `$ARGUMENTS`.
 
 If the user provided input in `$ARGUMENTS` (e.g. "focus on the API app"), append it after the closing `</constraints>` tag as:
 
@@ -197,6 +197,11 @@ Generate exactly these artifacts:
 <constraints>
 - All generated files must be idempotent: re-running echelon.cicd on an evolved
   project updates existing files rather than duplicating content.
+- echelon.yml MUST be updated in-place. If a deploy: block already exists, patch
+  only the fields that need correction (container_port, health_check_path,
+  build_env_file, services). Do NOT change the dockerfile, blue_port, green_port,
+  or the app being deployed — those were set by echelon.init and are authoritative.
+  Do NOT create a new echelon.yml or overwrite the file wholesale.
 - The Dockerfile must build successfully with docker build from the project root.
 - The CI workflow must use the same package manager detected in step 1.
 - Do not generate a docker-compose.yml — echelon-deploy uses plain Docker + Traefik.

@@ -47,9 +47,9 @@ bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
 
 ### Step 1b: Regenerate CI/CD Artifacts
 
-Invoke `speckit.echelon.cicd` now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon.yml deploy block, db-start.sh, and CI workflow for the current project state.
+Invoke the `speckit-echelon-cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon.yml deploy block, db-start.sh, and CI workflow for the current project state.
 
-After `speckit.echelon.cicd` completes successfully, update the fingerprint:
+After `speckit-echelon-cicd` completes successfully, update the fingerprint:
 
 ```bash
 ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
