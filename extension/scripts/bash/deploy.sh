@@ -210,6 +210,21 @@ if [ -n "${_env_path}" ]; then
   done < "${_env_path}"
 fi
 
+# ── Read health_check_path ────────────────────────────────────────────────────
+# Optional path that must return 2xx to confirm the app bundle is healthy.
+# Falls back to any-HTTP-response check when not set.
+# Set in echelon.yml deploy.health_check_path (e.g. /api/health).
+HEALTH_CHECK_PATH=""
+if [ -f "${ECHELON_YML}" ]; then
+  HEALTH_CHECK_PATH=$(python3 -c "
+import yaml, sys
+try:
+    c = yaml.safe_load(open('${ECHELON_YML}'))
+    print(c.get('deploy', {}).get('health_check_path', ''))
+except Exception: pass
+" 2>/dev/null || true)
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
 # CLI PATH
 # ══════════════════════════════════════════════════════════════════════════════
@@ -334,19 +349,36 @@ docker run -d \
   "${APP}:candidate"
 
 # ── Health check (via host-bound port) ───────────────────────────────────────
-# Accepts any HTTP response (even 4xx/5xx) — verifies the server process is
-# responding to TCP connections, not that auth/routes pass.
-echo "deploy: health check on http://localhost:${INACTIVE_PORT}..."
+# Two modes:
+#   health_check_path set → must return 2xx (verifies app logic works)
+#   not set              → accepts any HTTP response (verifies server is up)
+# Set deploy.health_check_path in echelon.yml for stricter checking, e.g.:
+#   health_check_path: /api/health
+if [ -n "${HEALTH_CHECK_PATH}" ]; then
+  echo "deploy: health check on http://localhost:${INACTIVE_PORT}${HEALTH_CHECK_PATH} (strict: 2xx required)..."
+else
+  echo "deploy: health check on http://localhost:${INACTIVE_PORT} (permissive: any HTTP response)..."
+fi
 HEALTHY=0
 for i in 1 2 3 4 5; do
   sleep 2
-  _code=$(curl -so /dev/null -w '%{http_code}' "http://localhost:${INACTIVE_PORT}" 2>/dev/null || true)
-  if [ -n "${_code}" ] && [ "${_code}" != "000" ]; then
-    HEALTHY=1
-    echo "deploy: health check passed (attempt ${i}, HTTP ${_code})"
-    break
+  if [ -n "${HEALTH_CHECK_PATH}" ]; then
+    _code=$(curl -so /dev/null -w '%{http_code}' "http://localhost:${INACTIVE_PORT}${HEALTH_CHECK_PATH}" 2>/dev/null || true)
+    if [[ "${_code}" =~ ^2 ]]; then
+      HEALTHY=1
+      echo "deploy: health check passed (attempt ${i}, HTTP ${_code})"
+      break
+    fi
+    echo "deploy: attempt ${i}/5 — not yet healthy (HTTP ${_code:-000})..."
+  else
+    _code=$(curl -so /dev/null -w '%{http_code}' "http://localhost:${INACTIVE_PORT}" 2>/dev/null || true)
+    if [ -n "${_code}" ] && [ "${_code}" != "000" ]; then
+      HEALTHY=1
+      echo "deploy: health check passed (attempt ${i}, HTTP ${_code})"
+      break
+    fi
+    echo "deploy: attempt ${i}/5 — not yet healthy..."
   fi
-  echo "deploy: attempt ${i}/5 — not yet healthy..."
 done
 
 if [ "${HEALTHY}" = "0" ]; then

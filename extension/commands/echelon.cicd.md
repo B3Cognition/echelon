@@ -137,6 +137,16 @@ before generating a Dockerfile.
     passes the correct build args to docker build. Do not commit secrets — only
     document the path; the file itself is gitignored. If the env file is at the
     project root, omit build_env_file (deploy.sh finds .env.local automatically).
+
+11. Health check path — determine whether the app exposes a dedicated health
+    endpoint (e.g. /api/health, /healthz, /ping) that returns 2xx when the app
+    is fully operational. If one exists or can be added cheaply (a one-line route
+    handler), set `health_check_path: /api/health` in the echelon.yml deploy
+    block. This enables strict 2xx health checks on deploy, catching broken
+    bundles and misconfigured apps (e.g. SSG pages that crash at runtime) before
+    the live slot is swapped. If no health endpoint exists and adding one is out
+    of scope, omit health_check_path — deploy.sh falls back to a permissive
+    "server is up" check.
 </analysis_steps>
 
 <deliverables>
