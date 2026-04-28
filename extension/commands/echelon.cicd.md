@@ -2,7 +2,7 @@
 name: speckit.echelon.cicd
 description: "Design and implement CI/CD for this project — Dockerfile, echelon.yml deploy block, GitHub Actions CI workflow, and db-start.sh if databases are detected."
 behavior:
-  invocation: explicit
+  invocation: automatic
 ---
 
 ## Role
