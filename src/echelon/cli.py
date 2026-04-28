@@ -346,12 +346,26 @@ def _cmd_harness_run(args: list[str]) -> None:
 
     user_message = " ".join([f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"])
 
-    from harness.config import load_config
+    from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
     from harness.skills.run_skill import run
 
-    config = load_config()
+    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon.yml"
+    if not echelon_yml.exists():
+        print(
+            "✗ Harness not initialised for this project.\n"
+            f"  Expected: {echelon_yml}\n"
+            "  Fix: run 'echelon harness init' first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        config = load_config()
+    except HarnessValidationError as e:
+        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        sys.exit(1)
     gitops = GitOpsManager(config)
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
 
