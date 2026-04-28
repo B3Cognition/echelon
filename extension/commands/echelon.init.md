@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.init
-description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik/git hook infrastructure. Run once per project before speckit.echelon.run."
+description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik infrastructure. Run once per project before speckit.echelon.run."
 behavior:
   invocation: explicit
 ---
@@ -24,9 +24,9 @@ One-time setup for a project. Must be run before `speckit.echelon.run` on any ne
 What it does:
 1. Bootstrap `echelon.yml` from template if absent
 2. Validate the deploy config block
-3. Run `deploy-init.sh` — installs Docker/Traefik (http type) or CLI wrapper, writes `deploy-state.json`, installs the git post-merge hook
+3. Run `deploy-init.sh` — installs Docker/Traefik (http type) or CLI wrapper, writes `deploy-state.json`
 
-Idempotent: safe to re-run. If deploy infrastructure already exists and is valid, it exits immediately. If the post-merge hook is missing but state is valid, it reinstalls the hook.
+Idempotent: safe to re-run. If deploy infrastructure already exists and is valid, it exits immediately.
 
 ---
 
@@ -145,7 +145,6 @@ Print a summary:
 
   echelon.yml      → {PROJECT_ROOT}/echelon.yml
   deploy-state     → {PROJECT_ROOT}/.specify/squad/deploy-state.json
-  post-merge hook  → {PROJECT_ROOT}/.git/hooks/post-merge
 
 Next step:
   speckit.echelon.run — start the cognitive squad run
