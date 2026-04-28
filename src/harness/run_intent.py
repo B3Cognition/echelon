@@ -126,7 +126,7 @@ _KILL_LOSERS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _STRATEGIES_PATTERN = re.compile(
-    r"(?:strateg(?:y|ies)\s*[=:]\s*)([\w,\s-]+)",
+    r"(?:strateg(?:y|ies)\s*[=:]\s*)([\w-]+(?:\s*,\s*[\w-]+)*)",
     re.IGNORECASE,
 )
 _TASK_PATTERN = re.compile(

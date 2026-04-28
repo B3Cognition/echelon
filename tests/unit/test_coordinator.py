@@ -258,3 +258,63 @@ def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
 
     mock_visual.assert_not_called()
     assert results[0].status == "failed"
+
+
+@pytest.mark.unit
+class TestTaskDescriptionInBuildPrompt:
+    """task_description from RunIntent must reach the build_prompt passed to RalphController."""
+
+    def test_task_description_included_in_build_prompt(self, tmp_path: Path) -> None:
+        """task_description is appended to build_prompt so the LLM receives the full task."""
+        captured: dict = {}
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            def capture_run_loop(**kwargs):
+                captured["build_prompt"] = kwargs.get("build_prompt", "")
+                return mock_controller.run_loop.return_value
+
+            mock_controller.run_loop.side_effect = capture_run_loop
+
+            coord = _make_coordinator(tmp_path, should_pass=True)
+            intent = RunIntent(
+                spec_id="spec-001",
+                max_outer=1,
+                max_inner=1,
+                task_description="fix the bug in bugfix-1.md",
+            )
+            coord.start(intent)
+
+        assert "fix the bug in bugfix-1.md" in captured["build_prompt"]
+
+    def test_no_task_description_omitted(self, tmp_path: Path) -> None:
+        """Empty task_description does not add a trailing newline to build_prompt."""
+        captured: dict = {}
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            def capture_run_loop(**kwargs):
+                captured["build_prompt"] = kwargs.get("build_prompt", "")
+                return mock_controller.run_loop.return_value
+
+            mock_controller.run_loop.side_effect = capture_run_loop
+
+            coord = _make_coordinator(tmp_path, should_pass=True)
+            intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1)
+            coord.start(intent)
+
+        assert captured["build_prompt"] == "spec spec-001 strategy=default semi mode"
