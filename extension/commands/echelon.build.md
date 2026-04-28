@@ -1,8 +1,6 @@
 ---
 name: speckit.echelon.build
 description: "Execute building phase — implement tasks with role-based agents and quality gates. Run after speckit.echelon.run completes Phase A."
-context: fork
-disable-model-invocation: true
 argument-hint: "...you will be assimilated"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh

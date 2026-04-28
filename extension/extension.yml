@@ -137,6 +137,7 @@ provides:
         capability: strong
         effort: high
         tools: full
+        color: red
     - name: "speckit.echelon.deploy"
       file: "commands/echelon.deploy.md"
       description: "Manual deploy trigger, status, and rollback for blue/green local CD"
@@ -144,16 +145,17 @@ provides:
         execution: skill
         capability: balanced
         tools: write
-        color: blue
+        color: red
     - name: "speckit.echelon.cicd"
       file: "commands/echelon.cicd.md"
       description: "Design and implement CI/CD for this project — Dockerfile, echelon.yml deploy block, GitHub Actions CI, and database services if detected. Re-runnable."
       behavior:
-        execution: isolated
-        invocation: explicit
+        execution: skill
+        invocation: automatic
         capability: strong
         effort: high
         tools: full
+        color: red
 
     # ── Agent Definitions ──────────────────────────────────────────
     # Control layer
