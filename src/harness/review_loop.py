@@ -693,15 +693,13 @@ class ReviewLoopController:
         if self._config.llm.config_dir:
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config.llm.config_dir)
 
-        # Construct a full prompt like BuildPromptBuilder does — sending a bare
-        # slash command via -p returns empty output because claude -p treats the
-        # text literally rather than invoking the skill tool.
+        from harness.skill_loader import resolve_llm_prompt
         args = f"{self._spec_id} pr_url={pr_url}"
-        prompt = (
-            "You are invoked by an external orchestrator to triage PR review comments.\n"
-            "Execute the review skill immediately. Do not ask clarifying questions.\n\n"
-            f"## Action\n"
-            f"Run /speckit-echelon-review with arguments: {args}"
+        prompt = resolve_llm_prompt(
+            build_command="echelon review",
+            arguments=args,
+            project_dir=self._base_dir,
+            cli=self._llm_cli,
         )
         logger.info("Invoking echelon.review: spec=%s pr=%s", self._spec_id, pr_url)
 
@@ -716,8 +714,6 @@ class ReviewLoopController:
                 cmd,
                 cwd=str(self._base_dir),
                 env=env,
-                capture_output=True,
-                text=True,
                 timeout=self._review_timeout_s,
             )
         except subprocess.TimeoutExpired:
@@ -725,10 +721,7 @@ class ReviewLoopController:
             return 0
 
         if result.returncode != 0:
-            logger.warning(
-                "echelon.review exited %d — stderr: %s",
-                result.returncode, result.stderr[:500],
-            )
+            logger.warning("echelon.review exited %d", result.returncode)
 
         # Read status file if present
         if status_file.exists():
@@ -743,7 +736,7 @@ class ReviewLoopController:
             except Exception as e:
                 logger.warning("Could not read review status file: %s", e)
 
-        return max(len(result.stdout) // 4, 0)
+        return 0  # stdout not captured; token tracking via status file only
 
     # === Private: state persistence ===
 
