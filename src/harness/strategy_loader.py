@@ -39,6 +39,14 @@ class StrategySpec:
     context: str = ""
 
 
+# Built-in strategies that don't require a file on disk.
+# A per-spec file always wins if present (allows context/override).
+BUILTIN_STRATEGIES: Dict[str, StrategySpec] = {
+    "default": StrategySpec(build_command="echelon build"),
+    "codegen": StrategySpec(build_command="echelon codegen"),
+}
+
+
 def load_strategies(
     spec_id: str,
     strategy_ids: List[str],
@@ -71,14 +79,19 @@ def load_strategies(
                 "Loaded strategy '%s' from %s (command: %s)",
                 sid, filepath, spec.build_command,
             )
-        elif sid == "default":
-            result[sid] = StrategySpec()
-            logger.info("Using default strategy (echelon build, no context file)")
+        elif sid in BUILTIN_STRATEGIES:
+            result[sid] = BUILTIN_STRATEGIES[sid]
+            logger.info(
+                "Using built-in strategy '%s' (command: %s, no context file)",
+                sid, BUILTIN_STRATEGIES[sid].build_command,
+            )
         else:
             available = _list_available(strategies_dir)
+            builtin_names = sorted(BUILTIN_STRATEGIES)
             raise StrategyNotFoundError(
                 f"Strategy file not found: {filepath}. "
-                f"Available strategies: {available or 'none'}"
+                f"Available on disk: {available or 'none'}. "
+                f"Built-in strategies (no file needed): {builtin_names}"
             )
 
     return result
