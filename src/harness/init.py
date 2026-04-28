@@ -78,11 +78,26 @@ def _check_os() -> str:
 
 
 def _detect_pr_host() -> str:
-    """Detect PR hosting platform from available CLI tools."""
+    """Detect PR hosting platform from git remotes + installed CLI tools.
+
+    Checks actual remote URLs first so repos without a remote don't get
+    mis-assigned a PR host just because gh/glab happen to be installed.
+    """
     import shutil
-    if shutil.which("gh"):
+    import subprocess as _sp
+
+    try:
+        result = _sp.run(
+            ["git", "remote", "-v"],
+            capture_output=True, text=True, timeout=10,
+        )
+        remotes = result.stdout.lower()
+    except Exception:
+        remotes = ""
+
+    if "github.com" in remotes and shutil.which("gh"):
         return "github"
-    if shutil.which("glab"):
+    if "gitlab.com" in remotes and shutil.which("glab"):
         return "gitlab"
     return "none"
 
