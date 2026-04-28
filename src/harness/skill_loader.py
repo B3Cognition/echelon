@@ -1,4 +1,4 @@
-"""Shared skill-file loading utilities used by both echelon CLI and harness coordinator."""
+"""Shared skill-file loading and streaming output utilities."""
 
 from __future__ import annotations
 
@@ -110,3 +110,42 @@ def resolve_llm_prompt(
 
     # Fallback: no skill file found — return bare COMMANDER prompt
     return COMMANDER_PREAMBLE + arguments
+
+
+def print_stream_event(event: dict) -> None:
+    """Print a human-readable line for each meaningful claude stream-json event.
+
+    Shared between echelon CLI and harness LLM provider so both show the same
+    live ▷ ToolName: hint format during non-interactive invocations.
+    """
+    etype = event.get("type")
+
+    if etype == "assistant":
+        for block in event.get("message", {}).get("content", []):
+            btype = block.get("type")
+            if btype == "text":
+                text = block.get("text", "").strip()
+                if text:
+                    print(text, flush=True)
+            elif btype == "tool_use":
+                name = block.get("name", "")
+                inp = block.get("input", {})
+                hint = (
+                    inp.get("description")
+                    or inp.get("command", "")[:80]
+                    or inp.get("prompt", "")[:80]
+                    or inp.get("file_path", "")
+                    or inp.get("path", "")
+                    or inp.get("subagent_type", "")
+                    or ""
+                )
+                print(f"  ▷ {name}: {hint}" if hint else f"  ▷ {name}", flush=True)
+
+    elif etype == "result":
+        cost = event.get("total_cost_usd", 0)
+        ms = event.get("duration_ms", 0)
+        turns = event.get("num_turns", 0)
+        if event.get("is_error"):
+            print(f"\n✗ failed after {turns} turns · {ms/1000:.0f}s: {event.get('result', '')}", flush=True)
+        else:
+            print(f"\n── done  {turns} turns · {ms/1000:.0f}s · ${cost:.4f} ──", flush=True)

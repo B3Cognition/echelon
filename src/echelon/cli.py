@@ -380,7 +380,11 @@ def _cmd_harness_run(args: list[str]) -> None:
 
 # ── Skill resolution ──────────────────────────────────────────────────────
 
-from harness.skill_loader import find_skill as _find_skill_impl, build_skill_prompt as _build_skill_prompt_impl
+from harness.skill_loader import (
+    find_skill as _find_skill_impl,
+    build_skill_prompt as _build_skill_prompt_impl,
+    print_stream_event as _print_stream_event,
+)
 
 
 def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
@@ -392,39 +396,7 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
 
 
 def _print_event(event: dict) -> None:
-    """Print a human-readable line for each meaningful stream-json event."""
-    import json as _json
-    etype = event.get("type")
-
-    if etype == "assistant":
-        for block in event.get("message", {}).get("content", []):
-            btype = block.get("type")
-            if btype == "text":
-                text = block.get("text", "").strip()
-                if text:
-                    print(text, flush=True)
-            elif btype == "tool_use":
-                name = block.get("name", "")
-                inp = block.get("input", {})
-                hint = (
-                    inp.get("description")
-                    or inp.get("command", "")[:80]
-                    or inp.get("prompt", "")[:80]
-                    or inp.get("file_path", "")
-                    or inp.get("path", "")
-                    or inp.get("subagent_type", "")
-                    or ""
-                )
-                print(f"  ▷ {name}: {hint}" if hint else f"  ▷ {name}", flush=True)
-
-    elif etype == "result":
-        cost = event.get("total_cost_usd", 0)
-        ms = event.get("duration_ms", 0)
-        turns = event.get("num_turns", 0)
-        if event.get("is_error"):
-            print(f"\n✗ failed after {turns} turns · {ms/1000:.0f}s: {event.get('result', '')}", flush=True)
-        else:
-            print(f"\n── done  {turns} turns · {ms/1000:.0f}s · ${cost:.4f} ──", flush=True)
+    _print_stream_event(event)
 
 
 def _run_claude_streaming(bin_: str, prompt: str, project_dir: Path, extra_args: list[str] | None = None) -> None:

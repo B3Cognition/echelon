@@ -9,21 +9,21 @@ from harness.config import HarnessConfig, LlmConfig
 from harness.build_result import BuildResult
 
 
-def _config(config_dir=None, timeout_ms=1_200_000):
+def _config(config_dir=None, timeout_ms=1_200_000, cli="claude"):
     return HarnessConfig(
         target_repo=".",
         target_default_branch="main",
         provider="docker",
-        llm=LlmConfig(config_dir=config_dir, timeout_ms=timeout_ms),
+        llm=LlmConfig(config_dir=config_dir, timeout_ms=timeout_ms, cli=cli),
     )
 
 
-def _completed_process(returncode=0, stdout="done", stderr=""):
-    m = MagicMock()
-    m.returncode = returncode
-    m.stdout = stdout
-    m.stderr = stderr
-    return m
+def _mock_streaming(returncode=0):
+    """Patch _run_streaming to return immediately with given exit code."""
+    return patch(
+        "harness.llm_provider.ClaudeCliProvider._run_streaming",
+        return_value=returncode,
+    )
 
 
 @pytest.mark.unit
@@ -33,29 +33,42 @@ class TestClaudeCliProvider:
         status_file = tmp_path / "status.json"
         status_file.write_text('{"status": "done"}')
 
-        with patch("harness.llm_provider.subprocess.run",
-                   return_value=_completed_process()) as mock_run, \
+        with _mock_streaming() as mock_stream, \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file), \
              patch("harness.llm_provider.shutil.which", return_value="claude"):
             provider = ClaudeCliProvider(_config())
             result = provider.exec_build("/wt/001", "build this")
 
-        args = mock_run.call_args
-        assert args[0][0][0] == "claude"
-        assert args[0][0][1] == "-p"
+        cmd_passed = mock_stream.call_args[0][0]
+        assert cmd_passed[0] == "claude"
+        assert "-p" in cmd_passed
         assert result.succeeded is True
+
+    def test_exec_build_uses_stream_json_for_claude(self, tmp_path):
+        status_file = tmp_path / "status.json"
+        status_file.write_text('{"status": "done"}')
+
+        with _mock_streaming() as mock_stream, \
+             patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
+                   return_value=status_file):
+            ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
+
+        cmd_passed = mock_stream.call_args[0][0]
+        assert "--output-format" in cmd_passed
+        assert "stream-json" in cmd_passed
 
     def test_exec_build_sets_status_file_env(self, tmp_path):
         status_file = tmp_path / "status.json"
         status_file.write_text('{"status": "done"}')
         captured_env = {}
 
-        def fake_run(cmd, **kwargs):
-            captured_env.update(kwargs.get("env", {}))
-            return _completed_process()
+        def fake_streaming(cmd, cwd, env, start):
+            captured_env.update(env)
+            return 0
 
-        with patch("harness.llm_provider.subprocess.run", side_effect=fake_run), \
+        with patch("harness.llm_provider.ClaudeCliProvider._run_streaming",
+                   side_effect=fake_streaming), \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file):
             ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
@@ -67,11 +80,12 @@ class TestClaudeCliProvider:
         status_file.write_text('{"status": "done"}')
         captured_env = {}
 
-        def fake_run(cmd, **kwargs):
-            captured_env.update(kwargs.get("env", {}))
-            return _completed_process()
+        def fake_streaming(cmd, cwd, env, start):
+            captured_env.update(env)
+            return 0
 
-        with patch("harness.llm_provider.subprocess.run", side_effect=fake_run), \
+        with patch("harness.llm_provider.ClaudeCliProvider._run_streaming",
+                   side_effect=fake_streaming), \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file):
             ClaudeCliProvider(_config(config_dir="/home/user/.config/claude-work"))\
@@ -84,11 +98,12 @@ class TestClaudeCliProvider:
         status_file.write_text('{"status": "done"}')
         captured_env = {}
 
-        def fake_run(cmd, **kwargs):
-            captured_env.update(kwargs.get("env", {}))
-            return _completed_process()
+        def fake_streaming(cmd, cwd, env, start):
+            captured_env.update(env)
+            return 0
 
-        with patch("harness.llm_provider.subprocess.run", side_effect=fake_run), \
+        with patch("harness.llm_provider.ClaudeCliProvider._run_streaming",
+                   side_effect=fake_streaming), \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file):
             ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
@@ -99,8 +114,7 @@ class TestClaudeCliProvider:
         status_file = tmp_path / "status.json"
         status_file.write_text('{"status": "impasse", "impasse_file": "codegen-impasse.md"}')
 
-        with patch("harness.llm_provider.subprocess.run",
-                   return_value=_completed_process()), \
+        with _mock_streaming(), \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file):
             result = ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
@@ -111,8 +125,7 @@ class TestClaudeCliProvider:
     def test_exec_build_returns_unknown_when_status_file_missing(self, tmp_path):
         missing = tmp_path / "missing.json"
 
-        with patch("harness.llm_provider.subprocess.run",
-                   return_value=_completed_process()), \
+        with _mock_streaming(), \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=missing):
             result = ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
@@ -124,11 +137,12 @@ class TestClaudeCliProvider:
         status_file.write_text('{"status": "done"}')
         captured_cwd = []
 
-        def fake_run(cmd, **kwargs):
-            captured_cwd.append(kwargs.get("cwd"))
-            return _completed_process()
+        def fake_streaming(cmd, cwd, env, start):
+            captured_cwd.append(cwd)
+            return 0
 
-        with patch("harness.llm_provider.subprocess.run", side_effect=fake_run), \
+        with patch("harness.llm_provider.ClaudeCliProvider._run_streaming",
+                   side_effect=fake_streaming), \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file):
             ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
@@ -139,22 +153,41 @@ class TestClaudeCliProvider:
         status_file = tmp_path / "status.json"
         status_file.write_text('{"status": "done"}')
 
-        with patch("harness.llm_provider.subprocess.run",
-                   return_value=_completed_process()) as mock_run, \
+        with _mock_streaming() as mock_stream, \
              patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
                    return_value=status_file), \
              patch("harness.llm_provider.shutil.which", return_value="claude"):
             result = ClaudeCliProvider(_config()).exec_feedback("/wt/001", "fix this")
 
-        args = mock_run.call_args
-        assert args[0][0][0] == "claude"
-        assert args[0][0][1] == "-p"
+        cmd_passed = mock_stream.call_args[0][0]
+        assert cmd_passed[0] == "claude"
+        assert "-p" in cmd_passed
         assert result.succeeded is True
 
-    def test_exec_build_returns_timeout_result_on_timeout(self):
-        import subprocess as sp
-        with patch("harness.llm_provider.subprocess.run",
-                   side_effect=sp.TimeoutExpired(cmd=["claude"], timeout=1.0)):
+    def test_exec_build_returns_timeout_result_on_timeout(self, tmp_path):
+        status_file = tmp_path / "status.json"
+        status_file.write_text('{"status": "done"}')
+
+        with patch("harness.llm_provider.ClaudeCliProvider._run_streaming",
+                   return_value=None), \
+             patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
+                   return_value=status_file):
             result = ClaudeCliProvider(_config()).exec_build("/wt/001", "build this")
+
         assert result.status == "timeout"
         assert result.exit_code == -1
+
+    def test_non_claude_cli_uses_plain_run(self, tmp_path):
+        """copilot/opencode use _run_plain, not _run_streaming."""
+        status_file = tmp_path / "status.json"
+        status_file.write_text('{"status": "done"}')
+
+        with patch("harness.llm_provider.ClaudeCliProvider._run_plain",
+                   return_value=0) as mock_plain, \
+             patch("harness.llm_provider.ClaudeCliProvider._run_streaming") as mock_stream, \
+             patch("harness.llm_provider.ClaudeCliProvider._status_file_path",
+                   return_value=status_file):
+            ClaudeCliProvider(_config(cli="copilot")).exec_build("/wt/001", "build this")
+
+        mock_stream.assert_not_called()
+        mock_plain.assert_called_once()
