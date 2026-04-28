@@ -36,18 +36,21 @@ try:
     print(d.get('dockerfile', 'Dockerfile'))
     print(d.get('health_check', ''))
     print(d.get('install_path', ''))
+    print(d.get('container_port', 80))
 except Exception as e:
     sys.exit(f'Cannot read deploy state: {e}')
 PYEOF
 )
-DEPLOY_TYPE=$(echo "${_state}"   | sed -n '1p')
-APP=$(echo "${_state}"           | sed -n '2p')
-ACTIVE=$(echo "${_state}"        | sed -n '3p')
-BLUE_PORT=$(echo "${_state}"     | sed -n '4p')
-GREEN_PORT=$(echo "${_state}"    | sed -n '5p')
-DOCKERFILE=$(echo "${_state}"    | sed -n '6p')
-HEALTH_CHECK=$(echo "${_state}"  | sed -n '7p')
-INSTALL_PATH=$(echo "${_state}"  | sed -n '8p')
+DEPLOY_TYPE=$(echo "${_state}"      | sed -n '1p')
+APP=$(echo "${_state}"              | sed -n '2p')
+ACTIVE=$(echo "${_state}"           | sed -n '3p')
+BLUE_PORT=$(echo "${_state}"        | sed -n '4p')
+GREEN_PORT=$(echo "${_state}"       | sed -n '5p')
+DOCKERFILE=$(echo "${_state}"       | sed -n '6p')
+HEALTH_CHECK=$(echo "${_state}"     | sed -n '7p')
+INSTALL_PATH=$(echo "${_state}"     | sed -n '8p')
+CONTAINER_PORT=$(echo "${_state}"   | sed -n '9p')
+CONTAINER_PORT="${CONTAINER_PORT:-80}"
 
 INACTIVE=$([ "${ACTIVE}" = "blue" ] && echo "green" || echo "blue")
 
@@ -256,8 +259,8 @@ docker run -d \
   --label "traefik.http.routers.${APP}.entrypoints=web" \
   --label "traefik.http.routers.${APP}.middlewares=${APP}-strip" \
   --label "traefik.http.middlewares.${APP}-strip.stripprefix.prefixes=/${APP}" \
-  --label "traefik.http.services.${APP}.loadbalancer.server.port=80" \
-  -p "${INACTIVE_PORT}:80" \
+  --label "traefik.http.services.${APP}.loadbalancer.server.port=${CONTAINER_PORT}" \
+  -p "${INACTIVE_PORT}:${CONTAINER_PORT}" \
   "${APP}:candidate"
 
 # ── Health check (via host-bound port) ───────────────────────────────────────

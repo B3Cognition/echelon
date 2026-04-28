@@ -68,18 +68,21 @@ try:
         print('')
         print(d.get('health_check', ''))
         print(d.get('install_path', ''))
+    print(d.get('container_port', 80))
 except KeyError as e:
     sys.exit(f'Cannot read deploy config key {e} from echelon.yml')
 except Exception as e:
     sys.exit(f'Cannot read deploy config: {e}')
 PYEOF
 )
-DEPLOY_TYPE=$(echo "${_config}"  | sed -n '1p')
-DOCKERFILE=$(echo "${_config}"   | sed -n '2p')
-BLUE_PORT=$(echo "${_config}"    | sed -n '3p')
-GREEN_PORT=$(echo "${_config}"   | sed -n '4p')
-HEALTH_CHECK=$(echo "${_config}" | sed -n '5p')
-INSTALL_PATH=$(echo "${_config}" | sed -n '6p')
+DEPLOY_TYPE=$(echo "${_config}"     | sed -n '1p')
+DOCKERFILE=$(echo "${_config}"      | sed -n '2p')
+BLUE_PORT=$(echo "${_config}"       | sed -n '3p')
+GREEN_PORT=$(echo "${_config}"      | sed -n '4p')
+HEALTH_CHECK=$(echo "${_config}"    | sed -n '5p')
+INSTALL_PATH=$(echo "${_config}"    | sed -n '6p')
+CONTAINER_PORT=$(echo "${_config}"  | sed -n '7p')
+CONTAINER_PORT="${CONTAINER_PORT:-80}"
 
 APP_NAME=$(basename "${PROJECT_ROOT}" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_-')
 
@@ -94,7 +97,7 @@ if [ "${DEPLOY_TYPE}" = "cli" ]; then
 
   # ── Global state ──────────────────────────────────────────────────────────
   APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
-  HEALTH_CHECK="${HEALTH_CHECK}" INSTALL_PATH="${INSTALL_PATH}" python3 - <<'PYEOF'
+  HEALTH_CHECK="${HEALTH_CHECK}" INSTALL_PATH="${INSTALL_PATH}" CONTAINER_PORT="${CONTAINER_PORT}" python3 - <<'PYEOF'
 import json, os
 
 state = {
@@ -107,6 +110,7 @@ state = {
     "dockerfile": os.environ['DOCKERFILE'],
     "health_check": os.environ['HEALTH_CHECK'],
     "install_path": os.environ['INSTALL_PATH'],
+    "container_port": int(os.environ.get('CONTAINER_PORT') or 80),
     "last_deploy": None,
     "blue_image": None,
     "green_image": None
@@ -234,7 +238,7 @@ fi
 
 # ── Global state registration ────────────────────────────────────────────────
 APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
-BLUE_PORT="${BLUE_PORT}" GREEN_PORT="${GREEN_PORT}" python3 - <<'PYEOF'
+BLUE_PORT="${BLUE_PORT}" GREEN_PORT="${GREEN_PORT}" CONTAINER_PORT="${CONTAINER_PORT}" python3 - <<'PYEOF'
 import json, os
 
 state = {
@@ -247,6 +251,7 @@ state = {
     "dockerfile": os.environ['DOCKERFILE'],
     "health_check": "",
     "install_path": "",
+    "container_port": int(os.environ.get('CONTAINER_PORT') or 80),
     "last_deploy": None,
     "blue_image": None,
     "green_image": None

@@ -118,6 +118,17 @@ before generating a Dockerfile.
 
    Fall back to `git symbolic-ref --short HEAD` if the remote check fails.
    Use the detected branch name in the CI workflow triggers. Do not hardcode `main`.
+
+9. Container listen port — detect the port the application actually listens on
+   inside the container. Read the Dockerfile EXPOSE directive first; if absent or
+   unclear, read framework config files (e.g. next.config.js, .env, server.js,
+   main.py, config.ru). Examples: Next.js custom port in next.config.js or
+   `server.listen(PORT)` → use that value; Express with `app.listen(3000)` → 3000;
+   nginx static site → 80; FastAPI/uvicorn → 8000; Rails → 3000; Go net/http → 8080.
+   Set `container_port: <detected>` in the echelon.yml deploy block.
+   Default to 80 only for static sites served by nginx/caddy.
+   This value is used by deploy.sh to wire Traefik's load balancer and the
+   health-check port binding — a wrong value causes deploy failures.
 </analysis_steps>
 
 <deliverables>
@@ -129,8 +140,10 @@ Generate exactly these artifacts:
 
 2. echelon.yml deploy block — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
-   (HTTP) or health_check / install_path (CLI). If databases were detected, add
-   a services: block. Do not touch other sections. If `echelon.yml` does not exist, create it with a minimal skeleton containing only the `deploy:` block with detected values.
+   (HTTP) or health_check / install_path (CLI), and container_port (detected in
+   step 9). If databases were detected, add a services: block. Do not touch other
+   sections. If `echelon.yml` does not exist, create it with a minimal skeleton
+   containing only the `deploy:` block with detected values.
 
 3. `$(git rev-parse --show-toplevel)/scripts/bash/db-start.sh` — only if
    database services were detected. This is a project-owned script; write it
