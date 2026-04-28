@@ -12,7 +12,8 @@ Thumbs.db
 .vscode/
 .idea/
 /specs/
-.github/
+.github/*
+!.github/workflows/
 .specify/squad/
 config-belief-graph.json
 .specify/
