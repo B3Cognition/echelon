@@ -14,7 +14,6 @@ STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
 
 # ── Idempotency guard ────────────────────────────────────────────────────────
-GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
 if [ -f "${STATE_FILE}" ]; then
   # Validate the state file is real (not a stub): must have required keys
   VALID=$(python3 -c "
@@ -36,19 +35,6 @@ except Exception as e:
     echo "  Delete it and re-run echelon.init to reinitialize:" >&2
     echo "    rm ${STATE_FILE}" >&2
     exit 1
-  fi
-
-  # Post-merge hook: re-install if missing (partial recovery)
-  if [ ! -x "${GIT_HOOK}" ]; then
-    echo "deploy: state initialized but post-merge hook missing — reinstalling..."
-    cat > "${GIT_HOOK}" << 'HOOK'
-#!/usr/bin/env bash
-# Installed by echelon deploy-init.sh
-SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/extensions/echelon/scripts/bash"
-exec "${SCRIPTS_DIR}/deploy.sh"
-HOOK
-    chmod +x "${GIT_HOOK}"
-    echo "deploy: hook reinstalled at ${GIT_HOOK}"
   fi
 
   echo "deploy: already initialized (${STATE_FILE} exists) — skipping"
@@ -105,18 +91,6 @@ mkdir -p "${GLOBAL_STATE_DIR}"
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "${DEPLOY_TYPE}" = "cli" ]; then
   echo "deploy: type=cli — skipping Traefik/network setup"
-
-  # ── Git hook ───────────────────────────────────────────────────────────────
-  GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
-  echo "deploy: installing git post-merge hook..."
-  cat > "${GIT_HOOK}" << 'HOOK'
-#!/usr/bin/env bash
-# Installed by echelon deploy-init.sh
-SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/extensions/echelon/scripts/bash"
-exec "${SCRIPTS_DIR}/deploy.sh"
-HOOK
-  chmod +x "${GIT_HOOK}"
-  echo "deploy: hook installed at ${GIT_HOOK}"
 
   # ── Global state ──────────────────────────────────────────────────────────
   APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
@@ -185,7 +159,6 @@ PYEOF
   echo ""
   echo "════════════════════════════════════════"
   echo "  Deploy initialized for ${APP_NAME} (cli)"
-  echo "  Hook:    ${GIT_HOOK}"
   if [ -n "${INSTALL_PATH}" ]; then
     EXPANDED=$(INSTALL_PATH="${INSTALL_PATH}" python3 -c "import os; print(os.path.expanduser(os.environ['INSTALL_PATH']))")
     echo "  Wrapper: ${EXPANDED}/${APP_NAME}"
@@ -259,18 +232,6 @@ else
   exit 1
 fi
 
-# ── Git hook ─────────────────────────────────────────────────────────────────
-GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
-echo "deploy: installing git post-merge hook..."
-cat > "${GIT_HOOK}" << 'HOOK'
-#!/usr/bin/env bash
-# Installed by echelon deploy-init.sh
-SCRIPTS_DIR="$(git rev-parse --show-toplevel)/.specify/extensions/echelon/scripts/bash"
-exec "${SCRIPTS_DIR}/deploy.sh"
-HOOK
-chmod +x "${GIT_HOOK}"
-echo "deploy: hook installed at ${GIT_HOOK}"
-
 # ── Global state registration ────────────────────────────────────────────────
 APP_NAME="${APP_NAME}" PROJECT_ROOT="${PROJECT_ROOT}" DOCKERFILE="${DOCKERFILE}" \
 BLUE_PORT="${BLUE_PORT}" GREEN_PORT="${GREEN_PORT}" python3 - <<'PYEOF'
@@ -314,5 +275,4 @@ echo "  Deploy initialized for ${APP_NAME}"
 echo "  Blue:    http://localhost:${BLUE_PORT}  (health check)"
 echo "  Green:   http://localhost:${GREEN_PORT}  (health check)"
 echo "  Live:    http://localhost/${APP_NAME}/"
-echo "  Hook:    ${GIT_HOOK}"
 echo "════════════════════════════════════════"
