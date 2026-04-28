@@ -549,9 +549,9 @@ class RalphController:
         """Execute verification.
 
         When llm_provider is set and worktree_path is provided, runs verification
-        locally on the host via npm ci + npm test + npm run build (avoids Docker
-        networking issues where the internal network blocks npm ci from downloading
-        packages). Falls back to sandbox provider path otherwise.
+        locally on the host via the detected package manager's install + test + build
+        commands (avoids Docker networking issues where the internal network blocks
+        package downloads). Falls back to sandbox provider path otherwise.
 
         Returns parsed VerifyResult.
         """
@@ -576,9 +576,9 @@ class RalphController:
     def _exec_verify_locally(self, worktree_path: str) -> VerifyResult:
         """Run verification locally on the host when LLM provider is active.
 
-        Executes npm ci + npm test + npm run build in the worktree directory.
-        npm ci is run first to install dependencies (worktrees don't inherit
-        node_modules from the parent repo).
+        Detects the package manager from lockfiles and runs the appropriate
+        install + test + build commands in the worktree directory.
+        worktrees don't inherit node_modules from the parent repo.
 
         Returns VerifyResult with structured failures when tests fail.
         """
@@ -588,11 +588,25 @@ class RalphController:
         failures = []
         start = time.monotonic()
 
-        commands = [
-            ("install", "npm ci"),
-            ("test", "npm test"),
-            ("build", "npm run build"),
-        ]
+        wt = Path(worktree_path)
+        if (wt / "pnpm-lock.yaml").exists():
+            commands = [
+                ("install", "pnpm install --frozen-lockfile --ignore-scripts"),
+                ("test", "pnpm test"),
+                ("build", "pnpm run build"),
+            ]
+        elif (wt / "yarn.lock").exists():
+            commands = [
+                ("install", "yarn install --frozen-lockfile"),
+                ("test", "yarn test"),
+                ("build", "yarn run build"),
+            ]
+        else:
+            commands = [
+                ("install", "npm ci"),
+                ("test", "npm test"),
+                ("build", "npm run build"),
+            ]
 
         for stage, cmd in commands:
             try:
