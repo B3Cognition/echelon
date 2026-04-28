@@ -374,6 +374,21 @@ If merge fails (branch protection, conflicts), report the error and stop — do 
 
 ---
 
+## Step 9b: Deploy
+
+Runs only when `auto_merge=true` and the merge in Step 9 succeeded.
+
+Invoke `speckit.echelon.deploy` now. This will:
+
+1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `speckit.echelon.cicd` first
+2. Run the blue/green (HTTP) or tag-pointer (CLI) deploy
+
+If `speckit.echelon.deploy` exits with an error, report it clearly but **do not fail the harness run** — the build and merge succeeded. The user can re-run `speckit.echelon.deploy` manually to retry the deploy.
+
+If `auto_merge=false`: skip this step entirely. The PR is open for review; deploy will happen when the user is ready.
+
+---
+
 ## Step 10: Display Result
 
 Print a single formatted block:
