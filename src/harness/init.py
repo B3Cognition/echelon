@@ -102,6 +102,25 @@ def _detect_pr_host() -> str:
     return "none"
 
 
+def _detect_llm_cli() -> str:
+    """Detect available LLM CLI tool.
+
+    Respects ECHELON_LLM env var; otherwise checks PATH for supported CLIs.
+    Returns 'claude' | 'copilot' | 'opencode'.
+    """
+    import os
+    import shutil
+
+    env = os.environ.get("ECHELON_LLM", "").strip()
+    if env in ("claude", "copilot", "opencode"):
+        return env
+    for cli in ("claude", "copilot", "opencode"):
+        if shutil.which(cli):
+            return cli
+    return "claude"  # default; will error at runtime if not installed
+
+
+
 def _check_constitution(base_dir: Path) -> Optional[str]:
     """Check for constitution placeholder or populated content.
 
@@ -310,6 +329,9 @@ def init_harness(
         "ci_skip_tag": config.ci_skip_tag,
         "pr_host": config.pr_host,
         "bind_mount_ack": config.bind_mount_ack,
+        "llm": {
+            "cli": _detect_llm_cli(),
+        },
     }
 
     if yaml is not None:
