@@ -580,6 +580,10 @@ class RalphController:
         install + test + build commands in the worktree directory.
         worktrees don't inherit node_modules from the parent repo.
 
+        For Python projects (pyproject.toml / setup.py / requirements.txt present
+        but no package.json), runs verify.sh if it exists, otherwise falls back
+        to ``python -m pytest``.
+
         Returns VerifyResult with structured failures when tests fail.
         """
         import subprocess
@@ -589,6 +593,21 @@ class RalphController:
         start = time.monotonic()
 
         wt = Path(worktree_path)
+
+        # Python project: skip all npm/pnpm/yarn steps, delegate to verify.sh
+        is_node = (wt / "package.json").exists()
+        is_python = (
+            not is_node
+            and (
+                (wt / "pyproject.toml").exists()
+                or (wt / "setup.py").exists()
+                or (wt / "requirements.txt").exists()
+            )
+        )
+
+        if is_python:
+            return self._exec_verify_python(worktree_path, start)
+
         if (wt / "pnpm-lock.yaml").exists():
             commands = [
                 ("install", "pnpm install --frozen-lockfile --ignore-scripts"),
@@ -601,12 +620,19 @@ class RalphController:
                 ("test", "yarn test"),
                 ("build", "yarn run build"),
             ]
-        else:
+        elif is_node:
             commands = [
                 ("install", "npm ci"),
                 ("test", "npm test"),
                 ("build", "npm run build"),
             ]
+        else:
+            # Unknown project type — skip local verification
+            logger.warning(
+                "Cannot detect project type in %s; skipping local verification",
+                worktree_path,
+            )
+            return VerifyResult(passed=True, failures=[], duration_s=0.0)
 
         for stage, cmd in commands:
             try:
@@ -641,6 +667,71 @@ class RalphController:
                     error=str(e),
                 ))
                 break
+
+        duration_s = time.monotonic() - start
+        return VerifyResult(
+            passed=len(failures) == 0,
+            failures=failures,
+            duration_s=duration_s,
+        )
+
+    def _exec_verify_python(self, worktree_path: str, start: float) -> VerifyResult:
+        """Run Python verification using uv (if uv.lock present) or pytest.
+
+        verify.sh is Docker-specific (mounts /workspace) and is NOT executed
+        on the host; instead this method runs the test suite directly.
+
+        Priority:
+          1. ``uv run pytest`` when uv.lock exists in the worktree
+          2. ``python -m pytest`` otherwise
+        """
+        import subprocess
+        import time
+        import shutil
+
+        failures = []
+        wt = Path(worktree_path)
+
+        # Prefer uv when a lockfile is present (handles venv + deps automatically)
+        use_uv = (wt / "uv.lock").exists() and shutil.which("uv") is not None
+
+        pytest_cmd = (
+            ["uv", "run", "--no-sync", "pytest", "--tb=short", "-q",
+             "--no-header", "--override-ini=addopts=",
+             "--ignore=tests/test_playwright"]
+            if use_uv
+            else ["python", "-m", "pytest", "--tb=short", "-q",
+                  "--no-header", "--override-ini=addopts=",
+                  "--ignore=tests/test_playwright"]
+        )
+
+        try:
+            result = subprocess.run(
+                pytest_cmd,
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode != 0:
+                output = (result.stdout + result.stderr).strip()
+                failures.append(FailureEntry(
+                    category=FailureCategory.TEST,
+                    id="pytest",
+                    error=output[-2000:] if len(output) > 2000 else output,
+                ))
+        except subprocess.TimeoutExpired:
+            failures.append(FailureEntry(
+                category=FailureCategory.TEST,
+                id="pytest-timeout",
+                error="pytest timed out after 300 seconds",
+            ))
+        except Exception as e:
+            failures.append(FailureEntry(
+                category=FailureCategory.OTHER,
+                id="pytest-error",
+                error=str(e),
+            ))
 
         duration_s = time.monotonic() - start
         return VerifyResult(

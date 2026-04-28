@@ -169,25 +169,29 @@ elif [ -f "${PROJECT_ROOT}/.env.local" ]; then
 fi
 
 # ── Load build args ───────────────────────────────────────────────────────────
-BUILD_ARGS=""
+BUILD_ARGS=()
 if [ -n "${_env_path}" ]; then
   _arg_count=0
-  while IFS='=' read -r _key _value; do
-    [[ -z "${_key}" || "${_key}" =~ ^# ]] && continue
-    BUILD_ARGS="${BUILD_ARGS} --build-arg ${_key}=${_value}"
+  while IFS='=' read -r _key _rest; do
+    [[ -z "${_key}" || "${_key}" =~ ^[[:space:]]*# ]] && continue
+    BUILD_ARGS+=(--build-arg "${_key}=${_rest}")
     _arg_count=$((_arg_count + 1))
   done < "${_env_path}"
   echo "deploy: injecting ${_arg_count} build arg(s) from ${_env_path}"
 fi
 
 # ── Load runtime env vars ─────────────────────────────────────────────────────
-# Sources (in order, last wins on conflict):
+# Written to a temp env-file so values with spaces/newlines (e.g. PEM keys)
+# are passed intact — unquoted string interpolation word-splits on spaces.
+# Sources (in order, last line wins on conflict):
 #   1. deploy.env block in echelon.yml — explicit key-value pairs
 #   2. Non-NEXT_PUBLIC_* vars from the env file (secrets baked in at build time
 #      via ARG are not in the image env — pass them again at runtime)
-RUN_ENV=""
+RUN_ENV_FILE="/tmp/echelon-run-env-${APP}.env"
+: > "${RUN_ENV_FILE}"
+
 if [ -f "${ECHELON_YML}" ]; then
-  _env_pairs=$(python3 -c "
+  python3 -c "
 import yaml, sys
 try:
     c = yaml.safe_load(open('${ECHELON_YML}'))
@@ -195,19 +199,20 @@ try:
     for k, v in env.items():
         print(f'{k}={v}')
 except Exception: pass
-" 2>/dev/null || true)
-  while IFS= read -r _line; do
-    [ -z "${_line}" ] && continue
-    RUN_ENV="${RUN_ENV} -e ${_line}"
-  done <<< "${_env_pairs}"
+" 2>/dev/null >> "${RUN_ENV_FILE}" || true
 fi
 
 if [ -n "${_env_path}" ]; then
-  while IFS='=' read -r _key _value; do
-    [[ -z "${_key}" || "${_key}" =~ ^# ]] && continue
+  while IFS='=' read -r _key _rest; do
+    [[ -z "${_key}" || "${_key}" =~ ^[[:space:]]*# ]] && continue
     [[ "${_key}" =~ ^NEXT_PUBLIC_ ]] && continue  # baked into bundle at build time
-    RUN_ENV="${RUN_ENV} -e ${_key}=${_value}"
+    printf '%s=%s\n' "${_key}" "${_rest}" >> "${RUN_ENV_FILE}"
   done < "${_env_path}"
+fi
+
+if [ -s "${RUN_ENV_FILE}" ]; then
+  _env_count=$(wc -l < "${RUN_ENV_FILE}" | tr -d '[:space:]')
+  echo "deploy: injecting ${_env_count} runtime env var(s) via env-file"
 fi
 
 # ── Read health_check_path ────────────────────────────────────────────────────
@@ -236,8 +241,7 @@ if [ "${DEPLOY_TYPE}" = "cli" ]; then
     bash "${SCRIPTS_DIR}/fix-spa-base.sh" "${PROJECT_ROOT}" "${APP}" "${APP_DIR}"
   fi
   echo "deploy: building ${APP}:candidate..."
-  # shellcheck disable=SC2086
-  docker build -t "${APP}:candidate" ${BUILD_ARGS} -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
+  docker build -t "${APP}:candidate" "${BUILD_ARGS[@]}" -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
 
   # ── Health check (optional) ───────────────────────────────────────────────
   # HEALTH_CHECK is intentionally unquoted so multi-word commands split correctly
@@ -328,13 +332,11 @@ fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "deploy: building ${APP}:candidate..."
-# shellcheck disable=SC2086
-docker build -t "${APP}:candidate" ${BUILD_ARGS} -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
+docker build -t "${APP}:candidate" "${BUILD_ARGS[@]}" -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
 
 # ── Start inactive slot ───────────────────────────────────────────────────────
 # -p binds the health-check port to the host; Traefik routes via Docker network.
 echo "deploy: starting ${APP}-${INACTIVE} (Traefik: http://localhost/${APP}/, health: :${INACTIVE_PORT})..."
-# shellcheck disable=SC2086
 docker run -d \
   --name "${APP}-${INACTIVE}" \
   --network speckit-deploy \
@@ -345,7 +347,7 @@ docker run -d \
   --label "traefik.http.middlewares.${APP}-strip.stripprefix.prefixes=/${APP}" \
   --label "traefik.http.services.${APP}.loadbalancer.server.port=${CONTAINER_PORT}" \
   -p "${INACTIVE_PORT}:${CONTAINER_PORT}" \
-  ${RUN_ENV} \
+  --env-file "${RUN_ENV_FILE}" \
   "${APP}:candidate"
 
 # ── Health check (via host-bound port) ───────────────────────────────────────
