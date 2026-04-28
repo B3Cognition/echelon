@@ -49,7 +49,7 @@ Pass the hardcoded feature description verbatim — do not summarise or rewrite 
 
 **Feature description to pass:**
 
-```
+```text
 You are a senior DevOps engineer and software architect.
 
 <task>
@@ -129,6 +129,14 @@ before generating a Dockerfile.
    Default to 80 only for static sites served by nginx/caddy.
    This value is used by deploy.sh to wire Traefik's load balancer and the
    health-check port binding — a wrong value causes deploy failures.
+
+10. Env file location — for monorepos, the deployable app's .env.local (or
+    equivalent) is typically NOT at the project root but inside the app directory
+    (e.g. apps/web/.env.local). If such a file exists, set
+    `build_env_file: <relative-path>` in the echelon.yml deploy block so deploy.sh
+    passes the correct build args to docker build. Do not commit secrets — only
+    document the path; the file itself is gitignored. If the env file is at the
+    project root, omit build_env_file (deploy.sh finds .env.local automatically).
 </analysis_steps>
 
 <deliverables>
