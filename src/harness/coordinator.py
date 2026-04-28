@@ -280,8 +280,15 @@ class StrategyCoordinator:
                 build_prompt=build_prompt,
             )
 
-            # Phase 2: visual loop — only when Phase 1 converged
-            if result.status == "converged" and self._config.visual_tests.enabled:
+            # Phase 2: visual loop — only when Phase 1 converged via Docker sandbox.
+            # Skipped when LLM provider ran Phase 1: the LLM already verified tests
+            # locally (including Playwright if present), and the Docker visual loop
+            # has no access to the LLM-managed worktree after it is committed.
+            if (
+                result.status == "converged"
+                and self._config.visual_tests.enabled
+                and llm_provider is None
+            ):
 
                 worktree_path = self._gitops.get_latest_worktree(
                     intent.spec_id, strategy_id,
