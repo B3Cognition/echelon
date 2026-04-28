@@ -222,16 +222,14 @@ def _cmd_init(project_dir: Path) -> None:
 
     # Step 4: Confirm
     state_file = project_dir / ".specify" / "squad" / "deploy-state.json"
-    hook_file = project_dir / ".git" / "hooks" / "post-merge"
     print(
         f"\n"
         f"╔══════════════════════════════════════════╗\n"
         f"║         echelon init — complete          ║\n"
         f"╚══════════════════════════════════════════╝\n"
         f"\n"
-        f"  echelon.yml      → {echelon_yml}\n"
-        f"  deploy-state     → {state_file}\n"
-        f"  post-merge hook  → {hook_file}\n"
+        f"  echelon.yml   → {echelon_yml}\n"
+        f"  deploy-state  → {state_file}\n"
         f"\n"
         f"Next step:\n"
         f"  echelon run <description>\n"
