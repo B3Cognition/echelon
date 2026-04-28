@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.strategy_loader import StrategyNotFoundError, StrategySpec, load_strategies
+from harness.strategy_loader import BUILTIN_STRATEGIES, StrategyNotFoundError, StrategySpec, load_strategies
 
 
 @pytest.mark.unit
@@ -114,3 +114,31 @@ class TestStrategyLoader:
         spec = result["broken"]
         assert spec.build_command == "echelon build"
         assert "command: echelon codegen" in spec.context
+
+    def test_codegen_builtin_no_file(self, tmp_path: Path) -> None:
+        """codegen is a built-in strategy — no file required."""
+        result = load_strategies("spec-001", ["codegen"], base_dir=str(tmp_path))
+        assert result == {"codegen": StrategySpec(build_command="echelon codegen", context="")}
+
+    def test_codegen_file_overrides_builtin(self, tmp_path: Path) -> None:
+        """Per-spec codegen.md wins over the built-in when present."""
+        strat_dir = tmp_path / "spec-001"
+        strat_dir.mkdir(parents=True)
+        (strat_dir / "codegen.md").write_text("Extra context for this spec.", encoding="utf-8")
+
+        result = load_strategies("spec-001", ["codegen"], base_dir=str(tmp_path))
+        assert result == {
+            "codegen": StrategySpec(build_command="echelon build", context="Extra context for this spec."),
+        }
+
+    def test_unknown_strategy_error_lists_builtins(self, tmp_path: Path) -> None:
+        """Error for unknown strategy names built-in strategies as alternatives."""
+        with pytest.raises(StrategyNotFoundError, match="Built-in strategies"):
+            load_strategies("spec-001", ["nonexistent"], base_dir=str(tmp_path))
+
+    def test_builtin_strategies_table(self) -> None:
+        """BUILTIN_STRATEGIES contains the expected entries."""
+        assert "default" in BUILTIN_STRATEGIES
+        assert BUILTIN_STRATEGIES["default"].build_command == "echelon build"
+        assert "codegen" in BUILTIN_STRATEGIES
+        assert BUILTIN_STRATEGIES["codegen"].build_command == "echelon codegen"
