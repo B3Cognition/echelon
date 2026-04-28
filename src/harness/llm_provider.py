@@ -48,8 +48,6 @@ class ClaudeCliProvider:
                 self._build_cmd(prompt),
                 cwd=worktree_path,
                 env=env,
-                capture_output=True,
-                text=True,
                 timeout=self._timeout_s,
             )
         except subprocess.TimeoutExpired:
@@ -67,8 +65,8 @@ class ClaudeCliProvider:
         return BuildResult.from_status_file(
             status_file,
             exit_code=result.returncode,
-            stdout=result.stdout,
-            stderr=result.stderr,
+            stdout="",
+            stderr="",
             duration_ms=duration_ms,
         )
 

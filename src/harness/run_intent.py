@@ -37,6 +37,7 @@ class RunIntent:
     auto_merge: bool = False
     kill_losers: bool = False
     strategies: List[str] = field(default_factory=lambda: ["default"])
+    task_description: str = ""
 
     def __post_init__(self) -> None:
         """Validate all fields after construction."""
@@ -128,6 +129,10 @@ _STRATEGIES_PATTERN = re.compile(
     r"(?:strateg(?:y|ies)\s*[=:]\s*)([\w,\s-]+)",
     re.IGNORECASE,
 )
+_TASK_PATTERN = re.compile(
+    r"task:\s*(.+)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def parse_intent(text: str) -> RunIntent:
@@ -186,6 +191,12 @@ def parse_intent(text: str) -> RunIntent:
         raw = strat_match.group(1)
         strategies = [s.strip() for s in raw.split(",") if s.strip()]
 
+    # Extract free-text task description (everything after "task: ")
+    task_description = ""
+    task_match = _TASK_PATTERN.search(text)
+    if task_match:
+        task_description = task_match.group(1).strip()
+
     return RunIntent(
         spec_id=spec_id,
         mode=mode,
@@ -195,4 +206,5 @@ def parse_intent(text: str) -> RunIntent:
         auto_merge=auto_merge,
         kill_losers=kill_losers,
         strategies=strategies,
+        task_description=task_description,
     )

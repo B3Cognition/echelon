@@ -337,14 +337,20 @@ def _cmd_harness_run(args: list[str]) -> None:
 
     spec_id = args[0]
     kv: dict[str, str] = {}
+    free_text: list[str] = []
     for arg in args[1:]:
         if "=" in arg:
             k, _, v = arg.partition("=")
             kv[k.strip()] = v.strip()
+        else:
+            free_text.append(arg)
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
 
-    user_message = " ".join([f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"])
+    parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
+    if free_text:
+        parts.append(f"task: {' '.join(free_text)}")
+    user_message = " ".join(parts)
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider

@@ -147,3 +147,19 @@ class TestParseIntent:
         parse_intent("spec 012 in semi mode, max 5 outer iterations")
         elapsed = time.monotonic() - start
         assert elapsed < 2.0
+
+    def test_task_description_extracted(self) -> None:
+        """task: prefix is parsed into task_description."""
+        intent = parse_intent("spec 013 semi mode strategies=codegen task: fix the bug in bugfix-1.md")
+        assert intent.task_description == "fix the bug in bugfix-1.md"
+
+    def test_task_description_absent(self) -> None:
+        """No task: prefix → task_description is empty string."""
+        intent = parse_intent("spec 013 semi mode strategies=codegen")
+        assert intent.task_description == ""
+
+    def test_task_description_multiword(self) -> None:
+        """task: captures the full remainder of the string."""
+        intent = parse_intent("spec 013 banzai mode task: implement feature X as described in spec.md")
+        assert intent.task_description == "implement feature X as described in spec.md"
+        assert intent.mode == "banzai"

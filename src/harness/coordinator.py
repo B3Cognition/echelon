@@ -237,8 +237,10 @@ class StrategyCoordinator:
             state_store.transition("running")
 
             build_prompt = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
+            if intent.task_description:
+                build_prompt += f"\n\n{intent.task_description}"
             if spec.context:
-                build_prompt += f" {spec.context}"
+                build_prompt += f"\n\n{spec.context}"
 
             llm_provider = (
                 ClaudeCliProvider(self._config)
