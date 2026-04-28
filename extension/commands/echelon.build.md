@@ -612,6 +612,40 @@ Adapt for other stacks:
 - **Static site:** `npx serve dist & sleep 2 && curl -s http://localhost:3000`
 - **No HTTP server (CLI tool, library):** smoke test = `node dist/index.js --version` or equivalent invocation that proves the artifact runs
 
+**Next.js apps require stricter smoke testing.** `next build` can exit 0 while producing a broken production bundle — pages that use modules requiring runtime initialization (auth providers, i18n, database clients, React context) crash during SSG with errors like `TypeError: (0, t) is not a function`. The bundle looks built but every page returns 500 at runtime.
+
+For Next.js, `verify.sh` MUST:
+
+1. **Capture build output and check for SSG errors** — `next build` prints these to stdout even when it exits 0:
+
+```sh
+# Capture build output; fail if Next.js emitted SSG errors
+next build 2>&1 | tee /tmp/nextbuild.log
+if grep -qE "(TypeError|ReferenceError|Error:.*is not a function|Error:.*Cannot read)" /tmp/nextbuild.log; then
+  echo "✗ Next.js build contains SSG errors — pages will crash at runtime"
+  echo "  Fix: add 'export const dynamic = \"force-dynamic\"' to affected pages"
+  cat /tmp/nextbuild.log >&2
+  exit 1
+fi
+```
+
+1. **Start the server and test a health endpoint with strict 2xx** — a permissive "server responded" check misses broken bundles. The app MUST expose a health endpoint (e.g. `app/api/health/route.ts`) that returns 2xx only when the app initialised correctly:
+
+```sh
+PORT=3099 node server.js &
+SERVER_PID=$!
+sleep 4
+STATUS=$(curl -so /dev/null -w '%{http_code}' http://localhost:3099/api/health 2>/dev/null)
+kill $SERVER_PID 2>/dev/null || true
+if [[ ! "$STATUS" =~ ^2 ]]; then
+  echo "✗ Health check failed: /api/health returned HTTP $STATUS (expected 2xx)"
+  exit 1
+fi
+echo "Smoke test PASSED: /api/health returned HTTP $STATUS"
+```
+
+**Pages that use provider-dependent modules must be `force-dynamic`.** The general rule: if a page imports from an auth provider, i18n library, ORM, or any module that reads from React context or makes async calls at module scope — it cannot be statically generated. Add `export const dynamic = 'force-dynamic'` to the page file. IMPLEMENTER must audit pages for this pattern during implementation and flag any that need it. SENTINEL must include a render test for each such page.
+
 If `verify.sh` does not contain a smoke test, ENGINEERING MANAGER must request IMPLEMENTER add one before sign-off. This is not optional.
 
 ### 8.1b.2 verify.sh Security and License Gate (MANDATORY)
