@@ -70,7 +70,7 @@ def _check_os() -> str:
     os_name = platform.system().lower()
     if os_name == "windows":
         raise InitError(
-            "Windows is not supported. spec-kit-harness requires macOS or Linux (FR-OS-001)."
+            "Windows is not supported. echelon-harness requires macOS or Linux (FR-OS-001)."
         )
     if os_name not in ("darwin", "linux"):
         logger.warning("Unrecognized OS '%s', proceeding anyway", os_name)
@@ -160,7 +160,7 @@ def init_harness(
     # Step 2: Docker health check
     if not _check_docker():
         raise InitError(
-            "Docker is not running. spec-kit-harness requires Docker to create sandboxes. "
+            "Docker is not running. echelon-harness requires Docker to create sandboxes. "
             "Please start Docker and try again."
         )
     logger.info("Docker is running")
