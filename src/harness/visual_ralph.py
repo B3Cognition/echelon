@@ -140,9 +140,9 @@ class VisualRalphController:
                     timeout=30,
                 )
                 if proc.returncode != 0:
-                    logger.warning(
-                        "docker cp failed for screenshots: %s",
-                        proc.stderr.decode(errors="replace"),
+                    logger.debug(
+                        "docker cp failed for screenshots (no playwright-report yet): %s",
+                        proc.stderr.decode(errors="replace").strip(),
                     )
                     return []
 

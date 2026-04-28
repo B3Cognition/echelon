@@ -380,69 +380,15 @@ def _cmd_harness_run(args: list[str]) -> None:
 
 # ── Skill resolution ──────────────────────────────────────────────────────
 
+from harness.skill_loader import find_skill as _find_skill_impl, build_skill_prompt as _build_skill_prompt_impl
+
+
 def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
-    """Locate the skill file for the given LLM CLI tool.
-
-    Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
-    Copilot  : .github/agents/speckit.<skill_base>.agent.md
-    Opencode : .opencode/command/speckit.<skill_base>.md
-    """
-    if cli == "copilot":
-        candidates = [
-            project_dir / ".github" / "agents" / f"speckit.{skill_base}.agent.md",
-        ]
-    elif cli == "opencode":
-        candidates = [
-            project_dir / ".opencode" / "command" / f"speckit.{skill_base}.md",
-        ]
-    else:
-        # claude (default) — dash-separated directory name
-        dash_name = "speckit-" + skill_base.replace(".", "-")
-        candidates = [
-            project_dir / ".claude" / "skills" / dash_name / "skill.md",
-            project_dir / ".claude" / "skills" / dash_name / "SKILL.md",
-            Path.home() / ".claude" / "skills" / dash_name / "skill.md",
-            Path.home() / ".claude" / "skills" / dash_name / "SKILL.md",
-        ]
-
-    for p in candidates:
-        if p.exists():
-            return p
-    return None
-
-
-def _strip_frontmatter(text: str) -> str:
-    """Remove YAML frontmatter from a skill file.
-
-    Skill files have frontmatter for the spec-kit skill invocation system
-    (disable-model-invocation, user-invocable, etc.). When the content is
-    passed directly to an LLM via -p, the frontmatter is meaningless and
-    causes the model to treat the file as a document to narrate rather than
-    instructions to execute.
-    """
-    if not text.startswith("---\n"):
-        return text
-    end = text.find("\n---\n", 4)
-    if end == -1:
-        return text
-    return text[end + 5:].lstrip()
+    return _find_skill_impl(skill_base, project_dir, cli)
 
 
 def _build_prompt(skill_path: Path, arguments: str) -> str:
-    raw = skill_path.read_text(encoding="utf-8")
-    content = _strip_frontmatter(raw)
-    if "$ARGUMENTS" in content:
-        content = content.replace("$ARGUMENTS", arguments)
-    else:
-        content = f"{content}\n\n## Arguments\n{arguments}"
-
-    preamble = (
-        "You are COMMANDER running non-interactively via `claude -p`. "
-        "The text below is your complete operating instruction set for this session. "
-        "Execute every step immediately using your tools. "
-        "Do not narrate or repeat the instructions back — just execute them.\n\n"
-    )
-    return preamble + content
+    return _build_skill_prompt_impl(skill_path, arguments)
 
 
 def _print_event(event: dict) -> None:

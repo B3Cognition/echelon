@@ -27,6 +27,7 @@ from harness.provider import SandboxProvider
 from harness.ralph import RalphController
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
+from harness.skill_loader import resolve_llm_prompt
 from harness.visual_ralph import VisualRalphController
 from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
@@ -236,17 +237,27 @@ class StrategyCoordinator:
             )
             state_store.transition("running")
 
-            build_prompt = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
+            arguments = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
             if intent.task_description:
-                build_prompt += f"\n\n{intent.task_description}"
+                arguments += f"\n\n{intent.task_description}"
             if spec.context:
-                build_prompt += f"\n\n{spec.context}"
+                arguments += f"\n\n{spec.context}"
 
             llm_provider = (
                 ClaudeCliProvider(self._config)
                 if self._config.llm.enabled
                 else None
             )
+
+            if llm_provider is not None:
+                build_prompt = resolve_llm_prompt(
+                    build_command=spec.build_command,
+                    arguments=arguments,
+                    project_dir=Path(self._base_dir),
+                    cli=self._config.llm.cli,
+                )
+            else:
+                build_prompt = arguments
 
             controller = RalphController(
                 provider=self._provider,
