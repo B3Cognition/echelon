@@ -6,7 +6,6 @@ set -euo pipefail
 
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
 STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
-GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
 
 ERRORS=0
@@ -56,24 +55,9 @@ fi
 
 echo "  ✓ deploy-state.json valid (app=${APP_NAME}, type=${DEPLOY_TYPE})"
 
-# ── 2. post-merge hook installed and executable ───────────────────────────────
-if [ ! -f "${GIT_HOOK}" ]; then
-  _fail "post-merge hook not installed at ${GIT_HOOK}"
-  echo "     The hook is installed by deploy-init.sh during echelon.run." >&2
-  echo "     Fix: re-run speckit.echelon.run (deploy-init is idempotent)" >&2
-  ERRORS=$((ERRORS + 1))
-elif [ ! -x "${GIT_HOOK}" ]; then
-  _fail "post-merge hook exists but is not executable (${GIT_HOOK})"
-  echo "     Fix: chmod +x ${GIT_HOOK}" >&2
-  ERRORS=$((ERRORS + 1))
-else
-  echo "  ✓ post-merge hook installed and executable"
-fi
-
-# ── 3. deploy.sh reachable from hook ─────────────────────────────────────────
+# ── 2. deploy.sh reachable ────────────────────────────────────────────────────
 if [ ! -f "${SCRIPTS_DIR}/deploy.sh" ]; then
   _fail "deploy.sh not found at ${SCRIPTS_DIR}/deploy.sh"
-  echo "     The hook will fail silently if deploy.sh is missing." >&2
   echo "     Fix: ensure the echelon extension is registered:" >&2
   echo "       specify extension add --dev ~/echelon/extension" >&2
   ERRORS=$((ERRORS + 1))
