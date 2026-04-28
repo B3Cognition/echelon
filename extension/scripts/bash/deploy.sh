@@ -11,6 +11,17 @@ if [ ! -f "${STATE_FILE}" ]; then
   exit 1
 fi
 
+# ── CI/CD Freshness Check ─────────────────────────────────────────────────────
+FINGERPRINT_SCRIPT="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash/cicd-fingerprint.sh"
+if [ -f "${FINGERPRINT_SCRIPT}" ]; then
+  if ! bash "${FINGERPRINT_SCRIPT}" --check >/dev/null 2>&1; then
+    echo "✗ CI/CD artifacts are stale or missing." >&2
+    echo "  Project dependencies or Dockerfiles have changed since the last echelon.cicd run." >&2
+    echo "  Run: speckit.echelon.deploy  (auto-regenerates CI/CD before deploying)" >&2
+    exit 1
+  fi
+fi
+
 # ── Read state ────────────────────────────────────────────────────────────────
 _state=$(STATE_FILE="${STATE_FILE}" python3 - <<'PYEOF'
 import os, sys, json
