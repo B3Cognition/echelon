@@ -112,40 +112,111 @@ def resolve_llm_prompt(
     return COMMANDER_PREAMBLE + arguments
 
 
-def print_stream_event(event: dict) -> None:
-    """Print a human-readable line for each meaningful claude stream-json event.
+class StreamEventPrinter:
+    """Stateful stream-json event printer.
 
-    Shared between echelon CLI and harness LLM provider so both show the same
-    live ▷ ToolName: hint format during non-interactive invocations.
+    Tracks the last tool name so tool results can be printed with context.
+    Create one instance per streaming session; call it with each parsed event.
+
+    Output levels:
+      ▷ ToolName: hint          — tool invocation
+      ⎿  <preview>              — tool result (trimmed; Read results skipped)
+      ── done N turns · Xs ··   — session summary
     """
-    etype = event.get("type")
 
-    if etype == "assistant":
-        for block in event.get("message", {}).get("content", []):
-            btype = block.get("type")
-            if btype == "text":
-                text = block.get("text", "").strip()
-                if text:
-                    print(text, flush=True)
-            elif btype == "tool_use":
-                name = block.get("name", "")
-                inp = block.get("input", {})
-                hint = (
-                    inp.get("description")
-                    or inp.get("command", "")[:80]
-                    or inp.get("prompt", "")[:80]
-                    or inp.get("file_path", "")
-                    or inp.get("path", "")
-                    or inp.get("subagent_type", "")
-                    or ""
-                )
-                print(f"  ▷ {name}: {hint}" if hint else f"  ▷ {name}", flush=True)
+    # Tools whose results are too verbose to preview (file/notebook reads).
+    _SKIP_RESULT = frozenset({"Read", "NotebookRead", "ListMcpResourcesTool", "ReadMcpResourceTool"})
+    # Tools that modify files — show first result line only.
+    _FILE_WRITE = frozenset({"Edit", "Write", "NotebookEdit"})
 
-    elif etype == "result":
-        cost = event.get("total_cost_usd", 0)
-        ms = event.get("duration_ms", 0)
-        turns = event.get("num_turns", 0)
-        if event.get("is_error"):
-            print(f"\n✗ failed after {turns} turns · {ms/1000:.0f}s: {event.get('result', '')}", flush=True)
+    def __init__(self) -> None:
+        self._pending_tool: Optional[str] = None
+
+    def __call__(self, event: dict) -> None:
+        etype = event.get("type")
+
+        if etype == "assistant":
+            for block in event.get("message", {}).get("content", []):
+                btype = block.get("type")
+                if btype == "text":
+                    text = block.get("text", "").strip()
+                    if text:
+                        print(text, flush=True)
+                elif btype == "tool_use":
+                    name = block.get("name", "")
+                    self._pending_tool = name
+                    inp = block.get("input", {})
+                    hint = (
+                        inp.get("description")
+                        or inp.get("command", "")[:80]
+                        or inp.get("prompt", "")[:80]
+                        or inp.get("file_path", "")
+                        or inp.get("path", "")
+                        or inp.get("subagent_type", "")
+                        or ""
+                    )
+                    print(f"  ▷ {name}: {hint}" if hint else f"  ▷ {name}", flush=True)
+
+        elif etype == "user":
+            tool_name = self._pending_tool
+            self._pending_tool = None
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") == "tool_result":
+                    self._print_result(tool_name, block.get("content", ""))
+
+        elif etype == "result":
+            cost = event.get("total_cost_usd", 0)
+            ms = event.get("duration_ms", 0)
+            turns = event.get("num_turns", 0)
+            if event.get("is_error"):
+                print(f"\n✗ failed after {turns} turns · {ms/1000:.0f}s: {event.get('result', '')}", flush=True)
+            else:
+                print(f"\n── done  {turns} turns · {ms/1000:.0f}s · ${cost:.4f} ──", flush=True)
+
+    def _print_result(self, tool_name: Optional[str], content) -> None:
+        # Extract text from content (list of blocks or plain string)
+        if isinstance(content, list):
+            text = next(
+                (c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"),
+                "",
+            )
         else:
-            print(f"\n── done  {turns} turns · {ms/1000:.0f}s · ${cost:.4f} ──", flush=True)
+            text = str(content) if content else ""
+
+        if not text:
+            return
+
+        # Skip noisy read-only tool results
+        if tool_name in self._SKIP_RESULT:
+            return
+
+        lines = [l for l in text.splitlines() if l.strip()]
+        if not lines:
+            return
+
+        if tool_name in self._FILE_WRITE:
+            # Single-line confirmation is enough for file writes
+            self._emit(lines[0])
+            return
+
+        # For commands (Bash, etc.): show up to 3 lines.
+        # Prefer the last lines — they tend to be summaries (test counts, etc.).
+        if len(lines) <= 3:
+            for i, line in enumerate(lines):
+                self._emit(line, continuation=i > 0)
+        else:
+            print(f"  ⎿  … ({len(lines)} lines)", flush=True)
+            for line in lines[-3:]:
+                self._emit(line, continuation=True)
+
+    @staticmethod
+    def _emit(line: str, continuation: bool = False) -> None:
+        prefix = "     " if continuation else "  ⎿  "
+        if len(line) > 120:
+            line = line[:120] + "…"
+        print(f"{prefix}{line}", flush=True)
+
+
+def print_stream_event(event: dict, _printer: StreamEventPrinter = StreamEventPrinter()) -> None:
+    """Module-level convenience wrapper. Use StreamEventPrinter() for per-session state."""
+    _printer(event)

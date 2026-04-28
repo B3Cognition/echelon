@@ -11,7 +11,7 @@ from pathlib import Path
 
 from harness.build_result import BuildResult
 from harness.config import HarnessConfig
-from harness.skill_loader import print_stream_event
+from harness.skill_loader import StreamEventPrinter
 
 
 class ClaudeCliProvider:
@@ -87,6 +87,7 @@ class ClaudeCliProvider:
         )
 
         timed_out = False
+        printer = StreamEventPrinter()
 
         def _kill():
             nonlocal timed_out
@@ -101,7 +102,7 @@ class ClaudeCliProvider:
                 if not line:
                     continue
                 try:
-                    print_stream_event(_json.loads(line))
+                    printer(_json.loads(line))
                 except _json.JSONDecodeError:
                     print(line, flush=True)
             proc.stdout.close()  # type: ignore[union-attr]

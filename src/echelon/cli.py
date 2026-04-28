@@ -383,7 +383,7 @@ def _cmd_harness_run(args: list[str]) -> None:
 from harness.skill_loader import (
     find_skill as _find_skill_impl,
     build_skill_prompt as _build_skill_prompt_impl,
-    print_stream_event as _print_stream_event,
+    StreamEventPrinter as _StreamEventPrinter,
 )
 
 
@@ -395,8 +395,11 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     return _build_skill_prompt_impl(skill_path, arguments)
 
 
-def _print_event(event: dict) -> None:
-    _print_stream_event(event)
+def _print_event(event: dict, _printer: list = []) -> None:
+    # Lazy-init one printer per process; list used as mutable default container.
+    if not _printer:
+        _printer.append(_StreamEventPrinter())
+    _printer[0](event)
 
 
 def _run_claude_streaming(bin_: str, prompt: str, project_dir: Path, extra_args: list[str] | None = None) -> None:
