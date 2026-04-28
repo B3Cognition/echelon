@@ -54,6 +54,13 @@ CONTAINER_PORT="${CONTAINER_PORT:-80}"
 
 INACTIVE=$([ "${ACTIVE}" = "blue" ] && echo "green" || echo "blue")
 
+# ── Derive helper paths ───────────────────────────────────────────────────────
+# SCRIPTS_DIR: where this script lives (same dir as fix-spa-base.sh, etc.)
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# APP_DIR: the directory containing the Dockerfile — for monorepos this is
+# apps/web/ not the project root, and is where framework configs live.
+APP_DIR="$(dirname "${PROJECT_ROOT}/${DOCKERFILE}")"
+
 # ── Auto-generate Dockerfile if missing ───────────────────────────────────────
 if [ ! -f "${PROJECT_ROOT}/${DOCKERFILE}" ]; then
   echo "deploy: ${DOCKERFILE} not found — auto-generating from project type..."
@@ -210,6 +217,9 @@ if [ "${DEPLOY_TYPE}" = "cli" ]; then
   echo "deploy: ${APP} (cli) ${ACTIVE} → ${INACTIVE}"
 
   # ── Build ─────────────────────────────────────────────────────────────────
+  if [ -f "${SCRIPTS_DIR}/fix-spa-base.sh" ]; then
+    bash "${SCRIPTS_DIR}/fix-spa-base.sh" "${PROJECT_ROOT}" "${APP}" "${APP_DIR}"
+  fi
   echo "deploy: building ${APP}:candidate..."
   # shellcheck disable=SC2086
   docker build -t "${APP}:candidate" ${BUILD_ARGS} -f "${PROJECT_ROOT}/${DOCKERFILE}" "${PROJECT_ROOT}"
@@ -294,6 +304,11 @@ fi
 if docker inspect "${APP}-${INACTIVE}" >/dev/null 2>&1; then
   echo "deploy: removing stale ${APP}-${INACTIVE}..."
   docker rm -f "${APP}-${INACTIVE}" >/dev/null
+fi
+
+# ── SPA base-path correction (idempotent) ────────────────────────────────────
+if [ -f "${SCRIPTS_DIR}/fix-spa-base.sh" ]; then
+  bash "${SCRIPTS_DIR}/fix-spa-base.sh" "${PROJECT_ROOT}" "${APP}" "${APP_DIR}"
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────

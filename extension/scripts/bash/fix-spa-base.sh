@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # fix-spa-base.sh — auto-correct SPA base/basePath for Traefik path-prefix routing
-# Called by deploy-init.sh after state is written.
+# Called by deploy.sh before each build (idempotent) and deploy-init.sh at init.
 # Always auto-corrects — never requires manual intervention.
 #
-# Usage: fix-spa-base.sh <project_root> <app_name>
+# Usage: fix-spa-base.sh <project_root> <app_name> [<app_dir>]
+#   app_dir defaults to project_root. For monorepos, pass the directory that
+#   contains the framework config (e.g. apps/web for apps/web/next.config.js).
 set -euo pipefail
 
 PROJECT_ROOT="${1:?PROJECT_ROOT required}"
 APP_NAME="${2:?APP_NAME required}"
+APP_DIR="${3:-${PROJECT_ROOT}}"  # directory to search for framework configs
 EXPECTED_BASE="/${APP_NAME}/"
 
 _patched=false
 
 # ── Vite ─────────────────────────────────────────────────────────────────────
 for ext in js ts mjs cjs; do
-  VITE_CONFIG="${PROJECT_ROOT}/vite.config.${ext}"
+  VITE_CONFIG="${APP_DIR}/vite.config.${ext}"
   [ -f "${VITE_CONFIG}" ] || continue
 
   RESULT=$(APP_NAME="${APP_NAME}" VITE_CONFIG="${VITE_CONFIG}" python3 - <<'PYEOF'
@@ -109,7 +112,7 @@ done
 
 # ── Next.js ───────────────────────────────────────────────────────────────────
 for ext in js ts mjs; do
-  NEXT_CONFIG="${PROJECT_ROOT}/next.config.${ext}"
+  NEXT_CONFIG="${APP_DIR}/next.config.${ext}"
   [ -f "${NEXT_CONFIG}" ] || continue
 
   RESULT=$(APP_NAME="${APP_NAME}" NEXT_CONFIG="${NEXT_CONFIG}" python3 - <<'PYEOF'
@@ -181,7 +184,7 @@ PYEOF
 done
 
 # ── Create React App (package.json homepage) ──────────────────────────────────
-PKG="${PROJECT_ROOT}/package.json"
+PKG="${APP_DIR}/package.json"
 if [ -f "${PKG}" ] && python3 -c "import json; d=json.load(open('${PKG}')); exit(0 if 'react-scripts' in str(d.get('dependencies',{})) or 'react-scripts' in str(d.get('devDependencies',{})) else 1)" 2>/dev/null; then
   RESULT=$(APP_NAME="${APP_NAME}" PKG="${PKG}" python3 - <<'PYEOF'
 import os, json
