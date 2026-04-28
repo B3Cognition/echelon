@@ -188,7 +188,7 @@ def _cmd_init(project_dir: Path) -> None:
         print(f"✗ deploy.type must be 'http' or 'cli', got: {deploy_type!r}", file=sys.stderr)
         sys.exit(1)
     if deploy_type == "http":
-        missing = [k for k in ("blue_port", "green_port", "active_port") if k not in deploy]
+        missing = [k for k in ("blue_port", "green_port") if k not in deploy]
         if missing:
             print(
                 f"✗ deploy config incomplete in echelon.yml.\n"
