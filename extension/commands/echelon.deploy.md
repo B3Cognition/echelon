@@ -35,6 +35,31 @@ Parse `$ARGUMENTS`:
 
 ## Run Deploy
 
+### Step 1: CI/CD Freshness Check
+
+```bash
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
+```
+
+- Exit code `0` — CI/CD artifacts are up to date. Skip to **Step 2**.
+- Exit code `1` — Artifacts are stale or missing. Proceed to **Step 1b**.
+
+### Step 1b: Regenerate CI/CD Artifacts
+
+Invoke `speckit.echelon.cicd` now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon.yml deploy block, db-start.sh, and CI workflow for the current project state.
+
+After `speckit.echelon.cicd` completes successfully, update the fingerprint:
+
+```bash
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --update
+```
+
+Then proceed to **Step 2**.
+
+### Step 2: Deploy
+
 ```bash
 ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
 bash "${ECHELON_EXT}/scripts/bash/deploy.sh"
