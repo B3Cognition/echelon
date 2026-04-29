@@ -54,6 +54,7 @@ Commands:
   codegen <spec_id>                         Run SOAR codegen pipeline
   harness init [<target_repo>]              Initialize harness (no LLM)
   harness run  <spec_id> [strategy=<s>]     Run build→verify→PR loop
+  spec target  <spec_id> <repo> [repo...]   Set target repos in spec frontmatter
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
@@ -359,10 +360,23 @@ def _cmd_harness_run(args: list[str]) -> None:
 
     echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon.yml"
     if not echelon_yml.exists():
+        # Orchestrator mode: no local echelon.yml — check if spec has targets
+        from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+        from echelon.orchestrator import validate_targets, run_multi_target
+
+        spec_dir = find_spec_dir(spec_id, Path.cwd())
+        if spec_dir is not None:
+            frontmatter = read_frontmatter(spec_dir)
+            targets_rel: list[str] = frontmatter.get("targets") or []
+            if targets_rel:
+                polyrepo_root = spec_dir.parent.parent
+                targets = validate_targets(targets_rel, polyrepo_root)
+                sys.exit(run_multi_target(spec_id, targets, args[1:]))
+
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
-            "  Fix: run 'echelon harness init' first.",
+            "  Fix: run 'echelon harness init' first, or add 'targets:' to your spec.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -463,6 +477,69 @@ def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
     )
 
 
+# ── spec subcommands ──────────────────────────────────────────────────────────
+
+def _cmd_spec(args: list[str]) -> None:
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon spec <subcommand> [args...]\n\n"
+            "  target <spec_id> <repo> [repo...]   Set targets: in spec frontmatter\n",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+    subcmd = args[0]
+    if subcmd == "target":
+        _cmd_spec_target(args[1:])
+    else:
+        print(f"echelon spec: unknown subcommand '{subcmd}'\n", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_spec_target(args: list[str]) -> None:
+    if len(args) < 2:
+        print(
+            "echelon spec target: usage: echelon spec target <spec_id> <repo> [repo...]\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    spec_id, repos = args[0], args[1:]
+
+    from harness.spec_frontmatter import find_spec_dir, write_targets
+
+    # Check for ambiguity: multiple specs/ dirs matching spec_id at the found level
+    start = Path.cwd()
+    current = start
+    while True:
+        matches = sorted(current.glob(f"specs/{spec_id}-*"))
+        if len(matches) > 1:
+            print(f"✗ Ambiguous spec id '{spec_id}': multiple matches:", file=sys.stderr)
+            for m in matches:
+                print(f"  {m}", file=sys.stderr)
+            sys.exit(1)
+        if matches:
+            break
+        parent = current.parent
+        if parent == current or (parent / ".git").exists():
+            break
+        current = parent
+
+    spec_dir = find_spec_dir(spec_id, start)
+    if spec_dir is None:
+        print(f"✗ Spec '{spec_id}' not found (searched from {start})", file=sys.stderr)
+        sys.exit(1)
+
+    md = write_targets(spec_dir, repos)
+    try:
+        display = md.relative_to(start)
+    except ValueError:
+        display = md
+    print(f"Updated {display}")
+    print("  targets:")
+    for r in repos:
+        print(f"    - {r}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -480,6 +557,10 @@ def main() -> None:
 
     if command == "harness":
         _cmd_harness(args[1:])
+        return
+
+    if command == "spec":
+        _cmd_spec(args[1:])
         return
 
     if command not in SKILL_MAP:
