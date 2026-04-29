@@ -15,7 +15,10 @@ _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 
 
 def _find_spec_md(spec_dir: Path) -> Optional[Path]:
-    """Return first .md file in spec_dir (sorted), or None."""
+    """Return spec.md if present, otherwise the first .md file (sorted), or None."""
+    spec_md = spec_dir / "spec.md"
+    if spec_md.exists():
+        return spec_md
     for p in sorted(spec_dir.glob("*.md")):
         return p
     return None
