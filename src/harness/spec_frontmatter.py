@@ -2,11 +2,14 @@
 and walk-up spec directory discovery."""
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 
@@ -55,6 +58,7 @@ def write_targets(spec_dir: Path, targets: List[str]) -> Path:
         data: Dict[str, Any] = yaml.safe_load(m.group(1)) if m else {}
         data = data if isinstance(data, dict) else {}
     except yaml.YAMLError:
+        logger.warning("write_targets: corrupt YAML frontmatter in %s — dropping existing keys", md)
         data = {}
 
     data["targets"] = targets
@@ -86,6 +90,7 @@ def find_spec_dir(spec_id: str, start_dir: Path) -> Optional[Path]:
         parent = current.parent
         if parent == current:          # filesystem root
             break
+        # Check parent (not current) so we search the current dir before stopping at its git boundary
         if (parent / ".git").exists(): # would cross into a git repo boundary
             break
         current = parent
