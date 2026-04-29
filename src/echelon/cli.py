@@ -358,21 +358,24 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.gitops import GitOpsManager
     from harness.skills.run_skill import run
 
+    # Orchestrator mode: spec targets take priority over local echelon.yml.
+    # Check targets first so a polyrepo root with its own echelon.yml (e.g. for
+    # deploy) doesn't silently bypass target validation and run against the wrong repo.
+    from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+    from echelon.orchestrator import validate_targets, run_multi_target
+
+    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    if spec_dir is not None:
+        frontmatter = read_frontmatter(spec_dir)
+        targets_rel: list[str] = frontmatter.get("targets") or []
+        if targets_rel:
+            polyrepo_root = spec_dir.parent.parent
+            targets = validate_targets(targets_rel, polyrepo_root)
+            sys.exit(run_multi_target(spec_id, targets, args[1:]))
+
+    # Single-repo mode: require local echelon.yml.
     echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon.yml"
     if not echelon_yml.exists():
-        # Orchestrator mode: no local echelon.yml — check if spec has targets
-        from harness.spec_frontmatter import find_spec_dir, read_frontmatter
-        from echelon.orchestrator import validate_targets, run_multi_target
-
-        spec_dir = find_spec_dir(spec_id, Path.cwd())
-        if spec_dir is not None:
-            frontmatter = read_frontmatter(spec_dir)
-            targets_rel: list[str] = frontmatter.get("targets") or []
-            if targets_rel:
-                polyrepo_root = spec_dir.parent.parent
-                targets = validate_targets(targets_rel, polyrepo_root)
-                sys.exit(run_multi_target(spec_id, targets, args[1:]))
-
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
