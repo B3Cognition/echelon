@@ -33,6 +33,7 @@ targets:
 ```
 
 **Rules:**
+
 - `targets:` is optional. Absence means single-repo mode (current behaviour, unchanged).
 - Paths are resolved relative to the spec's parent directory at parse time.
 - Invalid / non-existent paths are caught at run time with a clear error before any sub-run starts.
@@ -55,7 +56,7 @@ This allows `cd og-platform && echelon harness run 024` to find a spec that live
 
 In `_cmd_harness_run`, after the existing "no echelon.yml" check, a second path handles orchestration:
 
-```
+```text
 if no local echelon.yml:
     find spec via walk-up
     if spec not found → exit with current error
@@ -68,17 +69,19 @@ if no local echelon.yml:
 ```
 
 Each subprocess call forwards the original args verbatim:
-```
+
+```text
 echelon harness run <spec_id> [strategy=…] [mode=…] [free-text…]
 ```
 
-Subprocesses run with their CWD set to the resolved target path. Output is streamed line-by-line with a `[<target-name>] ` prefix so the user can follow both runs simultaneously.
+Subprocesses run with their CWD set to the resolved target path. Output is streamed line-by-line with a `[target-name]` prefix so the user can follow both runs simultaneously.
 
 ### 4. Squad target detection during `echelon run`
 
 The `echelon.run` squad command's SCOUT phase reads the revenge analysis output from `.specify/extensions/revenge/` (when present at P level) to identify which repos are touched by the new spec. CARTOGRAPHER writes the detected repos as `targets:` frontmatter into the spec file.
 
 Fallback behaviour when revenge output is absent or ambiguous:
+
 - Squad explicitly asks the user: "Which repos does this spec target? (found: og-platform, fet-frontend-libs, …)"
 - User can name one, several, or none (for single-repo specs)
 
@@ -86,13 +89,13 @@ The frontmatter is written as the last step of `echelon run` spec generation, be
 
 ### 5. `echelon spec target` command
 
-```
+```text
 echelon spec target <spec_id> <repo> [repo…]
 ```
 
 Reads the spec's frontmatter, replaces (or creates) the `targets:` list with the provided repos, writes the file in-place. Prints the updated frontmatter as confirmation.
 
-```
+```text
 $ echelon spec target 024 og-platform
 Updated specs/024-psd-import-filter-support/spec.md
   targets:
@@ -106,7 +109,7 @@ If `spec_id` matches multiple spec folders (ambiguous prefix), the command lists
 ## File Structure
 
 | File | Change |
-|---|---|
+| --- | --- |
 | `src/harness/coordinator.py` | Extract `find_spec_dir()` helper with walk-up logic |
 | `src/harness/spec_frontmatter.py` | New: parse/write spec YAML frontmatter (`targets`, future fields) |
 | `src/echelon/cli.py` | Add orchestrator mode in `_cmd_harness_run`; add `spec target` subcommand |
@@ -122,7 +125,7 @@ If `spec_id` matches multiple spec folders (ambiguous prefix), the command lists
 ## Error Handling
 
 | Scenario | Behaviour |
-|---|---|
+| --- | --- |
 | P has no echelon.yml, spec has no targets | Exit with: `✗ Harness not initialised. Run 'echelon harness init' or add targets: to your spec.` |
 | Target path does not exist | Exit before any sub-run: `✗ Target 'og-platform' not found relative to spec.` |
 | Target not initialised (no echelon.yml) | Exit before any sub-run: `✗ og-platform: run 'echelon harness init' inside og-platform first.` |
@@ -146,12 +149,40 @@ If `spec_id` matches multiple spec folders (ambiguous prefix), the command lists
 
 ### Regression tests
 
-- `test_harness_single_repo_unchanged.py`: existing single-repo run path (spec without `targets:`, local echelon.yml present) is untouched by this change — same behaviour as before
+- `test_harness_single_repo_unchanged.py`: existing single-repo run path (spec without `targets:`, local echelon.yml present) is untouched — same behaviour as before
 - `test_find_spec_dir_local_preferred.py`: local spec takes precedence over parent-level spec of same id
+
+### Automated smoke tests (bash, `tests/e2e/`)
+
+Following the existing pattern (bash scripts, isolated tmpdir, no Docker):
+
+**`test-e2e-spec-target-cmd.sh`** — end-to-end test for `echelon spec target`:
+
+- Creates a temp polyrepo structure with a `specs/024-test/spec.md`
+- Runs `echelon spec target 024 og-platform fet-frontend-libs`
+- Asserts `targets:` frontmatter written correctly
+- Runs again with different targets — asserts in-place replacement (no duplication)
+- Runs with ambiguous spec_id — asserts exit 1 and no file write
+
+**`test-e2e-walk-up-spec-discovery.sh`** — end-to-end test for walk-up discovery:
+
+- Creates a temp dir tree: `P/specs/024-test/` and `P/A/` (with `.git` marker)
+- Calls the `find_spec_dir` Python helper directly with `start_dir=P/A`
+- Asserts it returns `P/specs/024-test`
+- Creates `P/A/specs/024-local/` — asserts local takes precedence over parent
+- Creates `P/.git` (git boundary at P level) — asserts walk-up stops and returns None
+
+**`test-e2e-orchestrator-prefixed-output.sh`** — end-to-end test for orchestrator mode:
+
+- Creates a temp polyrepo with `specs/024-test/spec.md` containing `targets: [repo-a, repo-b]`
+- Creates `repo-a/.specify/extensions/echelon/echelon.yml` and `repo-b/...` (minimal valid config)
+- Stubs `echelon harness run` to echo `hello from <repo>` and exit 0
+- Runs orchestrator from P — asserts output contains `[repo-a]` and `[repo-b]` prefixes
+- Repeats with one stub exiting 1 — asserts overall exit code is 1 and both outputs still appear
 
 ### Manual smoke test (documented, not automated)
 
-```
+```bash
 # One-time setup per sub-repo
 cd og-platform && echelon harness init && cd ..
 
