@@ -29,6 +29,7 @@ specify extension add --dev ~/echelon/extension
 | ---- | ------- |
 | `echelon` | Main CLI — init, run, bugfix, build, review, change, codegen |
 | `echelon harness` | Build harness subcommands — init, run |
+| `echelon spec` | Spec metadata subcommands — target |
 | `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
 | `understanding` | Requirements quality metrics |
 
@@ -77,6 +78,10 @@ echelon bugfix 001 "upload button does nothing on mobile Safari"
 # Phase B — build, verify in Docker, open PR
 echelon harness run 001                    # echelon squad build (default)
 echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
+
+# Polyrepo: run against multiple sub-repos from a polyrepo root
+echelon spec target 001 og-platform fet-frontend-libs   # set target repos in spec frontmatter
+echelon harness run 001                                  # auto-dispatches to each sub-repo in parallel
 
 # After PR is open — review triage runs automatically via harness Phase 3
 # but can also be invoked directly:
