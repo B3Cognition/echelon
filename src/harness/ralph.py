@@ -595,15 +595,15 @@ class RalphController:
         wt = Path(worktree_path)
 
         # Python project: skip all npm/pnpm/yarn steps, delegate to verify.sh
-        is_node = (wt / "package.json").exists()
-        is_python = (
-            not is_node
-            and (
-                (wt / "pyproject.toml").exists()
-                or (wt / "setup.py").exists()
-                or (wt / "requirements.txt").exists()
-            )
+        # Python takes priority over Node when both pyproject.toml and package.json exist
+        # (e.g., a full-stack project where the primary runtime is Python).
+        has_python_markers = (
+            (wt / "pyproject.toml").exists()
+            or (wt / "setup.py").exists()
+            or (wt / "requirements.txt").exists()
         )
+        is_node = (wt / "package.json").exists() and not has_python_markers
+        is_python = has_python_markers
 
         if is_python:
             return self._exec_verify_python(worktree_path, start)
