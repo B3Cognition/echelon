@@ -43,6 +43,7 @@ def _print_delivery_summary(
     result_map: Dict[str, Any],
     comparison: Dict[str, Any],
     base_dir: str,
+    config: Any = None,
 ) -> None:
     """Print a structured delivery summary to stderr."""
     sep = "=" * 60
@@ -50,10 +51,13 @@ def _print_delivery_summary(
     print("  DELIVERY SUMMARY", file=sys.stderr)
     print(sep, file=sys.stderr)
 
-    # -- Spec --
+    # -- Spec / target --
     task_count = _count_tasks(intent.spec_id, base_dir)
     task_note = f"  ({task_count} tasks)" if task_count else ""
     print(f"  Spec:      {intent.spec_id}{task_note}", file=sys.stderr)
+    target_repo = getattr(config, "target_repo", None) if config is not None else None
+    if target_repo:
+        print(f"  Target:    {target_repo}", file=sys.stderr)
     print(f"  Strategy:  {', '.join(intent.strategies)}  |  Mode: {intent.mode}",
           file=sys.stderr)
 
@@ -166,7 +170,7 @@ def run(
     result_map = dict(zip(intent.strategies, results))
     comparison = coordinator.compare_results(result_map)
 
-    _print_delivery_summary(intent, result_map, comparison, base_dir)
+    _print_delivery_summary(intent, result_map, comparison, base_dir, config)
 
     # 8. Auto-merge if applicable
     if intent.auto_merge and len(results) == 1:
