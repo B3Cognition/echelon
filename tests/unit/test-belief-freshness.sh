@@ -5,7 +5,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/scripts/bash/belief-freshness-check.sh"
+SCRIPT="$ROOT_DIR/extension/scripts/bash/belief-freshness-check.sh"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {

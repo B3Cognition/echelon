@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 KB_DIR="$REPO_ROOT/knowledge-base"
 LOCK_DIR="$KB_DIR/.locks/kb-write.lock"
 METADATA_FILE="$LOCK_DIR/metadata.yaml"

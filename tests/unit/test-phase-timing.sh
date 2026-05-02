@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 
 pass=0
 fail=0

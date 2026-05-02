@@ -19,7 +19,7 @@ $ARGUMENTS
 
 ## Overview
 
-Manual control over the deployment. The automated path is the `post-merge` git hook → `deploy.sh`. Use this command for status checks, manual deploys, and rollback.
+Manual control over the deployment. The automated path is `harness.run` → `deploy.sh` (triggered directly after merge). Use this command for status checks, manual deploys, and rollback.
 
 ---
 

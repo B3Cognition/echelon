@@ -3,7 +3,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/scripts/contradiction-scanner.py"
+SCRIPT="$ROOT_DIR/extension/scripts/contradiction-scanner.py"
 FIXTURES="$ROOT_DIR/tests/fixtures/contradiction-scanner"
 TMP_DIR="$(mktemp -d)"
 

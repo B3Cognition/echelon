@@ -19,7 +19,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-SCRIPT="$ROOT/scripts/token-logger.py"
+SCRIPT="$ROOT/extension/scripts/token-logger.py"
 FIXTURE="$ROOT/tests/fixtures/token-logger/sample-journal.json"
 TMP_DIR="$(mktemp -d)"
 OUTPUT="$TMP_DIR/token-baseline.json"

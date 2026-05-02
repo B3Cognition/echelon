@@ -4,7 +4,7 @@ export LC_ALL=C
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
-SCRIPT="$REPO_ROOT/scripts/bash/prompt-budget.sh"
+SCRIPT="$REPO_ROOT/extension/scripts/bash/prompt-budget.sh"
 
 pass=0
 fail=0

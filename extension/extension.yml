@@ -80,7 +80,7 @@ provides:
 
     - name: "speckit.echelon.init"
       file: "commands/echelon.init.md"
-      description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik/git hook. Run once per project before speckit.echelon.run."
+      description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik. Run once per project before speckit.echelon.run."
       behavior:
         execution: isolated
         invocation: explicit

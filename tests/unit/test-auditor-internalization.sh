@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-AUDITOR_MD="$(dirname "$0")/../../agents/learning/auditor.md"
+AUDITOR_MD="$(dirname "$0")/../../extension/agents/learning/auditor.md"
 PASS=0
 FAIL=0
 

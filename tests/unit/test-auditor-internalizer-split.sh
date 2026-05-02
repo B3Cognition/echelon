@@ -15,13 +15,13 @@ echo ""
 # --- File existence ---
 echo "--- File Existence ---"
 
-if [[ -f "$REPO_ROOT/agents/learning/auditor.md" ]]; then
+if [[ -f "$REPO_ROOT/extension/agents/learning/auditor.md" ]]; then
   pass "auditor.md exists"
 else
   fail "auditor.md does not exist"
 fi
 
-if [[ -f "$REPO_ROOT/agents/learning/internalizer.md" ]]; then
+if [[ -f "$REPO_ROOT/extension/agents/learning/internalizer.md" ]]; then
   pass "internalizer.md exists"
 else
   fail "internalizer.md does not exist"
@@ -31,7 +31,7 @@ fi
 echo ""
 echo "--- AUDITOR does NOT contain internalization keywords ---"
 
-AUDITOR="$REPO_ROOT/agents/learning/auditor.md"
+AUDITOR="$REPO_ROOT/extension/agents/learning/auditor.md"
 
 for keyword in "I-01 requirement_coverage_rate" "I-05 numeric_contradiction_rate" \
                "I-09 confidence_accuracy" "I-13 first_pass_acceptance" \
@@ -63,7 +63,7 @@ done
 echo ""
 echo "--- INTERNALIZER contains internalization keywords ---"
 
-INTERNALIZER="$REPO_ROOT/agents/learning/internalizer.md"
+INTERNALIZER="$REPO_ROOT/extension/agents/learning/internalizer.md"
 
 for keyword in "I-01 requirement_coverage_rate" "I-05 numeric_contradiction_rate" \
                "I-09 confidence_accuracy" "I-13 first_pass_acceptance" \
@@ -98,7 +98,7 @@ fi
 echo ""
 echo "--- agents.yaml registration ---"
 
-AGENTS_YAML="$REPO_ROOT/agents.yaml"
+AGENTS_YAML="$REPO_ROOT/extension/agents.yaml"
 
 if grep -q "INTERNALIZER:" "$AGENTS_YAML"; then
   pass "INTERNALIZER registered in agents.yaml"
@@ -119,7 +119,7 @@ fi
 echo ""
 echo "--- endocrine.sh mapping ---"
 
-ENDOCRINE="$REPO_ROOT/scripts/bash/endocrine.sh"
+ENDOCRINE="$REPO_ROOT/extension/scripts/bash/endocrine.sh"
 
 if grep -q "INTERNALIZER" "$ENDOCRINE"; then
   pass "INTERNALIZER in endocrine.sh"
@@ -137,7 +137,7 @@ fi
 echo ""
 echo "--- commander.md references ---"
 
-COMMANDER="$REPO_ROOT/agents/control/commander.md"
+COMMANDER="$REPO_ROOT/extension/agents/control/commander.md"
 
 if grep -q "INTERNALIZER" "$COMMANDER"; then
   pass "INTERNALIZER referenced in commander.md"

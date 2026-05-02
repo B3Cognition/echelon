@@ -2,7 +2,7 @@
 set -eu
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/scripts/bash/build-light-gates.sh"
+SCRIPT="$ROOT_DIR/extension/scripts/bash/build-light-gates.sh"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {

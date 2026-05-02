@@ -110,7 +110,7 @@ fi
 # --- Test 10: VETERAN agent prompt exists ---
 echo ""
 echo "--- T10: veteran.md agent prompt exists ---"
-if [ -f "$REPO_ROOT/agents/learning/veteran.md" ]; then
+if [ -f "$REPO_ROOT/extension/agents/learning/veteran.md" ]; then
   pass "veteran.md exists"
 else
   fail "veteran.md not found"
@@ -119,8 +119,8 @@ fi
 # --- Test 11: MIRROR agent references project_fingerprint ---
 echo ""
 echo "--- T11: mirror.md references project_fingerprint computation ---"
-if grep -q 'project_fingerprint' "$REPO_ROOT/agents/learning/mirror.md" && \
-   grep -q 'shasum -a 256' "$REPO_ROOT/agents/learning/mirror.md"; then
+if grep -q 'project_fingerprint' "$REPO_ROOT/extension/agents/learning/mirror.md" && \
+   grep -q 'shasum -a 256' "$REPO_ROOT/extension/agents/learning/mirror.md"; then
   pass "mirror.md has fingerprint computation instructions"
 else
   fail "mirror.md missing fingerprint computation"

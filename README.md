@@ -502,7 +502,9 @@ mempalace:
 
 #### Mine requirements into MemPalace
 
-Before running `echelon codegen`, mine your spec files so the RE phase can retrieve them semantically:
+**When using `echelon harness run strategy=codegen`, mining happens automatically.** The codegen pipeline always runs `codegen requirements mine` on the feature's `spec.md` and `research.md` at the start of every run — no manual step needed.
+
+The manual command is only needed when you want to pre-populate MemPalace before running codegen, or to mine spec files outside the standard feature directory:
 
 ```bash
 # Mine a single spec file
@@ -612,7 +614,7 @@ See `config-template.yml` for full reference with guidance comments.
 
 ## Local CD
 
-Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, a `post-merge` git hook fires `deploy.sh` automatically.
+Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, it calls `deploy.sh` directly.
 
 **Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
 
@@ -650,7 +652,6 @@ EXPOSE 80
 - Docker network `speckit-deploy` created (shared across all apps on this machine)
 - `speckit-traefik` container started at `:80` — one per machine, started once, never recreated
 - SPA framework config auto-corrected for path-prefix routing (Vite/Next.js/CRA)
-- `.git/hooks/post-merge` installed
 
 **Deploy flow (automatic after merge to main):**
 
@@ -688,7 +689,7 @@ ENTRYPOINT ["myapp"]
 ```
 
 **What happens on `echelon.init`:**
-- `.git/hooks/post-merge` installed
+
 - Wrapper script installed to `install_path/myapp` (if `install_path` set)
 
 **Deploy flow (automatic after merge to main):**
@@ -715,7 +716,7 @@ docker run --rm myapp:blue --help
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.deploy` | Trigger a deploy manually (same as post-merge hook) |
+| `speckit.echelon.deploy` | Trigger a deploy manually |
 | `speckit.echelon.deploy status` | Show active slot, image, ports, last deploy time |
 | `speckit.echelon.deploy rollback` | Roll back to the previous slot |
 

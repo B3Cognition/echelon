@@ -7,7 +7,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 UTILS="$REPO_ROOT/tests/utils"
 FIXTURES="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 KB_DIR="$REPO_ROOT/knowledge-base"
