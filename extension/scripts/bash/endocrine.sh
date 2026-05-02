@@ -885,7 +885,7 @@ cmd_get_full_prompt_modifier() {
   # Calibration injection (FR-002, Spec 010)
   # Read agent's prior score and failure modes from agent-scores.yaml
   local SCORES_FILE
-  SCORES_FILE="$(dirname "$(dirname "$SCRIPT_DIR")")/knowledge-base/agent-scores.yaml"
+  SCORES_FILE="$REPO_ROOT/knowledge-base/agent-scores.yaml"
   if [[ -f "$SCORES_FILE" ]] && command -v $PYTHON &>/dev/null; then
     local cal_block
     cal_block=$($PYTHON -c "
@@ -897,8 +897,7 @@ try:
     a = agents.get('$agent', {})
     history = a.get('history', a.get('run_history', []))
     if not history:
-        print('[CALIBRATION] COLD START — no prior data for $agent.')
-        sys.exit(0)
+        sys.exit(0)  # no prior data — nothing to inject
     last = history[-1] if isinstance(history, list) else {}
     score = last.get('quality_score', last.get('score', '?'))
     modes = last.get('failure_modes', [])

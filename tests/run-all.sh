@@ -28,16 +28,20 @@ TOTAL_SKIP=0
 SUITE_RESULTS=()
 
 # Detect the Python interpreter that has pytest available.
-# Try absolute Homebrew paths first to avoid broken venv shims on PATH.
+# Prefer project venv first, then try absolute Homebrew paths.
 PYTHON=""
-for candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 python3.12 python3 python; do
-  if [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; then
-    if "$candidate" -m pytest --version >/dev/null 2>&1; then
-      PYTHON="$candidate"
-      break
+if [[ -x "$ROOT/.venv/bin/python" ]] && "$ROOT/.venv/bin/python" -m pytest --version >/dev/null 2>&1; then
+  PYTHON="$ROOT/.venv/bin/python"
+else
+  for candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 python3.12 python3 python; do
+    if [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; then
+      if "$candidate" -m pytest --version >/dev/null 2>&1; then
+        PYTHON="$candidate"
+        break
+      fi
     fi
-  fi
-done
+  done
+fi
 
 run_suite() {
   local suite_name="$1"

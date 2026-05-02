@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 SQUAD_DIR="$REPO_ROOT/.specify/squad"
 LOCK_FILE="$SQUAD_DIR/.state.lock"
 LOCK_META="$SQUAD_DIR/.state.lock.meta"

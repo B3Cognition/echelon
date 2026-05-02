@@ -129,12 +129,10 @@ critical_stale     = [b for b in stale_beliefs if b["severity"] == "critical" an
 high_stale         = [b for b in stale_beliefs if b["severity"] == "high" and b["status"] == "expired"]
 low_confidence_all = [b for b in stale_beliefs if b["status"] == "low_confidence"]
 
-if critical_stale:
-    exit_code = 2  # Critical-severity expired → INVESTIGATOR dispatch
-elif high_stale or len(low_confidence_all) >= 3:
+if high_stale or len(low_confidence_all) >= 3:
     exit_code = 1  # High-severity expired OR 3+ low-confidence → defer dispatch
 else:
-    exit_code = 0  # All others (approaching_expiry, low/medium expired) → log only
+    exit_code = 0  # All others including critical-severity → log only (FR-009)
 
 # ── Emit human-readable warnings to stderr ────────────────────────
 
@@ -153,8 +151,12 @@ for b in non_critical_stale:
 
 for b in critical_stale:
     source = f"{b['source_file']}:{b['source_line']}" if b['source_file'] else "<unknown>"
+    print(f"⚠ STALE BELIEF: {b['belief_id']}", file=sys.stderr)
+    print(f"  Claim: {b['claim']}", file=sys.stderr)
+    print(f"  Status: {b['status']} | Severity: {b['severity']} | Confidence: {b['confidence']}", file=sys.stderr)
+    print(f"  Source: {source}", file=sys.stderr)
     print(CRITICAL_BANNER_TOP, file=sys.stderr)
-    print("║  CRITICAL STALE BELIEF — INVESTIGATION REQ  ║", file=sys.stderr)
+    print("║  CRITICAL STALE BELIEF DETECTED              ║", file=sys.stderr)
     print(CRITICAL_BANNER_SEP, file=sys.stderr)
     def banner_line(text, width=44):
         padded = text[:width]

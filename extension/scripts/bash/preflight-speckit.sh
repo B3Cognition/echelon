@@ -7,7 +7,9 @@
 #   3 — incompatible version (major < 1)
 set -uo pipefail
 
-REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/python-detect.sh"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 ERROR_LOG="${SPEC_KIT_ERROR_LOG:-$REPO_ROOT/.specify/squad/error.log}"
 TIMEOUT_SECONDS="${SPEC_KIT_TIMEOUT:-3}"
 MIN_MAJOR=1
@@ -36,7 +38,7 @@ if [[ -z "$cmd_path" ]]; then
 fi
 
 # Use python3 to run the command with a timeout (portable: works on macOS + Linux)
-version_output="$(python3 - "$cmd_path" "$TIMEOUT_SECONDS" 2>/dev/null <<'PY'
+version_output="$($PYTHON - "$cmd_path" "$TIMEOUT_SECONDS" 2>/dev/null <<'PY'
 import subprocess, sys
 
 cmd_path = sys.argv[1]

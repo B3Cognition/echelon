@@ -8,7 +8,8 @@ set -euo pipefail
 # Warnings (WARN) do not cause a non-zero exit.
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/python-detect.sh"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 KB_DIR="$REPO_ROOT/knowledge-base"
 
 AGENTS_YAML="$REPO_ROOT/extension/agents.yaml"
@@ -93,7 +94,7 @@ check_referential_integrity() {
   echo "=== Check 1: Cross-file referential integrity ==="
 
   local _check1_out
-  _check1_out=$(python3 - "$AGENTS_YAML" "$PROMPT_VERSIONS" "$INTERNALIZATION_LOG" "$EVOLUTION_SIGNALS" <<'PY'
+  _check1_out=$($PYTHON - "$AGENTS_YAML" "$PROMPT_VERSIONS" "$INTERNALIZATION_LOG" "$EVOLUTION_SIGNALS" <<'PY'
 import sys, yaml
 from pathlib import Path
 
@@ -167,7 +168,7 @@ check_score_consistency() {
   echo "=== Check 2: Score/result consistency ==="
 
   local _check2_out
-  _check2_out=$(python3 - "$CONFIG_FILE" "$INTERNALIZATION_LOG" <<'PY'
+  _check2_out=$($PYTHON - "$CONFIG_FILE" "$INTERNALIZATION_LOG" <<'PY'
 import sys, yaml
 from pathlib import Path
 
@@ -237,7 +238,7 @@ check_downstream_completeness() {
     return
   fi
 
-  python3 - "$STATE_FILE" "$INTERNALIZATION_LOG" <<'PY'
+  $PYTHON - "$STATE_FILE" "$INTERNALIZATION_LOG" <<'PY'
 import sys, json, yaml
 from pathlib import Path
 
