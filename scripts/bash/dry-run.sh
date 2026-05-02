@@ -270,7 +270,19 @@ fi
 header "8. SCRIPTS"
 # ═══════════════════════════════════════════
 
-for f in detect-project.sh run-understanding.sh setup-worktree.sh migrate-kb.sh; do
+for f in detect-project.sh; do
+  if [ -f "$ROOT/extension/scripts/bash/$f" ]; then
+    if [ -x "$ROOT/extension/scripts/bash/$f" ]; then
+      green "extension/scripts/bash/$f (executable)"
+    else
+      yellow "extension/scripts/bash/$f (not executable)"
+    fi
+  else
+    red "extension/scripts/bash/$f not found"
+  fi
+done
+
+for f in run-understanding.sh setup-worktree.sh migrate-kb.sh; do
   if [ -f "$ROOT/scripts/bash/$f" ]; then
     if [ -x "$ROOT/scripts/bash/$f" ]; then
       green "scripts/bash/$f (executable)"

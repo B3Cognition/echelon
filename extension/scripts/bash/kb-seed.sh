@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 KB_DIR="$REPO_ROOT/knowledge-base"
 FIXTURES_DIR="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 ERROR_LOG="$REPO_ROOT/.specify/squad/error.log"
