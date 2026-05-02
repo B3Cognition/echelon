@@ -239,3 +239,25 @@ journal_entries:
       recommendations: []
       agent_performance_notes: ""
 ```
+
+---
+
+**Amendment Candidates Output (required when dispatched in consolidation phase):**
+
+When COMMANDER dispatches MIRROR with `mode: "consolidation"` in the context pack, MIRROR must additionally produce an `amendment_candidates` list in its output. Each candidate is a principle that would have prevented a problem observed in this run, or that would reinforce a pattern that worked well.
+
+Format each candidate as:
+
+```text
+[PROPOSED: {principle text}]
+Source: {what happened in this run that suggests this principle}
+Confidence: high | medium | low
+Category: coding-standards | architecture | quality-gates | process
+```
+
+Rules for candidates:
+
+- ONLY propose additions to the constitution — never propose changes to existing human-defined principles
+- Only include candidates with `confidence: high` or `confidence: medium`
+- Maximum 3 candidates per run (prioritize highest-confidence)
+- If nothing notable happened: return an empty `amendment_candidates: []`

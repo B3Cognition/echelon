@@ -17,6 +17,22 @@ All 1,109 tests passed on our first run — TypeScript compiled clean, the build
 - Before declaring BUILD COMPLETE
 - When user asks to see the product
 
+## Capability Check (mandatory — run before any other step)
+
+1. Verify Playwright is available:
+
+   ```bash
+   npx playwright --version
+   ```
+
+   - If the command fails or returns an error: set `state.json.visual_validation_status: "skipped_no_playwright"`, emit this warning in the build log: `[VISUAL VALIDATOR] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
+
+2. Determine app type from `.specify/memory/constitution.md` — look for frontend framework keywords in the tech stack section (React, Vue, Angular, Svelte, Next.js, Nuxt, SvelteKit, or any browser-targeting framework):
+   - If no browser/UI framework is listed: skip silently, return `COMPLETE` with note `[VISUAL VALIDATOR] No browser UI framework detected — visual validation not applicable`.
+   - If a browser framework is listed: proceed to visual validation steps below.
+
+3. Only proceed past this check if both conditions are met: Playwright is installed AND a browser UI framework is detected.
+
 ## Process
 
 ### Step 1: Build and Serve

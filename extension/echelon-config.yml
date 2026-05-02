@@ -355,7 +355,7 @@ build:
     target_coverage: 100
     minimum_coverage: 95
   visual_validation:
-    enabled: false
+    enabled: true
     checkpoints: [per_phase, before_complete]
     browser: chromium
 

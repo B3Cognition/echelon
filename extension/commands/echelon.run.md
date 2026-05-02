@@ -398,6 +398,15 @@ Create `.specify/squad/state.json`:
 
 Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
+**Run History Check (mandatory at INIT):**
+1. Check if `{spec_dir}/run-history.json` exists (only possible if `spec_dir` was specified as an argument — if starting fresh with no spec_dir yet, skip this check).
+2. If `run-history.json` exists:
+   - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
+   - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.
+   - If Phase A is done AND constitution hash matches: log `[COMMANDER] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Set `state.json.phase` to `"phase1-constitution"` to signal resume.
+   - If Phase A is done but constitution hash differs: log `[COMMANDER] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
+3. If `run-history.json` does not exist: continue normally (new spec, first run).
+
 ### 1.4 Initialize Staging Reasoning Journal
 
 Create `.specify/squad/staging/reasoning-journal.json`:
@@ -648,6 +657,28 @@ Use the Agent tool to dispatch a subagent with:
 ### Post-Dispatch
 
 Read `contradictions-and-gaps.md`. If CRITICAL contradictions found, log them — WHY1 will challenge these specifically.
+
+**Transition:** Update state.json phase to "modeler". Proceed to MODELER.
+
+---
+
+## 2b.1 Dispatch MODELER — Initial Codebase Map
+
+Dispatch MODELER to build the initial queryable codebase map from SYNTHESIZER's output. This gives ARCHITECT a pre-built entity graph instead of requiring re-analysis.
+
+**Agent:** MODELER
+
+**Input context pack:**
+
+- `.specify/squad/synthesis.md` (SYNTHESIZER output)
+- `.specify/squad/staging/` (all discovery artifacts)
+- Codebase file structure (from `state.json.mode`: for brownfield, also include `state.json.golddigger_artifacts`)
+
+**Output required:** `.specify/squad/mental-model-code.md` — entity graph, contract map, data flow trace, and invariants list.
+
+**Verdict:** Must be `COMPLETE`. If MODELER returns any invariant violations in its output, COMMANDER logs them as ALERT-level journal entries but does NOT block — the map is new and violations may be expected at this stage.
+
+**State update:** Set `state.json.last_dispatch.agent` to `"MODELER"` using standard Pre-Dispatch Protocol before dispatching.
 
 **Transition:** Update state.json phase to "tracker". Proceed to TRACKER.
 
@@ -918,6 +949,10 @@ Update state.json:
   "updated_at": "{ISO-8601}"
 }
 ```
+
+**Spec Status Transition (mandatory):**
+Update `state.json.spec_status` to `"planned"`.
+Update `{spec_dir}/spec.md`: find the line `**Status**: Draft` and change it to `**Status**: Planned`.
 
 ### Expected Outputs
 
@@ -1783,6 +1818,21 @@ Update `state.json`:
   "updated_at": "{ISO-8601}"
 }
 ```
+
+**Run History Write (mandatory at DONE):**
+1. Read or create `{spec_dir}/run-history.json`.
+2. Append to `runs` array:
+   ```json
+   {
+     "run_id": "{state.json.run_id}",
+     "phase": "A",
+     "status": "done",
+     "constitution_hash": "{sha256 of .specify/memory/constitution.md}",
+     "spec_status": "{state.json.spec_status}",
+     "timestamp": "{current UTC ISO-8601}"
+   }
+   ```
+3. Write the updated file.
 
 ### 12.8 Print Final Summary
 

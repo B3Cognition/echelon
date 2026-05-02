@@ -192,3 +192,18 @@ journal_entries:
       pitfalls_flagged: []
       confidence: 0.0
 ```
+
+---
+
+**Cross-Run Amendment Candidates (required when dispatched in consolidation phase):**
+
+When COMMANDER dispatches VETERAN with `mode: "consolidation"` in the context pack, VETERAN must:
+
+1. Read `{spec_dir}/run-history.json` to find prior runs for this spec.
+2. Cross-reference MIRROR's candidates (provided in context pack) against patterns seen across multiple runs.
+3. Promote candidates that recur across ≥2 runs from `confidence: medium` to `confidence: high`.
+4. Add any cross-run patterns not already in MIRROR's list.
+
+Format: same `[PROPOSED: ...]` format as MIRROR.
+
+Output: `veteran_amendment_candidates` list (may overlap with MIRROR's — COMMANDER deduplicates by principle text before writing to `constitution-amendment-candidates.md`).
