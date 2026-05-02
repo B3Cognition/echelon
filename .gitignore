@@ -18,3 +18,4 @@ Thumbs.db
 config-belief-graph.json
 .specify/
 .pytest_cache/
+tests/benchmarks/reports/
