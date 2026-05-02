@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Spec Run History",
+  "description": "Persists across runs for a single spec. Allows COMMANDER to skip phases already completed and identify authoritative artifacts.",
+  "type": "object",
+  "required": ["spec_id", "runs"],
+  "properties": {
+    "spec_id": {
+      "type": "string",
+      "description": "The NNN prefix of the spec (e.g. '003')."
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["run_id", "phase", "status", "timestamp"],
+        "properties": {
+          "run_id": {
+            "type": "string",
+            "description": "Matches state.json run_id for this run."
+          },
+          "phase": {
+            "type": "string",
+            "enum": ["A", "B"],
+            "description": "A = echelon.run (spec/plan/tasks). B = echelon.build (implementation)."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["in-progress", "done", "failed", "killed"],
+            "description": "Final status of this run."
+          },
+          "constitution_hash": {
+            "type": "string",
+            "description": "SHA of constitution.md at run start. If changed between runs, Phase A must re-run."
+          },
+          "verification_result": {
+            "type": "string",
+            "enum": ["PASS", "FAIL", "PARTIAL", "SKIPPED"]
+          },
+          "spec_status": {
+            "type": "string",
+            "enum": ["draft", "planned", "in-progress", "implemented"]
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "authoritative_run": {
+      "type": "string",
+      "description": "run_id of the run whose artifacts are canonical. Updated to the latest Phase B run on VERIFICATION PASS."
+    }
+  }
+}
