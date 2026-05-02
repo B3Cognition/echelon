@@ -3,6 +3,7 @@
 # Full preflight → state writes → CARTOGRAPHER dispatch simulation.
 # Covers TEST-001a-3, TEST-001a-5, TEST-001b-1, TEST-001b-2.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS="$REPO_ROOT/extension/scripts/bash"
@@ -40,7 +41,7 @@ commander_preflight_and_dispatch() {
   preflight_rc=$?
   set -e
 
-  python3 - "$state_file" "$journal_file" "$preflight_rc" "$preflight_stdout" "$run_id" <<'PY'
+  $PYTHON - "$state_file" "$journal_file" "$preflight_rc" "$preflight_stdout" "$run_id" <<'PY'
 import json
 import os
 import sys
@@ -138,23 +139,23 @@ printf 'mode=available\ntimeout_seconds=3\n' > "$MOCKS/spec-kit.conf"
 commander_preflight_and_dispatch /nonexistent/speckit "$state_f" "$journal_f" "run-fallback-001"
 
 assert "INT-001b-1: fallback_mode=true after unavailable preflight" "$(
-  python3 -c "import json; d=json.load(open('$state_f')); exit(0 if d.get('fallback_mode')==True else 1)" \
-    && ok_result || fail_result "$(python3 -c "import json; d=json.load(open('$state_f')); print(d.get('fallback_mode'))")"
+  $PYTHON -c "import json; d=json.load(open('$state_f')); exit(0 if d.get('fallback_mode')==True else 1)" \
+    && ok_result || fail_result "$($PYTHON -c "import json; d=json.load(open('$state_f')); print(d.get('fallback_mode'))")"
 )"
 assert "INT-001b-1: dependency_checks.spec_kit written" "$(
-  python3 -c "import json; d=json.load(open('$state_f')); exit(0 if 'spec_kit' in d.get('dependency_checks',{}) else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state_f')); exit(0 if 'spec_kit' in d.get('dependency_checks',{}) else 1)" \
     && ok_result || fail_result "dependency_checks missing"
 )"
 assert "INT-001b-1: execution_mode=manual_specification" "$(
-  python3 -c "import json; d=json.load(open('$state_f')); exit(0 if d.get('execution_mode')=='manual_specification' else 1)" \
-    && ok_result || fail_result "$(python3 -c "import json; d=json.load(open('$state_f')); print(d.get('execution_mode'))")"
+  $PYTHON -c "import json; d=json.load(open('$state_f')); exit(0 if d.get('execution_mode')=='manual_specification' else 1)" \
+    && ok_result || fail_result "$($PYTHON -c "import json; d=json.load(open('$state_f')); print(d.get('execution_mode'))")"
 )"
 assert "INT-001b-1: spec-kit in dependency_fallbacks" "$(
-  python3 -c "import json; d=json.load(open('$state_f')); exit(0 if 'spec-kit' in d.get('dependency_fallbacks',[]) else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state_f')); exit(0 if 'spec-kit' in d.get('dependency_fallbacks',[]) else 1)" \
     && ok_result || fail_result "dependency_fallbacks missing spec-kit"
 )"
 assert "INT-001b-1: dependency_failure journal entry" "$(
-  python3 -c "import json; d=json.load(open('$journal_f')); entry=[e for e in d.get('entries',[]) if e.get('type')=='dependency_failure']; exit(0 if entry else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$journal_f')); entry=[e for e in d.get('entries',[]) if e.get('type')=='dependency_failure']; exit(0 if entry else 1)" \
     && ok_result || fail_result "dependency_failure entry missing"
 )"
 
@@ -164,7 +165,7 @@ assert "INT-001b-1: dependency_failure journal entry" "$(
 cartographer_mock="$MOCKS/agent-responses/quality-pass.md"
 cartographer_artifact="$tmpdir/spec.md"
 if [[ -f "$cartographer_mock" ]]; then
-  fallback_mode_val="$(python3 -c "import json; d=json.load(open('$state_f')); print(d.get('fallback_mode',False))")"
+  fallback_mode_val="$($PYTHON -c "import json; d=json.load(open('$state_f')); print(d.get('fallback_mode',False))")"
   if [[ "$fallback_mode_val" == "True" ]]; then
     # Inject UNVALIDATED_DEPENDENCY banner (simulating CARTOGRAPHER fallback output)
     cat > "$cartographer_artifact" <<'ARTIFACT'
@@ -200,11 +201,11 @@ chmod +x "$TMPWRAP/spec-kit"
 PATH="$TMPWRAP:$PATH" commander_preflight_and_dispatch "spec-kit" "$state_f2" "$journal_f2" "run-normal-001"
 
 assert "INT-001a-3: fallback_mode not set on available preflight" "$(
-  python3 -c "import json; d=json.load(open('$state_f2')); exit(0 if not d.get('fallback_mode') else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state_f2')); exit(0 if not d.get('fallback_mode') else 1)" \
     && ok_result || fail_result "fallback_mode is true"
 )"
 assert "INT-001a-3: dependency_checks.spec_kit has status=available" "$(
-  python3 -c "import json; d=json.load(open('$state_f2')); s=d.get('dependency_checks',{}).get('spec_kit',{}).get('status'); exit(0 if s=='available' else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state_f2')); s=d.get('dependency_checks',{}).get('spec_kit',{}).get('status'); exit(0 if s=='available' else 1)" \
     && ok_result || fail_result "status not available"
 )"
 # Normal artifact: no UNVALIDATED banner

@@ -4,6 +4,7 @@
 # Covers TEST-001b-3, TEST-001b-4, TEST-001c-1.
 # Runs in an isolated tmpdir; does NOT modify real knowledge-base or .specify/squad/.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS="$REPO_ROOT/extension/scripts/bash"
@@ -52,7 +53,7 @@ simulate_squad_run() {
   preflight_rc=$?
   set -e
 
-  python3 - "$state_file" "$journal_file" \
+  $PYTHON - "$state_file" "$journal_file" \
             "$preflight_rc" "$preflight_stdout" \
             "$run_id" "$artifact_dir" <<'PY'
 import json
@@ -174,12 +175,12 @@ assert "E2E-001b-3: run completes without uncaught exception (no error exit)" "$
   [[ $? -eq 0 ]] && ok_result || fail_result "simulate_squad_run failed"
 )"
 assert "E2E-001b-3: fallback_mode=true in state.json" "$(
-  python3 -c "import json; d=json.load(open('$state1')); exit(0 if d.get('fallback_mode')==True else 1)" \
-    && ok_result || fail_result "$(python3 -c "import json; d=json.load(open('$state1')); print(d)")"
+  $PYTHON -c "import json; d=json.load(open('$state1')); exit(0 if d.get('fallback_mode')==True else 1)" \
+    && ok_result || fail_result "$($PYTHON -c "import json; d=json.load(open('$state1')); print(d)")"
 )"
 assert "E2E-001b-3: execution_mode=manual_specification" "$(
-  python3 -c "import json; d=json.load(open('$state1')); exit(0 if d.get('execution_mode')=='manual_specification' else 1)" \
-    && ok_result || fail_result "mode=$(python3 -c "import json; d=json.load(open('$state1')); print(d.get('execution_mode'))")"
+  $PYTHON -c "import json; d=json.load(open('$state1')); exit(0 if d.get('execution_mode')=='manual_specification' else 1)" \
+    && ok_result || fail_result "mode=$($PYTHON -c "import json; d=json.load(open('$state1')); print(d.get('execution_mode'))")"
 )"
 assert "E2E-001b-4: spec.md artifact created (CARTOGRAPHER not blocked)" "$(
   [[ -f "$artifacts1/spec.md" ]] && ok_result || fail_result "spec.md not found"
@@ -188,7 +189,7 @@ assert "E2E-001b-3: spec.md has UNVALIDATED_DEPENDENCY banner" "$(
   grep -q 'UNVALIDATED_DEPENDENCY' "$artifacts1/spec.md" && ok_result || fail_result "banner missing"
 )"
 assert "E2E-001b-3: dependency_failure entry in journal" "$(
-  python3 -c "import json; d=json.load(open('$journal1')); e=[x for x in d.get('entries',[]) if x.get('type')=='dependency_failure']; exit(0 if e else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$journal1')); e=[x for x in d.get('entries',[]) if x.get('type')=='dependency_failure']; exit(0 if e else 1)" \
     && ok_result || fail_result "dependency_failure missing"
 )"
 
@@ -205,11 +206,11 @@ artifacts2="$tmpdir/artifacts-run2"
 PATH="$TMPWRAP:$PATH" simulate_squad_run "spec-kit" "e2e-run-002" "$state2" "$journal2" "$artifacts2" "$state1"
 
 assert "E2E-001c-1: fallback_mode=false after available preflight on run2" "$(
-  python3 -c "import json; d=json.load(open('$state2')); exit(0 if not d.get('fallback_mode') else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state2')); exit(0 if not d.get('fallback_mode') else 1)" \
     && ok_result || fail_result "fallback_mode still true"
 )"
 assert "E2E-001c-1: fallback_recovery journal entry on run2" "$(
-  python3 -c "import json; d=json.load(open('$journal2')); e=[x for x in d.get('entries',[]) if x.get('type')=='fallback_recovery']; exit(0 if e else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$journal2')); e=[x for x in d.get('entries',[]) if x.get('type')=='fallback_recovery']; exit(0 if e else 1)" \
     && ok_result || fail_result "fallback_recovery missing"
 )"
 assert "E2E-001b-1: run2 spec.md has NO UNVALIDATED_DEPENDENCY banner" "$(
@@ -217,7 +218,7 @@ assert "E2E-001b-1: run2 spec.md has NO UNVALIDATED_DEPENDENCY banner" "$(
     && ok_result || fail_result "unexpected banner found"
 )"
 assert "E2E-001c-1: spec-kit removed from dependency_fallbacks on run2" "$(
-  python3 -c "import json; d=json.load(open('$state2')); exit(0 if 'spec-kit' not in d.get('dependency_fallbacks',[]) else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state2')); exit(0 if 'spec-kit' not in d.get('dependency_fallbacks',[]) else 1)" \
     && ok_result || fail_result "spec-kit still in dependency_fallbacks"
 )"
 

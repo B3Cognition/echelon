@@ -4,6 +4,7 @@
 # Reports P50/P95/P99 wait durations, timeout count, and pending queue volume.
 # Output: JSON + markdown in tests/benchmarks/reports/
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS="$REPO_ROOT/extension/scripts/bash"
@@ -35,7 +36,7 @@ results_md="$REPORTS_DIR/lock-contention.md"
 printf '{"scenarios":[]}\n' > "$results_json"
 
 printf '# B-001: Lock Contention Benchmark\n\n' > "$results_md"
-printf 'Generated: %s\n\n' "$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')" >> "$results_md"
+printf 'Generated: %s\n\n' "$($PYTHON -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')" >> "$results_md"
 printf '| Writers | Hold (s) | P50 wait (ms) | P95 wait (ms) | P99 wait (ms) | Timeouts | Pending queue |\n' >> "$results_md"
 printf '|---------|----------|---------------|---------------|---------------|----------|---------------|\n' >> "$results_md"
 
@@ -70,12 +71,12 @@ for scenario in "${SCENARIOS[@]}"; do
   for i in $(seq 2 "$writer_count"); do
     wait_file="$tmpdir/wait-${writer_count}-${hold_seconds}-${i}.txt"
     (
-      start_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+      start_ms="$($PYTHON -c 'import time; print(int(time.time()*1000))')"
       set +e
       bash "$SCRIPTS/kb-lock.sh" acquire --run-id "bench-contender-${i}" >/dev/null 2>&1
       lock_rc=$?
       set -e
-      end_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+      end_ms="$($PYTHON -c 'import time; print(int(time.time()*1000))')"
       elapsed=$((end_ms - start_ms))
 
       if [[ "$lock_rc" -eq 2 ]]; then
@@ -122,7 +123,7 @@ for scenario in "${SCENARIOS[@]}"; do
   # Compute percentiles
   p50=0; p95=0; p99=0
   if [[ "${#wait_times[@]}" -gt 0 ]]; then
-    p50_p95_p99="$(python3 - "${wait_times[@]}" <<'PY'
+    p50_p95_p99="$($PYTHON - "${wait_times[@]}" <<'PY'
 import sys
 vals = sorted(int(x) for x in sys.argv[1:])
 def pct(arr, p):
@@ -143,7 +144,7 @@ PY
     "$writer_count" "$hold_seconds" "$p50" "$p95" "$p99" "$timeouts" "$pending_count" >> "$results_md"
 
   # Append scenario to JSON
-  python3 - "$results_json" "$writer_count" "$hold_seconds" "$p50" "$p95" "$p99" "$timeouts" "$pending_count" <<'PY'
+  $PYTHON - "$results_json" "$writer_count" "$hold_seconds" "$p50" "$p95" "$p99" "$timeouts" "$pending_count" <<'PY'
 import json, sys
 from pathlib import Path
 
@@ -167,7 +168,7 @@ done
 
 printf '\n## Acceptance Checks\n\n' >> "$results_md"
 # Check: 2 writers, hold=29s → second writer succeeds (0 timeouts)
-no_timeout="$(python3 - "$results_json" <<'PY'
+no_timeout="$($PYTHON - "$results_json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 for s in d["scenarios"]:
@@ -181,7 +182,7 @@ PY
 printf -- '- 2 writers hold=29s, second succeeds: **%s**\n' "$no_timeout" >> "$results_md"
 
 # Check: 2 writers, hold=31s → second writer times out
-timeout_check="$(python3 - "$results_json" <<'PY'
+timeout_check="$($PYTHON - "$results_json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 for s in d["scenarios"]:

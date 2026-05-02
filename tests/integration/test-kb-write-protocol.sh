@@ -4,6 +4,7 @@
 # Corruption → backup → restore → recovery_mode=true.
 # Covers TEST-002a-2, TEST-002b-2, TEST-002b-3, TEST-002c-2, TEST-002c-3, TEST-002d-4.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS="$REPO_ROOT/extension/scripts/bash"
@@ -58,6 +59,7 @@ set +e
 bash "$SCRIPTS/kb-lock.sh" acquire --run-id "int-run-001"
 lock_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 assert "INT write roundtrip: lock acquired" "$(
   [[ "$lock_rc" == "0" ]] && ok_result || fail_result "acquire exit $lock_rc"
@@ -108,6 +110,7 @@ set +e
 bash "$SCRIPTS/kb-write.sh" validate_append_only --file "$test_kb" 2>/tmp/aov_stderr_$$
 aov_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 assert "INT-002c-3: validate_append_only rejects destructive rewrite (non-zero)" "$(
   [[ "$aov_rc" -ne 0 ]] && ok_result || fail_result "exit 0 (should fail)"
@@ -136,6 +139,7 @@ set +e
 bash "$SCRIPTS/kb-recover.sh" restore --file "$corrupt_kb" >/dev/null 2>&1
 restore_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 assert "INT-002b-3: restore exits 0" "$(
   [[ "$restore_rc" == "0" ]] && ok_result || fail_result "exit $restore_rc"
@@ -145,11 +149,12 @@ set +e
 bash "$SCRIPTS/kb-recover.sh" detect --file "$corrupt_kb" >/dev/null 2>&1
 detect_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 assert "INT-002b-3: restored file passes detect" "$(
   [[ "$detect_rc" == "0" ]] && ok_result || fail_result "detect exit $detect_rc"
 )"
 # Verify recovery_mode=true in state.json
-rcm="$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('recovery_mode', False))" 2>/dev/null || echo false)"
+rcm="$($PYTHON -c "import json; d=json.load(open('$STATE_FILE')); print(d.get('recovery_mode', False))" 2>/dev/null || echo false)"
 assert "INT-002b-3: recovery_mode=true in state.json after restore" "$(
   [[ "$rcm" == "True" ]] && ok_result || fail_result "recovery_mode=$rcm"
 )"

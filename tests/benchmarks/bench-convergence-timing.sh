@@ -7,6 +7,7 @@
 # Isolation: each run uses its own KB root via KB_ROOT env var + tmp dir.
 # Output: JSON + markdown in tests/benchmarks/reports/
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS="$REPO_ROOT/extension/scripts/bash"
@@ -33,14 +34,14 @@ printf '{"runs":[],"summary":{}}\n' > "$results_json"
 
 printf '# B-002: Convergence Timing Benchmark\n\n' > "$results_md"
 printf 'Mode: %s\n\n' "$MODE_LABEL" >> "$results_md"
-printf 'Generated: %s\n\n' "$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')" >> "$results_md"
+printf 'Generated: %s\n\n' "$($PYTHON -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')" >> "$results_md"
 printf '| Run | phase1-understand (s) | phase2-decide (s) | phase3-solution (s) | Over-budget | Complete |\n' >> "$results_md"
 printf '|-----|-----------------------|-------------------|---------------------|-------------|----------|\n' >> "$results_md"
 
 complete_runs=0
 
 for run_num in $(seq 1 "$RUN_COUNT"); do
-  run_id="bench-conv-$(python3 -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))')-r${run_num}"
+  run_id="bench-conv-$($PYTHON -c 'from datetime import datetime,timezone; print(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))')-r${run_num}"
 
   # Isolated tmpdir for this run
   run_tmpdir="$(mktemp -d)"
@@ -71,12 +72,12 @@ for run_num in $(seq 1 "$RUN_COUNT"); do
       --run-id "$run_id"
 
     # Read result
-    elapsed="$(python3 -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('elapsed_seconds',-1))")"
-    over_budget_phase="$(python3 -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('over_budget',False))")"
+    elapsed="$($PYTHON -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('elapsed_seconds',-1))")"
+    over_budget_phase="$($PYTHON -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('over_budget',False))")"
     [[ "$over_budget_phase" == "True" ]] && over_budget_any="true"
 
     # Check completeness (elapsed_seconds and end_ts must be set)
-    end_ts="$(python3 -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('end_ts','missing'))")"
+    end_ts="$($PYTHON -c "import json; d=json.load(open('$run_state')); print(d.get('phase_timings',{}).get('$phase_key',{}).get('end_ts','missing'))")"
     if [[ "$elapsed" == "-1" || "$end_ts" == "missing" ]]; then
       run_complete="false"
     fi
@@ -104,7 +105,7 @@ for run_num in $(seq 1 "$RUN_COUNT"); do
     "$run_complete" >> "$results_md"
 
   # Append run to results JSON
-  python3 - "$results_json" "$run_id" "$run_num" \
+  $PYTHON - "$results_json" "$run_id" "$run_num" \
     "${phase_results[0]:-0}" "${phase_results[1]:-0}" "${phase_results[2]:-0}" \
     "$over_budget_any" "$run_complete" <<'PY'
 import json, sys
@@ -127,12 +128,12 @@ PY
 done
 
 # Compute summary statistics
-completeness_pct="$(python3 - <<PY
+completeness_pct="$($PYTHON - <<PY
 print(${complete_runs} * 100 // ${RUN_COUNT})
 PY
 )"
 
-python3 - "$results_json" "$completeness_pct" <<'PY'
+$PYTHON - "$results_json" "$completeness_pct" <<'PY'
 import json, sys, statistics
 from pathlib import Path
 results_path = Path(sys.argv[1])
@@ -161,7 +162,7 @@ print(f"Completeness: {completeness_pct}%  AC-003a-2: {'PASS' if completeness_pc
 PY
 
 printf '\n## Summary Statistics\n\n' >> "$results_md"
-python3 - "$results_json" >> "$results_md" <<'PY'
+$PYTHON - "$results_json" >> "$results_md" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))
 s = data.get("summary", {})

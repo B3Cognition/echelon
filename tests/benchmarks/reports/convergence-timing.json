@@ -1,1 +1,56 @@
-{"runs":[],"summary":{}}
+{
+  "runs": [
+    {
+      "over_budget": false,
+      "phase1_understand_seconds": -1.0,
+      "phase2_decide_seconds": -1.0,
+      "phase3_solution_seconds": -1.0,
+      "run_id": "bench-conv-20260502T152100Z-r1",
+      "run_num": 1,
+      "timing_complete": false
+    },
+    {
+      "over_budget": false,
+      "phase1_understand_seconds": -1.0,
+      "phase2_decide_seconds": -1.0,
+      "phase3_solution_seconds": -1.0,
+      "run_id": "bench-conv-20260502T152103Z-r2",
+      "run_num": 2,
+      "timing_complete": false
+    },
+    {
+      "over_budget": false,
+      "phase1_understand_seconds": -1.0,
+      "phase2_decide_seconds": -1.0,
+      "phase3_solution_seconds": -1.0,
+      "run_id": "bench-conv-20260502T152107Z-r3",
+      "run_num": 3,
+      "timing_complete": false
+    },
+    {
+      "over_budget": false,
+      "phase1_understand_seconds": -1.0,
+      "phase2_decide_seconds": -1.0,
+      "phase3_solution_seconds": -1.0,
+      "run_id": "bench-conv-20260502T152110Z-r4",
+      "run_num": 4,
+      "timing_complete": false
+    },
+    {
+      "over_budget": false,
+      "phase1_understand_seconds": -1.0,
+      "phase2_decide_seconds": -1.0,
+      "phase3_solution_seconds": -1.0,
+      "run_id": "bench-conv-20260502T152114Z-r5",
+      "run_num": 5,
+      "timing_complete": false
+    }
+  ],
+  "summary": {
+    "ac_003a_2_pass": false,
+    "anomaly_count": 0,
+    "complete_runs": 0,
+    "completeness_pct": 0,
+    "total_runs": 5
+  }
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env sh
 # test-contradiction-scanner.sh — Unit tests for scripts/contradiction-scanner.py
 set -eu
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 SCRIPT="$ROOT_DIR/extension/scripts/contradiction-scanner.py"
@@ -33,7 +34,7 @@ assert_json_key() {
   file="$2"
   key="$3"
   TOTAL=$((TOTAL + 1))
-  if python3 -c "import json,sys; d=json.load(open('$file')); assert '$key' in d, '$key missing'" 2>/dev/null; then
+  if $PYTHON -c "import json,sys; d=json.load(open('$file')); assert '$key' in d, '$key missing'" 2>/dev/null; then
     echo "  PASS: $label"
     PASS=$((PASS + 1))
   else
@@ -47,7 +48,7 @@ assert_json_val() {
   file="$2"
   expr="$3"
   TOTAL=$((TOTAL + 1))
-  if python3 -c "import json,sys; d=json.load(open('$file')); $expr" 2>/dev/null; then
+  if $PYTHON -c "import json,sys; d=json.load(open('$file')); $expr" 2>/dev/null; then
     echo "  PASS: $label"
     PASS=$((PASS + 1))
   else
@@ -63,7 +64,7 @@ echo ""
 # Test 1: --help exits 0
 # ---------------------------------------------------------------------------
 echo "-- Test 1: --help exits 0 --"
-assert_ok "--help exits 0" "python3 '$SCRIPT' --help"
+assert_ok "--help exits 0" "$PYTHON '$SCRIPT' --help"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -74,13 +75,13 @@ echo "-- Test 2: Clean fixture produces valid JSON --"
 CLEAN_OUT="$TMP_DIR/clean-report.json"
 CLEAN_SPECS="$FIXTURES/clean-run/.."   # parent of clean-run = contradiction-scanner/
 
-python3 "$SCRIPT" \
+$PYTHON "$SCRIPT" \
   --specs-dir "$FIXTURES" \
   --spec-ids "clean-run" \
   --output "$CLEAN_OUT" 2>/dev/null
 
 assert_ok "Output file exists" "[ -f '$CLEAN_OUT' ]"
-assert_ok "Output is valid JSON" "python3 -c \"import json; json.load(open('$CLEAN_OUT'))\""
+assert_ok "Output is valid JSON" "$PYTHON -c \"import json; json.load(open('$CLEAN_OUT'))\""
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -104,7 +105,7 @@ echo "-- Test 4: Dirty fixture — injected count contradiction detected --"
 
 DIRTY_OUT="$TMP_DIR/dirty-report.json"
 
-python3 "$SCRIPT" \
+$PYTHON "$SCRIPT" \
   --specs-dir "$FIXTURES" \
   --spec-ids "dirty-run" \
   --output "$DIRTY_OUT" 2>/dev/null

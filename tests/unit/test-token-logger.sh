@@ -15,6 +15,7 @@
 # Exit 0 = ALL PASS, Exit 1 = one or more FAIL
 
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -39,15 +40,15 @@ fail() {
   FAILURES=$((FAILURES + 1))
 }
 
-# Run python3 with the script; capture stdout+stderr separately
+# Run $PYTHON with the script; capture stdout+stderr separately
 run_logger() {
-  python3 "$SCRIPT" "$@" 2>/dev/null
+  $PYTHON "$SCRIPT" "$@" 2>/dev/null
 }
 
-# Extract a JSON value using python3 (no jq dependency)
+# Extract a JSON value using $PYTHON (no jq dependency)
 json_get() {
   local file="$1" key="$2"
-  python3 -c "
+  $PYTHON -c "
 import json, sys
 try:
     d = json.load(open('$file'))
@@ -63,7 +64,7 @@ except Exception as e:
 
 json_has_key() {
   local file="$1" key="$2"
-  python3 -c "
+  $PYTHON -c "
 import json, sys
 try:
     d = json.load(open('$file'))
@@ -96,7 +97,7 @@ fi
 
 # ── T1: --help exits 0 ─────────────────────────────────────────────────────
 
-if python3 "$SCRIPT" --help >/dev/null 2>&1; then
+if $PYTHON "$SCRIPT" --help >/dev/null 2>&1; then
   pass "T1: --help exits 0"
 else
   fail "T1: --help should exit 0"
@@ -104,7 +105,7 @@ fi
 
 # ── T2: Runs against fixture journal, exits 0 ─────────────────────────────
 
-if python3 "$SCRIPT" \
+if $PYTHON "$SCRIPT" \
     --journal "$FIXTURE" \
     --output  "$OUTPUT" \
     >/dev/null 2>&1; then
@@ -139,7 +140,7 @@ fi
 
 # ── T4: per_agent_type has at least one entry with mean/median/p90/count ──
 
-per_agent_valid=$(python3 - "$OUTPUT" <<'PYEOF'
+per_agent_valid=$($PYTHON - "$OUTPUT" <<'PYEOF'
 import json, sys
 data = json.load(open(sys.argv[1]))
 pa = data.get("per_agent_type", {})
@@ -175,7 +176,7 @@ fi
 
 # ── T6: invocations array is non-empty ────────────────────────────────────
 
-inv_count=$(python3 -c "
+inv_count=$($PYTHON -c "
 import json, sys
 d = json.load(open('$OUTPUT'))
 print(len(d.get('invocations', [])))
@@ -189,7 +190,7 @@ fi
 
 # ── T7: pipeline_total has all three token fields ─────────────────────────
 
-pipeline_valid=$(python3 - "$OUTPUT" <<'PYEOF'
+pipeline_valid=$($PYTHON - "$OUTPUT" <<'PYEOF'
 import json, sys
 data = json.load(open(sys.argv[1]))
 pt = data.get("pipeline_total", {})
@@ -212,7 +213,7 @@ fi
 # ── T8: At least one invocation has the five AC-003-001 required fields ──────
 # AC-003-001 requires: prompt_tokens, completion_tokens, agent, spec_run_id, codebase_id
 
-inv_fields_valid=$(python3 - "$OUTPUT" <<'PYEOF'
+inv_fields_valid=$($PYTHON - "$OUTPUT" <<'PYEOF'
 import json, sys
 data = json.load(open(sys.argv[1]))
 invocations = data.get("invocations", [])
@@ -241,7 +242,7 @@ fi
 EXPECTED_AGENTS=("SCOUT" "CARTOGRAPHER" "SAGE")
 all_agents_found=true
 for agent in "${EXPECTED_AGENTS[@]}"; do
-  found=$(python3 -c "
+  found=$($PYTHON -c "
 import json, sys
 data = json.load(open('$OUTPUT'))
 pa = data.get('per_agent_type', {})

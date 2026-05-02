@@ -4,6 +4,7 @@
 # then running preflight with mock-available, and asserting fallback_mode cleared and
 # fallback_recovery journal entry written.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 SCRIPTS="$REPO_ROOT/extension/scripts/bash"
@@ -35,7 +36,7 @@ apply_commander_preflight_recovery() {
   local run_id="$4"
   local prior_run_id="$5"
 
-  python3 - "$state_file" "$journal_file" "$preflight_rc" "$run_id" "$prior_run_id" <<'PY'
+  $PYTHON - "$state_file" "$journal_file" "$preflight_rc" "$run_id" "$prior_run_id" <<'PY'
 import json
 import os
 import sys
@@ -122,7 +123,7 @@ journal_file="$tmpdir/journal.json"
 cp "$FIXTURES/state/fallback-mode.json" "$state_file"
 cp "$FIXTURES/journal/baseline.json" "$journal_file"
 
-prior_run_id="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('run_id','unknown'))")"
+prior_run_id="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('run_id','unknown'))")"
 recovery_run_id="squad-recovery-$(date +%s)"
 
 # Run preflight with available mock
@@ -131,25 +132,26 @@ set +e
 PATH="$TMPWRAP:$PATH" bash "$SCRIPTS/preflight-speckit.sh" --cmd spec-kit >/dev/null 2>&1
 preflight_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 apply_commander_preflight_recovery "$state_file" "$journal_file" "$preflight_rc" "$recovery_run_id" "$prior_run_id"
 
 # Assert fallback_mode=false
-fallback_mode="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('fallback_mode', 'absent'))")"
+fallback_mode="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('fallback_mode', 'absent'))")"
 assert "TEST-001c-1: fallback_mode is false after available preflight" "$(
   [[ "$fallback_mode" != "True" && "$fallback_mode" != "true" ]] && ok_result || fail_result "fallback_mode=$fallback_mode"
 )"
 
 # Assert spec-kit removed from dependency_fallbacks
-dep_fallbacks="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('dependency_fallbacks', []))")"
+dep_fallbacks="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('dependency_fallbacks', []))")"
 assert "TEST-001c-1: spec-kit removed from dependency_fallbacks" "$(
   # dependency_fallbacks should be empty or not contain spec-kit
-  python3 -c "import json; d=json.load(open('$state_file')); fallbacks=d.get('dependency_fallbacks',[]); exit(0 if 'spec-kit' not in fallbacks else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state_file')); fallbacks=d.get('dependency_fallbacks',[]); exit(0 if 'spec-kit' not in fallbacks else 1)" \
     && ok_result || fail_result "dependency_fallbacks=$dep_fallbacks"
 )"
 
 # Assert fallback_recovery journal entry with prior_run_id and recovery_run_id
-recovery_entry="$(python3 -c "
+recovery_entry="$($PYTHON -c "
 import json
 d=json.load(open('$journal_file'))
 entries=[e for e in d.get('entries',[]) if e.get('type')=='fallback_recovery']
@@ -177,24 +179,25 @@ journal_file2="$tmpdir2/journal.json"
 cp "$FIXTURES/state/baseline.json" "$state_file2"
 cp "$FIXTURES/journal/baseline.json" "$journal_file2"
 
-prior_id2="$(python3 -c "import json; d=json.load(open('$state_file2')); print(d.get('run_id','unknown'))")"
+prior_id2="$($PYTHON -c "import json; d=json.load(open('$state_file2')); print(d.get('run_id','unknown'))")"
 new_run_id2="squad-test2-$(date +%s)"
 
 set +e
 bash "$SCRIPTS/preflight-speckit.sh" --cmd /nonexistent/speckit-x >/dev/null 2>&1
 prc2=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 apply_commander_preflight_recovery "$state_file2" "$journal_file2" "$prc2" "$new_run_id2" "$prior_id2"
 
 # Assert fallback_mode=true
-fbm="$(python3 -c "import json; d=json.load(open('$state_file2')); print(d.get('fallback_mode', 'absent'))")"
+fbm="$($PYTHON -c "import json; d=json.load(open('$state_file2')); print(d.get('fallback_mode', 'absent'))")"
 assert "TEST-001c-2: unavailable preflight sets fallback_mode=true" "$(
   [[ "$fbm" == "True" ]] && ok_result || fail_result "fallback_mode=$fbm"
 )"
 
 # Assert dependency_failure journal entry
-dep_entry="$(python3 -c "
+dep_entry="$($PYTHON -c "
 import json
 d=json.load(open('$journal_file2'))
 entries=[e for e in d.get('entries',[]) if e.get('type')=='dependency_failure']

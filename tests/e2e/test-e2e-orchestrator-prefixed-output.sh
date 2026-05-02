@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # E2E: orchestrator mode — prefixed output, parallel dispatch, exit code propagation
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 PYTHONPATH="$REPO_ROOT/src"
@@ -58,7 +59,7 @@ fi
 STUB
   chmod +x "$tmpdir/bin/echelon"
 
-  PATH="$tmpdir/bin:$PATH" PYTHONPATH="$PYTHONPATH" python3 -c "
+  PATH="$tmpdir/bin:$PATH" PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
 sys.argv = ['echelon', 'harness', 'run', '024']
