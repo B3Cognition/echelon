@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/python-detect.sh"
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -45,7 +46,7 @@ checksum_for() {
   local operation="$2"
   local payload="$3"
 
-  python3 - "$target_file" "$operation" "$payload" <<'PY'
+  $PYTHON - "$target_file" "$operation" "$payload" <<'PY'
 import hashlib
 import sys
 raw = "|".join([sys.argv[1], sys.argv[2], sys.argv[3]])

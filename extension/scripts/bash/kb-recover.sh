@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/python-detect.sh"
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -27,7 +28,7 @@ log_error() {
 validate_file() {
   local file_path="$1"
 
-  python3 - "$file_path" <<'PY'
+  $PYTHON - "$file_path" <<'PY'
 import sys
 from pathlib import Path
 
@@ -62,7 +63,7 @@ PY
 }
 
 iso_utc() {
-  python3 - <<'PY'
+  $PYTHON - <<'PY'
 from datetime import datetime, timezone
 print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
@@ -76,7 +77,7 @@ set_recovery_mode() {
     return 0
   fi
 
-  python3 - "$state_file" <<'PY'
+  $PYTHON - "$state_file" <<'PY'
 import json
 import os
 import sys

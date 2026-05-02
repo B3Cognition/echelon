@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/python-detect.sh"
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -24,14 +25,14 @@ USAGE
 }
 
 now_iso_utc() {
-  python3 - <<'PY'
+  $PYTHON - <<'PY'
 from datetime import datetime, timezone
 print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
 }
 
 now_compact_utc() {
-  python3 - <<'PY'
+  $PYTHON - <<'PY'
 from datetime import datetime, timezone
 print(datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
 PY
@@ -39,7 +40,7 @@ PY
 
 iso_to_epoch() {
   local ts="$1"
-  python3 - "$ts" <<'PY'
+  $PYTHON - "$ts" <<'PY'
 import sys
 from datetime import datetime, timezone
 
@@ -104,7 +105,7 @@ is_stale_lock() {
   local grace_seconds="$3"
 
   local now_epoch acquired_epoch age max_age
-  now_epoch="$(python3 - <<'PY'
+  now_epoch="$($PYTHON - <<'PY'
 import time
 print(int(time.time()))
 PY
@@ -150,7 +151,7 @@ acquire_lock() {
   mkdir -p "$LOCKS_DIR"
 
   local start_epoch now_epoch elapsed
-  start_epoch="$(python3 - <<'PY'
+  start_epoch="$($PYTHON - <<'PY'
 import time
 print(int(time.time()))
 PY
@@ -173,7 +174,7 @@ PY
       fi
     fi
 
-    now_epoch="$(python3 - <<'PY'
+    now_epoch="$($PYTHON - <<'PY'
 import time
 print(int(time.time()))
 PY

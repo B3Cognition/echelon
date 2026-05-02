@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+. "$(CDPATH='' cd "$(dirname "$0")" && pwd)/python-detect.sh"
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -15,7 +16,7 @@ USAGE
 }
 
 now_iso_utc() {
-  python3 - <<'PY'
+  $PYTHON - <<'PY'
 from datetime import datetime, timezone
 print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
@@ -38,7 +39,7 @@ append_entry() {
   local created_at
   created_at="$(now_iso_utc)"
 
-  python3 - "$file_path" "$payload" "$run_id" "$operation_id" "$source" "$created_at" <<'PY'
+  $PYTHON - "$file_path" "$payload" "$run_id" "$operation_id" "$source" "$created_at" <<'PY'
 import hashlib
 import json
 import os
@@ -124,7 +125,7 @@ validate_append_only() {
   local file_path="$1"
   ensure_checksum_store
 
-  python3 - "$file_path" "$CHECKSUM_FILE" <<'PY'
+  $PYTHON - "$file_path" "$CHECKSUM_FILE" <<'PY'
 import hashlib
 import json
 import sys
