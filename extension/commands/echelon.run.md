@@ -138,22 +138,22 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
-**Bootstrap echelon.yml (if absent):**
+**Bootstrap echelon-config.yml (if absent):**
 
-If `echelon.yml` does not exist at the project root, copy a starter config from the extension. The extension ships with `config-template.yml`; `echelon-config.yml` may or may not be present depending on the install:
+If `echelon-config.yml` does not exist at the project root, copy a starter config from the extension. The extension ships with `config-template.yml`; `echelon-config.yml` is the preferred starter when present:
 
 ```bash
 ECHELON_EXT=".specify/extensions/echelon"
-if [ ! -f echelon.yml ]; then
+if [ ! -f echelon-config.yml ]; then
   if [ -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-    cp "${ECHELON_EXT}/echelon-config.yml" echelon.yml
-    echo "Bootstrapped echelon.yml from echelon-config.yml"
+    cp "${ECHELON_EXT}/echelon-config.yml" echelon-config.yml
+    echo "Bootstrapped echelon-config.yml from extension starter"
   elif [ -f "${ECHELON_EXT}/config-template.yml" ]; then
-    cp "${ECHELON_EXT}/config-template.yml" echelon.yml
-    echo "Bootstrapped echelon.yml from config-template.yml"
+    cp "${ECHELON_EXT}/config-template.yml" echelon-config.yml
+    echo "Bootstrapped echelon-config.yml from config-template.yml"
   else
-    echo "✗ echelon.yml not found and no template available in ${ECHELON_EXT}" >&2
-    echo "  Create echelon.yml at the project root before running echelon." >&2
+    echo "✗ echelon-config.yml not found and no template available in ${ECHELON_EXT}" >&2
+    echo "  Create echelon-config.yml at the project root before running echelon." >&2
     exit 1
   fi
 fi
@@ -306,15 +306,22 @@ Prior run data is included in agent context packs so the squad can track improve
 
 ### 1.6 Load Configuration
 
-Read `echelon.yml` if it exists. Otherwise use defaults from `config-template.yml`:
+Resolve config via the spec-kit ConfigurationManager. In a shell context:
 
-- `max_iterations`: 5
-- `convergence_delta`: 0.02
-- `max_active_specialists`: 3
-- `token_budget_k`: 1000
+```bash
+# shellcheck disable=SC2046
+eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)"
+```
+
+This merges manifest defaults → `echelon-config.yml` (project overrides) → `local-config.yml` → `SPECKIT_ECHELON_*` env vars. Key defaults when no project config exists:
+
+- `ECHELON_CFG_CONVERGENCE_MAX_ITERATIONS`: 5
+- `ECHELON_CFG_CONVERGENCE_DELTA`: 0.02
+- `ECHELON_CFG_MAX_ACTIVE_SPECIALISTS`: 3
+- `ECHELON_CFG_BUDGET_TOKEN_BUDGET_K`: 1000
 - Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
 
-> **Authoritative values:** `echelon.yml` (project overrides) / `config-template.yml` (defaults) is the single source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
+> **Authoritative values:** `echelon-config.yml` (project overrides) / manifest `config.defaults` (fallback) is the single source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
 
 ### 1.7 Check Constitution Status
 
@@ -342,7 +349,7 @@ For reconciliation after recovery, reference `templates/recovery-checklist.md` a
 
 ### Preflight: KB Evolution Validation
 
-If `evolution.enabled` is `true` in `echelon.yml`:
+If `evolution.enabled` is `true` in `echelon-config.yml`:
 
 ```bash
 scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
@@ -886,7 +893,7 @@ Read WHY2 outputs:
 1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
 2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in CARTOGRAPHER's context pack so CARTOGRAPHER knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
 3. **Track quality scores** — append to `state.json.quality_scores[]` an object with ALL of these fields: `pass` (iteration label), `overall`, `structure`, `readability`, `cognitive`, `semantic`, `testability`, `behavioral`, `depth`. All score values come from Understanding output (quality-gates.md). If a category score is not available, set to `null`.
-4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
+4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
 **Transition:** `phases[phase2-decide]` — see `workflow/definition.yaml`
@@ -1089,7 +1096,7 @@ Use the Agent tool:
 
 #### SECURITY Dispatch (GUARDIAN codename) — always-on by default
 
-**Dispatch mode** is controlled by `echelon.yml` → `guardian.mode` (default: `always_on`).
+**Dispatch mode** is controlled by `echelon-config.yml` → `guardian.mode` (default: `always_on`).
 
 - **`always_on`**: Dispatch GUARDIAN on every run. If the domain is NOT security-sensitive, GUARDIAN runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, GUARDIAN runs the full STRIDE + OWASP + compliance analysis.
 - **`on_demand`**: Dispatch only when domain involves auth, payments, PII, regulatory compliance (legacy behavior).
@@ -1962,7 +1969,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 ### Rule 1: Understanding Delta Convergence
 
 - After each WHY pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
-- If the delta between the last two passes is < `convergence_delta` (per `echelon.yml convergence:`) for 2 consecutive passes → **stop WHY iterations**
+- If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop WHY iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
 ### Rule 2: Circular Issue Detection
@@ -1973,13 +1980,13 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 ### Rule 3: Max Iterations
 
-- Maximum `max_iterations` (per `echelon.yml convergence:`) total squad iterations → **force convergence**
+- Maximum `max_iterations` (per `echelon-config.yml convergence:`) total squad iterations → **force convergence**
 - When forced: run FINALIZE with whatever artifacts exist, flag all as "forced convergence"
 - DEFER re-routes count toward the iteration max
 
 ### Rule 4: Token Budget Exhaustion
 
-- If cumulative `token_usage` exceeds `token_budget_k * 1000` (per `echelon.yml budget:`) → **force finalize**
+- If cumulative `token_usage` exceeds `token_budget_k * 1000` (per `echelon-config.yml budget:`) → **force finalize**
 - Skip remaining specialists if budget is tight
 - Always run GROUND + CALIBRATE (minimum finalize)
 
@@ -2079,7 +2086,7 @@ Every artifact produced in degraded mode (fallback was used) must have this bann
 
 ## 18. Token Budget Management
 
-**See `echelon.yml budget:` for allocation tiers and the 40% single-agent cap. See `agents/control/commander.md` → "Token Budget Management" for enforcement procedures (borrow rules, warning agents).**
+**See `echelon-config.yml budget:` for allocation tiers and the 40% single-agent cap. See `agents/control/commander.md` → "Token Budget Management" for enforcement procedures (borrow rules, warning agents).**
 
 ### Budget Enforcement (phase-specific skip rules)
 
