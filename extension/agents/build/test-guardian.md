@@ -28,7 +28,7 @@ Action: record as non-testable-logic in reasoning journal. Do NOT require covera
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 
 - `tests.*` - Minimum test counts by component type
 

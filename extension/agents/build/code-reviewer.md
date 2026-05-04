@@ -31,10 +31,10 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 
 - `code_quality.*` - Function length, nesting, complexity limits
-- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `squad-config.yml`. Findings below this threshold are silently suppressed. Range: 0–100.
+- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `echelon.yml`. Findings below this threshold are silently suppressed. Range: 0–100.
 
 ## Prime Directive
 
@@ -73,7 +73,7 @@ All review findings MUST pass through confidence-based filtering before being re
 
 ### Confidence Threshold
 
-- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `squad-config.yml` (default: `80`).
+- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `echelon.yml` (default: `80`).
 - Each finding MUST include a confidence percentage (0–100) reflecting the reviewer's certainty that it is a genuine defect, not a false positive.
 - Findings below the threshold are silently dropped — they do not appear in the review report.
 

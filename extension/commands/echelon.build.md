@@ -854,7 +854,7 @@ End of build:
 
 After SCOREKEEPER and before final summary, COMMANDER runs the autonomous feedback pipeline. This closes the learning loop without human input.
 
-**Config gate:** Read `feedback.auto_feedback` from `squad-config.yml` (default: `true`). If `false`, skip to Section 8.6 Print Summary.
+**Config gate:** Read `feedback.auto_feedback` from `echelon.yml` (default: `true`). If `false`, skip to Section 8.6 Print Summary.
 
 ### 8.5.1 Dispatch AUDITOR (Post-Build Self-Assessment)
 
@@ -900,7 +900,7 @@ For each expert dispatch:
 
 ### 8.5.3 Post-Build Validation (optional)
 
-**Config gate:** Read `feedback.post_build_validation` from `squad-config.yml` (default: `true`). If `false`, skip to 8.5.4.
+**Config gate:** Read `feedback.post_build_validation` from `echelon.yml` (default: `true`). If `false`, skip to 8.5.4.
 
 **a) Understanding re-scan:**
 
@@ -924,7 +924,7 @@ Dispatch SAGE in post-build-validation mode:
 
 **b) Intent alignment check:**
 
-**Config gate:** Read `feedback.post_build_intent_check` from `squad-config.yml` (default: `true`).
+**Config gate:** Read `feedback.post_build_intent_check` from `echelon.yml` (default: `true`).
 
 Dispatch TRACKER in post-build-alignment mode:
 
@@ -1163,7 +1163,7 @@ Tasks or gates flagged as DEGRADED must have this banner in their report section
 - **Max total IMPLEMENTER dispatches per task:** 7 (1 initial + 2 per gate for 3 gates)
 - **Max BLOCKED tasks before pause:** 3
 - **Max DEGRADED tasks before warning:** 30% of total tasks
-- **Token budget for build phase:** Configurable in `squad-config.yml`. Default: 2M tokens.
+- **Token budget for build phase:** Configurable in `echelon.yml`. Default: 2M tokens.
 - **Wall-clock time limit:** 60 minutes. Force complete with whatever is done.
 
 ---

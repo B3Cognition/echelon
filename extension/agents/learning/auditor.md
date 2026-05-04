@@ -14,7 +14,7 @@ You are dispatched as a subagent by the COMMANDER during FINALIZE and after FEED
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 
 - `calibration.*` - Accuracy thresholds and correction factors
 - `risk.*` - Risk level thresholds
@@ -169,7 +169,7 @@ Cross-reference feedback outcomes with entries in `patterns.yaml`:
 
 ### Mode 3: Evolution Loop (during FINALIZE, after Mode 1)
 
-Only execute if `evolution.enabled` is `true` in `squad-config.yml`.
+Only execute if `evolution.enabled` is `true` in `echelon.yml`.
 
 #### Step 1: Check Evolution Signal Triggers
 

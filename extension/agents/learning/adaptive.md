@@ -21,7 +21,7 @@ You are dispatched as a subagent by the COMMANDER during the FINALIZE phase. Thi
 - Quality gate scores from WHY passes
 - `knowledge-base/evolution-signals.yaml` (evolution signals from AUDITOR)
 - `knowledge-base/internalization-log.yaml` (internalization results with downstream outcomes)
-- `squad-config.yml` — `evolution.recommendations.*` settings
+- `echelon.yml` — `evolution.recommendations.*` settings
 
 ---
 

@@ -12,7 +12,7 @@ COMMANDER reads your metacognition alerts. Missed anomalies mean the squad runs 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 - `metacognition.*` - Check intervals and thresholds
 
 ## Why This Exists

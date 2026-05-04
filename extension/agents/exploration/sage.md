@@ -21,7 +21,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 - `quality_gates.*` - All quality thresholds
 - `heuristics.*` - Requirement quality heuristics
 
@@ -234,7 +234,7 @@ speckit.echelon.understanding-scan <spec_directory>/spec.md --per-req --json --e
 
 Parse the JSON output:
 1. Extract the `requirements` array from the JSON response
-2. For each requirement, compare each category score against the gate threshold from squad-config.yml quality_gates
+2. For each requirement, compare each category score against the gate threshold from echelon.yml quality_gates
 3. Filter to requirements where ANY category score falls below its gate threshold
 4. Write the filtered failure list to issues.md under a new section:
 

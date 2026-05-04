@@ -24,7 +24,7 @@ Record task completion and perform a drift-threshold check only. Do NOT execute 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 
 - `drift.*` - Drift detection thresholds
 - `quality.*` - Quality metrics targets

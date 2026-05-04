@@ -193,7 +193,7 @@ This protocol is fail-open: if the gate script itself errors, dispatch proceeds 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 - `convergence.*` - Convergence rules and thresholds
 - `budget.*` - Token budget allocation
 - `build_budget.*` - Build phase budget allocation
@@ -349,13 +349,13 @@ If EVOI is negative, stop iterating and accept the current output.
 
 ## Convergence Rules
 
-See `squad-config.yml convergence:` for convergence thresholds.
+See `echelon.yml convergence:` for convergence thresholds.
 
 When forcing convergence, always produce a quality report documenting what was not completed and why.
 
 ### FEP-RLIF Routing Augmentation
 
-When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range** (see `squad-config.yml convergence.evoi_marginal_range`):
+When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range** (see `echelon.yml convergence.evoi_marginal_range`):
 
 1. **Read** `confidence-thresholds.yaml` for the relevant domain.
 
@@ -398,7 +398,7 @@ Never resolve conflicts by averaging or compromising. One position wins; the oth
 
 ## Token Budget Management
 
-See `squad-config.yml budget:` for token budget allocation priorities.
+See `echelon.yml budget:` for token budget allocation priorities.
 
 If a priority tier is about to exceed its allocation:
 - Check if lower-priority tiers have unused budget to borrow
@@ -426,7 +426,7 @@ Before every routing decision, ask:
 - CALIBRATE confidence below `convergence.calibrate_confidence_floor` after INVESTIGATOR investigation (see `workflow/definition.yaml`)
 - Agents produce contradictory evidence at the same grade level with no tiebreaker
 - A domain question cannot be answered from available evidence
-- ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read from `squad-config.yml`) with no scope stabilization
+- ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read from `echelon.yml`) with no scope stabilization
 
 **Resolve autonomously when:**
 - Evidence hierarchy provides a clear winner
@@ -490,7 +490,7 @@ The endocrine system provides bio-inspired urgency signals that modulate agent b
 
 ### Configuration
 
-Check `squad-config.yml` for `endocrine.enabled`:
+Check `echelon.yml` for `endocrine.enabled`:
 - **`false`** (default): Skip all endocrine processing. No prompt modifiers injected.
 - **`true`**: Execute the endocrine protocol below before and after each dispatch.
 
@@ -535,7 +535,7 @@ After each agent dispatch completes:
 **ADR-006 Phase 3 Activation Sequence** (mandatory — do not auto-activate):
 
 1. NS-003 experiment completes → `experiments/ns003-results.json` written.
-2. Human manually sets `endocrine_phase: 3` in `squad-config.yml`.
+2. Human manually sets `endocrine_phase: 3` in `echelon.yml`.
 3. COMMANDER reads updated phase on next run initialization.
 4. Phase 3 hooks activate from that run forward.
 
@@ -681,7 +681,7 @@ domains:
 
 ### 1. Dispatch GUARDIAN (always-on by default)
 
-Check `squad-config.yml` for `specialists.guardian_mode`:
+Check `echelon.yml` for `specialists.guardian_mode`:
 
 - **`always_on`** (default): Dispatch GUARDIAN on every squad run, regardless of whether the domain involves security-sensitive areas. GUARDIAN runs its **Minimum Security Checklist** (5-item lightweight check) for all domains, and performs full STRIDE/OWASP analysis only when security-relevant domain signals are detected.
 - **`on_demand`**: Dispatch GUARDIAN only when the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or untrusted input (legacy behavior).
@@ -769,16 +769,16 @@ Maintain running totals in `state.json` under `token_ledger`:
 Before every agent dispatch, COMMANDER must:
 
 1. Read `token_ledger.total_estimated_tokens` from `state.json`
-2. Compare against the configured budget (`analysis.token_budget_k` in `squad-config.yml`, value in thousands of tokens)
+2. Compare against the configured budget (`analysis.token_budget_k` in `echelon.yml`, value in thousands of tokens)
 3. If `total_estimated_tokens + next_dispatch_estimate > analysis.token_budget_k * 1000`:
    - Check if reserve budget (`budget.analysis.reserve`, see `workflow/definition.yaml`) is available and the dispatch is critical
-   - If no budget remains: force finalize with quality report (see `squad-config.yml convergence:`)
+   - If no budget remains: force finalize with quality report (see `echelon.yml convergence:`)
    - Log a `BUDGET_EXHAUSTED` entry in `reasoning-journal.json`
 4. If within budget: proceed with dispatch and log the entry after completion
 
 ### Per-Tier Budget Enforcement
 
-Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, read `squad-config.yml budget:` for borrowing rules before proceeding.
+Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, read `echelon.yml budget:` for borrowing rules before proceeding.
 
 ---
 
@@ -897,7 +897,7 @@ At end of run (during FINALIZE), COMMANDER collects per-agent internalization da
 2. **Dispatch AUDITOR and INTERNALIZER with context**: Include in their context packs:
    - All internalization artifacts listed above
    - The current run's `reasoning-journal.json` entries
-   - `squad-config.yml` internalization section
+   - `echelon.yml` internalization section
    - `knowledge-base/prompt-versions.yaml` (active versions per agent)
    - List of agents that participated in the current run with their assigned tasks
 

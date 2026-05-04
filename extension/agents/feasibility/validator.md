@@ -44,7 +44,7 @@ NEVER accept partial coverage — AMENDED: NEVER accept partial coverage unless 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+This agent uses values from `echelon.yml`:
 - `internalization.*` - Pass/fail thresholds
 
 ## The Triadic Cognitive Model
