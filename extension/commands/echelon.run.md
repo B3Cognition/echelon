@@ -310,6 +310,8 @@ Read `squad-config.yml` if it exists. Otherwise use defaults from `config-templa
 - `token_budget_k`: 1000
 - Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
 
+> **Authoritative values:** `workflow/definition.yaml` is the single source of truth for all thresholds (`convergence:`, `budget:`, `quality_gates:`). The values listed above are defaults shown here for quick reference only — always read from `definition.yaml` at runtime.
+
 ### 1.7 Check Constitution Status
 
 Check if `.specify/memory/constitution.md` exists and note the status:
@@ -880,7 +882,7 @@ Read WHY2 outputs:
 1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
 2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in CARTOGRAPHER's context pack so CARTOGRAPHER knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
 3. **Track quality scores** — append to `state.json.quality_scores[]` an object with ALL of these fields: `pass` (iteration label), `overall`, `structure`, `readability`, `cognitive`, `semantic`, `testability`, `behavioral`, `depth`. All score values come from Understanding output (quality-gates.md). If a category score is not available, set to `null`.
-4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (0.02) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
+4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `workflow/definition.yaml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
 **Transition:** Update state.json phase to "assess". Proceed to ASSESS.
@@ -1956,7 +1958,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 ### Rule 1: Understanding Delta Convergence
 
 - After each WHY pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
-- If the delta between the last two passes is < `convergence_delta` (default 0.02) for 2 consecutive passes → **stop WHY iterations**
+- If the delta between the last two passes is < `convergence_delta` (per `workflow/definition.yaml convergence:`) for 2 consecutive passes → **stop WHY iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
 ### Rule 2: Circular Issue Detection
@@ -1967,13 +1969,13 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 ### Rule 3: Max Iterations
 
-- Maximum `max_iterations` (default 5) total squad iterations → **force convergence**
+- Maximum `max_iterations` (per `workflow/definition.yaml convergence:`) total squad iterations → **force convergence**
 - When forced: run FINALIZE with whatever artifacts exist, flag all as "forced convergence"
 - DEFER re-routes count toward the iteration max
 
 ### Rule 4: Token Budget Exhaustion
 
-- If cumulative `token_usage` exceeds `token_budget_k * 1000` → **force finalize**
+- If cumulative `token_usage` exceeds `token_budget_k * 1000` (per `workflow/definition.yaml budget:`) → **force finalize**
 - Skip remaining specialists if budget is tight
 - Always run GROUND + CALIBRATE (minimum finalize)
 
@@ -2073,7 +2075,7 @@ Every artifact produced in degraded mode (fallback was used) must have this bann
 
 ## 18. Token Budget Management
 
-**See `agents/control/commander.md` → "Token Budget Management" section.** The COMMANDER prompt is the authoritative source for budget allocation tiers, borrow rules between tiers, and the 40% single-agent cap.
+**See `workflow/definition.yaml budget:` for allocation tiers and the 40% single-agent cap. See `agents/control/commander.md` → "Token Budget Management" for enforcement procedures (borrow rules, warning agents).**
 
 ### Budget Enforcement (phase-specific skip rules)
 
