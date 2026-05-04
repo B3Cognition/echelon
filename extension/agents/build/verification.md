@@ -304,7 +304,7 @@ output_files:
   - .specify/.../verification-summary.md
 journal_entries:
   - id: null
-    type: verification_complete
+    type: verification_result
     phase: build
     agent: VERIFICATION
     timestamp: null

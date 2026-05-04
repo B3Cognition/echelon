@@ -76,9 +76,9 @@ types:
     required_data_fields: [task_id, verdict, requirements_checked, failures]
 
   review_finding:
-    description: "CODE_REVIEWER finding"
+    description: "CODE_REVIEWER task review summary — issues and strengths found"
     agents: [REVIEW]
-    required_data_fields: [task_id, verdict, findings]
+    required_data_fields: [task_id, issues, strengths]
     optional_data_fields: [adr_violations, constitution_violations]
 
   test_quality_finding:
@@ -90,7 +90,23 @@ types:
   integration_finding:
     description: "INTEGRATOR phase checkpoint result"
     agents: [INTEGRATE]
-    required_data_fields: [phase_group, verdict, failures]
+    required_data_fields: [components_checked, failures]
+    optional_data_fields: [phase_group]
+
+  implementation_complete:
+    description: "IMPLEMENTER task completion record — files changed, tests passing"
+    agents: [CODE]
+    required_data_fields: [task_id, files_changed, tests_passing]
+
+  progress_update:
+    description: "PROGRESS_TRACKER velocity and schedule drift record for an iteration"
+    agents: [PROGRESS]
+    required_data_fields: [iteration, velocity, drift_days]
+
+  visual_check:
+    description: "VISUAL_VALIDATOR screenshot comparison result for UI components"
+    agents: [VALIDATE_VISUAL]
+    required_data_fields: [components_checked, failures]
 
   debug_finding:
     description: "DEBUGGER root cause analysis"
@@ -110,7 +126,8 @@ types:
   verification_result:
     description: "VERIFICATION final coverage check result"
     agents: [VERIFY]
-    required_data_fields: [verdict, coverage_pct, gaps]
+    required_data_fields: [coverage_pct, gaps]
+    optional_data_fields: [requirements_traced, verdict]
 
   # --- COMMANDER internal ---
   init_knowledge_read:
@@ -246,6 +263,11 @@ types:
     agents: [REFLECT]
     required_data_fields: [pattern_id, pattern_summary, applicable_phases]
 
+  pattern_identified:
+    description: "VETERAN or CONSOLIDATOR recognized existing patterns as relevant to this run and evaluated them for promotion — distinct from pattern_extracted (which creates new patterns)"
+    agents: [PATTERN_PROMOTION, SCHEMA_CONSOLIDATION]
+    required_data_fields: [patterns_matched, pitfalls_flagged, confidence]
+
   pitfall_extracted:
     description: "MIRROR extracted a pitfall from this run"
     agents: [REFLECT]
@@ -255,6 +277,21 @@ types:
     description: "ADAPTIVE cross-run quality trajectory assessment"
     agents: [EVOLVE]
     required_data_fields: [run_ids_compared, trajectory, regression_detected]
+
+  adaptation_triggered:
+    description: "ADAPTIVE detected a quality trajectory shift and recommends a process adaptation"
+    agents: [EVOLVE]
+    required_data_fields: [trajectory, iteration_delta, action_recommended]
+
+  retrospective:
+    description: "MIRROR end-of-run synthesis — patterns found, recommendations, agent performance notes"
+    agents: [REFLECT]
+    required_data_fields: [patterns_found, recommendations, agent_performance_notes]
+
+  internalization_score:
+    description: "INTERNALIZER computed internalization metric scores for a set of agents"
+    agents: [INTERNALIZE_METRICS]
+    required_data_fields: [overall_score, metrics, gaps]
 
   reality_check:
     description: "REALIST reality check finding"

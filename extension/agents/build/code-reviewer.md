@@ -311,7 +311,7 @@ output_files:
   - .specify/.../code-review-report.md
 journal_entries:
   - id: null
-    type: review_complete
+    type: review_finding
     phase: build
     agent: CODE_REVIEWER
     timestamp: null
