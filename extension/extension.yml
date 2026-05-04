@@ -592,7 +592,7 @@ provides:
         color: blue
 
   config:
-    - name: "echelon.yml"
+    - name: "echelon-config.yml"
       template: "config-template.yml"
       description: "Echelon configuration (includes harness: section for sandbox settings)"
       required: false
