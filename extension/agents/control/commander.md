@@ -403,7 +403,7 @@ See `workflow/definition.yaml budget:` for token budget allocation priorities.
 If a priority tier is about to exceed its allocation:
 - Check if lower-priority tiers have unused budget to borrow
 - If no budget available, warn the agent to produce output with current analysis
-- Never allow a single agent to consume more than 40% of total budget
+- Never allow a single agent to consume more than `budget.analysis.max_single_agent` of total budget (see `workflow/definition.yaml`)
 
 ---
 
@@ -771,7 +771,7 @@ Before every agent dispatch, COMMANDER must:
 1. Read `token_ledger.total_estimated_tokens` from `state.json`
 2. Compare against the configured budget (`analysis.token_budget_k` in `squad-config.yml`, value in thousands of tokens)
 3. If `total_estimated_tokens + next_dispatch_estimate > analysis.token_budget_k * 1000`:
-   - Check if reserve budget (5%) is available and the dispatch is critical
+   - Check if reserve budget (`budget.analysis.reserve`, see `workflow/definition.yaml`) is available and the dispatch is critical
    - If no budget remains: force finalize with quality report (see `workflow/definition.yaml convergence:`)
    - Log a `BUDGET_EXHAUSTED` entry in `reasoning-journal.json`
 4. If within budget: proceed with dispatch and log the entry after completion
