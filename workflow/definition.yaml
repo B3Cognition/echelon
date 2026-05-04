@@ -122,6 +122,8 @@ convergence:
   assess_defer_loop_limit: 2           # GATEKEEPER DEFER N times with no scope stabilization → kill or escalate
   evoi_marginal_range: [0.3, 0.7]      # Dispatch when EVOI in this range (see FEP-RLIF rules)
   evoi_confidence_floor: 0.6           # Bias toward dispatch when domain confidence_floor < this
+  evoi_brier_policy_baseline: 0.70     # Policy baseline for confidence_brier accuracy (FR-FEP-007)
+  evoi_brier_gap_threshold: 0.10       # Gap below policy baseline triggering confidence_floor governance (FR-FEP-007)
 
 # =============================================================================
 # TOKEN BUDGET ALLOCATION

@@ -355,7 +355,7 @@ When forcing convergence, always produce a quality report documenting what was n
 
 ### FEP-RLIF Routing Augmentation
 
-When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range (0.3–0.7 inclusive)**:
+When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range** (see `workflow/definition.yaml convergence.evoi_marginal_range`):
 
 1. **Read** `confidence-thresholds.yaml` for the relevant domain.
 
@@ -363,10 +363,10 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 
 3. **Absence fallback (FR-FEP-001):** If `confidence-thresholds.yaml` is absent — proceed with default EVOI rules. No error. The artifact's presence augments but does not gate routing.
 
-4. **Confidence-floor bias rule (FR-FEP-004):** If `confidence_floor < 0.6` for the relevant domain — bias toward dispatch. Treat the marginal EVOI as a dispatch trigger (dispatch the agent).
+4. **Confidence-floor bias rule (FR-FEP-004):** If `confidence_floor` is below `convergence.evoi_confidence_floor` (see `workflow/definition.yaml`) for the relevant domain — bias toward dispatch. Treat the marginal EVOI as a dispatch trigger (dispatch the agent).
 
 5. **EVOI conflict precedence (FR-FEP-007):** When both `confidence_sa` entropy signal and `confidence_ecc` signal provide conflicting routing recommendations:
-   - If domain `confidence_brier` accuracy is more than **10 percentage points** below the policy baseline (0.7): the domain `confidence_floor` governs the routing decision.
+   - If domain `confidence_brier` accuracy is more than `convergence.evoi_brier_gap_threshold` below `convergence.evoi_brier_policy_baseline` (see `workflow/definition.yaml`): the domain `confidence_floor` governs the routing decision.
    - Otherwise: `confidence_sa` entropy governs.
    - `confidence_ecc` is supplementary only — it never gates or replaces the primary routing signal.
 
@@ -376,7 +376,7 @@ COMMANDER reads `confidence_ecc` from AUDITOR journal entries as a **supplementa
 
 **Rules:**
 - `confidence_ecc` does NOT gate or replace the EVOI signal. EVOI-only routing proceeds without error when `confidence_ecc` is absent.
-- When present, `confidence_ecc` may be used to break ties in the marginal EVOI range (0.3–0.7), subject to the FR-FEP-007 precedence rule above.
+- When present, `confidence_ecc` may be used to break ties in the marginal EVOI range (`convergence.evoi_marginal_range`), subject to the FR-FEP-007 precedence rule above.
 - COMMANDER never blocks dispatch or waits for `confidence_ecc` to be produced. The signal is read opportunistically from the reasoning journal.
 
 ---
@@ -422,15 +422,15 @@ Before every routing decision, ask:
 ## Human Escalation vs Autonomous Resolution
 
 **Escalate to human when:**
-- Same issue appears 3 times without resolution
-- CALIBRATE confidence < 0.5 after INVESTIGATOR investigation
+- Same issue appears `convergence.issue_repetition_limit` times without resolution (see `workflow/definition.yaml`)
+- CALIBRATE confidence below `convergence.calibrate_confidence_floor` after INVESTIGATOR investigation (see `workflow/definition.yaml`)
 - Agents produce contradictory evidence at the same grade level with no tiebreaker
 - A domain question cannot be answered from available evidence
 - ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read from `squad-config.yml`) with no scope stabilization
 
 **Resolve autonomously when:**
 - Evidence hierarchy provides a clear winner
-- Quality metrics show improvement (delta > 0.02)
+- Quality metrics show improvement (delta > `convergence.quality_delta_threshold`, see `workflow/definition.yaml`)
 - The issue is within a single agent's domain and does not affect other agents
 - A conservative default exists that mitigates risk
 - GUARDIAN's Risk Acceptance Protocol resolved with ACCEPT or ACCEPT_WITH_MITIGATIONS (check `risk-acceptance-log.md`)
