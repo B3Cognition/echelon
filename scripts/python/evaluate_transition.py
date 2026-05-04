@@ -35,7 +35,7 @@ from kernel.state_loader import StateLoadError, load
 
 
 def _load_config(config_path: str) -> dict:
-    """Load squad-config.yml or return minimal defaults."""
+    """Load echelon-config.yml or return minimal defaults."""
     if not config_path:
         return {
             "convergence": {
@@ -73,7 +73,7 @@ def main() -> int:
     )
     parser.add_argument("--state", required=True, help="Path to state.json")
     parser.add_argument("--transitions", required=True, help="JSON array of transition objects")
-    parser.add_argument("--config", default="", help="Path to squad-config.yml (optional)")
+    parser.add_argument("--config", default="", help="Path to echelon-config.yml (optional)")
     parser.add_argument("--last-outputs", default="{}", help="JSON string of last agent outputs (optional)")
     args = parser.parse_args()
 

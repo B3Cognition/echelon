@@ -59,8 +59,8 @@ def _run_endocrine(args: list[str], config_path: Path) -> tuple[int, str]:
 
 
 def _make_config(tmpdir: Path, phase: int) -> Path:
-    """Write a minimal squad-config.yml with the given endocrine.phase."""
-    config_path = tmpdir / "squad-config.yml"
+    """Write a minimal echelon-config.yml with the given endocrine.phase."""
+    config_path = tmpdir / "echelon-config.yml"
     config_path.write_text(
         f"endocrine:\n"
         f"  enabled: true\n"

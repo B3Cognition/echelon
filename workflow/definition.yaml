@@ -73,7 +73,7 @@ glossary:
   - term: "Mode"
     senses:
       - sense: "run mode (greenfield/brownfield/self_analysis)"
-        detect: "when it refers to state.mode or squad-config.yml mode setting"
+        detect: "when it refers to state.mode or echelon-config.yml mode setting"
         example: "mode: brownfield"
       - sense: "agent sub-mode"
         detect: "when it refers to a named agent operating variant"
@@ -109,7 +109,7 @@ glossary:
 # =============================================================================
 # CONVERGENCE THRESHOLDS
 # All convergence decisions reference these values — never hardcode in prompts.
-# Runtime overrides sourced from squad-config.yml take precedence.
+# Runtime overrides sourced from echelon-config.yml take precedence.
 # =============================================================================
 
 # =============================================================================
@@ -153,7 +153,7 @@ conflict_resolution:
 # Each phase has:
 #   type:          commander_internal | agent | parallel | human_gate | terminal
 #   agent(s):      which agent(s) to invoke (omitted for commander_internal)
-#   tier:          model-tier selection key from squad-config.yml execution.models
+#   tier:          model-tier selection key from echelon-config.yml execution.models
 #   context_pack:  artifacts injected into the agent's dispatch prompt
 #   pre_dispatch:  checks/actions COMMANDER takes before invoking the agent
 #   outputs:       artifacts the agent is expected to produce
@@ -161,19 +161,19 @@ conflict_resolution:
 #
 # Condition language (evaluated against state.json + current outputs):
 #   always                               — unconditional
-#   quality_gates.pass                   — latest quality_scores entry meets all thresholds (from squad-config.yml quality_gates)
+#   quality_gates.pass                   — latest quality_scores entry meets all thresholds (from echelon-config.yml quality_gates)
 #   quality_gates.fail                   — latest quality_scores entry fails any threshold
-#   convergence_detected                 — delta < threshold for consecutive_passes (both from squad-config.yml convergence)
+#   convergence_detected                 — delta < threshold for consecutive_passes (both from echelon-config.yml convergence)
 #   CRITICAL_issues                      — any issue in issues_log with severity=CRITICAL and resolved=false
 #   no_CRITICAL_issues                   — no unresolved CRITICAL issues
 #   iteration < max_iterations           — not yet at iteration cap
 #   iteration >= max_iterations          — at or beyond iteration cap
 #   verdict = <value>                    — named agent returned this verdict
 #   defer_count >= assess_defer_loop_limit
-#   autonomy in [guided, semi, banzai]   — matches autonomy_mode from squad-config.yml
+#   autonomy in [guided, semi, banzai]   — matches autonomy_mode from echelon-config.yml
 #   human_approved                       — human responded to checkpoint with approval
 #
-# Condition token → squad-config.yml key mapping:
+# Condition token → echelon-config.yml key mapping:
 #   max_iterations           → convergence.max_squad_iterations
 #   convergence_delta        → convergence.quality_delta_threshold
 #   assess_defer_loop_limit  → convergence.defer_loop_limit
@@ -535,7 +535,7 @@ phases:
     description: >
       GUARDIAN always runs (always_on default).
       Others summoned based on conditions below.
-      Dispatch in parallel up to max_parallel_agents from squad-config.yml.
+      Dispatch in parallel up to max_parallel_agents from echelon-config.yml.
     agents:
       - id: GUARDIAN
         tier: specialists

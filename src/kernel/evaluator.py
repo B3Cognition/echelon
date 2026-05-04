@@ -475,7 +475,7 @@ def evaluate_transitions(
     Args:
         phase_id:    Node id from definition.yaml (e.g., 'phase1-what').
         state:       Schema-validated state.json dict.
-        config:      squad-config.yml dict.
+        config:      echelon-config.yml dict.
         last_outputs: Last agent's echelon_result dict.
         definition:  Parsed definition.yaml dict (optional). When None,
                      the caller must supply transitions via a different means.

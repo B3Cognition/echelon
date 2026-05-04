@@ -46,9 +46,9 @@ def _repo_root() -> str:
 
 
 def _max_chars(config_path: Optional[str] = None) -> int:
-    """Read max_tokens from squad-config.yml → convert to chars."""
+    """Read max_tokens from echelon-config.yml → convert to chars."""
     if config_path is None:
-        config_path = os.path.join(_repo_root(), "squad-config.yml")
+        config_path = os.path.join(_repo_root(), "echelon-config.yml")
     if not os.path.isfile(config_path):
         return DEFAULT_MAX_CHARS
     try:

@@ -284,7 +284,7 @@ agent_profiles:
         timestamp: "2026-04-04T09:18:50Z"
     observed_strengths:
       - All 6 dispatched investigations resolved their assigned blockers
-      - Goes directly to primary sources (agents.yaml, commander.md, echelon.run.md, squad-config.yml) rather than relying on staging summaries
+      - Goes directly to primary sources (agents.yaml, commander.md, echelon.run.md, echelon-config.yml) rather than relying on staging summaries
       - INV-004 convergence finding eliminated the largest potential hard blocker without requiring Echelon modification
       - Correctly characterizes partial resolutions (pilot cost, scenario count) as "design with known uncertainty" rather than show-stoppers
     failure_modes:

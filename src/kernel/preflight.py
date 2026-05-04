@@ -372,7 +372,7 @@ def run_preflight(
     Args:
         node:    The preflight node dict from definition.yaml.
         state:   Schema-validated state.json dict.
-        config:  squad-config.yml dict.
+        config:  echelon-config.yml dict.
         ext_dir: Extension root directory (auto-detected if None).
 
     Returns:

@@ -294,7 +294,7 @@ The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER 
 
 ### Autonomy Modes
 
-Set in `squad-config.yml`:
+Set in `echelon-config.yml`:
 
 ```yaml
 autonomy:
@@ -595,7 +595,7 @@ verify → push → re-request review
 ## Configuration
 
 ```bash
-cp config-template.yml squad-config.yml
+cp config-template.yml echelon-config.yml
 ```
 
 76 configurable values across 20 sections. Key ones:

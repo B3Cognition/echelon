@@ -359,7 +359,7 @@ Total: 4h + 3h45m = 7h45m (vs 18h20m)
 
 ## Configuration
 
-Add to `squad-config.yml`:
+Add to `echelon-config.yml`:
 
 ```yaml
 phases:

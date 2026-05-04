@@ -361,7 +361,7 @@ MONITOR evaluates canary performance:
 #### Configuration
 
 ```yaml
-# squad-config.yml
+# echelon-config.yml
 evolution:
   enabled: true
 
