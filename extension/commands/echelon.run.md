@@ -2109,48 +2109,11 @@ The goal of re-runs is monotonic improvement: each run should produce artifacts 
 
 ## 20. Quick Reference: Phase Transitions
 
-```
-INIT ──────► DISCOVER ──► SYNTHESIZER ──► WHY1 ──► WHAT
-                  ▲                 │                 │
-                  │ (re-investigate) │ (CRITICAL)      │
-                  └─────────────────┘                 ▼
-                                                    WHY2
-                                                      │
-                               ┌──────────────────────┤
-                               │ (gates fail)         │ (gates pass)
-                               ▼                      ▼
-                             WHAT ◄────────────── ASSESS
-                                                      │
-                                    ┌─────────────────┤
-                                    │ KILL            │ DEFER (≥2 → kill/escalate)
-                                    ▼                 │ PASS
-                                   DONE               ▼
-                                              SPECIALISTS
-                                                      │
-                                                      ▼
-                                                    HOW
-                                                      │
-                                                      ▼
-                                              TEST ARCHITECT
-                                                      │
-                                                      ▼
-                                                    PLAN
-                                                      │
-                                                      ▼
-                                                 CONSENSUS
-                                              (WHY3 ∥ ASSESS2)
-                                                 then PLAN2
-                                                      │
-                               ┌──────────────────────┤
-                               │ CRITICAL             │ ALL PASS
-                               ▼                      ▼
-                          (route back)           FINALIZE
-                                              GROUND → REFLECT
-                                              → EVOLVE → CALIBRATE
-                                                      │
-                                                      ▼
-                                                    DONE
-```
+See `workflow/definition.yaml phases[]` for the authoritative phase graph — every node, condition, and transition target is defined there. The ordered sequence is:
+
+`init` → `phase1-discover` → `phase1-synthesizer` → `phase1-modeler` → `phase1-tracker` → `phase1-why1` → `phase1-constitution` → `phase1-what` → `phase1-why2` → `checkpoint-assess` → `phase2-decide` → `phase2-strategic-overview` → `phase2-tracker-alignment` → `phase3-how` → `phase3-specialists` → `phase3-sentinel` → `phase3-plan` → `phase3-consensus` → `checkpoint-plan` → `phase4-document` → `done`
+
+Conditional branches (quality gate failures, KILL verdicts, iteration loops, escalation) are defined in each node's `transitions[]` array in `definition.yaml`.
 
 ---
 
