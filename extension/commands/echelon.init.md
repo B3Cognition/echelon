@@ -1,13 +1,13 @@
 ---
 name: speckit.echelon.init
-description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik infrastructure. Run once per project before speckit.echelon.run."
+description: "One-time project initialization — bootstrap echelon-config.yml, validate deploy config, install Traefik infrastructure. Run once per project before speckit.echelon.run."
 behavior:
   invocation: explicit
 ---
 
 ## Role
 
-You are COMMANDER performing one-time project initialization — bootstrapping `echelon.yml`, validating deploy config, and installing infrastructure. Run once per project before `speckit.echelon.run`.
+You are COMMANDER performing one-time project initialization — bootstrapping `echelon-config.yml`, validating deploy config, and installing infrastructure. Run once per project before `speckit.echelon.run`.
 
 ---
 
@@ -22,7 +22,7 @@ $ARGUMENTS
 One-time setup for a project. Must be run before `speckit.echelon.run` on any new project.
 
 What it does:
-1. Bootstrap `echelon.yml` from template if absent
+1. Bootstrap `echelon-config.yml` from template if absent
 2. Validate the deploy config block
 3. Run `deploy-init.sh` — installs Docker/Traefik (http type) or CLI wrapper, writes `deploy-state.json`
 
@@ -41,25 +41,25 @@ echo "ECHELON_EXT=${ECHELON_EXT}"
 
 ---
 
-## Step 2: Bootstrap echelon.yml
+## Step 2: Bootstrap echelon-config.yml
 
-If `echelon.yml` does not exist at the project root, copy a starter config from the extension:
+If `echelon-config.yml` does not exist at the project root, copy a starter config from the extension:
 
 ```bash
-if [ ! -f "${PROJECT_ROOT}/echelon.yml" ]; then
+if [ ! -f "${PROJECT_ROOT}/echelon-config.yml" ]; then
   if [ -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-    cp "${ECHELON_EXT}/echelon-config.yml" "${PROJECT_ROOT}/echelon.yml"
-    echo "✓ Bootstrapped echelon.yml from echelon-config.yml"
+    cp "${ECHELON_EXT}/echelon-config.yml" "${PROJECT_ROOT}/echelon-config.yml"
+    echo "✓ Bootstrapped echelon-config.yml from extension starter"
   elif [ -f "${ECHELON_EXT}/config-template.yml" ]; then
-    cp "${ECHELON_EXT}/config-template.yml" "${PROJECT_ROOT}/echelon.yml"
-    echo "✓ Bootstrapped echelon.yml from config-template.yml"
+    cp "${ECHELON_EXT}/config-template.yml" "${PROJECT_ROOT}/echelon-config.yml"
+    echo "✓ Bootstrapped echelon-config.yml from config-template.yml"
   else
-    echo "✗ echelon.yml not found and no template available in ${ECHELON_EXT}" >&2
-    echo "  Create echelon.yml at the project root before running echelon init." >&2
+    echo "✗ echelon-config.yml not found and no template available in ${ECHELON_EXT}" >&2
+    echo "  Create echelon-config.yml at the project root before running echelon init." >&2
     exit 1
   fi
 else
-  echo "✓ echelon.yml already exists"
+  echo "✓ echelon-config.yml already exists"
 fi
 ```
 
@@ -73,7 +73,7 @@ If the file was bootstrapped, tell the user to review and configure the `deploy:
 python3 -c "
 import sys, yaml
 try:
-    c = yaml.safe_load(open('${PROJECT_ROOT}/echelon.yml'))
+    c = yaml.safe_load(open('${PROJECT_ROOT}/echelon-config.yml'))
     d = c.get('deploy', {})
     deploy_type = d.get('type', 'http')
     if deploy_type not in ('http', 'cli'):
@@ -82,18 +82,18 @@ try:
     if deploy_type == 'http':
         missing = [k for k in ['blue_port','green_port'] if k not in d]
         if missing:
-            print('✗ deploy config incomplete in echelon.yml.', file=sys.stderr)
+            print('✗ deploy config incomplete in echelon-config.yml.', file=sys.stderr)
             print(f'  HTTP type requires: {missing}', file=sys.stderr)
             print('  See config-template.yml for reference.', file=sys.stderr)
             sys.exit(1)
     print(f'✓ deploy config valid (type={deploy_type})')
 except FileNotFoundError:
-    print('✗ echelon.yml not found.', file=sys.stderr)
+    print('✗ echelon-config.yml not found.', file=sys.stderr)
     sys.exit(1)
 "
 ```
 
-If exit code is non-zero, stop. User must fix `echelon.yml` before proceeding.
+If exit code is non-zero, stop. User must fix `echelon-config.yml` before proceeding.
 
 ---
 
@@ -107,20 +107,20 @@ import sys
 try:
     from echelon.cli import _provision_wing
     from pathlib import Path
-    _provision_wing(Path('${PROJECT_ROOT}'), Path('${PROJECT_ROOT}/echelon.yml'))
+    _provision_wing(Path('${PROJECT_ROOT}'), Path('${PROJECT_ROOT}/echelon-config.yml'))
 except ImportError:
     print('  ℹ  echelon not installed — wing provisioning skipped')
 "
 ```
 
-If the wing is already set in `echelon.yml`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes `mempalace.wing` to `echelon.yml`.
+If the wing is already set in `echelon-config.yml`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes `mempalace.wing` to `echelon-config.yml`.
 
 ---
 
 ## Step 4: Run deploy-init.sh
 
 ```bash
-bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "${PROJECT_ROOT}/echelon.yml"
+bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "${PROJECT_ROOT}/echelon-config.yml"
 ```
 
 If exit code is non-zero, report the full output and stop. Common failures:
@@ -128,8 +128,8 @@ If exit code is non-zero, report the full output and stop. Common failures:
 | Error | Fix |
 |-------|-----|
 | Traefik not healthy | `docker rm -f speckit-traefik` then re-run `speckit.echelon.init` |
-| Port already claimed by another app | Change `blue_port`/`green_port` in `echelon.yml` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
-| deploy config missing | Add `deploy:` block to `echelon.yml` (see `config-template.yml`) |
+| Port already claimed by another app | Change `blue_port`/`green_port` in `echelon-config.yml` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
+| deploy config missing | Add `deploy:` block to `echelon-config.yml` (see `config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
 
 ---
@@ -143,7 +143,7 @@ Print a summary:
 ║         echelon init — complete          ║
 ╚══════════════════════════════════════════╝
 
-  echelon.yml      → {PROJECT_ROOT}/echelon.yml
+  echelon-config.yml → {PROJECT_ROOT}/echelon-config.yml
   deploy-state     → {PROJECT_ROOT}/.specify/squad/deploy-state.json
 
 Next step:
