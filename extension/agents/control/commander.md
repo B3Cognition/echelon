@@ -349,13 +349,13 @@ If EVOI is negative, stop iterating and accept the current output.
 
 ## Convergence Rules
 
-See `workflow/definition.yaml convergence:` for convergence thresholds.
+See `squad-config.yml convergence:` for convergence thresholds.
 
 When forcing convergence, always produce a quality report documenting what was not completed and why.
 
 ### FEP-RLIF Routing Augmentation
 
-When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range** (see `workflow/definition.yaml convergence.evoi_marginal_range`):
+When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range** (see `squad-config.yml convergence.evoi_marginal_range`):
 
 1. **Read** `confidence-thresholds.yaml` for the relevant domain.
 
@@ -398,7 +398,7 @@ Never resolve conflicts by averaging or compromising. One position wins; the oth
 
 ## Token Budget Management
 
-See `workflow/definition.yaml budget:` for token budget allocation priorities.
+See `squad-config.yml budget:` for token budget allocation priorities.
 
 If a priority tier is about to exceed its allocation:
 - Check if lower-priority tiers have unused budget to borrow
@@ -772,13 +772,13 @@ Before every agent dispatch, COMMANDER must:
 2. Compare against the configured budget (`analysis.token_budget_k` in `squad-config.yml`, value in thousands of tokens)
 3. If `total_estimated_tokens + next_dispatch_estimate > analysis.token_budget_k * 1000`:
    - Check if reserve budget (`budget.analysis.reserve`, see `workflow/definition.yaml`) is available and the dispatch is critical
-   - If no budget remains: force finalize with quality report (see `workflow/definition.yaml convergence:`)
+   - If no budget remains: force finalize with quality report (see `squad-config.yml convergence:`)
    - Log a `BUDGET_EXHAUSTED` entry in `reasoning-journal.json`
 4. If within budget: proceed with dispatch and log the entry after completion
 
 ### Per-Tier Budget Enforcement
 
-Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, read `workflow/definition.yaml budget:` for borrowing rules before proceeding.
+Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, read `squad-config.yml budget:` for borrowing rules before proceeding.
 
 ---
 

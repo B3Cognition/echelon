@@ -112,39 +112,6 @@ glossary:
 # Runtime overrides sourced from squad-config.yml take precedence.
 # =============================================================================
 
-convergence:
-  quality_delta_threshold: 0.02        # Stop WHY iterations when delta < this
-  consecutive_passes_required: 2       # Consecutive passes below threshold to declare convergence
-  max_iterations: 5                    # Absolute maximum across all phases
-  issue_repetition_limit: 3            # Same issue raised N times → escalate
-  wall_clock_timeout_minutes: 40       # Force finalize if elapsed time exceeds this
-  calibrate_confidence_floor: 0.5      # Below this → summon INVESTIGATOR or flag for human
-  assess_defer_loop_limit: 2           # GATEKEEPER DEFER N times with no scope stabilization → kill or escalate
-  evoi_marginal_range: [0.3, 0.7]      # Dispatch when EVOI in this range (see FEP-RLIF rules)
-  evoi_confidence_floor: 0.6           # Bias toward dispatch when domain confidence_floor < this
-  evoi_brier_policy_baseline: 0.70     # Policy baseline for confidence_brier accuracy (FR-FEP-007)
-  evoi_brier_gap_threshold: 0.10       # Gap below policy baseline triggering confidence_floor governance (FR-FEP-007)
-
-# =============================================================================
-# TOKEN BUDGET ALLOCATION
-# Phase-group percentages of total analysis.token_budget_k from squad-config.yml
-# =============================================================================
-
-budget:
-  analysis:
-    discover_what: 0.25     # DISCOVER + WHAT — highest priority
-    why_passes: 0.20        # All WHY passes (WHY1, WHY2, WHY3)
-    how_specialists: 0.25   # HOW + all specialist agents
-    plan_assess: 0.15       # PLAN + ASSESS
-    consensus_finalize: 0.10
-    reserve: 0.05           # Re-routes, error recovery
-    max_single_agent: 0.40  # No single agent may consume more than this fraction
-  build:
-    implementation: 0.50    # IMPLEMENTER (all tasks)
-    quality_gates: 0.30     # SPEC_GUARD + CODE_REVIEWER + TEST_GUARDIAN
-    integration: 0.15       # INTEGRATOR (all checkpoints)
-    reserve: 0.05           # Fix cycles, error recovery
-
 # =============================================================================
 # EVIDENCE HIERARCHY
 # Conflict resolution: lower rank NEVER overrides higher rank.
@@ -181,23 +148,6 @@ conflict_resolution:
   never: "Average or compromise. One position wins; the other is recorded as a rejected alternative."
 
 # =============================================================================
-# QUALITY GATES
-# Minimum threshold per dimension for WHY-validated artifacts.
-# SAGE applies these; COMMANDER checks results.
-# =============================================================================
-
-quality_gates:
-  spec:
-    overall: 0.70
-    structure: 0.65
-    testability: 0.70
-    readability: 0.65
-    cognitive: 0.65
-    semantic: 0.65
-    behavioral: 0.70
-    depth: 0.65
-
-# =============================================================================
 # PHASE GRAPH
 #
 # Each phase has:
@@ -211,9 +161,9 @@ quality_gates:
 #
 # Condition language (evaluated against state.json + current outputs):
 #   always                               — unconditional
-#   quality_gates.pass                   — latest quality_scores entry meets all thresholds
+#   quality_gates.pass                   — latest quality_scores entry meets all thresholds (from squad-config.yml quality_gates)
 #   quality_gates.fail                   — latest quality_scores entry fails any threshold
-#   convergence_detected                 — delta < threshold for consecutive_passes_required passes
+#   convergence_detected                 — delta < threshold for consecutive_passes (both from squad-config.yml convergence)
 #   CRITICAL_issues                      — any issue in issues_log with severity=CRITICAL and resolved=false
 #   no_CRITICAL_issues                   — no unresolved CRITICAL issues
 #   iteration < max_iterations           — not yet at iteration cap
@@ -222,6 +172,13 @@ quality_gates:
 #   defer_count >= assess_defer_loop_limit
 #   autonomy in [guided, semi, banzai]   — matches autonomy_mode from squad-config.yml
 #   human_approved                       — human responded to checkpoint with approval
+#
+# Condition token → squad-config.yml key mapping:
+#   max_iterations           → convergence.max_squad_iterations
+#   convergence_delta        → convergence.quality_delta_threshold
+#   assess_defer_loop_limit  → convergence.defer_loop_limit
+#   calibrate_confidence_floor → convergence.calibrate_confidence_floor
+#   quality_gates.*          → quality_gates.* (same key names)
 # =============================================================================
 
 phases:
