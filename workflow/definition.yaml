@@ -305,6 +305,62 @@ phases:
       - .specify/.../unknowns.md
       - .specify/.../reference-architectures.md   # greenfield only
     transitions:
+      - to: phase1-synthesizer
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-synthesizer
+    label: "Knowledge Fusion (SYNTHESIZER)"
+    type: agent
+    agent: SYNTHESIZER
+    tier: exploration
+    context_pack:
+      - all SCOUT outputs from .specify/squad/staging/
+      - reasoning-journal.json [phase=phase1-discover]
+    outputs:
+      - glossary.md              # unified, contradictions flagged
+      - mental-model.md          # unified, gaps flagged
+      - boundaries.md            # unified
+      - assumptions.md           # deduplicated
+      - contradictions-and-gaps.md
+    transitions:
+      - to: phase1-modeler
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-modeler
+    label: "Codebase Map (MODELER)"
+    type: agent
+    agent: MODELER
+    tier: exploration
+    condition: "mode = brownfield"
+    context_pack:
+      - all source files (brownfield path)
+      - golddigger artifacts (if available from state.json.golddigger_artifacts)
+    outputs:
+      - mental-model-code.md
+      - codebase-graph.md
+    on_greenfield:
+      action: skip_agent_proceed_to_next
+    transitions:
+      - to: phase1-tracker
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-tracker
+    label: "Intent Capture (TRACKER)"
+    type: agent
+    agent: TRACKER
+    tier: control
+    context_pack:
+      - user_request
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+    outputs:
+      - user-intent.md
+    transitions:
       - to: phase1-why1
         condition: always
 
@@ -440,7 +496,7 @@ phases:
       - kill-report.md    # if KILL
       - scope adjustments # if DEFER
     transitions:
-      - to: phase3-how
+      - to: phase2-strategic-overview
         condition: "verdict = PASS"
       - to: done
         condition: "verdict = KILL"
@@ -450,6 +506,46 @@ phases:
         action: increment_defer_count
       - to: escalate
         condition: "verdict = DEFER AND defer_count >= assess_defer_loop_limit"
+
+  # --------------------------------------------------------------------------
+  # NOTE: echelon.run.md runs STRATEGIC OVERVIEW and TRACKER alignment here,
+  # then Specialists, then HOW. But this file currently has HOW before
+  # Specialists (phase3-how → phase3-specialists). That ordering discrepancy
+  # needs a separate resolution pass.
+  # --------------------------------------------------------------------------
+  - id: phase2-strategic-overview
+    label: "Strategic Overview (STRATEGIST)"
+    type: agent
+    agent: STRATEGIST
+    tier: control
+    context_pack:
+      - spec.md
+      - gatekeeper output (feasibility.md, estimates.md, mvp-scope.md)
+      - reasoning-journal.json [phase=phase1-*, phase=phase2-decide]
+    outputs:
+      - strategic-overview.md
+    transitions:
+      - to: phase2-tracker-alignment
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase2-tracker-alignment
+    label: "Intent Alignment Check (TRACKER)"
+    type: agent
+    agent: TRACKER
+    tier: control
+    context_pack:
+      - user-intent.md
+      - spec.md
+      - gatekeeper output (scope adjustments)
+      - strategic-overview.md
+    outputs:
+      - alignment-report.md   # ALIGNED | DRIFT | STOP_AND_ASK
+    transitions:
+      - to: phase3-how
+        condition: "alignment = ALIGNED OR alignment = DRIFT"
+      - to: escalate
+        condition: "alignment = STOP_AND_ASK"
 
   # --------------------------------------------------------------------------
   - id: phase3-how
