@@ -121,6 +121,10 @@ Telemetry rules:
 
 ---
 
+> **Phase routing authority:** `workflow/definition.yaml phases[]` is the single source of truth for all phase transitions, conditions, and next-phase targets. After every agent dispatch, evaluate `phases[<current-id>].transitions[]` — first matching condition wins. Update `state.json.phase` to the target. The `**Transition:**` markers below name the definition.yaml node for quick reference; they are not standalone routing instructions.
+
+---
+
 ## 1. Initialization (INIT)
 
 ### 1.0 Anchor Project Root
@@ -398,7 +402,7 @@ After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, 
    d. After GOLDDIGGER completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
 3. Continue to next Phase 1 agent dispatch.
 
-**Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
+**Transition:** `phases[phase1-discover]` — see `workflow/definition.yaml`
 
 ---
 
@@ -454,7 +458,7 @@ If any are missing, log a warning but continue — WHY1 will catch gaps.
 
 Read DISCOVER's outputs to classify the domain. Store domain classification for specialist summoning later. Append routing decision to reasoning journal.
 
-**Transition:** Update state.json phase to "synthesize". Proceed to SYNTHESIZER.
+**Transition:** `phases[phase1-synthesizer]` — see `workflow/definition.yaml`
 
 ---
 
@@ -505,7 +509,7 @@ Use the Agent tool to dispatch a subagent with:
 
 Read `contradictions-and-gaps.md`. If CRITICAL contradictions found, log them — WHY1 will challenge these specifically.
 
-**Transition:** Update state.json phase to "modeler". Proceed to MODELER.
+**Transition:** `phases[phase1-modeler]` — see `workflow/definition.yaml`
 
 ---
 
@@ -527,7 +531,7 @@ Dispatch MODELER to build the initial queryable codebase map from SYNTHESIZER's 
 
 **State update:** Set `state.json.last_dispatch.agent` to `"MODELER"` using standard Pre-Dispatch Protocol before dispatching.
 
-**Transition:** Update state.json phase to "tracker". Proceed to TRACKER.
+**Transition:** `phases[phase1-tracker]` — see `workflow/definition.yaml`
 
 ---
 
@@ -566,7 +570,7 @@ Use the Agent tool to dispatch a subagent with:
 
 - `user-intent.md` (in staging, later moved to spec directory)
 
-**Transition:** Update state.json phase to "why1". Proceed to WHY1.
+**Transition:** `phases[phase1-why1]` — see `workflow/definition.yaml`
 
 ---
 
@@ -615,7 +619,7 @@ Read WHY1 outputs:
 - If **CRITICAL** issues found in `assumption-review.md` → route back to DISCOVER (re-investigate). Increment iteration counter. Check iteration limit.
 - If **PASS** (no critical issues, all major assumptions validated or flagged) → proceed to WHAT.
 
-**Transition:** Update state.json phase to "constitution". Proceed to Constitution Creation.
+**Transition:** `phases[phase1-constitution]` — see `workflow/definition.yaml`
 
 ---
 
@@ -698,7 +702,7 @@ For brownfield projects where constitution doesn't exist:
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `speckit.constitution` is called with the derived context
 
-**Transition:** Update state.json phase to "what". Proceed to WHAT.
+**Transition:** `phases[phase1-what]` — see `workflow/definition.yaml`
 
 ---
 
@@ -806,7 +810,7 @@ Update `{spec_dir}/spec.md`: find the line `**Status**: Draft` and change it to 
 - `spec.md` (created by `speckit.specify`, enhanced by CARTOGRAPHER)
 - `00-overview.md`
 
-**Transition:** Update state.json phase to "why2". Proceed to WHY2.
+**Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`
 
 ---
 
@@ -885,7 +889,7 @@ Read WHY2 outputs:
 4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `workflow/definition.yaml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
-**Transition:** Update state.json phase to "assess". Proceed to ASSESS.
+**Transition:** `phases[phase2-decide]` — see `workflow/definition.yaml`
 
 ---
 
@@ -947,7 +951,7 @@ Phase budget map for consistency across all transitions:
 - `phase3-solution=2400`
 - `phase4-build=7200`
 
-**Transition:** Update state.json phase to "strategic_overview". Proceed to STRATEGIC OVERVIEW.
+**Transition:** `phases[phase2-strategic-overview]` — see `workflow/definition.yaml`
 
 ---
 
@@ -981,7 +985,7 @@ Before this transition, COMMANDER updates timing state via `scripts/bash/phase-t
 2. If `phase2-decide` was never started due to restart recovery, initialize with `start_phase phase2-decide 1800` before continuing.
 3. Persist `state.json` after timing reconciliation and before dispatching specialists.
 
-**Transition:** Update state.json phase to "tracker_alignment". Proceed to TRACKER alignment check.
+**Transition:** `phases[phase2-tracker-alignment]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1011,7 +1015,7 @@ If TRACKER reports MISALIGNED:
 - In `guided` or `semi` mode: pause for human confirmation
 - In `banzai` mode: log the divergence, proceed with GATEKEEPER's scope
 
-**Transition:** Update state.json phase to "specialists". Proceed to specialist summoning.
+**Transition:** `phases[phase3-specialists]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1220,7 +1224,7 @@ Before this transition, COMMANDER performs phase-boundary timing writes in order
 3. `end_phase` writes `end_ts`, `elapsed_seconds`, `over_budget`, and `anomaly_reason`; if over budget (>120%), it also appends a `timing_anomaly` journal entry.
 4. Persist state updates before routing to HOW.
 
-**Transition:** Update state.json phase to "how". Proceed to HOW.
+**Transition:** `phases[phase3-how]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1262,7 +1266,7 @@ Use the Agent tool to dispatch a subagent with:
 - `contracts/` (API/interface specs)
 - `constitution.md`
 
-**Transition:** Update state.json phase to "test-architect". Proceed to TEST ARCHITECT.
+**Transition:** `phases[phase3-sentinel]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1313,7 +1317,7 @@ Before this transition, COMMANDER updates timing state via `scripts/bash/phase-t
 2. If missing from recovered state, initialize `phase3-solution` using `start_phase phase3-solution 2400` before dispatching PLAN.
 3. Persist `state.json` timing updates before dispatch.
 
-**Transition:** Update state.json phase to "plan". Proceed to PLAN.
+**Transition:** `phases[phase3-plan]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1360,7 +1364,7 @@ Before this transition, COMMANDER performs phase-boundary timing writes in order
 2. Open `phase4-build` with `scripts/bash/phase-timing.sh start_phase phase4-build 7200`.
 3. Confirm updated `phase_timings` are flushed to `state.json` before consensus dispatch.
 
-**Transition:** Update state.json phase to "consensus". Proceed to CONSENSUS.
+**Transition:** `phases[phase3-consensus]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1470,7 +1474,7 @@ At run close (after FINALIZE and before setting status `done`), COMMANDER must:
 2. Read `state.json.phase_timings` and append one `timing_summary` entry per phase to `reasoning-journal.json` with fields: `type`, `phase`, `run_id`, `elapsed_seconds`, `budget_seconds`, `over_budget`, `anomaly_reason`.
 3. Ensure anomaly reason enum for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
 
-**Transition:** Update state.json phase to "finalize". Proceed to FINALIZE.
+**Transition:** `phases[phase4-document]` — see `workflow/definition.yaml`
 
 ---
 
