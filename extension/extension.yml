@@ -623,47 +623,47 @@ tags:
   - "ci"
   - "isolation"
 
-defaults:
-  understanding:
-    threshold: 0.70
-    format: "text"
-    energy: false
-    basic: false
-    per_req: false
-    diagram: false
-
-  harness:
-    resource_limits:
-      memory: "4g"
-      cpu: 2.0
-      pids: 256
-      storage: "10g"
-    network:
-      allowlist:
-        - "registry.npmjs.org"
-        - "pypi.org"
-        - "files.pythonhosted.org"
-        - "proxy.golang.org"
-        - "crates.io"
-        - "static.crates.io"
-        - "repo1.maven.org"
-        - "playwright.azureedge.net"
-        - "cdn.playwright.dev"
-      proxy_image: "ubuntu/squid:latest"
-    buffer_limit_bytes: 10485760
-    ci_skip_tag: "[skip ci]"
-    ci_skip_enabled: true
-    secrets_env_file: "secrets.env"
-    bind_mount_ack: false
-    pr_host: "none"
-    gc:
-      worktree_max_age_hours: 24
-      container_max_age_hours: 1
-      backup_max_age_days: 7
-    visual_tests:
-      enabled: false
-      serve_command: "npm run preview"
-      test_command: "npx playwright test --reporter=json"
-      timeout_ms: 300000
-      screenshot_dir: "playwright-report"
-      max_iterations: 3
+config:
+  defaults:
+    understanding:
+      threshold: 0.70
+      format: "text"
+      energy: false
+      basic: false
+      per_req: false
+      diagram: false
+    harness:
+      resource_limits:
+        memory: "4g"
+        cpu: 2.0
+        pids: 256
+        storage: "10g"
+      network:
+        allowlist:
+          - "registry.npmjs.org"
+          - "pypi.org"
+          - "files.pythonhosted.org"
+          - "proxy.golang.org"
+          - "crates.io"
+          - "static.crates.io"
+          - "repo1.maven.org"
+          - "playwright.azureedge.net"
+          - "cdn.playwright.dev"
+        proxy_image: "ubuntu/squid:latest"
+      buffer_limit_bytes: 10485760
+      ci_skip_tag: "[skip ci]"
+      ci_skip_enabled: true
+      secrets_env_file: "secrets.env"
+      bind_mount_ack: false
+      pr_host: "none"
+      gc:
+        worktree_max_age_hours: 24
+        container_max_age_hours: 1
+        backup_max_age_days: 7
+      visual_tests:
+        enabled: false
+        serve_command: "npm run preview"
+        test_command: "npx playwright test --reporter=json"
+        timeout_ms: 300000
+        screenshot_dir: "playwright-report"
+        max_iterations: 3
