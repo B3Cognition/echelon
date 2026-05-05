@@ -44,6 +44,13 @@ class TestFindPrUrl:
         _write_state(tmp_path, "042", "default", None)
         assert find_pr_url("042", tmp_path) is None
 
+    def test_returns_first_sorted_file_when_multiple_have_pr_url(self, tmp_path: Path) -> None:
+        spec_dir = tmp_path / "spec-042"
+        spec_dir.mkdir()
+        (spec_dir / "a-state.json").write_text('{"pr_url": "https://github.com/org/repo/pull/1"}')
+        (spec_dir / "b-state.json").write_text('{"pr_url": "https://github.com/org/repo/pull/2"}')
+        assert find_pr_url("spec-042", tmp_path) == "https://github.com/org/repo/pull/1"
+
     def test_skips_corrupt_json(self, tmp_path: Path) -> None:
         d = tmp_path / "042"
         d.mkdir()
@@ -120,6 +127,28 @@ class TestLand:
         gitops = _make_gitops()
         land("042", project_dir=tmp_path, gitops=gitops)
         gitops.destroy_worktree.assert_called_once_with(worktree_dir, keep_branch=True)
+
+    @patch("harness.land.subprocess.run")
+    def test_deletes_harness_branches(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        gitops = _make_gitops(feature_branch=None)
+        list_result = MagicMock(
+            returncode=0,
+            stdout="  harness/042/strategy1/iter-1\n  harness/042/strategy1/iter-2\n",
+        )
+        delete_result = MagicMock(returncode=0, stdout="")
+        mock_run.side_effect = [list_result, delete_result, delete_result]
+
+        result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is True
+        # Verify git branch --list was called
+        list_call = mock_run.call_args_list[0]
+        assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
+        # Verify git branch -D was called for each branch
+        assert mock_run.call_count == 3
+        deleted_branches = [c[0][0][3] for c in mock_run.call_args_list[1:]]
+        assert "harness/042/strategy1/iter-1" in deleted_branches
+        assert "harness/042/strategy1/iter-2" in deleted_branches
 
     def test_accepts_explicit_state_dir(self, tmp_path: Path) -> None:
         custom_state = tmp_path / "custom-state"
