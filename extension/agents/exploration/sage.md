@@ -21,7 +21,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Configuration
 
-This agent uses values from `echelon-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 - `quality_gates.*` - All quality thresholds
 - `heuristics.*` - Requirement quality heuristics
 
@@ -234,7 +234,7 @@ speckit.echelon.understanding-scan <spec_directory>/spec.md --per-req --json --e
 
 Parse the JSON output:
 1. Extract the `requirements` array from the JSON response
-2. For each requirement, compare each category score against the gate threshold from echelon-config.yml quality_gates
+2. For each requirement, compare each category score against the gate threshold (run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh quality_gates` for the full section)
 3. Filter to requirements where ANY category score falls below its gate threshold
 4. Write the filtered failure list to issues.md under a new section:
 

@@ -349,7 +349,7 @@ For reconciliation after recovery, reference `templates/recovery-checklist.md` a
 
 ### Preflight: KB Evolution Validation
 
-If `evolution.enabled` is `true` in `echelon-config.yml`:
+If `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`:
 
 ```bash
 scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json

@@ -31,7 +31,7 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 
 ## Configuration
 
-This agent uses values from `echelon-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `code_quality.*` - Function length, nesting, complexity limits
 - `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `echelon-config.yml`. Findings below this threshold are silently suppressed. Range: 0–100.

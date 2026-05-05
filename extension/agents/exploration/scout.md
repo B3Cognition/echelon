@@ -18,7 +18,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Configuration
 
-This agent uses values from `echelon-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 - `discovery.*` - Git history lookback, commit counts, hotspots
 - `scoring.*` - Confidence and evidence grades
 

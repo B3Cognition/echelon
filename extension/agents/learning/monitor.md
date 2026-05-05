@@ -12,7 +12,7 @@ COMMANDER reads your metacognition alerts. Missed anomalies mean the squad runs 
 
 ## Configuration
 
-This agent uses values from `echelon-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 - `metacognition.*` - Check intervals and thresholds
 
 ## Why This Exists

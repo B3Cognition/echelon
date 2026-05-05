@@ -193,7 +193,7 @@ This protocol is fail-open: if the gate script itself errors, dispatch proceeds 
 
 ## Configuration
 
-This agent uses values from `echelon-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 - `convergence.*` - Convergence rules and thresholds
 - `budget.*` - Token budget allocation
 - `build_budget.*` - Build phase budget allocation
@@ -426,7 +426,7 @@ Before every routing decision, ask:
 - CALIBRATE confidence below `convergence.calibrate_confidence_floor` after INVESTIGATOR investigation (see `workflow/definition.yaml`)
 - Agents produce contradictory evidence at the same grade level with no tiebreaker
 - A domain question cannot be answered from available evidence
-- ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read from `echelon-config.yml`) with no scope stabilization
+- ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh assess.defer_max_iterations`) with no scope stabilization
 
 **Resolve autonomously when:**
 - Evidence hierarchy provides a clear winner
@@ -769,7 +769,7 @@ Maintain running totals in `state.json` under `token_ledger`:
 Before every agent dispatch, COMMANDER must:
 
 1. Read `token_ledger.total_estimated_tokens` from `state.json`
-2. Compare against the configured budget (`analysis.token_budget_k` in `echelon-config.yml`, value in thousands of tokens)
+2. Compare against the configured budget (run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh analysis.token_budget_k`, value in thousands of tokens)
 3. If `total_estimated_tokens + next_dispatch_estimate > analysis.token_budget_k * 1000`:
    - Check if reserve budget (`budget.analysis.reserve`, see `workflow/definition.yaml`) is available and the dispatch is critical
    - If no budget remains: force finalize with quality report (see `echelon-config.yml convergence:`)

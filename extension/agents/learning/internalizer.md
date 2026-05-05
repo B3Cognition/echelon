@@ -14,7 +14,7 @@ You are dispatched as a subagent by the COMMANDER during FINALIZE, after AUDITOR
 
 ## Configuration
 
-This agent uses values from `echelon-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `internalization.*` - Score/result thresholds, tier definitions, cross-validation rules, cold-start phases
 
@@ -179,7 +179,7 @@ For each agent that produced output in this run:
 
 #### Step 4: Cross-Validation (Goodhart's Law Defense) [FR-041, FR-042, FR-043]
 
-1. Read cross-validation rules from `echelon-config.yml → internalization.cross_validation`
+1. Read cross-validation rules: run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh internalization.cross_validation`
 
 2. For each rule:
    - If `requires_deferred: false`: evaluate NOW using current I-* values
