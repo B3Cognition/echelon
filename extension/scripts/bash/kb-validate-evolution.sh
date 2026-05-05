@@ -27,8 +27,8 @@ if command -v specify &>/dev/null; then
     && _ECHELON_RESOLVER_OK=true
 fi
 if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
-  if [[ -f "$REPO_ROOT/echelon-config.yml" ]]; then
-    CONFIG_FILE="$REPO_ROOT/echelon-config.yml"
+  if [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
+    CONFIG_FILE="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
   else
     CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
   fi
@@ -50,7 +50,7 @@ Validates Knowledge Base evolution files with 3 checks:
     - Every evolution-signals entry affected_agents exist in agents.yaml
 
   Check 2: Score/result consistency
-    - Reads internalization thresholds from ECHELON_CFG_* (resolver) or echelon-config.yml
+    - Reads internalization thresholds from ECHELON_CFG_* (resolver) or .specify/extensions/echelon/echelon-config.yml
     - Verifies score and result (PASS/PARTIAL/FAIL) agree per threshold rules
 
   Check 3: Downstream outcome completeness (--state required)

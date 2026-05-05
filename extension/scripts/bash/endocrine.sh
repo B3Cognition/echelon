@@ -33,7 +33,7 @@
 #   endocrine.sh log_hormone_event <agent> <event> — appends to hormone_history in state.json
 #
 # Reads config via `specify extension config resolve echelon` (preferred).
-# Falls back to direct YAML read from echelon-config.yml when specify is unavailable.
+# Falls back to direct YAML read from .specify/extensions/echelon/echelon-config.yml when specify is unavailable.
 # State stored in .specify/squad/state.json under "endocrine_state".
 set -euo pipefail
 . "$(CDPATH='' cd "$(dirname -- "$0")" && pwd)/python-detect.sh"
@@ -57,11 +57,11 @@ if command -v specify &>/dev/null; then
 fi
 
 if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
-  # Fallback: read from project config or bundled defaults
+  # Fallback: read from project config (resolver's source) or bundled defaults
   if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
     CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
-  elif [[ -f "$REPO_ROOT/echelon-config.yml" ]]; then
-    CONFIG_FILE="$REPO_ROOT/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
+    CONFIG_FILE="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
   else
     CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
   fi
