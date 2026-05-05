@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.spec_frontmatter import read_frontmatter, write_targets
+from harness.spec_frontmatter import read_frontmatter, write_status, write_targets
 
 
 def _make_spec_dir(tmp_path: Path, content: str, filename: str = "spec.md") -> Path:
@@ -92,3 +92,61 @@ class TestWriteTargets:
         result = write_targets(spec_dir, ["r"])
         assert result.exists()
         assert result.suffix == ".md"
+
+
+@pytest.mark.unit
+class TestWriteStatus:
+    def test_adds_status_field(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\ntargets: []\n---\n# Body\n")
+        write_status(spec_dir, "landed")
+        assert read_frontmatter(spec_dir)["status"] == "landed"
+
+    def test_creates_frontmatter_when_absent(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "# No frontmatter\n")
+        write_status(spec_dir, "landed")
+        assert read_frontmatter(spec_dir)["status"] == "landed"
+
+    def test_overwrites_existing_status(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\nstatus: running\n---\n# Body\n")
+        write_status(spec_dir, "landed")
+        assert read_frontmatter(spec_dir)["status"] == "landed"
+
+    def test_preserves_other_frontmatter_keys(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\ntargets:\n  - repo-a\n---\n# Body\n")
+        write_status(spec_dir, "landed")
+        fm = read_frontmatter(spec_dir)
+        assert fm["targets"] == ["repo-a"]
+        assert fm["status"] == "landed"
+
+    def test_returns_modified_file_path(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\n---\n")
+        result = write_status(spec_dir, "landed")
+        assert result == spec_dir / "spec.md"
+
+    def test_raises_when_no_md_file(self, tmp_path: Path) -> None:
+        empty_dir = tmp_path / "specs" / "042-empty"
+        empty_dir.mkdir(parents=True)
+        with pytest.raises(FileNotFoundError):
+            write_status(empty_dir, "landed")
+
+
+@pytest.mark.unit
+class TestWriteStatusIntegration:
+    def test_multiple_writes_are_idempotent(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\ntargets:\n  - repo-a\n---\n# Spec body\n")
+        write_status(spec_dir, "landed")
+        write_status(spec_dir, "landed")  # second write must not corrupt
+        fm = read_frontmatter(spec_dir)
+        assert fm["status"] == "landed"
+        assert fm["targets"] == ["repo-a"]
+        # body must survive both writes
+        content = (spec_dir / "spec.md").read_text(encoding="utf-8")
+        assert "# Spec body" in content
+
+    def test_status_survives_write_targets_roundtrip(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\ntargets: []\n---\n# Body\n")
+        write_status(spec_dir, "landed")
+        write_targets(spec_dir, ["repo-b"])
+        fm = read_frontmatter(spec_dir)
+        assert fm["status"] == "landed"
+        assert fm["targets"] == ["repo-b"]
