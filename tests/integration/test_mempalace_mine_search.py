@@ -41,7 +41,9 @@ def isolated_palace(tmp_path, monkeypatch):
 def project_alpha(tmp_path, isolated_palace):
     proj = tmp_path / "project-alpha"
     proj.mkdir()
-    (proj / "echelon-config.yml").write_text(
+    echelon_cfg = proj / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
+    echelon_cfg.write_text(
         yaml.dump({"mempalace": {"wing": "alpha"}, "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001}})
     )
     (proj / "spec.md").write_text((FIXTURES / "spec-alpha.md").read_text())
@@ -52,7 +54,9 @@ def project_alpha(tmp_path, isolated_palace):
 def project_beta(tmp_path, isolated_palace):
     proj = tmp_path / "project-beta"
     proj.mkdir()
-    (proj / "echelon-config.yml").write_text(
+    echelon_cfg = proj / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
+    echelon_cfg.write_text(
         yaml.dump({"mempalace": {"wing": "beta"}, "deploy": {"type": "http", "blue_port": 3100, "green_port": 3101}})
     )
     (proj / "spec.md").write_text((FIXTURES / "spec-beta.md").read_text())
@@ -211,7 +215,8 @@ def test_provision_wing_full_lifecycle(tmp_path, isolated_palace):
     from unittest.mock import patch
     from echelon.cli import _provision_wing
 
-    echelon_yml = tmp_path / "echelon-config.yml"
+    echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_yml.parent.mkdir(parents=True, exist_ok=True)
     echelon_yml.write_text(yaml.dump({
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))

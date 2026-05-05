@@ -75,7 +75,9 @@ def isolated_palace(tmp_path, monkeypatch):
 def project_dir(tmp_path, isolated_palace):
     proj = tmp_path / "api-project"
     proj.mkdir()
-    (proj / "echelon-config.yml").write_text(yaml.dump({
+    echelon_cfg = proj / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
+    echelon_cfg.write_text(yaml.dump({
         "mempalace": {"wing": "api-project"},
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))
@@ -252,7 +254,9 @@ class TestCLISubprocess:
         env = _isolated_env(isolated_palace)
         proj = tmp_path / "no-wing"
         proj.mkdir()
-        (proj / "echelon-config.yml").write_text(yaml.dump({
+        echelon_cfg = proj / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
+        echelon_cfg.write_text(yaml.dump({
             "deploy": {"type": "http", "blue_port": 3200, "green_port": 3201},
         }))
         (proj / "codegen-state.json").write_text("{}")

@@ -14,7 +14,8 @@ def test_run_pipeline_constructs_ctx_from_project(tmp_path):
     from codegen.cli.codegen_cli import _run_pipeline
     import argparse
 
-    echelon_yml = tmp_path / "echelon-config.yml"
+    echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_yml.parent.mkdir(parents=True, exist_ok=True)
     echelon_yml.write_text("mempalace:\n  wing: my-app\n")
     state_file = tmp_path / "codegen-state.json"
 
@@ -53,7 +54,8 @@ def test_run_pipeline_wing_override_from_args(tmp_path):
     from codegen.cli.codegen_cli import _run_pipeline
     import argparse
 
-    echelon_yml = tmp_path / "echelon-config.yml"
+    echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_yml.parent.mkdir(parents=True, exist_ok=True)
     echelon_yml.write_text("mempalace:\n  wing: yaml-wing\n")
     state_file = tmp_path / "codegen-state.json"
 
