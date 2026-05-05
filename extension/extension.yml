@@ -80,7 +80,7 @@ provides:
 
     - name: "speckit.echelon.init"
       file: "commands/echelon.init.md"
-      description: "One-time project initialization — bootstrap echelon.yml, validate deploy config, install Traefik. Run once per project before speckit.echelon.run."
+      description: "One-time project initialization — bootstrap echelon-config.yml, validate deploy config, install Traefik. Run once per project before speckit.echelon.run."
       behavior:
         execution: isolated
         invocation: explicit
@@ -148,7 +148,7 @@ provides:
         color: red
     - name: "speckit.echelon.cicd"
       file: "commands/echelon.cicd.md"
-      description: "Design and implement CI/CD for this project — Dockerfile, echelon.yml deploy block, GitHub Actions CI, and database services if detected. Re-runnable."
+      description: "Design and implement CI/CD for this project — Dockerfile, echelon-config.yml deploy block, GitHub Actions CI, and database services if detected. Re-runnable."
       behavior:
         execution: skill
         invocation: automatic

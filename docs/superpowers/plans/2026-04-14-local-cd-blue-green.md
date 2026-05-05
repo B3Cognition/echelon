@@ -101,7 +101,7 @@ set -euo pipefail
 
 # ── Args ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
-ECHELON_YML="${2:-${PROJECT_ROOT}/echelon.yml}"
+ECHELON_YML="${2:-${PROJECT_ROOT}/echelon-config.yml}"
 STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/scripts"
 
@@ -113,7 +113,7 @@ fi
 
 # ── Read config ──────────────────────────────────────────────────────────────
 if ! grep -q "^deploy:" "${ECHELON_YML}" 2>/dev/null; then
-  echo "✗ deploy config missing in echelon.yml." >&2
+  echo "✗ deploy config missing in echelon-config.yml." >&2
   echo "  Add a deploy: block with blue_port, green_port, active_port." >&2
   echo "  See config-template.yml for reference." >&2
   exit 1
@@ -173,7 +173,7 @@ for f in "${GLOBAL_STATE_DIR}"/*.json 2>/dev/null; do
     for WANTED in "${BLUE_PORT}" "${GREEN_PORT}" "${ACTIVE_PORT}"; do
       if [ "${CLAIMED}" = "${WANTED}" ] && [ -n "${CLAIMED}" ]; then
         echo "✗ Port ${WANTED} is already claimed by app '${OTHER_APP}' (${f})." >&2
-        echo "  Choose different ports in echelon.yml." >&2
+        echo "  Choose different ports in echelon-config.yml." >&2
         exit 1
       fi
     done
@@ -700,16 +700,16 @@ Append immediately after it (before `### 1.1`):
 python3 -c "
 import sys, yaml
 try:
-    c = yaml.safe_load(open('echelon.yml'))
+    c = yaml.safe_load(open('echelon-config.yml'))
     d = c.get('deploy', {})
     missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
     if missing:
-        print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
+        print('✗ deploy config missing in echelon-config.yml.', file=sys.stderr)
         print('  Add a deploy: block with blue_port, green_port, active_port.', file=sys.stderr)
         print('  See config-template.yml for reference.', file=sys.stderr)
         sys.exit(1)
 except FileNotFoundError:
-    print('✗ echelon.yml not found.', file=sys.stderr)
+    print('✗ echelon-config.yml not found.', file=sys.stderr)
     sys.exit(1)
 "
 ```
@@ -720,7 +720,7 @@ If exit code is non-zero, stop immediately — do not proceed with the run.
 
 ```bash
 ECHELON_EXT=".specify/extensions/echelon"
-bash ${ECHELON_EXT}/scripts/bash/deploy-init.sh "${PROJECT_ROOT}" "echelon.yml"
+bash ${ECHELON_EXT}/scripts/bash/deploy-init.sh "${PROJECT_ROOT}" "echelon-config.yml"
 ```
 
 If exit code is non-zero, report the error and stop.
@@ -792,7 +792,7 @@ Expected: branch pushed to remote, no errors.
 |---|---|
 | `deploy:` block in config-template.yml and echelon-config.yml | Task 1 |
 | App name derived from `basename(PROJECT_ROOT)` | Task 2 (deploy-init.sh) |
-| Fail fast if `deploy:` missing from echelon.yml | Task 7 (echelon.run.md) |
+| Fail fast if `deploy:` missing from echelon-config.yml | Task 7 (echelon.run.md) |
 | Port conflict detection against global state | Task 2 (deploy-init.sh) |
 | `speckit-deploy` Docker network creation | Task 2 |
 | Traefik startup with per-app entrypoints | Task 2 |

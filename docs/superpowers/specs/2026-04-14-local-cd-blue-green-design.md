@@ -28,7 +28,7 @@ echelon.run → harness.run (build → merge to main)
 
 ## Configuration
 
-Added to `echelon.yml` and `config-template.yml`:
+Added to `echelon-config.yml` and `config-template.yml`:
 
 ```yaml
 deploy:
@@ -43,7 +43,7 @@ deploy:
 If the `deploy:` block is absent when `echelon.run` starts, fail immediately with:
 
 ```
-✗ deploy config missing in echelon.yml.
+✗ deploy config missing in echelon-config.yml.
   Add a deploy: block with blue_port, green_port, active_port.
   See config-template.yml for reference.
 ```
@@ -76,7 +76,7 @@ Init runs once, transparently, as part of `echelon.run` section 1.0 (after `PROJ
 
 **Init sequence (`deploy-init.sh`):**
 
-1. Validate `deploy:` block exists in `echelon.yml` — fail fast if missing
+1. Validate `deploy:` block exists in `echelon-config.yml` — fail fast if missing
 2. Check `deploy-state.json` exists → if yes, skip all init
 3. Derive app name from `basename(PROJECT_ROOT)`
 4. Check requested ports not already claimed → fail with conflict message if taken

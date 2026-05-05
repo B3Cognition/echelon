@@ -10,11 +10,11 @@ import pytest
 
 
 def test_run_pipeline_constructs_ctx_from_project(tmp_path):
-    """_run_pipeline builds MemPalaceContext from echelon.yml and calls engine.set_context."""
+    """_run_pipeline builds MemPalaceContext from echelon-config.yml and calls engine.set_context."""
     from codegen.cli.codegen_cli import _run_pipeline
     import argparse
 
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text("mempalace:\n  wing: my-app\n")
     state_file = tmp_path / "codegen-state.json"
 
@@ -49,11 +49,11 @@ def test_run_pipeline_constructs_ctx_from_project(tmp_path):
 
 
 def test_run_pipeline_wing_override_from_args(tmp_path):
-    """--wing arg overrides echelon.yml wing."""
+    """--wing arg overrides echelon-config.yml wing."""
     from codegen.cli.codegen_cli import _run_pipeline
     import argparse
 
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text("mempalace:\n  wing: yaml-wing\n")
     state_file = tmp_path / "codegen-state.json"
 

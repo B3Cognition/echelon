@@ -62,7 +62,7 @@ specify extension add --dev ~/echelon/extension
 specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
-echelon init    # bootstrap echelon.yml, set up Docker/Traefik or CLI wrapper, install git hook
+echelon init    # bootstrap echelon-config.yml, set up Docker/Traefik or CLI wrapper, install git hook
 echelon harness init    # write harness: section into echelon.yml, mirror-clone target repo, detect language + image
 ```
 
@@ -411,7 +411,7 @@ Each command is available two ways: as a terminal CLI tool (no Claude session ne
 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
-| `echelon init` | `speckit.echelon.init` | One-time project setup — `echelon.yml`, deploy infra, git hook |
+| `echelon init` | `speckit.echelon.init` | One-time project setup — `echelon-config.yml`, deploy infra, git hook |
 | `echelon run "<description>"` | `speckit.echelon.run` | Phase A: full squad run → spec.md, tasks.md, feature branch |
 | `echelon bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
@@ -489,7 +489,7 @@ speckit.echelon.codegen 001-photo-album --resume
 
 #### Wing
 
-The wing is your project's stable identity in MemPalace. It is set once during `echelon init` and written to `echelon.yml`:
+The wing is your project's stable identity in MemPalace. It is set once during `echelon init` and written to `echelon-config.yml`:
 
 ```yaml
 mempalace:
@@ -498,7 +498,7 @@ mempalace:
 
 `echelon init` auto-suggests a wing name from your git remote URL (e.g. `my-app` from `github.com/org/my-app`), falling back to `{dirname}-{hash6}` if no remote exists. It checks for collision with other projects before writing.
 
-**Wing portability:** all clones of the same repo should use the same wing name so they share mined requirements across machines and teammates. The wing is committed in `echelon.yml` — clones inherit it automatically.
+**Wing portability:** all clones of the same repo should use the same wing name so they share mined requirements across machines and teammates. The wing is committed in `echelon-config.yml` — clones inherit it automatically.
 
 #### Mine requirements into MemPalace
 
@@ -543,7 +543,7 @@ codegen requirements clean --from-wing my-app --project-dir .
 #### Data flow
 
 ```text
-echelon.yml (mempalace.wing)
+echelon-config.yml (mempalace.wing)
         │
         ▼
 codegen run  ──► codegen-state.json (wing field)
@@ -556,7 +556,7 @@ codegen run  ──► codegen-state.json (wing field)
                        respecify)
 ```
 
-`codegen run` reads `wing` from `echelon.yml`, writes it to `codegen-state.json`, and all subsequent phase gate operations read it back from the state file — no config file needed at gate time.
+`codegen run` reads `wing` from `echelon-config.yml`, writes it to `codegen-state.json`, and all subsequent phase gate operations read it back from the state file — no config file needed at gate time.
 
 ## PR Review Loop
 
@@ -627,7 +627,7 @@ The only difference between UI and CLI is how traffic is routed to the active sl
 
 Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic. All apps on a machine share one Traefik instance — adding a new app never restarts Traefik.
 
-**Config (`echelon.yml`):**
+**Config (`echelon-config.yml`):**
 
 ```yaml
 deploy:
@@ -669,7 +669,7 @@ EXPOSE 80
 
 Two image tags (blue/green) are maintained. No Traefik, no long-lived containers. Each deploy builds a new image, optionally verifies it via `docker run --rm`, then updates the active-tag pointer. An optional wrapper script at `install_path` reads the active tag on every invocation — rollback is instant since the wrapper always checks the pointer at runtime.
 
-**Config (`echelon.yml`):**
+**Config (`echelon-config.yml`):**
 
 ```yaml
 deploy:

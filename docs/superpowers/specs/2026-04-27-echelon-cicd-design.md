@@ -7,7 +7,7 @@
 
 ## Problem
 
-`echelon-deploy` is a generic blue/green and CLI deployment system. It cannot automatically produce correct deployment artifacts (Dockerfile, `echelon.yml` deploy block, CI workflow) for arbitrary project stacks — especially pnpm monorepos, multi-app workspaces, or projects that evolve over time. Hard-coding detection heuristics in bash scripts is a dead end.
+`echelon-deploy` is a generic blue/green and CLI deployment system. It cannot automatically produce correct deployment artifacts (Dockerfile, `echelon-config.yml` deploy block, CI workflow) for arbitrary project stacks — especially pnpm monorepos, multi-app workspaces, or projects that evolve over time. Hard-coding detection heuristics in bash scripts is a dead end.
 
 ---
 
@@ -31,7 +31,7 @@ This is intentionally self-referential: echelon configuring its own deployment i
 ## Lifecycle Position
 
 ```
-echelon.init       — bootstrap echelon.yml, install Traefik / git hook
+echelon.init       — bootstrap echelon-config.yml, install Traefik / git hook
 echelon.cicd       — NEW: design + generate CI/CD for this project   ← here
 echelon.run        — cognitive squad feature work
 echelon.deploy     — manual deploy / status / rollback
@@ -105,7 +105,7 @@ before generating a Dockerfile.
    and ORMs (e.g. pg, mysql2, prisma, sequelize, typeorm, sqlalchemy, ecto,
    gorm, mongoose, redis, etc.) to identify required backing services.
    For each detected database:
-   - Add a `services:` block to echelon.yml listing the container image,
+   - Add a `services:` block to echelon-config.yml listing the container image,
      network alias, volume mount for persistence, and environment variables.
    - Generate a `scripts/bash/db-start.sh` script that starts each service
      container on the speckit-deploy Docker network (idempotent: skip if
@@ -116,7 +116,7 @@ before generating a Dockerfile.
 
 6. Deploy type — http (web server, needs ports) vs cli (binary, needs
    health_check command). Infer from project type; confirm against existing
-   echelon.yml deploy block if present.
+   echelon-config.yml deploy block if present.
 
 7. Test setup — detect test runner and existing test scripts for the CI
    workflow (e.g. jest, vitest, pytest, go test, cargo test, rspec, mix test).
@@ -129,7 +129,7 @@ Generate exactly these artifacts:
    correct package manager, correct build context. Place at project root or
    apps/{name}/Dockerfile as appropriate.
 
-2. **echelon.yml deploy block** — update the existing deploy: section in-place.
+2. **echelon-config.yml deploy block** — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
    (HTTP) or health_check / install_path (CLI). If databases were detected, add
    a services: block. Do not touch other sections.
@@ -163,7 +163,7 @@ Generate exactly these artifacts:
 | Artifact | Condition | Created / Updated |
 | --- | --- | --- |
 | `Dockerfile` or `apps/*/Dockerfile` | always | Created if absent; patched if wrong |
-| `echelon.yml` `deploy:` block | always | Updated in-place |
+| `echelon-config.yml` `deploy:` block | always | Updated in-place |
 | `scripts/bash/db-start.sh` | database detected | Created if absent; updated if present |
 | `.github/workflows/ci.yml` | always | Created if absent; updated if present |
 

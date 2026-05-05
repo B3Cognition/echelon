@@ -4,7 +4,7 @@ Two categories:
   A. CLI subprocess tests — invoke `codegen` CLI commands as subprocesses,
      verify real ChromaDB round-trips with an isolated palace.
   B. PipelineEngine tests — call PipelineEngine directly with mocked SOAR bridge,
-     verify wing flows from echelon.yml -> codegen-state.json -> resume().
+     verify wing flows from echelon-config.yml -> codegen-state.json -> resume().
 
 Run with: pytest tests/e2e/test_mempalace_e2e.py -v -m e2e
 """
@@ -75,7 +75,7 @@ def isolated_palace(tmp_path, monkeypatch):
 def project_dir(tmp_path, isolated_palace):
     proj = tmp_path / "api-project"
     proj.mkdir()
-    (proj / "echelon.yml").write_text(yaml.dump({
+    (proj / "echelon-config.yml").write_text(yaml.dump({
         "mempalace": {"wing": "api-project"},
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))
@@ -248,11 +248,11 @@ class TestCLISubprocess:
         )
 
     def test_codegen_run_hard_fails_without_wing_in_echelon_yml(self, tmp_path, isolated_palace):
-        """codegen run exits non-zero with clear message when echelon.yml has no wing."""
+        """codegen run exits non-zero with clear message when echelon-config.yml has no wing."""
         env = _isolated_env(isolated_palace)
         proj = tmp_path / "no-wing"
         proj.mkdir()
-        (proj / "echelon.yml").write_text(yaml.dump({
+        (proj / "echelon-config.yml").write_text(yaml.dump({
             "deploy": {"type": "http", "blue_port": 3200, "green_port": 3201},
         }))
         (proj / "codegen-state.json").write_text("{}")
@@ -304,7 +304,7 @@ class TestPipelineEngineWingThreading:
         return bridge
 
     def test_initialize_writes_wing_from_echelon_yml(self, project_dir, isolated_palace):
-        """PipelineEngine.initialize() writes wing from echelon.yml to codegen-state.json."""
+        """PipelineEngine.initialize() writes wing from echelon-config.yml to codegen-state.json."""
         from codegen.pipeline.pipeline_engine import PipelineEngine
         from codegen.memory.context import MemPalaceContext
 
@@ -364,7 +364,7 @@ class TestPipelineEngineWingThreading:
         )
 
     def test_set_context_wing_overrides_echelon_yml_via_arg(self, project_dir, isolated_palace):
-        """--wing CLI arg overrides the echelon.yml wing via wing_override parameter."""
+        """--wing CLI arg overrides the echelon-config.yml wing via wing_override parameter."""
         from codegen.pipeline.pipeline_engine import PipelineEngine
         from codegen.memory.context import MemPalaceContext
 

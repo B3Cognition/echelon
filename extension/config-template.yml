@@ -1,5 +1,5 @@
 # Echelon Configuration
-# Copy to echelon.yml and customize
+# Copy to echelon-config.yml and customize
 #
 # GUIDANCE NOTATION:
 #   [range: X-Y]     = sensible values, beyond this is likely wasteful or broken
