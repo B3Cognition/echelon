@@ -142,33 +142,17 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
 
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
-    echelon_yml = project_dir / "echelon-config.yml"
+    echelon_cfg = ext_dir / "echelon-config.yml"
 
-    # Step 1: Bootstrap echelon-config.yml
-    if echelon_yml.exists():
-        print(f"✓ echelon-config.yml already exists")
-    else:
-        template = None
-        for name in ("echelon-config.yml", "config-template.yml"):
-            candidate = ext_dir / name
-            if candidate.exists():
-                template = candidate
-                break
-        if template is None:
-            print(
-                "✗ echelon-config.yml not found and no template available.\n"
-                f"  Expected template at: {ext_dir / 'echelon-config.yml'}\n"
-                "  Have you run 'specify extension add echelon' first?",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        shutil.copy(template, echelon_yml)
-        print(f"✓ Bootstrapped echelon-config.yml from {template.name}")
+    # Step 1: Confirm project config exists (created by `specify extension add echelon`)
+    if not echelon_cfg.exists():
         print(
-            "\n  Review echelon-config.yml and configure the deploy: block before continuing.\n"
-            "  Set type: http or cli, ports (http) or install_path (cli).\n"
+            f"✗ Project config not found: {echelon_cfg}\n"
+            "  Run: specify extension add echelon",
+            file=sys.stderr,
         )
-        sys.exit(0)
+        sys.exit(1)
+    print(f"✓ Project config found: {echelon_cfg}")
 
     # Step 2: Validate deploy config
     try:
@@ -178,7 +162,7 @@ def _cmd_init(project_dir: Path) -> None:
         sys.exit(1)
 
     try:
-        config = yaml.safe_load(echelon_yml.read_text())
+        config = yaml.safe_load(echelon_cfg.read_text())
     except Exception as e:
         print(f"✗ Cannot parse echelon-config.yml: {e}", file=sys.stderr)
         sys.exit(1)
@@ -202,7 +186,7 @@ def _cmd_init(project_dir: Path) -> None:
 
     # Step 2b: Provision MemPalace wing
     print("\n▶ Configuring MemPalace wing...")
-    _provision_wing(project_dir, echelon_yml)
+    _provision_wing(project_dir, echelon_cfg)
 
     # Step 3: Run deploy-init.sh
     init_script = ext_dir / "scripts" / "bash" / "deploy-init.sh"
@@ -215,7 +199,7 @@ def _cmd_init(project_dir: Path) -> None:
         sys.exit(1)
 
     result = subprocess.run(
-        ["bash", str(init_script), str(project_dir), str(echelon_yml)],
+        ["bash", str(init_script), str(project_dir), str(echelon_cfg)],
         cwd=str(project_dir),
     )
     if result.returncode != 0:
@@ -229,8 +213,8 @@ def _cmd_init(project_dir: Path) -> None:
         f"║         echelon init — complete          ║\n"
         f"╚══════════════════════════════════════════╝\n"
         f"\n"
-        f"  echelon-config.yml   → {echelon_yml}\n"
-        f"  deploy-state  → {state_file}\n"
+        f"  config       → {echelon_cfg}\n"
+        f"  deploy-state → {state_file}\n"
         f"\n"
         f"Next step:\n"
         f"  echelon run <description>\n"

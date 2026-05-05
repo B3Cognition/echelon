@@ -9,9 +9,14 @@ from unittest.mock import patch
 from codegen.memory.context import MemPalaceContext
 
 
+def _echelon_cfg(tmp_path: Path) -> Path:
+    p = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def test_from_project_reads_wing_from_echelon_yml(tmp_path):
-    echelon_yml = tmp_path / "echelon-config.yml"
-    echelon_yml.write_text(yaml.dump({"mempalace": {"wing": "my-app"}}))
+    _echelon_cfg(tmp_path).write_text(yaml.dump({"mempalace": {"wing": "my-app"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
         ctx = MemPalaceContext.from_project(tmp_path, run_id="run-123")
@@ -22,8 +27,7 @@ def test_from_project_reads_wing_from_echelon_yml(tmp_path):
 
 
 def test_from_project_wing_override_takes_precedence(tmp_path):
-    echelon_yml = tmp_path / "echelon-config.yml"
-    echelon_yml.write_text(yaml.dump({"mempalace": {"wing": "my-app"}}))
+    _echelon_cfg(tmp_path).write_text(yaml.dump({"mempalace": {"wing": "my-app"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
         ctx = MemPalaceContext.from_project(tmp_path, run_id="run-123", wing_override="override-wing")
@@ -38,8 +42,7 @@ def test_from_project_hard_fails_if_no_echelon_yml(tmp_path):
 
 
 def test_from_project_hard_fails_if_wing_not_set(tmp_path):
-    echelon_yml = tmp_path / "echelon-config.yml"
-    echelon_yml.write_text(yaml.dump({"deploy": {"type": "http"}}))
+    _echelon_cfg(tmp_path).write_text(yaml.dump({"deploy": {"type": "http"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
         with pytest.raises(SystemExit, match="wing not set"):
@@ -47,8 +50,7 @@ def test_from_project_hard_fails_if_wing_not_set(tmp_path):
 
 
 def test_from_project_empty_string_override_is_accepted(tmp_path):
-    echelon_yml = tmp_path / "echelon-config.yml"
-    echelon_yml.write_text(yaml.dump({"mempalace": {"wing": "from-yaml"}}))
+    _echelon_cfg(tmp_path).write_text(yaml.dump({"mempalace": {"wing": "from-yaml"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
         ctx = MemPalaceContext.from_project(tmp_path, run_id="r1", wing_override="")

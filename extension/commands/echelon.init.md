@@ -1,13 +1,13 @@
 ---
 name: speckit.echelon.init
-description: "One-time project initialization — bootstrap echelon-config.yml, validate deploy config, install Traefik infrastructure. Run once per project before speckit.echelon.run."
+description: "One-time project initialization — validate deploy config, provision MemPalace wing, install Traefik infrastructure. Run once per project before speckit.echelon.run."
 behavior:
   invocation: explicit
 ---
 
 ## Role
 
-You are COMMANDER performing one-time project initialization — bootstrapping `echelon-config.yml`, validating deploy config, and installing infrastructure. Run once per project before `speckit.echelon.run`.
+You are COMMANDER performing one-time project initialization — validating deploy config in the project config file, provisioning the MemPalace wing, and installing infrastructure. Run once per project before `speckit.echelon.run`.
 
 ---
 
@@ -20,11 +20,14 @@ $ARGUMENTS
 ## Overview
 
 One-time setup for a project. Must be run before `speckit.echelon.run` on any new project.
+Requires `specify extension add echelon` to have been run first (creates the project config).
 
 What it does:
-1. Bootstrap `echelon-config.yml` from template if absent
+
+1. Confirm project config exists at `ECHELON_EXT/echelon-config.yml`
 2. Validate the deploy config block
-3. Run `deploy-init.sh` — installs Docker/Traefik (http type) or CLI wrapper, writes `deploy-state.json`
+3. Provision MemPalace wing
+4. Run `deploy-init.sh` — installs Docker/Traefik (http type) or CLI wrapper, writes `deploy-state.json`
 
 Idempotent: safe to re-run. If deploy infrastructure already exists and is valid, it exits immediately.
 
@@ -35,35 +38,27 @@ Idempotent: safe to re-run. If deploy infrastructure already exists and is valid
 ```bash
 PROJECT_ROOT=$(pwd)
 ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+ECHELON_CONFIG="${ECHELON_EXT}/echelon-config.yml"
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
-echo "ECHELON_EXT=${ECHELON_EXT}"
+echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
 ```
 
 ---
 
-## Step 2: Bootstrap echelon-config.yml
+## Step 2: Confirm project config exists
 
-If `echelon-config.yml` does not exist at the project root, copy a starter config from the extension:
+The project config is created automatically by `specify extension add echelon`. If it is missing, the extension was not installed correctly.
 
 ```bash
-if [ ! -f "${PROJECT_ROOT}/echelon-config.yml" ]; then
-  if [ -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-    cp "${ECHELON_EXT}/echelon-config.yml" "${PROJECT_ROOT}/echelon-config.yml"
-    echo "✓ Bootstrapped echelon-config.yml from extension starter"
-  elif [ -f "${ECHELON_EXT}/config-template.yml" ]; then
-    cp "${ECHELON_EXT}/config-template.yml" "${PROJECT_ROOT}/echelon-config.yml"
-    echo "✓ Bootstrapped echelon-config.yml from config-template.yml"
-  else
-    echo "✗ echelon-config.yml not found and no template available in ${ECHELON_EXT}" >&2
-    echo "  Create echelon-config.yml at the project root before running echelon init." >&2
-    exit 1
-  fi
-else
-  echo "✓ echelon-config.yml already exists"
+if [ ! -f "${ECHELON_CONFIG}" ]; then
+  echo "✗ Project config not found: ${ECHELON_CONFIG}" >&2
+  echo "  Run: specify extension add echelon" >&2
+  exit 1
 fi
+echo "✓ Project config found: ${ECHELON_CONFIG}"
 ```
 
-If the file was bootstrapped, tell the user to review and configure the `deploy:` block before continuing — particularly `type`, `blue_port`/`green_port` (http, must be unique per app on this machine), or `install_path` (cli), and `dockerfile`. All apps share Traefik at `:80` with path-prefix routing — `active_port` is not needed.
+Tell the user to review and configure the `deploy:` block in `${ECHELON_CONFIG}` before continuing — particularly `type`, `blue_port`/`green_port` (http, must be unique per app on this machine), or `install_path` (cli), and `dockerfile`. All apps share Traefik at `:80` with path-prefix routing.
 
 ---
 
@@ -73,7 +68,7 @@ If the file was bootstrapped, tell the user to review and configure the `deploy:
 python3 -c "
 import sys, yaml
 try:
-    c = yaml.safe_load(open('${PROJECT_ROOT}/echelon-config.yml'))
+    c = yaml.safe_load(open('${ECHELON_CONFIG}'))
     d = c.get('deploy', {})
     deploy_type = d.get('type', 'http')
     if deploy_type not in ('http', 'cli'):
@@ -93,7 +88,7 @@ except FileNotFoundError:
 "
 ```
 
-If exit code is non-zero, stop. User must fix `echelon-config.yml` before proceeding.
+If exit code is non-zero, stop. User must fix `${ECHELON_CONFIG}` before proceeding.
 
 ---
 
@@ -107,20 +102,20 @@ import sys
 try:
     from echelon.cli import _provision_wing
     from pathlib import Path
-    _provision_wing(Path('${PROJECT_ROOT}'), Path('${PROJECT_ROOT}/echelon-config.yml'))
+    _provision_wing(Path('${PROJECT_ROOT}'), Path('${ECHELON_CONFIG}'))
 except ImportError:
     print('  ℹ  echelon not installed — wing provisioning skipped')
 "
 ```
 
-If the wing is already set in `echelon-config.yml`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes `mempalace.wing` to `echelon-config.yml`.
+If the wing is already set in `${ECHELON_CONFIG}`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes `mempalace.wing` to `${ECHELON_CONFIG}`.
 
 ---
 
 ## Step 4: Run deploy-init.sh
 
 ```bash
-bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "${PROJECT_ROOT}/echelon-config.yml"
+bash "${ECHELON_EXT}/scripts/bash/deploy-init.sh" "${PROJECT_ROOT}" "${ECHELON_CONFIG}"
 ```
 
 If exit code is non-zero, report the full output and stop. Common failures:
@@ -128,8 +123,8 @@ If exit code is non-zero, report the full output and stop. Common failures:
 | Error | Fix |
 |-------|-----|
 | Traefik not healthy | `docker rm -f speckit-traefik` then re-run `speckit.echelon.init` |
-| Port already claimed by another app | Change `blue_port`/`green_port` in `echelon-config.yml` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
-| deploy config missing | Add `deploy:` block to `echelon-config.yml` (see `config-template.yml`) |
+| Port already claimed by another app | Change `blue_port`/`green_port` in `${ECHELON_CONFIG}` (use 3100/3101 for app2, 3200/3201 for app3, etc.) |
+| deploy config missing | Add `deploy:` block to `${ECHELON_CONFIG}` (see `config-template.yml`) |
 | Docker not running | Start Docker Desktop, then re-run |
 
 ---
@@ -143,8 +138,8 @@ Print a summary:
 ║         echelon init — complete          ║
 ╚══════════════════════════════════════════╝
 
-  echelon-config.yml → {PROJECT_ROOT}/echelon-config.yml
-  deploy-state     → {PROJECT_ROOT}/.specify/squad/deploy-state.json
+  config       → {ECHELON_CONFIG}
+  deploy-state → {PROJECT_ROOT}/.specify/squad/deploy-state.json
 
 Next step:
   speckit.echelon.run — start the cognitive squad run

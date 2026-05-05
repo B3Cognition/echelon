@@ -18,12 +18,12 @@ def _get_palace_path() -> str:
 
 
 def _read_wing_from_echelon_yml(project_dir: Path) -> str:
-    """Read mempalace.wing from echelon-config.yml. Hard-exits with clear message if absent."""
-    echelon_yml = project_dir / "echelon-config.yml"
+    """Read mempalace.wing from the project config. Hard-exits with clear message if absent."""
+    echelon_yml = project_dir / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     if not echelon_yml.exists():
         sys.exit(
             f"echelon-config.yml not found at {echelon_yml}.\n"
-            "Run 'echelon init' to initialize this project."
+            "Run 'specify extension add echelon' then 'echelon init' to initialize this project."
         )
     try:
         import yaml  # type: ignore[import]
