@@ -14,7 +14,7 @@ You are dispatched as a subagent by the COMMANDER during FINALIZE, after AUDITOR
 
 ## Configuration
 
-This agent uses values from `echelon.yml`:
+This agent uses values from `echelon-config.yml`:
 
 - `internalization.*` - Score/result thresholds, tier definitions, cross-validation rules, cold-start phases
 
@@ -31,7 +31,7 @@ This agent uses values from `echelon.yml`:
 - Agent output artifacts (from build phase)
 - CHECKPOINT's `internalization-report.md` (current run internalization results)
 - SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN verdict reports
-- `echelon.yml` `internalization.*` section
+- `echelon-config.yml` `internalization.*` section
 - `knowledge-base/internalization-log.yaml` (prior internalization entries)
 - `knowledge-base/evolution-signals.yaml` (prior evolution signals)
 - `knowledge-base/prompt-versions.yaml` (active versions)
@@ -156,7 +156,7 @@ For each agent that produced output in this run:
    - `int_accuracy_score` = mean of non-null values among I-05, I-06, I-07, I-08
    - If ALL constituents in a category are null, category score = null
 
-2. Look up agent's tier from `echelon.yml → internalization.tiers`
+2. Look up agent's tier from `echelon-config.yml → internalization.tiers`
    - Search deep.agents, moderate.agents, minimal.agents, exempt.agents
    - If agent not found in ANY tier: use `internalization.default_tier` (default: deep). Log warning: "unclassified-agent-defaulted: {agent_name}"
 
@@ -179,7 +179,7 @@ For each agent that produced output in this run:
 
 #### Step 4: Cross-Validation (Goodhart's Law Defense) [FR-041, FR-042, FR-043]
 
-1. Read cross-validation rules from `echelon.yml → internalization.cross_validation`
+1. Read cross-validation rules from `echelon-config.yml → internalization.cross_validation`
 
 2. For each rule:
    - If `requires_deferred: false`: evaluate NOW using current I-* values
@@ -211,7 +211,7 @@ For each agent that produced output in this run:
 Before computing deferred metrics for an agent:
 
 1. Count existing entries in internalization-log.yaml for this agent (prior runs only, not current)
-2. Apply cold-start phases from `echelon.yml → internalization.cold_start`:
+2. Apply cold-start phases from `echelon-config.yml → internalization.cold_start`:
 
    - **Phase 1 (runs 1-4):** Set I-09 through I-16 to null with reason "cold-start-phase-1". Skip Steps 6-7 for this agent.
    - **Phase 2 (runs 5-9):** Compute I-09 through I-16 normally, but add qualifier "low-confidence" to computation_health warnings. For I-09 (Brier Score): require >= `brier_min_pairs` confidence-outcome pairs. Below threshold: null with "insufficient-confidence-outcome-data".

@@ -18,7 +18,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Configuration
 
-This agent uses values from `echelon.yml`:
+This agent uses values from `echelon-config.yml`:
 - `discovery.*` - Git history lookback, commit counts, hotspots
 - `scoring.*` - Confidence and evidence grades
 

@@ -137,7 +137,7 @@ Prefer antifragile designs over robust ones. Systems that learn from failures ar
 
 ## Configuration
 
-See `echelon.yml` for tunable values:
+See `echelon-config.yml` for tunable values:
 - `specialists.max_active` — maximum concurrent specialists
 
 ## Output Requirements

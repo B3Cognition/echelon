@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.cicd
-description: "Design and implement CI/CD for this project — Dockerfile, echelon.yml deploy block, GitHub Actions CI workflow, and db-start.sh if databases are detected."
+description: "Design and implement CI/CD for this project — Dockerfile, echelon-config.yml deploy block, GitHub Actions CI workflow, and db-start.sh if databases are detected."
 behavior:
   invocation: automatic
 ---
@@ -92,7 +92,7 @@ before generating a Dockerfile.
    and ORMs (e.g. pg, mysql2, prisma, sequelize, typeorm, sqlalchemy, ecto,
    gorm, mongoose, redis, etc.) to identify required backing services.
    For each detected database:
-   - Add a services: block to echelon.yml listing the container image,
+   - Add a services: block to echelon-config.yml listing the container image,
      network alias, volume mount for persistence, and environment variables.
    - Generate the file at `$(git rev-parse --show-toplevel)/scripts/bash/db-start.sh`
      — this is a project-owned script, NOT an echelon extension file. It must
@@ -107,7 +107,7 @@ before generating a Dockerfile.
 
 6. Deploy type — http (web server, needs ports) vs cli (binary, needs
    health_check command). Infer from project type; confirm against existing
-   echelon.yml deploy block if present.
+   echelon-config.yml deploy block if present.
 
 7. Test setup — detect test runner and existing test scripts for the CI
    workflow (e.g. jest, vitest, pytest, go test, cargo test, rspec, mix test).
@@ -125,7 +125,7 @@ before generating a Dockerfile.
    main.py, config.ru). Examples: Next.js custom port in next.config.js or
    `server.listen(PORT)` → use that value; Express with `app.listen(3000)` → 3000;
    nginx static site → 80; FastAPI/uvicorn → 8000; Rails → 3000; Go net/http → 8080.
-   Set `container_port: <detected>` in the echelon.yml deploy block.
+   Set `container_port: <detected>` in the echelon-config.yml deploy block.
    Default to 80 only for static sites served by nginx/caddy.
    This value is used by deploy.sh to wire Traefik's load balancer and the
    health-check port binding — a wrong value causes deploy failures.
@@ -133,7 +133,7 @@ before generating a Dockerfile.
 10. Env file location — for monorepos, the deployable app's .env.local (or
     equivalent) is typically NOT at the project root but inside the app directory
     (e.g. apps/web/.env.local). If such a file exists, set
-    `build_env_file: <relative-path>` in the echelon.yml deploy block so deploy.sh
+    `build_env_file: <relative-path>` in the echelon-config.yml deploy block so deploy.sh
     passes the correct build args to docker build. Do not commit secrets — only
     document the path; the file itself is gitignored. If the env file is at the
     project root, omit build_env_file (deploy.sh finds .env.local automatically).
@@ -141,7 +141,7 @@ before generating a Dockerfile.
 11. Health check path — determine whether the app exposes a dedicated health
     endpoint (e.g. /api/health, /healthz, /ping) that returns 2xx when the app
     is fully operational. If one exists or can be added cheaply (a one-line route
-    handler), set `health_check_path: /api/health` in the echelon.yml deploy
+    handler), set `health_check_path: /api/health` in the echelon-config.yml deploy
     block. This enables strict 2xx health checks on deploy, catching broken
     bundles and misconfigured apps (e.g. SSG pages that crash at runtime) before
     the live slot is swapped. If no health endpoint exists and adding one is out
@@ -156,11 +156,11 @@ Generate exactly these artifacts:
    correct package manager, correct build context. Place at project root or
    apps/{name}/Dockerfile as appropriate.
 
-2. echelon.yml deploy block — update the existing deploy: section in-place.
+2. echelon-config.yml deploy block — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
    (HTTP) or health_check / install_path (CLI), and container_port (detected in
    step 9). If databases were detected, add a services: block. Do not touch other
-   sections. If `echelon.yml` does not exist, create it with a minimal skeleton
+   sections. If `echelon-config.yml` does not exist, create it with a minimal skeleton
    containing only the `deploy:` block with detected values.
 
 3. `$(git rev-parse --show-toplevel)/scripts/bash/db-start.sh` — only if
@@ -197,11 +197,11 @@ Generate exactly these artifacts:
 <constraints>
 - All generated files must be idempotent: re-running echelon.cicd on an evolved
   project updates existing files rather than duplicating content.
-- echelon.yml MUST be updated in-place. If a deploy: block already exists, patch
+- echelon-config.yml MUST be updated in-place. If a deploy: block already exists, patch
   only the fields that need correction (container_port, health_check_path,
   build_env_file, services). Do NOT change the dockerfile, blue_port, green_port,
   or the app being deployed — those were set by echelon.init and are authoritative.
-  Do NOT create a new echelon.yml or overwrite the file wholesale.
+  Do NOT create a new echelon-config.yml or overwrite the file wholesale.
 - The Dockerfile must build successfully with docker build from the project root.
 - The CI workflow must use the same package manager detected in step 1.
 - Do not generate a docker-compose.yml — echelon-deploy uses plain Docker + Traefik.

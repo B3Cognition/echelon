@@ -24,7 +24,7 @@ Record task completion and perform a drift-threshold check only. Do NOT execute 
 
 ## Configuration
 
-This agent uses values from `echelon.yml`:
+This agent uses values from `echelon-config.yml`:
 
 - `drift.*` - Drift detection thresholds
 - `quality.*` - Quality metrics targets
