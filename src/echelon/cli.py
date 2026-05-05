@@ -52,6 +52,7 @@ Commands:
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
   change  <spec_id> <description>           Plan a scope change
   codegen <spec_id>                         Run SOAR codegen pipeline
+  land    <spec_id>                         Land a spec: merge PR, clean up
   harness init [<target_repo>]              Initialize harness (no LLM)
   harness run  <spec_id> [strategy=<s>]     Run build→verify→PR loop
   spec target  <spec_id> <repo> [repo...]   Set target repos in spec frontmatter
@@ -219,6 +220,40 @@ def _cmd_init(project_dir: Path) -> None:
         f"Next step:\n"
         f"  echelon run <description>\n"
     )
+
+
+# ── land (pure Python, no LLM) ────────────────────────────────────────────
+
+from harness.config import load_config
+from harness.gitops import GitOpsManager
+from harness.land import land
+
+
+def _cmd_land(args: list[str]) -> None:
+    """Land a spec: merge PR, delete branch, clean worktrees, mark done."""
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon land <spec_id>\n\n"
+            "  Merge PR, delete branch, clean worktrees, mark spec as landed.\n",
+        )
+        sys.exit(0)
+
+    spec_id = args[0]
+    project_dir = Path.cwd()
+
+    config = load_config()
+    gitops = GitOpsManager(config)
+
+    success = land(spec_id, project_dir=project_dir, gitops=gitops)
+    if success:
+        print(f"echelon land: {spec_id} landed successfully")
+        sys.exit(0)
+    else:
+        print(f"echelon land: {spec_id} could not be landed (PR merge blocked?)", file=sys.stderr)
+        sys.exit(1)
 
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
@@ -548,6 +583,10 @@ def main() -> None:
 
     if command == "spec":
         _cmd_spec(args[1:])
+        return
+
+    if command == "land":
+        _cmd_land(args[1:])
         return
 
     if command not in SKILL_MAP:
