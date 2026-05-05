@@ -18,23 +18,23 @@ def _get_palace_path() -> str:
 
 
 def _read_wing_from_echelon_yml(project_dir: Path) -> str:
-    """Read mempalace.wing from echelon.yml. Hard-exits with clear message if absent."""
-    echelon_yml = project_dir / "echelon.yml"
+    """Read mempalace.wing from echelon-config.yml. Hard-exits with clear message if absent."""
+    echelon_yml = project_dir / "echelon-config.yml"
     if not echelon_yml.exists():
         sys.exit(
-            f"echelon.yml not found at {echelon_yml}.\n"
+            f"echelon-config.yml not found at {echelon_yml}.\n"
             "Run 'echelon init' to initialize this project."
         )
     try:
         import yaml  # type: ignore[import]
         config = yaml.safe_load(echelon_yml.read_text()) or {}
     except Exception as exc:
-        sys.exit(f"Cannot parse echelon.yml: {exc}")
+        sys.exit(f"Cannot parse echelon-config.yml: {exc}")
 
     wing = config.get("mempalace", {}).get("wing", "")
     if not wing:
         sys.exit(
-            "wing not set in echelon.yml — run 'echelon init' to configure it.\n"
+            "wing not set in echelon-config.yml — run 'echelon init' to configure it.\n"
             "  Expected:\n"
             "    mempalace:\n"
             "      wing: <your-project-name>"
@@ -56,7 +56,7 @@ class MemPalaceContext:
         run_id: str,
         wing_override: Optional[str] = None,
     ) -> "MemPalaceContext":
-        """Build context from echelon.yml. wing_override (--wing CLI arg) takes precedence."""
+        """Build context from echelon-config.yml. wing_override (--wing CLI arg) takes precedence."""
         wing = wing_override if wing_override is not None else _read_wing_from_echelon_yml(project_dir)
         return cls(wing=wing, run_id=run_id, palace_path=_get_palace_path())
 

@@ -88,7 +88,7 @@ def _derive_wing_suggestion(project_dir: Path) -> str:
 
 def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
     """
-    Interactively provision wing name into echelon.yml.
+    Interactively provision wing name into echelon-config.yml.
     Idempotent: if wing already set, returns existing value immediately.
     Returns the confirmed wing name.
     """
@@ -136,17 +136,17 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
         config["mempalace"] = {}
     config["mempalace"]["wing"] = chosen
     echelon_yml.write_text(_yaml.dump(config, default_flow_style=False, allow_unicode=True))
-    print(f"✓ wing: {chosen!r} written to echelon.yml")
+    print(f"✓ wing: {chosen!r} written to echelon-config.yml")
     return chosen
 
 
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
-    echelon_yml = project_dir / "echelon.yml"
+    echelon_yml = project_dir / "echelon-config.yml"
 
-    # Step 1: Bootstrap echelon.yml
+    # Step 1: Bootstrap echelon-config.yml
     if echelon_yml.exists():
-        print(f"✓ echelon.yml already exists")
+        print(f"✓ echelon-config.yml already exists")
     else:
         template = None
         for name in ("echelon-config.yml", "config-template.yml"):
@@ -156,16 +156,16 @@ def _cmd_init(project_dir: Path) -> None:
                 break
         if template is None:
             print(
-                "✗ echelon.yml not found and no template available.\n"
+                "✗ echelon-config.yml not found and no template available.\n"
                 f"  Expected template at: {ext_dir / 'echelon-config.yml'}\n"
                 "  Have you run 'specify extension add echelon' first?",
                 file=sys.stderr,
             )
             sys.exit(1)
         shutil.copy(template, echelon_yml)
-        print(f"✓ Bootstrapped echelon.yml from {template.name}")
+        print(f"✓ Bootstrapped echelon-config.yml from {template.name}")
         print(
-            "\n  Review echelon.yml and configure the deploy: block before continuing.\n"
+            "\n  Review echelon-config.yml and configure the deploy: block before continuing.\n"
             "  Set type: http or cli, ports (http) or install_path (cli).\n"
         )
         sys.exit(0)
@@ -180,7 +180,7 @@ def _cmd_init(project_dir: Path) -> None:
     try:
         config = yaml.safe_load(echelon_yml.read_text())
     except Exception as e:
-        print(f"✗ Cannot parse echelon.yml: {e}", file=sys.stderr)
+        print(f"✗ Cannot parse echelon-config.yml: {e}", file=sys.stderr)
         sys.exit(1)
 
     deploy = config.get("deploy", {})
@@ -192,7 +192,7 @@ def _cmd_init(project_dir: Path) -> None:
         missing = [k for k in ("blue_port", "green_port") if k not in deploy]
         if missing:
             print(
-                f"✗ deploy config incomplete in echelon.yml.\n"
+                f"✗ deploy config incomplete in echelon-config.yml.\n"
                 f"  HTTP type requires: {missing}\n"
                 f"  See config-template.yml for reference.",
                 file=sys.stderr,
@@ -229,7 +229,7 @@ def _cmd_init(project_dir: Path) -> None:
         f"║         echelon init — complete          ║\n"
         f"╚══════════════════════════════════════════╝\n"
         f"\n"
-        f"  echelon.yml   → {echelon_yml}\n"
+        f"  echelon-config.yml   → {echelon_yml}\n"
         f"  deploy-state  → {state_file}\n"
         f"\n"
         f"Next step:\n"
@@ -359,7 +359,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.skills.run_skill import run
 
     # Orchestrator mode: spec targets take priority over local echelon.yml.
-    # Check targets first so a polyrepo root with its own echelon.yml (e.g. for
+    # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
     from harness.spec_frontmatter import find_spec_dir, read_frontmatter
     from echelon.orchestrator import validate_targets, run_multi_target
@@ -373,7 +373,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             targets = validate_targets(targets_rel, polyrepo_root)
             sys.exit(run_multi_target(spec_id, targets, args[1:]))
 
-    # Single-repo mode: require local echelon.yml.
+    # Single-repo mode: require local echelon.yml (harness config).
     echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon.yml"
     if not echelon_yml.exists():
         print(

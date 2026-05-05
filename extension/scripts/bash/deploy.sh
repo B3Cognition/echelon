@@ -147,9 +147,9 @@ DEOF
 fi
 
 # ── Resolve env file for build args ──────────────────────────────────────────
-# deploy.build_env_file in echelon.yml overrides root .env.local (useful for
+# deploy.build_env_file in echelon-config.yml overrides root .env.local (useful for
 # monorepos where the app's env lives in e.g. apps/web/.env.local).
-ECHELON_YML="${PROJECT_ROOT}/echelon.yml"
+ECHELON_YML="${PROJECT_ROOT}/echelon-config.yml"
 _build_env_file=""
 if [ -f "${ECHELON_YML}" ]; then
   _build_env_file=$(python3 -c "
@@ -184,7 +184,7 @@ fi
 # Written to a temp env-file so values with spaces/newlines (e.g. PEM keys)
 # are passed intact — unquoted string interpolation word-splits on spaces.
 # Sources (in order, last line wins on conflict):
-#   1. deploy.env block in echelon.yml — explicit key-value pairs
+#   1. deploy.env block in echelon-config.yml — explicit key-value pairs
 #   2. Non-NEXT_PUBLIC_* vars from the env file (secrets baked in at build time
 #      via ARG are not in the image env — pass them again at runtime)
 RUN_ENV_FILE="/tmp/echelon-run-env-${APP}.env"
@@ -218,7 +218,7 @@ fi
 # ── Read health_check_path ────────────────────────────────────────────────────
 # Optional path that must return 2xx to confirm the app bundle is healthy.
 # Falls back to any-HTTP-response check when not set.
-# Set in echelon.yml deploy.health_check_path (e.g. /api/health).
+# Set in echelon-config.yml deploy.health_check_path (e.g. /api/health).
 HEALTH_CHECK_PATH=""
 if [ -f "${ECHELON_YML}" ]; then
   HEALTH_CHECK_PATH=$(python3 -c "
@@ -354,7 +354,7 @@ docker run -d \
 # Two modes:
 #   health_check_path set → must return 2xx (verifies app logic works)
 #   not set              → accepts any HTTP response (verifies server is up)
-# Set deploy.health_check_path in echelon.yml for stricter checking, e.g.:
+# Set deploy.health_check_path in echelon-config.yml for stricter checking, e.g.:
 #   health_check_path: /api/health
 if [ -n "${HEALTH_CHECK_PATH}" ]; then
   echo "deploy: health check on http://localhost:${INACTIVE_PORT}${HEALTH_CHECK_PATH} (strict: 2xx required)..."

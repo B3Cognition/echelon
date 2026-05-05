@@ -1064,7 +1064,7 @@ cmd="${1:-}"
 shift || true
 
 # Enforce kill switch — if endocrine.enabled is explicitly false, no-op silently and exit.
-# Default is enabled (opt-out model): endocrine runs unless echelon.yml sets enabled: false.
+# Default is enabled (opt-out model): endocrine runs unless echelon-config.yml sets enabled: false.
 if [[ "$(get_enabled)" != "true" ]]; then
   exit 0
 fi

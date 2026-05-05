@@ -36,7 +36,7 @@ _compute_hash() {
         -o -name "pom.xml" \
         -o -name "build.gradle" \
         -o -name "build.gradle.kts" \
-        -o -name "echelon.yml" \
+        -o -name "echelon-config.yml" \
       \) \
       -type f | sort | while read -r f; do
         echo "=== $f ==="
