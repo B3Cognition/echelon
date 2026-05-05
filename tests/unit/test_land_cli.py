@@ -13,14 +13,16 @@ import pytest
 class TestCmdLand:
     """Verify _cmd_land wires arguments correctly and exits with proper codes."""
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_calls_land_with_correct_args(
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
         """land() is called with spec_id, project_dir, and gitops."""
         from echelon.cli import _cmd_land
+
+        expected_cwd = Path.cwd()
 
         mock_config = MagicMock()
         mock_load_config.return_value = mock_config
@@ -34,13 +36,13 @@ class TestCmdLand:
         assert exc_info.value.code == 0
         mock_land.assert_called_once_with(
             "042",
-            project_dir=Path.cwd(),
+            project_dir=expected_cwd,
             gitops=mock_gitops,
         )
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_exit_code_0_on_success(
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
@@ -56,9 +58,9 @@ class TestCmdLand:
 
         assert exc_info.value.code == 0
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_exit_code_1_on_failure(
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
@@ -74,9 +76,9 @@ class TestCmdLand:
 
         assert exc_info.value.code == 1
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_prints_success_message(
         self, mock_load_config, mock_gitops_cls, mock_land, capsys
     ):
@@ -94,9 +96,9 @@ class TestCmdLand:
         assert "042" in captured.out
         assert "landed" in captured.out.lower()
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_prints_failure_message(
         self, mock_load_config, mock_gitops_cls, mock_land, capsys
     ):
@@ -113,9 +115,9 @@ class TestCmdLand:
         captured = capsys.readouterr()
         assert "042" in captured.err
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_gitops_instantiated_with_config(
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
@@ -132,9 +134,9 @@ class TestCmdLand:
 
         mock_gitops_cls.assert_called_once_with(mock_config)
 
-    @patch("echelon.cli.land")
-    @patch("echelon.cli.GitOpsManager")
-    @patch("echelon.cli.load_config")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
     def test_land_exception_propagates(
         self, mock_load_config, mock_gitops_cls, mock_land
     ):
@@ -158,3 +160,30 @@ class TestCmdLand:
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
         assert "Usage" in captured.out
+
+    @pytest.mark.parametrize("flag", ["-h", "--help"])
+    def test_help_flag_shows_help(self, flag, capsys):
+        """Calling land with -h or --help shows help and exits 0."""
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land([flag])
+
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "Usage" in captured.out
+
+    @patch("harness.config.load_config")
+    def test_config_validation_error_exits_1(self, mock_load_config, capsys):
+        """If load_config() raises ValidationError, exit 1 with user-friendly message."""
+        from harness.config import ValidationError as HarnessValidationError
+        from echelon.cli import _cmd_land
+
+        mock_load_config.side_effect = HarnessValidationError("bad config")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["042"])
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "config error" in captured.err.lower()

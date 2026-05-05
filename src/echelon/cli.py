@@ -224,11 +224,6 @@ def _cmd_init(project_dir: Path) -> None:
 
 # ── land (pure Python, no LLM) ────────────────────────────────────────────
 
-from harness.config import load_config
-from harness.gitops import GitOpsManager
-from harness.land import land
-
-
 def _cmd_land(args: list[str]) -> None:
     """Land a spec: merge PR, delete branch, clean worktrees, mark done."""
     import logging
@@ -241,10 +236,18 @@ def _cmd_land(args: list[str]) -> None:
         )
         sys.exit(0)
 
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.gitops import GitOpsManager
+    from harness.land import land
+
     spec_id = args[0]
     project_dir = Path.cwd()
 
-    config = load_config()
+    try:
+        config = load_config()
+    except HarnessValidationError as e:
+        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        sys.exit(1)
     gitops = GitOpsManager(config)
 
     success = land(spec_id, project_dir=project_dir, gitops=gitops)
