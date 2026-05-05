@@ -56,8 +56,6 @@ fi
 if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
   if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
     CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
-  elif [[ -f "$REPO_ROOT/echelon-config.yml" ]]; then
-    CONFIG_FILE="$REPO_ROOT/echelon-config.yml"
   else
     CONFIG_FILE="$REPO_ROOT/extension/config-template.yml"
   fi
