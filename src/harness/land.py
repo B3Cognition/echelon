@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
+from harness.spec_frontmatter import find_spec_dir, write_status
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,12 +60,11 @@ def land(
     else:
         logger.warning("land: %s — no PR URL in state, skipping merge step", spec_id)
 
-    gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir))
+    if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
+        logger.warning("land: remote branch %s could not be deleted; continuing", feature_branch)
     _cleanup_worktrees(spec_id, project_dir, gitops)
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
-
-    from harness.spec_frontmatter import find_spec_dir, write_status
 
     spec_dir = find_spec_dir(spec_id, project_dir)
     if spec_dir:
@@ -113,5 +114,5 @@ def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
                 logger.info("land: deleted legacy branch %s", branch)
             except subprocess.CalledProcessError as e:
                 logger.warning("land: could not delete legacy branch %s: %s", branch, e)
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.warning("land: could not list harness branches for %s: %s", spec_id, e)
