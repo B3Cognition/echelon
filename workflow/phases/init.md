@@ -1,0 +1,282 @@
+# Phase: init
+# Source: echelon.run.md §1 — Initialization (INIT)
+# Read by: COMMANDER before starting any phase dispatch
+
+## 1. Initialization (INIT)
+
+### 1.0 Anchor Project Root
+
+Before any file operation, establish and record the absolute project root:
+
+```bash
+PROJECT_ROOT=$(pwd)
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+```
+
+Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
+
+**Verify echelon-config.yml exists:**
+
+The config lives at `.specify/extensions/echelon/echelon-config.yml` (written by `echelon init`). Fail fast if absent:
+
+```bash
+ECHELON_EXT=".specify/extensions/echelon"
+if [ ! -f "${ECHELON_EXT}/echelon-config.yml" ]; then
+  echo "✗ echelon-config.yml not found at ${ECHELON_EXT}/echelon-config.yml" >&2
+  echo "  Run 'echelon init' first to create the project configuration." >&2
+  exit 1
+fi
+echo "✓ echelon-config.yml found"
+```
+
+**Guard: deploy infrastructure must be initialized:**
+
+```bash
+ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
+```
+
+If exit code is non-zero, HARD STOP:
+
+```
+✗ Deploy infrastructure not initialized.
+  Run speckit.echelon.init first, then re-run speckit.echelon.run.
+```
+
+### 1.1 Detect Greenfield vs Brownfield
+
+The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its output is available as `$SH_OUTPUT`.
+
+- If user provided a repo path: run detect-project.sh against that path
+- If `$SH_OUTPUT` says "brownfield" OR user provided a repo path with >5 source files: mode = brownfield
+- Otherwise: mode = greenfield
+
+### 1.2 Create Staging Area
+
+The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outputs go to a staging area.
+
+**Archive prior run before wiping.** If staging contains artifacts from a completed prior run, archive them so project knowledge persists:
+
+```bash
+# Archive prior staging artifacts if they exist
+if [ -d ".specify/squad/staging" ] && [ "$(ls .specify/squad/staging/ 2>/dev/null)" ]; then
+  # Read prior run_id from state.json (if available)
+  PRIOR_RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+  ARCHIVE_DIR=".specify/squad/archive/${PRIOR_RUN_ID}"
+  mkdir -p "$ARCHIVE_DIR"
+  cp -r .specify/squad/staging/* "$ARCHIVE_DIR/" 2>/dev/null || true
+  # Also archive state.json snapshot
+  cp .specify/squad/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
+  echo "Archived prior run ${PRIOR_RUN_ID} → ${ARCHIVE_DIR}/"
+fi
+
+# Now safe to wipe staging
+rm -rf .specify/squad/staging
+mkdir -p .specify/squad/staging
+mkdir -p .specify/squad
+```
+
+**Archive structure:** `.specify/squad/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.json, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
+
+**Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `speckit.specify`, which creates the branch and directory structure.
+
+### 1.3 Initialize State
+
+Create `.specify/squad/state.json`:
+
+```json
+{
+  "run_id": "squad-{unix_timestamp}",
+  "status": "running",
+  "phase": "init",
+  "mode": "{greenfield|brownfield}",
+  "iteration": 0,
+  "project_root": "{absolute path from PROJECT_ROOT}",
+  "spec_id": null,
+  "spec_dir": null,
+  "constitution_status": "pending",
+  "created_at": "{ISO-8601}",
+  "updated_at": "{ISO-8601}",
+  "token_usage": 0,
+  "quality_scores": [],
+  "active_specialists": [],
+  "issues_log": [],
+  "blocked_reason": null,
+  "escalation_question": null,
+  "dispatch_counters": {},
+  "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 },
+  "fallback_mode": false,
+  "golddigger_status": null,
+  "golddigger_mode": null,
+  "golddigger_notes": null,
+  "golddigger_artifacts": null,
+  "golddigger_requests": [],
+  "golddigger_completed_domains": []
+}
+```
+
+Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
+
+**Run History Check (mandatory at INIT):**
+1. Check if `{spec_dir}/run-history.json` exists (only possible if `spec_dir` was specified as an argument — if starting fresh with no spec_dir yet, skip this check).
+2. If `run-history.json` exists:
+   - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
+   - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.
+   - If Phase A is done AND constitution hash matches: log `[COMMANDER] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Set `state.json.phase` to `"phase1-constitution"` to signal resume.
+   - If Phase A is done but constitution hash differs: log `[COMMANDER] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
+3. If `run-history.json` does not exist: continue normally (new spec, first run).
+
+### 1.4 Initialize Staging Reasoning Journal
+
+Create `.specify/squad/staging/reasoning-journal.json`:
+
+```json
+{
+  "entries": []
+}
+```
+
+This will be moved to the spec directory after `speckit.specify` creates it.
+
+### 1.5 Load Prior Run Data (if re-run)
+
+If user specifies a prior spec (e.g., "continue with 012-feature"):
+
+- Find `specs/{NNN}-{feature}/` directory
+- Read `reasoning-journal.json` for continuity
+- Read `evolution-report.md` if it exists
+- Set `iteration` to prior iteration + 1
+- Set `spec_id` and `spec_dir` in state.json
+- Note: EVOLVE will diff against prior artifacts during FINALIZE
+
+**Load from archive (automatic):** If no explicit prior spec is given but `.specify/squad/archive/` contains prior runs:
+
+```bash
+# Find the most recent archived run
+LATEST_ARCHIVE=$(ls -td .specify/squad/archive/squad-* 2>/dev/null | head -1)
+if [ -n "$LATEST_ARCHIVE" ]; then
+  echo "Prior run found: ${LATEST_ARCHIVE}"
+  # Read prior reasoning journal for continuity
+  if [ -f "${LATEST_ARCHIVE}/reasoning-journal.json" ]; then
+    # Include prior journal entries as context for all agents
+    PRIOR_JOURNAL="${LATEST_ARCHIVE}/reasoning-journal.json"
+  fi
+  # Read prior issues for regression tracking
+  if [ -f "${LATEST_ARCHIVE}/issues.md" ]; then
+    PRIOR_ISSUES="${LATEST_ARCHIVE}/issues.md"
+  fi
+  # Read prior quality scores for convergence comparison
+  if [ -f "${LATEST_ARCHIVE}/state.json" ]; then
+    PRIOR_QUALITY=$(python3 -c "import json; s=json.load(open('${LATEST_ARCHIVE}/state.json')); print(json.dumps(s.get('quality_scores',[])))" 2>/dev/null)
+  fi
+fi
+```
+
+Prior run data is included in agent context packs so the squad can track improvement, detect regressions, and avoid re-discovering the same issues.
+
+### 1.6 Load Configuration
+
+Resolve config via the spec-kit ConfigurationManager. In a shell context:
+
+```bash
+# shellcheck disable=SC2046
+eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)"
+```
+
+This merges manifest defaults → `echelon-config.yml` (project overrides) → `local-config.yml` → `SPECKIT_ECHELON_*` env vars. Key defaults when no project config exists:
+
+- `ECHELON_CFG_CONVERGENCE_MAX_ITERATIONS`: 5
+- `ECHELON_CFG_CONVERGENCE_DELTA`: 0.02
+- `ECHELON_CFG_MAX_ACTIVE_SPECIALISTS`: 3
+- `ECHELON_CFG_BUDGET_TOKEN_BUDGET_K`: 1000
+- Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
+
+> **Authoritative values:** `echelon-config.yml` (project overrides) / manifest `config.defaults` (fallback) is the single source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
+
+### 1.7 Check Constitution Status
+
+Check if `.specify/memory/constitution.md` exists and note the status:
+
+**If EXISTS:**
+
+- Read the constitution — it will guide all architectural decisions
+- Store constitution principles in context for ARCHITECT and all build agents
+- Set `state.json.constitution_status` to `"exists"`
+
+**If MISSING:**
+
+- Set `state.json.constitution_status` to `"pending"`
+- **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
+- Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
+
+### Spec-kit Availability
+
+spec-kit skill availability is validated at install time (`specify extension add echelon`). COMMANDER assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, COMMANDER sets `state.json.fallback_mode = true` and `execution_mode = manual_specification` at that point.
+
+CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
+
+For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
+
+### Preflight: KB Evolution Validation
+
+If `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`:
+
+```bash
+scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
+```
+
+- Exit 0: Continue
+- Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
+
+### 1.8 GOLDDIGGER Mode 1 dispatch (brownfield path only)
+
+If `detected_mode` is `brownfield`:
+
+1. Dispatch GOLDDIGGER in Mode 1 (Survey) before DISCOVER:
+   - Use the Agent tool
+   - **prompt:**
+
+     ```xml
+     <context>
+     [include state.json.golddigger_artifacts paths if available]
+     </context>
+
+     <instructions>
+     You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
+     Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
+     </instructions>
+     ```
+2. Block until GOLDDIGGER completes.
+3. Read `state.json.golddigger_status`:
+   - `complete`: proceed — SCOUT will read artifact paths from `state.json.golddigger_artifacts`
+   - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual structural analysis)
+
+If `revenge extension` is not listed or `extensions` is empty: skip GOLDDIGGER, proceed directly to DISCOVER.
+
+**GOLDDIGGER Mode 2 Queue (Phase 1 agents):**
+
+After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, MODELER) completes, before dispatching the next agent:
+
+1. Read `state.json.golddigger_requests` — if empty or absent, continue
+2. For each pending request entry (each entry is an object: `{domain, repo, requested_by, reason}`):
+   - **Backward compatibility:** If a `golddigger_requests` entry is a plain string (old format), treat it as `{domain: <string>, repo: null, requested_by: "unknown", reason: ""}`.
+   a. Compute the cache key: if `repo` is non-null → `"{repo}--{domain}"`, if `repo` is null → `"{domain}"`
+   b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
+   c. Otherwise: dispatch GOLDDIGGER in Mode 2 (Deep Dive) for that domain
+      - **prompt:**
+
+        ```xml
+        <context>
+        [include golddigger-cache/{cache-key}.md if available, state.json.golddigger_artifacts paths]
+        </context>
+
+        <instructions>
+        You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
+        Run **Mode 2 (Deep Dive)** for domain `"{domain}"` in repo `"{repo}"` at target path `"{target_path}"`. If repo is null, target path is `"{target_path}"` (single-repo mode).
+        </instructions>
+        ```
+
+   d. After GOLDDIGGER completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
+3. Continue to next Phase 1 agent dispatch.
+
+**Transition:** `phases[phase1-discover]` — see `workflow/definition.yaml`
