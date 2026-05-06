@@ -186,6 +186,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: init
     label: "Initialization"
+    spec_file: workflow/phases/init.md
     type: commander_internal
     description: >
       COMMANDER executes directly — no agent dispatch.
@@ -234,6 +235,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-discover
     label: "Discovery (SCOUT)"
+    spec_file: workflow/phases/phase1-discover.md
     type: agent
     agent: SCOUT
     tier: exploration
@@ -270,6 +272,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-synthesizer
     label: "Knowledge Fusion (SYNTHESIZER)"
+    spec_file: workflow/phases/phase1-synthesizer.md
     type: agent
     agent: SYNTHESIZER
     tier: exploration
@@ -289,6 +292,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-modeler
     label: "Codebase Map (MODELER)"
+    spec_file: workflow/phases/phase1-modeler.md
     type: agent
     agent: MODELER
     tier: exploration
@@ -308,6 +312,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-tracker
     label: "Intent Capture (TRACKER)"
+    spec_file: workflow/phases/phase1-tracker.md
     type: agent
     agent: TRACKER
     tier: control
@@ -326,6 +331,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-why1
     label: "Assumption Challenge (SAGE WHY1)"
+    spec_file: workflow/phases/phase1-why1.md
     type: agent
     agent: SAGE
     mode: WHY1
@@ -354,6 +360,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-constitution
     label: "Constitution Creation"
+    spec_file: workflow/phases/phase1-constitution.md
     type: commander_internal
     description: >
       COMMANDER synthesizes constitution.md from SCOUT + SAGE artifacts.
@@ -367,6 +374,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-what
     label: "Requirements (CARTOGRAPHER)"
+    spec_file: workflow/phases/phase1-what.md
     type: agent
     agent: CARTOGRAPHER
     tier: exploration
@@ -398,6 +406,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase1-why2
     label: "Spec Validation (SAGE WHY2)"
+    spec_file: workflow/phases/phase1-why2.md
     type: agent
     agent: SAGE
     mode: WHY2
@@ -439,6 +448,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase2-decide
     label: "Feasibility Gate (GATEKEEPER)"
+    spec_file: workflow/phases/phase2-decide.md
     type: agent
     agent: GATEKEEPER
     tier: feasibility
@@ -467,13 +477,9 @@ phases:
         condition: "verdict = DEFER AND defer_count >= assess_defer_loop_limit"
 
   # --------------------------------------------------------------------------
-  # NOTE: echelon.run.md runs STRATEGIC OVERVIEW and TRACKER alignment here,
-  # then Specialists, then HOW. But this file currently has HOW before
-  # Specialists (phase3-how → phase3-specialists). That ordering discrepancy
-  # needs a separate resolution pass.
-  # --------------------------------------------------------------------------
   - id: phase2-strategic-overview
     label: "Strategic Overview (STRATEGIST)"
+    spec_file: workflow/phases/phase2-strategic-overview.md
     type: agent
     agent: STRATEGIST
     tier: control
@@ -490,6 +496,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase2-tracker-alignment
     label: "Intent Alignment Check (TRACKER)"
+    spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
     agent: TRACKER
     tier: control
@@ -509,6 +516,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase3-how
     label: "Architecture (ARCHITECT)"
+    spec_file: workflow/phases/phase3-how.md
     type: agent
     agent: ARCHITECT
     tier: solution
@@ -531,6 +539,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase3-specialists
     label: "Specialist Consultation"
+    spec_file: workflow/phases/phase3-specialists.md
     type: conditional_parallel
     description: >
       GUARDIAN always runs (always_on default).
@@ -596,6 +605,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase3-sentinel
     label: "Test Strategy (SENTINEL)"
+    spec_file: workflow/phases/phase3-sentinel.md
     type: agent
     agent: SENTINEL
     tier: solution
@@ -616,6 +626,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase3-plan
     label: "Implementation Planning (ORCHESTRATOR)"
+    spec_file: workflow/phases/phase3-plan.md
     type: agent
     agent: ORCHESTRATOR
     tier: solution
@@ -637,6 +648,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase3-consensus
     label: "Consensus Gate (WHY3 + ASSESS2 + PLAN2)"
+    spec_file: workflow/phases/phase3-consensus.md
     type: parallel
     description: >
       Dispatch all three agents in parallel. COMMANDER then reads all three
@@ -700,6 +712,7 @@ phases:
   # --------------------------------------------------------------------------
   - id: phase4-document
     label: "Finalization"
+    spec_file: workflow/phases/phase4-document.md
     type: commander_internal
     description: >
       Collate all artifacts. Produce squad report.
