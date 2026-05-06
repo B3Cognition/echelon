@@ -138,25 +138,18 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
-**Bootstrap echelon-config.yml (if absent):**
+**Verify echelon-config.yml exists:**
 
-If `echelon-config.yml` does not exist at the project root, copy a starter config from the extension. The extension ships with `config-template.yml`; `echelon-config.yml` is the preferred starter when present:
+The config lives at `.specify/extensions/echelon/echelon-config.yml` (written by `echelon init`). Fail fast if absent:
 
 ```bash
 ECHELON_EXT=".specify/extensions/echelon"
-if [ ! -f echelon-config.yml ]; then
-  if [ -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-    cp "${ECHELON_EXT}/echelon-config.yml" echelon-config.yml
-    echo "Bootstrapped echelon-config.yml from extension starter"
-  elif [ -f "${ECHELON_EXT}/config-template.yml" ]; then
-    cp "${ECHELON_EXT}/config-template.yml" echelon-config.yml
-    echo "Bootstrapped echelon-config.yml from config-template.yml"
-  else
-    echo "✗ echelon-config.yml not found and no template available in ${ECHELON_EXT}" >&2
-    echo "  Create echelon-config.yml at the project root before running echelon." >&2
-    exit 1
-  fi
+if [ ! -f "${ECHELON_EXT}/echelon-config.yml" ]; then
+  echo "✗ echelon-config.yml not found at ${ECHELON_EXT}/echelon-config.yml" >&2
+  echo "  Run 'echelon init' first to create the project configuration." >&2
+  exit 1
 fi
+echo "✓ echelon-config.yml found"
 ```
 
 **Guard: deploy infrastructure must be initialized:**
