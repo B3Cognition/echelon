@@ -34,7 +34,7 @@ class RunIntent:
     max_outer: int = 5
     max_inner: int = 3
     token_budget: Optional[int] = None
-    auto_merge: bool = False
+    auto_merge: bool = True
     kill_losers: bool = False
     strategies: List[str] = field(default_factory=lambda: ["default"])
     task_description: str = ""

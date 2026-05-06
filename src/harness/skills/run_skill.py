@@ -15,7 +15,6 @@ from typing import Any, Dict
 from harness.config import load_config
 from harness.coordinator import StrategyCoordinator
 from harness.gc import run_gc
-from harness.merge import attempt_auto_merge
 from harness.run_intent import parse_intent
 from harness.state import StateStore
 
@@ -172,8 +171,11 @@ def run(
 
     _print_delivery_summary(intent, result_map, comparison, base_dir, config)
 
-    # 8. Auto-merge if applicable
-    if intent.auto_merge and len(results) == 1:
-        merged = attempt_auto_merge(results[0], intent, gitops)
-        if merged:
-            print("  Auto-merged successfully!", file=sys.stderr)
+    # 8. Auto-land if applicable
+    if intent.auto_merge:
+        from harness.land import land
+        landed = land(intent.spec_id, project_dir=Path(base_dir), gitops=gitops)
+        if landed:
+            print("  Auto-landed successfully!", file=sys.stderr)
+        else:
+            logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)

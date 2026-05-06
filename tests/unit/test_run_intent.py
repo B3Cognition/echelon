@@ -23,7 +23,7 @@ class TestRunIntentConstruction:
         assert intent.max_outer == 5
         assert intent.max_inner == 3
         assert intent.token_budget is None
-        assert intent.auto_merge is False
+        assert intent.auto_merge is True
         assert intent.kill_losers is False
         assert intent.strategies == ["default"]
 
