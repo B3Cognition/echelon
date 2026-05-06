@@ -64,11 +64,13 @@ def _load_state(archive_dir: Path) -> dict:
 
 
 def _load_config(archive_dir: Path) -> dict:
-    """Try to load squad-config.yml from archive or parent squad dir."""
-    # Try YAML first
+    """Try to load echelon-config.yml from archive or parent squad dir."""
+    # Try YAML first — check both new (.specify/...) and legacy project-root paths
     for config_path in [
-        archive_dir / "squad-config.yml",
-        archive_dir.parent.parent / "squad-config.yml",
+        archive_dir / ".specify" / "extensions" / "echelon" / "echelon-config.yml",
+        archive_dir.parent.parent / ".specify" / "extensions" / "echelon" / "echelon-config.yml",
+        archive_dir / "echelon-config.yml",
+        archive_dir.parent.parent / "echelon-config.yml",
     ]:
         if config_path.exists():
             try:

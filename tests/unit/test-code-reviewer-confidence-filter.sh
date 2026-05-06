@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-TARGET="$REPO_ROOT/agents/build/code-reviewer.md"
+TARGET="$REPO_ROOT/extension/agents/build/code-reviewer.md"
 
 PASS=0
 FAIL=0

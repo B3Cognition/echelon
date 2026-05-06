@@ -3,7 +3,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-CONFIG="$REPO_ROOT/config-template.yml"
+CONFIG="$REPO_ROOT/extension/config-template.yml"
 
 pass=0
 fail=0

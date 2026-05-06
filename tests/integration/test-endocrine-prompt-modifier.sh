@@ -4,7 +4,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 ENDOCRINE="$SCRIPTS/endocrine.sh"
 
 # Temp dir for isolated state
@@ -16,7 +16,7 @@ echo '{}' > "$TEST_SQUAD_DIR/state.json"
 # Export env vars so endocrine.sh picks them up
 export ENDOCRINE_SQUAD_DIR="$TEST_SQUAD_DIR"
 export ENDOCRINE_STATE_FILE="$TEST_SQUAD_DIR/state.json"
-export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/config-template.yml"
+export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/config-template.yml"
 
 pass=0
 fail=0

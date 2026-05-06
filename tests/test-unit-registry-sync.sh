@@ -13,10 +13,10 @@ pass=0
 fail=0
 
 # Get registered agent files from agents.yaml
-registered_files=$(grep -E '^\s+file:' "$REPO_ROOT/agents.yaml" | sed 's/.*file: *//' | sort)
+registered_files=$(grep -E '^\s+file:' "$REPO_ROOT/extension/agents.yaml" | sed 's/.*file: *//' | sort)
 
 # Get actual agent prompt files (exclude drafts/)
-actual_files=$(find "$REPO_ROOT/agents" -name "*.md" -not -path "*/drafts/*" | \
+actual_files=$(find "$REPO_ROOT/extension/agents" -name "*.md" -not -path "*/drafts/*" | \
   sed "s|$REPO_ROOT/||" | sort)
 
 # Check for unregistered files

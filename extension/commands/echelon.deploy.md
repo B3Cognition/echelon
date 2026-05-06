@@ -19,7 +19,7 @@ $ARGUMENTS
 
 ## Overview
 
-Manual control over the deployment. The automated path is the `post-merge` git hook → `deploy.sh`. Use this command for status checks, manual deploys, and rollback.
+Manual control over the deployment. The automated path is `harness.run` → `deploy.sh` (triggered directly after merge). Use this command for status checks, manual deploys, and rollback.
 
 ---
 
@@ -47,7 +47,7 @@ bash "${ECHELON_EXT}/scripts/bash/cicd-fingerprint.sh" --check
 
 ### Step 1b: Regenerate CI/CD Artifacts
 
-Invoke the `speckit-echelon-cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon.yml deploy block, db-start.sh, and CI workflow for the current project state.
+Invoke the `speckit-echelon-cicd` skill now. This runs the full cognitive squad to regenerate the Dockerfile(s), echelon-config.yml deploy block, db-start.sh, and CI workflow for the current project state.
 
 After `speckit-echelon-cicd` completes successfully, update the fingerprint:
 

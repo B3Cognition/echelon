@@ -195,7 +195,7 @@ output_files:
   - .specify/.../integration-report.md
 journal_entries:
   - id: null
-    type: integration_check
+    type: integration_finding
     phase: build
     agent: INTEGRATOR
     timestamp: null

@@ -4,7 +4,7 @@
 
 **Goal:** Fix 4 bugs in the echelon/codegen MemPalace integration and introduce stable, portable per-project wing identity via `MemPalaceContext`.
 
-**Architecture:** A new `MemPalaceContext` dataclass becomes the single source of truth for `wing`, `run_id`, and `palace_path`. It is constructed once per pipeline run in the CLI and threaded into `MemPalaceReader`, `MemPalaceWriter`, `RequirementsMiner`, `PipelineEngine`, and `PhaseGateRunner`. Wing is persisted in `echelon.yml` (set during `echelon init`) and written into `codegen-state.json` so `PhaseGateRunner` can read it without access to the project config.
+**Architecture:** A new `MemPalaceContext` dataclass becomes the single source of truth for `wing`, `run_id`, and `palace_path`. It is constructed once per pipeline run in the CLI and threaded into `MemPalaceReader`, `MemPalaceWriter`, `RequirementsMiner`, `PipelineEngine`, and `PhaseGateRunner`. Wing is persisted in `echelon-config.yml` (set during `echelon init`) and written into `codegen-state.json` so `PhaseGateRunner` can read it without access to the project config.
 
 **Tech Stack:** Python 3.11, pytest, PyYAML, chromadb, mempalace v3.3.3, hashlib (stdlib)
 
@@ -25,7 +25,7 @@
 | `src/echelon/cli.py` | **Modify** | Add wing provisioning step to `_cmd_init()` |
 | `extension/echelon-config.yml` | **Modify** | Add `mempalace:` block with `wing:` placeholder |
 | `extension/commands/echelon.init.md` | **Modify** | Document wing provisioning step |
-| `extension/commands/echelon.codegen.md` | **Modify** | Replace `WING=$(basename $(pwd))` with `echelon.yml` read |
+| `extension/commands/echelon.codegen.md` | **Modify** | Replace `WING=$(basename $(pwd))` with `echelon-config.yml` read |
 | `extension/commands/echelon.codegenlight.md` | **Modify** | Same as above |
 | `scripts/install.sh` | **Modify** | Remove dead `memory-config.yml` write |
 | `tests/unit/test_mempalace_context.py` | **Create** | Unit tests for `MemPalaceContext` |
@@ -58,7 +58,7 @@ from unittest.mock import patch
 
 
 def test_from_project_reads_wing_from_echelon_yml(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"mempalace": {"wing": "my-app"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
@@ -71,7 +71,7 @@ def test_from_project_reads_wing_from_echelon_yml(tmp_path):
 
 
 def test_from_project_wing_override_takes_precedence(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"mempalace": {"wing": "my-app"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
@@ -84,12 +84,12 @@ def test_from_project_wing_override_takes_precedence(tmp_path):
 def test_from_project_hard_fails_if_no_echelon_yml(tmp_path):
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
         from codegen.memory.context import MemPalaceContext
-        with pytest.raises(SystemExit, match="echelon.yml not found"):
+        with pytest.raises(SystemExit, match="echelon-config.yml not found"):
             MemPalaceContext.from_project(tmp_path, run_id="run-123")
 
 
 def test_from_project_hard_fails_if_wing_not_set(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"deploy": {"type": "http"}}))
 
     with patch("codegen.memory.context._get_palace_path", return_value="/fake/palace"):
@@ -141,23 +141,23 @@ def _get_palace_path() -> str:
 
 
 def _read_wing_from_echelon_yml(project_dir: Path) -> str:
-    """Read mempalace.wing from echelon.yml. Hard-exits with clear message if absent."""
-    echelon_yml = project_dir / "echelon.yml"
+    """Read mempalace.wing from echelon-config.yml. Hard-exits with clear message if absent."""
+    echelon_yml = project_dir / "echelon-config.yml"
     if not echelon_yml.exists():
         sys.exit(
-            f"echelon.yml not found at {echelon_yml}.\n"
+            f"echelon-config.yml not found at {echelon_yml}.\n"
             "Run 'echelon init' to initialize this project."
         )
     try:
         import yaml  # type: ignore[import]
         config = yaml.safe_load(echelon_yml.read_text()) or {}
     except Exception as exc:
-        sys.exit(f"Cannot parse echelon.yml: {exc}")
+        sys.exit(f"Cannot parse echelon-config.yml: {exc}")
 
     wing = config.get("mempalace", {}).get("wing", "")
     if not wing:
         sys.exit(
-            "wing not set in echelon.yml — run 'echelon init' to configure it.\n"
+            "wing not set in echelon-config.yml — run 'echelon init' to configure it.\n"
             "  Expected:\n"
             "    mempalace:\n"
             "      wing: <your-project-name>"
@@ -179,7 +179,7 @@ class MemPalaceContext:
         run_id: str,
         wing_override: Optional[str] = None,
     ) -> "MemPalaceContext":
-        """Build context from echelon.yml. wing_override (--wing CLI arg) takes precedence."""
+        """Build context from echelon-config.yml. wing_override (--wing CLI arg) takes precedence."""
         wing = wing_override if wing_override else _read_wing_from_echelon_yml(project_dir)
         return cls(wing=wing, run_id=run_id, palace_path=_get_palace_path())
 
@@ -1474,7 +1474,7 @@ def test_derive_wing_fallback_when_no_remote(tmp_path):
 
 
 def test_init_wing_already_set_is_idempotent(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"mempalace": {"wing": "existing-wing"}, "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001}}))
 
     from echelon.cli import _provision_wing
@@ -1487,7 +1487,7 @@ def test_init_wing_already_set_is_idempotent(tmp_path):
 
 
 def test_init_wing_written_to_echelon_yml(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"deploy": {"type": "http", "blue_port": 3000, "green_port": 3001}}))
 
     with patch("echelon.cli._derive_wing_suggestion", return_value="my-app"):
@@ -1503,7 +1503,7 @@ def test_init_wing_written_to_echelon_yml(tmp_path):
 
 
 def test_init_wing_collision_reprompts(tmp_path, monkeypatch):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"deploy": {"type": "http", "blue_port": 3000, "green_port": 3001}}))
 
     inputs = iter(["colliding-wing", "colliding-wing", "clean-wing"])
@@ -1565,7 +1565,7 @@ def _derive_wing_suggestion(project_dir: Path) -> str:
 
 def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
     """
-    Interactively provision wing name into echelon.yml.
+    Interactively provision wing name into echelon-config.yml.
     Idempotent: if wing already set, returns it immediately.
     Returns the confirmed wing name.
     """
@@ -1619,12 +1619,12 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
 
         break
 
-    # Write mempalace.wing into echelon.yml, preserving all other keys
+    # Write mempalace.wing into echelon-config.yml, preserving all other keys
     if "mempalace" not in config:
         config["mempalace"] = {}
     config["mempalace"]["wing"] = chosen
     echelon_yml.write_text(_yaml.dump(config, default_flow_style=False, allow_unicode=True))
-    print(f"✓ wing: {chosen!r} written to echelon.yml")
+    print(f"✓ wing: {chosen!r} written to echelon-config.yml")
     return chosen
 ```
 
@@ -1650,7 +1650,7 @@ Expected: 5 tests PASS.
 
 ```bash
 git add src/echelon/cli.py tests/unit/test_echelon_init_wing.py
-git commit -m "feat(init): echelon init provisions wing in echelon.yml with auto-suggest and collision check"
+git commit -m "feat(init): echelon init provisions wing in echelon-config.yml with auto-suggest and collision check"
 ```
 
 ---
@@ -1695,13 +1695,13 @@ sys.path.insert(0, '.')
 try:
     from echelon.cli import _provision_wing
     from pathlib import Path
-    _provision_wing(Path('${PROJECT_ROOT}'), Path('${PROJECT_ROOT}/echelon.yml'))
+    _provision_wing(Path('${PROJECT_ROOT}'), Path('${PROJECT_ROOT}/echelon-config.yml'))
 except ImportError:
     print('  ℹ  echelon not installed — wing provisioning skipped')
 "
 ```
 
-If the wing is already set in `echelon.yml`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes it to `echelon.yml`.
+If the wing is already set in `echelon-config.yml`, this is a no-op. If not, it prompts for a name (auto-suggests from git remote) and writes it to `echelon-config.yml`.
 ```
 
 - [ ] **Step 3: Fix `WING` derivation in `extension/commands/echelon.codegen.md`**
@@ -1716,14 +1716,14 @@ Replace with:
 WING=$(python3 -c "
 import sys, yaml
 try:
-    c = yaml.safe_load(open('echelon.yml'))
+    c = yaml.safe_load(open('echelon-config.yml'))
     w = (c or {}).get('mempalace', {}).get('wing', '')
     if not w:
-        print('ERROR: wing not set in echelon.yml — run echelon init', file=sys.stderr)
+        print('ERROR: wing not set in echelon-config.yml — run echelon init', file=sys.stderr)
         sys.exit(1)
     print(w)
 except FileNotFoundError:
-    print('ERROR: echelon.yml not found — run echelon init', file=sys.stderr)
+    print('ERROR: echelon-config.yml not found — run echelon init', file=sys.stderr)
     sys.exit(1)
 " 2>&1)
 if echo "$WING" | grep -q "^ERROR:"; then
@@ -1781,7 +1781,7 @@ git commit -m "fix(config): add mempalace.wing to echelon-config.yml template, f
 | Spec requirement | Task |
 |---|---|
 | `MemPalaceContext` dataclass with `from_project` + `from_wing` | Task 1 |
-| Wing from `echelon.yml`, hard fail if absent | Task 1 |
+| Wing from `echelon-config.yml`, hard fail if absent | Task 1 |
 | `--wing` CLI override takes precedence | Task 8 |
 | `check_wing_collision()` | Task 2 |
 | Collision check at init time | Task 9 |
@@ -1800,7 +1800,7 @@ git commit -m "fix(config): add mempalace.wing to echelon-config.yml template, f
 | `requirements clean` subcommand | Task 8 |
 | `echelon init` wing provisioning (auto-suggest + prompt) | Task 9 |
 | Idempotent init when wing already set | Task 9 |
-| `echelon.yml` template has `mempalace.wing` | Task 10 |
+| `echelon-config.yml` template has `mempalace.wing` | Task 10 |
 | Skill docs replace `basename $(pwd)` | Task 10 |
 | Remove dead `memory-config.yml` from install.sh | Task 10 |
 | Migration path: `requirements clean` removes old drawers | Task 8 |

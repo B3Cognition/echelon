@@ -413,6 +413,52 @@
         }
       },
       "required": ["agent", "dispatched_at", "post_dispatch_complete", "journal_entries_written"]
+    },
+    "spec_status": {
+      "type": "string",
+      "enum": ["draft", "planned", "in-progress", "implemented"],
+      "default": "draft",
+      "description": "Lifecycle status of the specification driven by this run."
+    },
+    "requires_human_review": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set to true when banzai mode detects major intent drift that requires post-run human review."
+    },
+    "constitution_amendments_pending": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Count of [PROPOSED] amendment blocks appended to constitution.md awaiting human review."
+    },
+    "build": {
+      "type": "object",
+      "description": "Build phase tracking state.",
+      "properties": {
+        "completed_tasks": { "type": "integer", "minimum": 0, "default": 0 },
+        "total_tasks": { "type": "integer", "minimum": 0, "default": 0 },
+        "tasks_completed_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Percentage of tasks completed, recomputed after each task."
+        },
+        "current_task": { "type": "string" },
+        "task_results": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "status": { "type": "string" },
+              "review_cycles": { "type": "integer" },
+              "degraded": { "type": "boolean" },
+              "spec_guard": { "type": "string" },
+              "code_review": { "type": "string" },
+              "test_guardian": { "type": "string" }
+            }
+          }
+        }
+      }
     }
   }
 }

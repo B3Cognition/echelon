@@ -2,9 +2,10 @@
 # T021: Unit tests — Story 001a Detection + Classification
 # Tests preflight-speckit.sh exit codes, error codes, and stdout format.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 MOCKS="$REPO_ROOT/tests/mocks"
 ERROR_LOG="$REPO_ROOT/.specify/squad/error.log"
 
@@ -95,9 +96,9 @@ assert "TEST-001a-1: no error.log entry on success" "$(
 )"
 
 # Timing check
-start_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+start_ms="$($PYTHON -c 'import time; print(int(time.time()*1000))')"
 PATH="$TMPWRAP:$PATH" bash "$SCRIPTS/preflight-speckit.sh" --cmd spec-kit >/dev/null 2>&1 || true
-end_ms="$(python3 -c 'import time; print(int(time.time()*1000))')"
+end_ms="$($PYTHON -c 'import time; print(int(time.time()*1000))')"
 elapsed_ms=$((end_ms - start_ms))
 assert "TEST-001a-1: available completes < 2000ms" "$(
   [[ "$elapsed_ms" -lt 2000 ]] && ok_result || fail_result "elapsed=${elapsed_ms}ms"
@@ -110,6 +111,7 @@ set +e
 bash "$SCRIPTS/preflight-speckit.sh" --cmd /nonexistent/speckit-not-found-xyz >/dev/null 2>&1
 rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 assert "TEST-001a-2: missing cmd exits 1" "$(
   [[ "$rc" == "1" ]] && ok_result || fail_result "expected exit 1, got $rc"
 )"

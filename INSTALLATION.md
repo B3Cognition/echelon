@@ -61,7 +61,7 @@ bash ~/echelon/scripts/bash/dry-run.sh
 
 ## Per-project setup: wing provisioning
 
-`echelon init` sets up a project for codegen use. Among other things, it provisions the **MemPalace wing** — your project's stable identity in the shared memory store — and writes it to `echelon.yml`.
+`echelon init` sets up a project for codegen use. Among other things, it provisions the **MemPalace wing** — your project's stable identity in the shared memory store — and writes it to `echelon-config.yml`.
 
 ```bash
 cd ~/my-project
@@ -74,12 +74,12 @@ echelon init
 Wing name for MemPalace memory [my-project]: ▌
 ```
 
-Press Enter to accept the auto-suggestion (derived from your git remote URL, e.g. `my-app` from `github.com/org/my-app`) or type a custom name. The wing is written to `echelon.yml` under `mempalace.wing` and committed with your project.
+Press Enter to accept the auto-suggestion (derived from your git remote URL, e.g. `my-app` from `github.com/org/my-app`) or type a custom name. The wing is written to `echelon-config.yml` under `mempalace.wing` and committed with your project.
 
 **Wing rules:**
 
 - Set it once, never change it for a given repo
-- All clones of the same repo should use the same wing (they inherit it automatically via `echelon.yml`)
+- All clones of the same repo should use the same wing (they inherit it automatically via `echelon-config.yml`)
 - Two different repos must use different wings — `echelon init` warns you if a collision is detected
 
 Re-running `echelon init` on an already-configured project is safe — if the wing is already set, the step is skipped.

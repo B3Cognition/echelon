@@ -1,0 +1,21 @@
+contract_id: rework-loop-transition
+version: "0.4.0"
+description: >
+  Contract governing rework loop routing when QA phase rejects a BUILD handoff.
+  Defines how tasks are re-routed back to BUILD agents for remediation.
+
+routing:
+  default_routing_mode: PER_AFFECTED
+  fallback_routing_mode: FULL_CYCLE
+  max_iterations: 3
+
+re_entry_dispatch:
+  trigger: qa_rejection
+  target_phase: build
+  notify_agents:
+    - IMPLEMENTER
+    - ENGINEERING_MANAGER
+
+on_max_iterations_exceeded:
+  action: escalate_to_commander
+  log_entry: true

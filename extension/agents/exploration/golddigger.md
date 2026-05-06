@@ -100,10 +100,10 @@ If `MODE` is `polyrepo`, proceed to Step 1b (polyrepo config). If `single`, proc
 
 ### Step 1b: Build polyrepo config with adaptive depth
 
-Small repos are cheap to extract at `full` depth in Mode 1, eliminating the need for Mode 2 dispatches on them entirely. Read the threshold from `squad-config.yml` and auto-promote repos below it from `logic` to `full`.
+Small repos are cheap to extract at `full` depth in Mode 1, eliminating the need for Mode 2 dispatches on them entirely. Read the threshold and auto-promote repos below it from `logic` to `full`.
 
 ```bash
-THRESHOLD=$(grep 'polyrepo_full_depth_threshold' squad-config.yml 2>/dev/null | awk '{print $2}' || echo 50)
+THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh heuristics.polyrepo_full_depth_threshold 2>/dev/null || echo 50)
 ```
 
 ```bash

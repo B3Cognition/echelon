@@ -17,8 +17,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`echelon init` wing provisioning** — new step added to `echelon init` flow
   - Auto-suggests wing name from `git remote get-url origin` slug (fallback: `{dirname}-{hash6}`)
   - Interactive confirm with collision check; force-accept by entering same name twice
-  - Idempotent: skips if `mempalace.wing` already set in `echelon.yml`
-  - Wing written to `echelon.yml` and committed with the project — all clones inherit it automatically
+  - Idempotent: skips if `mempalace.wing` already set in `echelon-config.yml`
+  - Wing written to `echelon-config.yml` and committed with the project — all clones inherit it automatically
 - **Endocrine system fully enabled by default** — opt-out model (was opt-in)
   - `endocrine.sh get_enabled()` defaults to `"true"` when key absent; explicitly disable with `enabled: false`
   - `echelon.run.md` endocrine call is now unconditional
@@ -46,7 +46,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `MemPalaceWriter.__init__` — takes `ctx: MemPalaceContext` instead of `(wing, run_id)`; methods renamed `_mcp_write` → `_write_drawer`, `_mcp_update_metadata` → `_update_drawer_metadata`
 - `RequirementsMiner.__init__` — takes `(ctx: MemPalaceContext, project_dir: Path)` instead of `(wing, run_id)`
 - `PipelineEngine` — new `set_context(ctx)` method; `wing` field added to `PipelineState`; `run_re_phase` and `search_requirements` take `ctx` instead of `wing`
-- `echelon.codegenlight.md` — `WING=$(basename $(pwd))` replaced with python snippet reading `mempalace.wing` from `echelon.yml`
+- `echelon.codegenlight.md` — `WING=$(basename $(pwd))` replaced with python snippet reading `mempalace.wing` from `echelon-config.yml`
 - `extension/echelon-config.yml`, `extension/config-template.yml` — `mempalace: { wing: "" }` block added
 - `README.md` — new `### MemPalace requirements memory` subsection under Codegen Pipeline
 - `INSTALLATION.md` — new `Per-project setup: wing provisioning` and `Mine requirements into MemPalace` sections
@@ -56,7 +56,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 Existing projects with drawers stored under wing `"codegen"` (the broken default):
 
 ```bash
-# 1. Set wing in echelon.yml
+# 1. Set wing in echelon-config.yml
 echelon init
 
 # 2. Re-mine specs under correct wing

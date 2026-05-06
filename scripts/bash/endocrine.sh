@@ -32,7 +32,8 @@
 #   endocrine.sh get_hormone_snapshot <agent>      — returns all 6 values as comma-separated
 #   endocrine.sh log_hormone_event <agent> <event> — appends to hormone_history in state.json
 #
-# Reads config from squad-config.yml (falls back to config-template.yml).
+# Reads config via `specify extension config resolve echelon` (preferred).
+# Falls back to direct YAML read from echelon-config.yml when specify is unavailable.
 # State stored in .specify/squad/state.json under "endocrine_state".
 set -euo pipefail
 
@@ -44,13 +45,20 @@ REPO_ROOT="${ENDOCRINE_REPO_ROOT:-$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)}"
 SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$REPO_ROOT/.specify/squad}"
 STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 
-# Config: prefer squad-config.yml, fall back to config-template.yml
-if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
-  CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
-elif [[ -f "$REPO_ROOT/squad-config.yml" ]]; then
-  CONFIG_FILE="$REPO_ROOT/squad-config.yml"
-else
-  CONFIG_FILE="$REPO_ROOT/config-template.yml"
+# Config resolution: prefer spec-kit ConfigurationManager resolver.
+# Falls back to direct YAML read when specify is unavailable (test/offline use).
+_ECHELON_RESOLVER_OK=false
+if command -v specify &>/dev/null; then
+  # shellcheck disable=SC2046
+  eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)" 2>/dev/null \
+    && _ECHELON_RESOLVER_OK=true
+fi
+if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
+  if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
+    CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
+  else
+    CONFIG_FILE="$REPO_ROOT/extension/config-template.yml"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -97,62 +105,101 @@ hormone_name_by_index() {
 # ---------------------------------------------------------------------------
 
 get_enabled() {
-  local val
-  # The endocrine.enabled is nested — read from the endocrine: block specifically
-  val=$(awk '/^endocrine:/{found=1} found && /^\s+enabled:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
-  # Default to "true" — opt-out model: endocrine is on unless explicitly disabled
+  local val="${ECHELON_CFG_ENDOCRINE_ENABLED:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/^endocrine:/{found=1} found && /^\s+enabled:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
   echo "${val:-true}"
 }
 
 get_phase() {
-  awk '/^endocrine:/{found=1} found && /^\s+phase:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_PHASE:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/^endocrine:/{found=1} found && /^\s+phase:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-3}"
 }
 
 get_ceiling() {
-  awk '/circuit_breakers:/{found=1} found && /ceiling:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_CEILING:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/circuit_breakers:/{found=1} found && /ceiling:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-1.0}"
 }
 
 get_floor() {
-  awk '/circuit_breakers:/{found=1} found && /floor:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_FLOOR:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/circuit_breakers:/{found=1} found && /floor:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-0.0}"
 }
 
 get_max_change() {
-  awk '/circuit_breakers:/{found=1} found && /max_change_per_cycle:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_MAX_CHANGE_PER_CYCLE:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/circuit_breakers:/{found=1} found && /max_change_per_cycle:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-0.4}"
 }
 
 get_consecutive_extreme_reset() {
-  awk '/circuit_breakers:/{found=1} found && /consecutive_extreme_reset:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_CONSECUTIVE_EXTREME_RESET:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/circuit_breakers:/{found=1} found && /consecutive_extreme_reset:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-5}"
 }
 
 get_decay_rate() {
   local hormone="$1"
-  awk -v h="$hormone" '
-    /^  decay:/ { in_decay=1; next }
-    in_decay && /^  [^ ]/ { exit }
-    in_decay && $0 ~ "^    " h ":" { print $2; exit }
-  ' "$CONFIG_FILE" | tr -d ' '
+  local env_key="ECHELON_CFG_ENDOCRINE_DECAY_$(echo "$hormone" | tr '[:lower:]' '[:upper:]')"
+  local val="${!env_key:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk -v h="$hormone" '
+      /^  decay:/ { in_decay=1; next }
+      in_decay && /^  [^ ]/ { exit }
+      in_decay && $0 ~ "^    " h ":" { print $2; exit }
+    ' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "$val"
 }
 
 get_budget_threshold() {
-  awk '/^\s+adrenaline:/{found=1} found && /budget_threshold:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_ADRENALINE_BUDGET_THRESHOLD:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/^\s+adrenaline:/{found=1} found && /budget_threshold:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-0.85}"
 }
 
 get_budget_boost() {
-  awk '/^\s+adrenaline:/{found=1} found && /budget_boost:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' '
+  local val="${ECHELON_CFG_ENDOCRINE_ADRENALINE_BUDGET_BOOST:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk '/^\s+adrenaline:/{found=1} found && /budget_boost:/{print $2; exit}' "$CONFIG_FILE" | tr -d ' ')
+  fi
+  echo "${val:-0.3}"
 }
 
 # Get baseline array for an archetype (returns comma-separated)
 get_baseline() {
   local archetype="$1"
-  # Must search within the baselines: section under endocrine:
-  awk -v arch="$archetype" '
-    /^  baselines:/ { in_baselines=1; next }
-    in_baselines && /^  [^ ]/ { exit }
-    in_baselines && $0 ~ "^    " arch ":" {
-      gsub(/.*\[/, ""); gsub(/\].*/, ""); gsub(/ /, "");
-      print; exit
-    }
-  ' "$CONFIG_FILE"
+  local env_key="ECHELON_CFG_ENDOCRINE_BASELINES_$(echo "$archetype" | tr '[:lower:]' '[:upper:]')"
+  local val="${!env_key:-}"
+  if [[ -z "$val" && -n "${CONFIG_FILE:-}" ]]; then
+    val=$(awk -v arch="$archetype" '
+      /^  baselines:/ { in_baselines=1; next }
+      in_baselines && /^  [^ ]/ { exit }
+      in_baselines && $0 ~ "^    " arch ":" {
+        gsub(/.*\[/, ""); gsub(/\].*/, ""); gsub(/ /, "");
+        print; exit
+      }
+    ' "$CONFIG_FILE")
+  else
+    val=$(echo "$val" | tr -d '[]"' | tr ',' ',')
+  fi
+  echo "$val"
 }
 
 # Get adrenaline baseline (index 0) for an archetype
@@ -1011,7 +1058,7 @@ cmd="${1:-}"
 shift || true
 
 # Enforce kill switch — if endocrine.enabled is explicitly false, no-op silently and exit.
-# Default is enabled (opt-out model): endocrine runs unless echelon.yml sets enabled: false.
+# Default is enabled (opt-out model): endocrine runs unless echelon-config.yml sets enabled: false.
 if [[ "$(get_enabled)" != "true" ]]; then
   exit 0
 fi

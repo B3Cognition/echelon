@@ -3,7 +3,7 @@
 # Greps implementer.md for required eval concepts.
 set -euo pipefail
 
-FILE="$(dirname "$0")/../../agents/build/implementer.md"
+FILE="$(dirname "$0")/../../extension/agents/build/implementer.md"
 FAIL=0
 
 check() {

@@ -22,13 +22,13 @@ Additionally there is no stable, portable wing identity. The current folder-name
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Wing config location | `echelon.yml` `mempalace.wing` | Already committed per-project; clones inherit wing automatically |
+| Wing config location | `echelon-config.yml` `mempalace.wing` | Already committed per-project; clones inherit wing automatically |
 | Wing provisioning | Auto-suggest + interactive confirm in `echelon init` | Gives user something to react to; falls back gracefully without git remote |
 | Missing wing behaviour | Hard fail in codegen | Forces one-time migration; keeps bug-free invariant |
 | `echelon init` idempotency | Wing already set → skip, print `✓ already configured` | Safe to re-run on existing projects |
 | Collision detection | Both `echelon init` (gate) and `mine` time (warning) | Init prevents the problem; mine-time catches independent-init collisions |
-| `--wing` CLI override | Kept on `codegen run` | Power-user escape hatch; takes precedence over `echelon.yml` |
-| Wing precedence | `--wing` CLI → `echelon.yml` → hard fail | Explicit beats configured; unconfigured is an error |
+| `--wing` CLI override | Kept on `codegen run` | Power-user escape hatch; takes precedence over `echelon-config.yml` |
+| Wing precedence | `--wing` CLI → `echelon-config.yml` → hard fail | Explicit beats configured; unconfigured is an error |
 
 ---
 
@@ -59,8 +59,8 @@ def from_project(
 
 Resolution order:
 1. `wing_override` (from `--wing` CLI arg)
-2. `echelon.yml` → `mempalace.wing`
-3. Hard fail: `"wing not set in echelon.yml — run 'echelon init' to configure it"`
+2. `echelon-config.yml` → `mempalace.wing`
+3. Hard fail: `"wing not set in echelon-config.yml — run 'echelon init' to configure it"`
 
 `palace_path` always comes from `MempalaceConfig().palace_path` (env var `MEMPALACE_PALACE_PATH` → `~/.mempalace/config.json` → default `~/.mempalace/palace`).
 
@@ -80,18 +80,18 @@ New step inserted after deploy config validation, before `deploy-init.sh`.
 
 **Flow:**
 ```
-wing in echelon.yml already?
+wing in echelon-config.yml already?
   YES → print "✓ wing: <name> already configured" → skip (idempotent)
   NO  → compute suggestion
         prompt: "Wing name for MemPalace memory [<suggestion>]: "
         user Enter = accept suggestion, or type override
         → collision check (see §3)
-          CLEAN  → write mempalace.wing into echelon.yml
-                   print "✓ wing: <name> written to echelon.yml"
+          CLEAN  → write mempalace.wing into echelon-config.yml
+                   print "✓ wing: <name> written to echelon-config.yml"
           COLLISION → re-prompt (loop); user may retype same name to force-accept
 ```
 
-**`echelon.yml` update strategy:** PyYAML round-trip — only add/update the `mempalace:` block, all other keys preserved.
+**`echelon-config.yml` update strategy:** PyYAML round-trip — only add/update the `mempalace:` block, all other keys preserved.
 
 ---
 
@@ -161,7 +161,7 @@ Rename `_mcp_write` → `_write_drawer` and `_mcp_update_metadata` → `_update_
 
 ### 5. Threading through the pipeline
 
-**Wing precedence:** `--wing` CLI arg → `echelon.yml mempalace.wing` → hard fail
+**Wing precedence:** `--wing` CLI arg → `echelon-config.yml mempalace.wing` → hard fail
 
 **`codegen run` CLI** (`codegen_cli.py`):
 - After `engine.initialize()` returns `pipeline_id`, construct `ctx = MemPalaceContext.from_project(Path.cwd(), run_id=pipeline_id, wing_override=args.wing)`
@@ -178,7 +178,7 @@ Rename `_mcp_write` → `_write_drawer` and `_mcp_update_metadata` → `_update_
 
 **`codegen requirements mine` CLI**:
 - Constructs `ctx = MemPalaceContext.from_project(Path.cwd(), run_id="manual", wing_override=args.wing)`
-- `--wing` arg kept for override; without it, reads from `echelon.yml`
+- `--wing` arg kept for override; without it, reads from `echelon-config.yml`
 
 **`MemPalaceReader`**:
 - Constructor: `__init__(self, ctx: MemPalaceContext)`
@@ -201,7 +201,7 @@ Rename `_mcp_write` → `_write_drawer` and `_mcp_update_metadata` → `_update_
 | `extension/commands/echelon.init.md` | Document new wing provisioning step |
 | `extension/echelon-config.yml` | Add `mempalace:` block template |
 | `scripts/install.sh` | Remove dead `memory-config.yml` write |
-| `extension/commands/echelon.codegenlight.md` | Replace `WING=$(basename $(pwd))` with `MemPalaceContext`-compatible wing read from `echelon.yml` |
+| `extension/commands/echelon.codegenlight.md` | Replace `WING=$(basename $(pwd))` with `MemPalaceContext`-compatible wing read from `echelon-config.yml` |
 | `extension/commands/echelon.codegen.md` | Same — replace `WING` derivation |
 
 | `src/codegen/cli/codegen_cli.py` | Add `requirements migrate` subcommand |
@@ -226,7 +226,7 @@ The simplest and most reliable path. Requirements drawers are regenerated from t
 **Steps for existing projects:**
 
 ```
-1. echelon init               # sets wing in echelon.yml (idempotent for other config)
+1. echelon init               # sets wing in echelon-config.yml (idempotent for other config)
 2. codegen requirements mine <spec-glob> --wing <new-wing>
    # creates fresh drawers under the correct wing
 3. codegen requirements clean --from-wing codegen

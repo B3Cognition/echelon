@@ -3,9 +3,10 @@
 # Tests: expired beliefs, low_confidence beliefs, critical banners, missing graph, exit code
 
 set -eu
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-SCRIPT="$ROOT_DIR/scripts/bash/belief-freshness-check.sh"
+SCRIPT="$ROOT_DIR/extension/scripts/bash/belief-freshness-check.sh"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -258,8 +259,8 @@ assert_contains "Critical banner present"      "$output" "CRITICAL STALE BELIEF 
 # ════════════════════════════════════════════════════════════════════
 echo "--- Test 8: Approaching expiry ---"
 GRAPH_APPROACHING="$TMP_DIR/approaching.json"
-# Use a date 14 days from today — compute with python3
-NEAR_EXPIRY=$(python3 -c "from datetime import date, timedelta; print((date.today() + timedelta(days=14)).isoformat())")
+# Use a date 14 days from today — compute with $PYTHON
+NEAR_EXPIRY=$($PYTHON -c "from datetime import date, timedelta; print((date.today() + timedelta(days=14)).isoformat())")
 write_graph "$GRAPH_APPROACHING" "[
   {
     \"belief_id\": \"TST-020\",

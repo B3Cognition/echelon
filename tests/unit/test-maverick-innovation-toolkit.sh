@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-MAVERICK_MD="$(dirname "$0")/../../agents/specialists/maverick.md"
+MAVERICK_MD="$(dirname "$0")/../../extension/agents/specialists/maverick.md"
 PASS=0
 FAIL=0
 

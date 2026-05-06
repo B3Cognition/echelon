@@ -135,7 +135,7 @@ set -euo pipefail
 
 # ── Args ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
-ECHELON_YML="${2:-${PROJECT_ROOT}/echelon.yml}"
+ECHELON_YML="${2:-${PROJECT_ROOT}/echelon-config.yml}"
 STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/scripts"
 
@@ -147,7 +147,7 @@ fi
 
 # ── Read config ──────────────────────────────────────────────────────────────
 if ! grep -q "^deploy:" "${ECHELON_YML}" 2>/dev/null; then
-  echo "✗ deploy config missing in echelon.yml." >&2
+  echo "✗ deploy config missing in echelon-config.yml." >&2
   echo "  Add a deploy: block with type: http|cli." >&2
   echo "  See config-template.yml for reference." >&2
   exit 1
@@ -175,7 +175,7 @@ try:
         print(d.get('health_check', ''))
         print(d.get('install_path', ''))
 except KeyError as e:
-    sys.exit(f'Cannot read deploy config key {e} from echelon.yml')
+    sys.exit(f'Cannot read deploy config key {e} from echelon-config.yml')
 except Exception as e:
     sys.exit(f'Cannot read deploy config: {e}')
 PYEOF
@@ -307,7 +307,7 @@ for f in "${GLOBAL_STATE_DIR}"/*.json; do
     for WANTED in "${BLUE_PORT}" "${GREEN_PORT}" "${ACTIVE_PORT}"; do
       if [ "${CLAIMED}" = "${WANTED}" ] && [ -n "${CLAIMED}" ]; then
         echo "✗ Port ${WANTED} is already claimed by app '${OTHER_APP}' (${f})." >&2
-        echo "  Choose different ports in echelon.yml." >&2
+        echo "  Choose different ports in echelon-config.yml." >&2
         exit 1
       fi
     done
@@ -992,7 +992,7 @@ Find the `**Validate deploy config:**` block in section 1.0. Replace only the `p
 python3 -c "
 import sys, yaml
 try:
-    c = yaml.safe_load(open('echelon.yml'))
+    c = yaml.safe_load(open('echelon-config.yml'))
     d = c.get('deploy', {})
     deploy_type = d.get('type', 'http')
     if deploy_type not in ('http', 'cli'):
@@ -1001,12 +1001,12 @@ try:
     if deploy_type == 'http':
         missing = [k for k in ['blue_port','green_port','active_port'] if k not in d]
         if missing:
-            print('✗ deploy config missing in echelon.yml.', file=sys.stderr)
+            print('✗ deploy config missing in echelon-config.yml.', file=sys.stderr)
             print('  HTTP type requires: blue_port, green_port, active_port.', file=sys.stderr)
             print('  See config-template.yml for reference.', file=sys.stderr)
             sys.exit(1)
 except FileNotFoundError:
-    print('✗ echelon.yml not found.', file=sys.stderr)
+    print('✗ echelon-config.yml not found.', file=sys.stderr)
     sys.exit(1)
 "
 ```
@@ -1055,7 +1055,7 @@ Both types run the app in Docker to keep the dev machine clean.
 
 For web apps. Two Docker containers run concurrently. On each deploy, the inactive slot is started, health-checked via `curl`, then Traefik switches traffic.
 
-**Config (`echelon.yml`):**
+**Config (`echelon-config.yml`):**
 
 ```yaml
 deploy:
@@ -1093,7 +1093,7 @@ EXPOSE 80
 
 For terminal apps. No Traefik, no long-lived containers. Each deploy builds a new image, optionally verifies it, then updates an active-tag pointer. An optional wrapper script at `install_path` reads the active tag on every invocation.
 
-**Config (`echelon.yml`):**
+**Config (`echelon-config.yml`):**
 
 ```yaml
 deploy:

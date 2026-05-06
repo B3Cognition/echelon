@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+. "$SCRIPT_DIR/python-detect.sh"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 STATE_FILE_DEFAULT="$REPO_ROOT/.specify/squad/state.json"
 JOURNAL_FILE_DEFAULT="$REPO_ROOT/.specify/squad/reasoning-journal.json"
 
@@ -25,7 +26,7 @@ record_split_metrics_cmd() {
   local qa_coverage="$3"
   local state_file="$4"
 
-  python3 - "$state_file" "$rework_count" "$fallback_count" "$qa_coverage" <<'PY'
+  $PYTHON - "$state_file" "$rework_count" "$fallback_count" "$qa_coverage" <<'PY'
 import json
 import os
 import sys
@@ -72,7 +73,7 @@ normalize_phase_key() {
 }
 
 now_iso_utc() {
-  python3 - <<'PY'
+  $PYTHON - <<'PY'
 from datetime import datetime, timezone
 print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 PY
@@ -84,7 +85,7 @@ start_phase_cmd() {
   local budget_seconds="$2"
   local state_file="$3"
 
-  python3 - "$state_file" "$phase_key" "$budget_seconds" <<'PY'
+  $PYTHON - "$state_file" "$phase_key" "$budget_seconds" <<'PY'
 import json
 import os
 import sys
@@ -124,7 +125,7 @@ append_timing_anomaly() {
   local elapsed_seconds="$4"
   local budget_seconds="$5"
 
-  python3 - "$journal_file" "$phase_key" "$run_id" "$elapsed_seconds" "$budget_seconds" <<'PY'
+  $PYTHON - "$journal_file" "$phase_key" "$run_id" "$elapsed_seconds" "$budget_seconds" <<'PY'
 import json
 import os
 import sys
@@ -174,7 +175,7 @@ end_phase_cmd() {
   local run_id="$4"
 
   local result
-  result="$(python3 - "$state_file" "$phase_key" <<'PY'
+  result="$($PYTHON - "$state_file" "$phase_key" <<'PY'
 import json
 import os
 import sys
@@ -310,7 +311,7 @@ main() {
         exit 64
       fi
       if [[ -z "$run_id" ]]; then
-        run_id="$(python3 - "$state_file" <<'PY'
+        run_id="$($PYTHON - "$state_file" <<'PY'
 import json
 import sys
 from pathlib import Path

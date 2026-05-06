@@ -12,7 +12,7 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 - `rice.*` - RICE scoring scales
 - `implementability.*` - Blocked threshold
 - `assess.*` - DEFER iteration limits
@@ -124,7 +124,7 @@ Apply the following decision logic:
 - **PASS** if: At least one feasibility dimension is FEASIBLE (others may be FEASIBLE_WITH_RISKS), AND MVP scope is coherent, AND RICE scores justify the estimated effort.
 
 If KILL: produce kill report using `templates/kill-report.md` format. The squad stops.
-If DEFER: produce a scope-reduction recommendation. MANAGER re-routes to WHAT for scope adjustment. DEFER re-routes count toward the `assess.defer_loop_limit`-iteration max (default: 2, read from `squad-config.yml`). MANAGER escalates to human if this limit is reached.
+If DEFER: produce a scope-reduction recommendation. MANAGER re-routes to WHAT for scope adjustment. DEFER re-routes count toward the `assess.defer_max_iterations` limit (default: 2, read via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh assess.defer_max_iterations`). MANAGER escalates to human if this limit is reached.
 If PASS: proceed to specialist summoning and HOW phase.
 
 ### Outputs (First-Pass)

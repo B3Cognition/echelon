@@ -2,9 +2,10 @@
 # T027: Unit tests — Story 003a Timing Fields
 # Tests phase-timing.sh start_phase and end_phase subcommands.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 
 pass=0
 fail=0
@@ -30,14 +31,14 @@ printf '{"run_id":"unit-test"}\n' > "$state_file"
 
 bash "$SCRIPTS/phase-timing.sh" start_phase "test-phase-1" 300 --state-file "$state_file"
 
-start_ts="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('start_ts','missing'))")"
-budget="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('budget_seconds','missing'))")"
+start_ts="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('start_ts','missing'))")"
+budget="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('budget_seconds','missing'))")"
 
 assert "start_phase: start_ts present in state.json" "$(
   [[ "$start_ts" != "missing" && -n "$start_ts" ]] && ok_result || fail_result "start_ts=$start_ts"
 )"
 assert "start_phase: budget_seconds=300 in state.json" "$(
-  python3 -c "import json; d=json.load(open('$state_file')); b=d.get('phase_timings',{}).get('test-phase-1',{}).get('budget_seconds'); exit(0 if b==300.0 else 1)" \
+  $PYTHON -c "import json; d=json.load(open('$state_file')); b=d.get('phase_timings',{}).get('test-phase-1',{}).get('budget_seconds'); exit(0 if b==300.0 else 1)" \
     && ok_result || fail_result "budget=$budget"
 )"
 assert "start_phase: start_ts is ISO-8601 format" "$(
@@ -45,7 +46,7 @@ assert "start_phase: start_ts is ISO-8601 format" "$(
     && ok_result || fail_result "start_ts=$start_ts"
 )"
 # Verify start_ts is within ±5s of current time
-ts_ok="$(python3 - "$start_ts" <<'PY'
+ts_ok="$($PYTHON - "$start_ts" <<'PY'
 import sys
 from datetime import datetime, timezone
 
@@ -73,12 +74,12 @@ bash "$SCRIPTS/phase-timing.sh" end_phase "test-phase-1" \
   --journal-file "$journal_file" \
   --run-id "unit-test"
 
-elapsed="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('elapsed_seconds',-1))")"
-over_budget="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('over_budget','not_set'))")"
-end_ts="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('end_ts','missing'))")"
+elapsed="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('elapsed_seconds',-1))")"
+over_budget="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('over_budget','not_set'))")"
+end_ts="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('test-phase-1',{}).get('end_ts','missing'))")"
 
 assert "end_phase: elapsed_seconds >= 1" "$(
-  python3 -c "exit(0 if float('$elapsed') >= 1.0 else 1)" \
+  $PYTHON -c "exit(0 if float('$elapsed') >= 1.0 else 1)" \
     && ok_result || fail_result "elapsed=$elapsed"
 )"
 assert "end_phase: end_ts set" "$(
@@ -88,7 +89,7 @@ assert "end_phase: over_budget=False when within budget" "$(
   [[ "$over_budget" == "False" ]] && ok_result || fail_result "over_budget=$over_budget"
 )"
 # No timing_anomaly in journal for on-budget phase
-anomaly_count="$(python3 -c "import json; d=json.load(open('$journal_file')); entries=[e for e in d.get('entries',[]) if e.get('type')=='timing_anomaly']; print(len(entries))")"
+anomaly_count="$($PYTHON -c "import json; d=json.load(open('$journal_file')); entries=[e for e in d.get('entries',[]) if e.get('type')=='timing_anomaly']; print(len(entries))")"
 assert "end_phase: no timing_anomaly in journal for on-budget phase" "$(
   [[ "$anomaly_count" == "0" ]] && ok_result || fail_result "anomaly_count=$anomaly_count"
 )"
@@ -108,8 +109,8 @@ bash "$SCRIPTS/phase-timing.sh" end_phase "tight-phase" \
   --journal-file "$journal_file2" \
   --run-id "unit-test-2"
 
-over_budget2="$(python3 -c "import json; d=json.load(open('$state_file2')); print(d.get('phase_timings',{}).get('tight-phase',{}).get('over_budget','not_set'))")"
-anomaly_reason="$(python3 -c "import json; d=json.load(open('$state_file2')); print(d.get('phase_timings',{}).get('tight-phase',{}).get('anomaly_reason','not_set'))")"
+over_budget2="$($PYTHON -c "import json; d=json.load(open('$state_file2')); print(d.get('phase_timings',{}).get('tight-phase',{}).get('over_budget','not_set'))")"
+anomaly_reason="$($PYTHON -c "import json; d=json.load(open('$state_file2')); print(d.get('phase_timings',{}).get('tight-phase',{}).get('anomaly_reason','not_set'))")"
 
 assert "end_phase: over_budget=True when elapsed > budget * 1.2" "$(
   [[ "$over_budget2" == "True" ]] && ok_result || fail_result "over_budget=$over_budget2"
@@ -120,7 +121,7 @@ assert "end_phase: anomaly_reason=EXCEEDED_BUDGET_20_PERCENT" "$(
 )"
 
 # timing_anomaly journal entry written for over-budget phase
-anomaly_entry="$(python3 -c "
+anomaly_entry="$($PYTHON -c "
 import json
 d=json.load(open('$journal_file2'))
 entries=[e for e in d.get('entries',[]) if e.get('type')=='timing_anomaly']

@@ -5,7 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CODE_REVIEWER="$ROOT/agents/build/code-reviewer.md"
+CODE_REVIEWER="$ROOT/extension/agents/build/code-reviewer.md"
 LANG_RULES_DIR="$ROOT/knowledge-base/language-rules"
 FAILURES=0
 

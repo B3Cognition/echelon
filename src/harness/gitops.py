@@ -765,6 +765,25 @@ class GitOpsManager:
             logger.warning("Failed to merge PR %s (may be blocked by branch protection): %s", pr_url, e)
             return False
 
+    def delete_remote_branch(
+        self, branch_name: str, *, project_dir: str, remote: str = "origin"
+    ) -> bool:
+        """Delete branch_name from remote. Returns True if deleted, False if blocked or not found."""
+        try:
+            subprocess.run(
+                ["git", "push", remote, "--delete", branch_name],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=True,
+                cwd=project_dir,
+            )
+            logger.info("Deleted remote branch %s/%s", remote, branch_name)
+            return True
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning("Could not delete remote branch %s/%s: %s", remote, branch_name, e)
+            return False
+
     # === Query Operations ===
 
     def get_latest_worktree(self, spec_id: str, strategy_id: str) -> Optional[str]:

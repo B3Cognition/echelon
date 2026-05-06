@@ -9,7 +9,7 @@ scripts:
 
 ## Role
 
-You are COMMANDER executing the full autonomous squad run — 21 phases from DISCOVER through FINALIZE. Load `agents/control/commander.md` first, then execute the state machine below.
+You are MANAGER executing the full autonomous squad run — 21 phases from DISCOVER through FINALIZE. Load `agents/control/commander.md` first, then execute the state machine below.
 
 ---
 
@@ -21,11 +21,9 @@ $ARGUMENTS
 
 ## COMMANDER Loading — MANDATORY FIRST STEP
 
-> **Note:** This skill is loaded via the slash command. Do NOT call `Skill("speckit-echelon-run")` — the content is already in your context. Proceed directly.
+**Note:** This skill is loaded via the slash command. Do NOT call `Skill("speckit-echelon-run")` — the content is already in your context. Proceed directly.
 
-**Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the COMMANDER (MANAGER). The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and convergence thresholds. These govern ALL routing and iteration decisions throughout the run.
-
-Then execute the state machine below.
+**Read `agents/control/commander.md` before taking any action.** It contains your complete behavioral framework: role separation rules, governance constraints, dispatch protocols, decision-making principles, and all always-on COMMANDER behavior. Then execute the state machine below.
 
 ---
 
@@ -45,7 +43,7 @@ Your job is to execute the full state machine below, dispatching each agent as a
 
 ## Scope Boundary — ABSOLUTE RULE
 
-**`speckit.echelon.run` produces SPEC/PLAN/TASKS artifacts ONLY. It never implements.**
+**`speckit.echelon.run` produces ADR/SPEC/PLAN/TASKS/etc artifacts ONLY. It never implements.**
 
 You must NEVER, under any circumstance:
 - Write, modify, or delete application source files in the target project
@@ -123,158 +121,9 @@ Telemetry rules:
 
 ---
 
-## Role Separation — ABSOLUTE RULES
-
-Every agent has ONE job. No agent may do another agent's job. This is non-negotiable.
-
-| Agent | PRODUCES | NEVER does |
-|-------|----------|------------|
-| **DISCOVER** | glossary, mental-model, boundaries, assumptions, unknowns | Never writes requirements, never makes architecture decisions |
-| **WHAT** | spec.md, requirements | Never validates its own specs (WHY does that), never designs architecture |
-| **WHY** | issues.md, quality-gates.md | **NEVER rewrites specs/plans/tasks.** WHY ONLY finds problems. Responsible agent fixes. |
-| **ASSESS** | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
-| **HOW** | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
-| **PLAN** | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
-| **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
-
-> **Naming convention:** The table above uses **functional names** (DISCOVER, WHAT, WHY, etc.). Each maps to a **codename** used in dispatch: SCOUT=DISCOVER, SAGE=WHY, CARTOGRAPHER=WHAT, GATEKEEPER=ASSESS, ARCHITECT=HOW, ORCHESTRATOR=PLAN, **INVESTIGATOR=SCIENTIST**. Dispatch instructions always use codenames.
-
-**The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
-
-- Spec issues → dispatch **WHAT** (CARTOGRAPHER) to fix → then **WHY** re-validates
-- Architecture issues → dispatch **HOW** (ARCHITECT) to fix → then **WHY** re-validates
-- Task issues → dispatch **PLAN** (ORCHESTRATOR) to fix → then **WHY** re-validates
-- Unknown questions → dispatch **SCIENTIST** (INVESTIGATOR) to investigate → feed results to the relevant agent
-
-**NEVER dispatch WHY with a prompt that says "fix" or "rewrite."** WHY is read-only on all artifacts except issues.md and quality-gates.md.
+> **Phase routing authority:** `workflow/definition.yaml phases[]` is the single source of truth for all phase transitions, conditions, and next-phase targets. After every agent dispatch, evaluate `phases[<current-id>].transitions[]` — first matching condition wins. Update `state.json.phase` to the target. The `**Transition:**` markers below name the definition.yaml node for quick reference; they are not standalone routing instructions.
 
 ---
-
-## Pre-Dispatch Enforcement Protocol — MANDATORY
-
-Before EVERY `Use the Agent tool` dispatch, COMMANDER MUST run the pre-dispatch gate:
-
-```bash
-scripts/bash/pre-dispatch-gate.sh --agent "{AGENT_CODENAME}" --task "{task_or_phase}" --state ".specify/squad/state.json"
-```
-
-- If exit code 0 (ALLOW): proceed with dispatch
-- If exit code non-zero (DENY): read the denial reason from stdout, log to reasoning-journal.json, and either skip the dispatch or resolve the violation before retrying
-
-### Calibration Injection (FR-001, Spec 010)
-
-Before EVERY agent dispatch, COMMANDER MUST prepend a **calibration block** to the agent's prompt. This block is assembled from the calibration map built during Step 0 (see `agents/control/commander.md` → Step 0).
-
-**Assembly process:**
-
-1. Look up `{AGENT_CODENAME}` in the calibration map (built from `knowledge-base/agent-scores.yaml` at Step 0)
-2. If data exists for this agent, prepend this block to the dispatch prompt:
-
-```markdown
-## Your Calibration Data (from prior runs)
-
-**Last run score:** {quality_score} (target: {gate_threshold})
-**Primary failure mode:** {failure_modes[0].type} ({failure_modes[0].count} occurrences)
-**Specific miss:** {failure_modes[0].example}
-**Domain correction factor:** {correction_factor} ({domain_name})
-
-Adjust your analysis to address these specific weaknesses.
-```
-
-3. If no data exists (cold start): prepend `## Calibration: COLD START — no prior data. Defaults apply.`
-4. Log to `reasoning-journal.json` entry type `calibration_injection` with fields: `agent`, `prior_score`, `failure_modes[]`, `correction_factor`
-
-Also call `endocrine.sh get_full_prompt_modifier {AGENT_CODENAME}` and append the `[CALIBRATION]` section from its output. (Endocrine is enabled by default; it no-ops silently if explicitly disabled via `echelon.yml`.)
-
-After EVERY agent dispatch completes, COMMANDER SHOULD run the post-execution audit:
-
-```bash
-scripts/bash/post-execution-audit.sh --agent "{AGENT_CODENAME}" --output-dir "specs/{NNN}-{feature}/"
-```
-
-- If exit code 0 (PASS): proceed normally
-- If exit code non-zero (FAIL): log the violation, route to fix
-
-This protocol is fail-open: if the gate script itself errors, dispatch proceeds with a warning logged.
-
----
-
-## Constitution Authority — IMMUTABLE
-
-The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the **highest authority** in the squad. It outranks all agents, all decisions, all evidence.
-
-**Rules:**
-
-1. **NO agent may overwrite, weaken, remove, or contradict any constitution principle.** This includes HOW, ASSESS, PLAN, INNOVATE — every agent without exception.
-
-2. **HOW may APPEND technical principles** (e.g., ADR-level decisions like "use TypeScript strict mode") but these additions:
-   - MUST NOT contradict any existing human-defined principle
-   - MUST be validated by WHY before taking effect
-   - MUST be clearly labeled as "squad-generated" vs "human-defined"
-
-3. **If any agent's output conflicts with the constitution:**
-   - The output is WRONG, not the constitution
-   - MANAGER routes back to the agent: "Your output violates constitution principle X. Revise."
-   - The agent revises its output to comply
-
-4. **If the constitution itself has a gap** (situation not covered):
-   - MANAGER flags the gap as a human escalation
-   - Prints: "Constitution gap detected: {description}. No principle covers {situation}."
-   - STOP and wait for human to add/update the constitution via `speckit.constitution`
-   - Resume after human updates
-
-5. **If an agent believes a constitution principle is wrong:**
-   - The agent reports to MANAGER: "Constitution principle X may need revision because {evidence}"
-   - MANAGER escalates to human — NEVER auto-modifies the constitution
-   - Human decides via `speckit.constitution` whether to amend
-
-**Only the human can amend the constitution. The squad follows it. Period.**
-
----
-
-## 0. MANAGER Reflection Protocol (Plan Mode)
-
-Before EVERY major phase transition, MANAGER enters a structured reflection:
-
-**When to reflect:**
-
-- Before dispatching DISCOVER (initial strategy)
-- Before dispatching HOW (after ASSESS — is the approach right?)
-- Before CONSENSUS (are we ready or should we iterate more?)
-- Before FINALIZE (is everything complete or are there gaps?)
-- Before any human escalation (frame the question well)
-
-**Reflection template:**
-
-```
-REFLECTION — Phase transition: {from} → {to}
-
-Current state:
-  - Quality scores: {latest}
-  - Issues: {open count by severity}
-  - User intent alignment: {aligned/drifting}
-  - Strategic overview: {risk status}
-  - Budget consumed: {%}
-
-What I know:
-  - {key insight 1 from last phase}
-  - {key insight 2}
-
-What I'm uncertain about:
-  - {uncertainty 1 — could affect routing}
-  - {uncertainty 2}
-
-Routing decision:
-  - Standard path: {next agent per state machine}
-  - Alternative: {should I summon a specialist first? should I loop back?}
-  - Decision: {chosen path with reasoning}
-  - Confidence: {high/medium/low}
-```
-
-This reflection is logged to reasoning-journal.json with type "manager_reflection".
-It takes 30 seconds and prevents reactive routing. Think before dispatching.
-
-**After the reflection ends, your ONLY next action is to dispatch the agent named in "Routing decision → Decision". Use the Agent tool. Do NOT continue writing analysis, do NOT produce artifacts inline, do NOT summarize the problem further. Reflection → dispatch. Nothing else.**
 
 ## 1. Initialization (INIT)
 
@@ -289,22 +138,22 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
-**Bootstrap echelon.yml (if absent):**
+**Bootstrap echelon-config.yml (if absent):**
 
-If `echelon.yml` does not exist at the project root, copy a starter config from the extension. The extension ships with `config-template.yml`; `echelon-config.yml` may or may not be present depending on the install:
+If `echelon-config.yml` does not exist at the project root, copy a starter config from the extension. The extension ships with `config-template.yml`; `echelon-config.yml` is the preferred starter when present:
 
 ```bash
 ECHELON_EXT=".specify/extensions/echelon"
-if [ ! -f echelon.yml ]; then
+if [ ! -f echelon-config.yml ]; then
   if [ -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-    cp "${ECHELON_EXT}/echelon-config.yml" echelon.yml
-    echo "Bootstrapped echelon.yml from echelon-config.yml"
+    cp "${ECHELON_EXT}/echelon-config.yml" echelon-config.yml
+    echo "Bootstrapped echelon-config.yml from extension starter"
   elif [ -f "${ECHELON_EXT}/config-template.yml" ]; then
-    cp "${ECHELON_EXT}/config-template.yml" echelon.yml
-    echo "Bootstrapped echelon.yml from config-template.yml"
+    cp "${ECHELON_EXT}/config-template.yml" echelon-config.yml
+    echo "Bootstrapped echelon-config.yml from config-template.yml"
   else
-    echo "✗ echelon.yml not found and no template available in ${ECHELON_EXT}" >&2
-    echo "  Create echelon.yml at the project root before running echelon." >&2
+    echo "✗ echelon-config.yml not found and no template available in ${ECHELON_EXT}" >&2
+    echo "  Create echelon-config.yml at the project root before running echelon." >&2
     exit 1
   fi
 fi
@@ -398,6 +247,15 @@ Create `.specify/squad/state.json`:
 
 Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
+**Run History Check (mandatory at INIT):**
+1. Check if `{spec_dir}/run-history.json` exists (only possible if `spec_dir` was specified as an argument — if starting fresh with no spec_dir yet, skip this check).
+2. If `run-history.json` exists:
+   - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
+   - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.
+   - If Phase A is done AND constitution hash matches: log `[COMMANDER] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Set `state.json.phase` to `"phase1-constitution"` to signal resume.
+   - If Phase A is done but constitution hash differs: log `[COMMANDER] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
+3. If `run-history.json` does not exist: continue normally (new spec, first run).
+
 ### 1.4 Initialize Staging Reasoning Journal
 
 Create `.specify/squad/staging/reasoning-journal.json`:
@@ -448,13 +306,22 @@ Prior run data is included in agent context packs so the squad can track improve
 
 ### 1.6 Load Configuration
 
-Read `squad-config.yml` if it exists. Otherwise use defaults from `config-template.yml`:
+Resolve config via the spec-kit ConfigurationManager. In a shell context:
 
-- `max_iterations`: 5
-- `convergence_delta`: 0.02
-- `max_active_specialists`: 3
-- `token_budget_k`: 1000
+```bash
+# shellcheck disable=SC2046
+eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)"
+```
+
+This merges manifest defaults → `echelon-config.yml` (project overrides) → `local-config.yml` → `SPECKIT_ECHELON_*` env vars. Key defaults when no project config exists:
+
+- `ECHELON_CFG_CONVERGENCE_MAX_ITERATIONS`: 5
+- `ECHELON_CFG_CONVERGENCE_DELTA`: 0.02
+- `ECHELON_CFG_MAX_ACTIVE_SPECIALISTS`: 3
+- `ECHELON_CFG_BUDGET_TOKEN_BUDGET_K`: 1000
 - Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
+
+> **Authoritative values:** `echelon-config.yml` (project overrides) / manifest `config.defaults` (fallback) is the single source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
 
 ### 1.7 Check Constitution Status
 
@@ -482,7 +349,7 @@ For reconciliation after recovery, reference `templates/recovery-checklist.md` a
 
 ### Preflight: KB Evolution Validation
 
-If `evolution.enabled` is `true` in `squad-config.yml`:
+If `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`:
 
 ```bash
 scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
@@ -542,7 +409,7 @@ After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, 
    d. After GOLDDIGGER completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
 3. Continue to next Phase 1 agent dispatch.
 
-**Transition:** Update state.json phase to "discover". Proceed to DISCOVER.
+**Transition:** `phases[phase1-discover]` — see `workflow/definition.yaml`
 
 ---
 
@@ -598,7 +465,7 @@ If any are missing, log a warning but continue — WHY1 will catch gaps.
 
 Read DISCOVER's outputs to classify the domain. Store domain classification for specialist summoning later. Append routing decision to reasoning journal.
 
-**Transition:** Update state.json phase to "synthesize". Proceed to SYNTHESIZER.
+**Transition:** `phases[phase1-synthesizer]` — see `workflow/definition.yaml`
 
 ---
 
@@ -649,7 +516,29 @@ Use the Agent tool to dispatch a subagent with:
 
 Read `contradictions-and-gaps.md`. If CRITICAL contradictions found, log them — WHY1 will challenge these specifically.
 
-**Transition:** Update state.json phase to "tracker". Proceed to TRACKER.
+**Transition:** `phases[phase1-modeler]` — see `workflow/definition.yaml`
+
+---
+
+## 2b.1 Dispatch MODELER — Initial Codebase Map
+
+Dispatch MODELER to build the initial queryable codebase map from SYNTHESIZER's output. This gives ARCHITECT a pre-built entity graph instead of requiring re-analysis.
+
+**Agent:** MODELER
+
+**Input context pack:**
+
+- `.specify/squad/synthesis.md` (SYNTHESIZER output)
+- `.specify/squad/staging/` (all discovery artifacts)
+- Codebase file structure (from `state.json.mode`: for brownfield, also include `state.json.golddigger_artifacts`)
+
+**Output required:** `.specify/squad/mental-model-code.md` — entity graph, contract map, data flow trace, and invariants list.
+
+**Verdict:** Must be `COMPLETE`. If MODELER returns any invariant violations in its output, COMMANDER logs them as ALERT-level journal entries but does NOT block — the map is new and violations may be expected at this stage.
+
+**State update:** Set `state.json.last_dispatch.agent` to `"MODELER"` using standard Pre-Dispatch Protocol before dispatching.
+
+**Transition:** `phases[phase1-tracker]` — see `workflow/definition.yaml`
 
 ---
 
@@ -688,7 +577,7 @@ Use the Agent tool to dispatch a subagent with:
 
 - `user-intent.md` (in staging, later moved to spec directory)
 
-**Transition:** Update state.json phase to "why1". Proceed to WHY1.
+**Transition:** `phases[phase1-why1]` — see `workflow/definition.yaml`
 
 ---
 
@@ -737,7 +626,7 @@ Read WHY1 outputs:
 - If **CRITICAL** issues found in `assumption-review.md` → route back to DISCOVER (re-investigate). Increment iteration counter. Check iteration limit.
 - If **PASS** (no critical issues, all major assumptions validated or flagged) → proceed to WHAT.
 
-**Transition:** Update state.json phase to "constitution". Proceed to Constitution Creation.
+**Transition:** `phases[phase1-constitution]` — see `workflow/definition.yaml`
 
 ---
 
@@ -820,7 +709,7 @@ For brownfield projects where constitution doesn't exist:
 2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `speckit.constitution` is called with the derived context
 
-**Transition:** Update state.json phase to "what". Proceed to WHAT.
+**Transition:** `phases[phase1-what]` — see `workflow/definition.yaml`
 
 ---
 
@@ -919,12 +808,16 @@ Update state.json:
 }
 ```
 
+**Spec Status Transition (mandatory):**
+Update `state.json.spec_status` to `"planned"`.
+Update `{spec_dir}/spec.md`: find the line `**Status**: Draft` and change it to `**Status**: Planned`.
+
 ### Expected Outputs
 
 - `spec.md` (created by `speckit.specify`, enhanced by CARTOGRAPHER)
 - `00-overview.md`
 
-**Transition:** Update state.json phase to "why2". Proceed to WHY2.
+**Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1000,10 +893,10 @@ Read WHY2 outputs:
 1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
 2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in CARTOGRAPHER's context pack so CARTOGRAPHER knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
 3. **Track quality scores** — append to `state.json.quality_scores[]` an object with ALL of these fields: `pass` (iteration label), `overall`, `structure`, `readability`, `cognitive`, `semantic`, `testability`, `behavioral`, `depth`. All score values come from Understanding output (quality-gates.md). If a category score is not available, set to `null`.
-4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (0.02) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
+4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
-**Transition:** Update state.json phase to "assess". Proceed to ASSESS.
+**Transition:** `phases[phase2-decide]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1065,7 +958,7 @@ Phase budget map for consistency across all transitions:
 - `phase3-solution=2400`
 - `phase4-build=7200`
 
-**Transition:** Update state.json phase to "strategic_overview". Proceed to STRATEGIC OVERVIEW.
+**Transition:** `phases[phase2-strategic-overview]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1099,7 +992,7 @@ Before this transition, COMMANDER updates timing state via `scripts/bash/phase-t
 2. If `phase2-decide` was never started due to restart recovery, initialize with `start_phase phase2-decide 1800` before continuing.
 3. Persist `state.json` after timing reconciliation and before dispatching specialists.
 
-**Transition:** Update state.json phase to "tracker_alignment". Proceed to TRACKER alignment check.
+**Transition:** `phases[phase2-tracker-alignment]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1129,7 +1022,7 @@ If TRACKER reports MISALIGNED:
 - In `guided` or `semi` mode: pause for human confirmation
 - In `banzai` mode: log the divergence, proceed with GATEKEEPER's scope
 
-**Transition:** Update state.json phase to "specialists". Proceed to specialist summoning.
+**Transition:** `phases[phase3-specialists]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1203,7 +1096,7 @@ Use the Agent tool:
 
 #### SECURITY Dispatch (GUARDIAN codename) — always-on by default
 
-**Dispatch mode** is controlled by `squad-config.yml` → `guardian.mode` (default: `always_on`).
+**Dispatch mode** is controlled by `echelon-config.yml` → `guardian.mode` (default: `always_on`).
 
 - **`always_on`**: Dispatch GUARDIAN on every run. If the domain is NOT security-sensitive, GUARDIAN runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, GUARDIAN runs the full STRIDE + OWASP + compliance analysis.
 - **`on_demand`**: Dispatch only when domain involves auth, payments, PII, regulatory compliance (legacy behavior).
@@ -1338,7 +1231,7 @@ Before this transition, COMMANDER performs phase-boundary timing writes in order
 3. `end_phase` writes `end_ts`, `elapsed_seconds`, `over_budget`, and `anomaly_reason`; if over budget (>120%), it also appends a `timing_anomaly` journal entry.
 4. Persist state updates before routing to HOW.
 
-**Transition:** Update state.json phase to "how". Proceed to HOW.
+**Transition:** `phases[phase3-how]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1380,7 +1273,7 @@ Use the Agent tool to dispatch a subagent with:
 - `contracts/` (API/interface specs)
 - `constitution.md`
 
-**Transition:** Update state.json phase to "test-architect". Proceed to TEST ARCHITECT.
+**Transition:** `phases[phase3-sentinel]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1431,7 +1324,7 @@ Before this transition, COMMANDER updates timing state via `scripts/bash/phase-t
 2. If missing from recovered state, initialize `phase3-solution` using `start_phase phase3-solution 2400` before dispatching PLAN.
 3. Persist `state.json` timing updates before dispatch.
 
-**Transition:** Update state.json phase to "plan". Proceed to PLAN.
+**Transition:** `phases[phase3-plan]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1478,7 +1371,7 @@ Before this transition, COMMANDER performs phase-boundary timing writes in order
 2. Open `phase4-build` with `scripts/bash/phase-timing.sh start_phase phase4-build 7200`.
 3. Confirm updated `phase_timings` are flushed to `state.json` before consensus dispatch.
 
-**Transition:** Update state.json phase to "consensus". Proceed to CONSENSUS.
+**Transition:** `phases[phase3-consensus]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1588,7 +1481,7 @@ At run close (after FINALIZE and before setting status `done`), COMMANDER must:
 2. Read `state.json.phase_timings` and append one `timing_summary` entry per phase to `reasoning-journal.json` with fields: `type`, `phase`, `run_id`, `elapsed_seconds`, `budget_seconds`, `over_budget`, `anomaly_reason`.
 3. Ensure anomaly reason enum for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
 
-**Transition:** Update state.json phase to "finalize". Proceed to FINALIZE.
+**Transition:** `phases[phase4-document]` — see `workflow/definition.yaml`
 
 ---
 
@@ -1783,6 +1676,21 @@ Update `state.json`:
   "updated_at": "{ISO-8601}"
 }
 ```
+
+**Run History Write (mandatory at DONE):**
+1. Read or create `{spec_dir}/run-history.json`.
+2. Append to `runs` array:
+   ```json
+   {
+     "run_id": "{state.json.run_id}",
+     "phase": "A",
+     "status": "done",
+     "constitution_hash": "{sha256 of .specify/memory/constitution.md}",
+     "spec_status": "{state.json.spec_status}",
+     "timestamp": "{current UTC ISO-8601}"
+   }
+   ```
+3. Write the updated file.
 
 ### 12.8 Print Final Summary
 
@@ -2061,7 +1969,7 @@ These rules prevent infinite loops and ensure the squad terminates:
 ### Rule 1: Understanding Delta Convergence
 
 - After each WHY pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
-- If the delta between the last two passes is < `convergence_delta` (default 0.02) for 2 consecutive passes → **stop WHY iterations**
+- If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop WHY iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
 ### Rule 2: Circular Issue Detection
@@ -2072,13 +1980,13 @@ These rules prevent infinite loops and ensure the squad terminates:
 
 ### Rule 3: Max Iterations
 
-- Maximum `max_iterations` (default 5) total squad iterations → **force convergence**
+- Maximum `max_iterations` (per `echelon-config.yml convergence:`) total squad iterations → **force convergence**
 - When forced: run FINALIZE with whatever artifacts exist, flag all as "forced convergence"
 - DEFER re-routes count toward the iteration max
 
 ### Rule 4: Token Budget Exhaustion
 
-- If cumulative `token_usage` exceeds `token_budget_k * 1000` → **force finalize**
+- If cumulative `token_usage` exceeds `token_budget_k * 1000` (per `echelon-config.yml budget:`) → **force finalize**
 - Skip remaining specialists if budget is tight
 - Always run GROUND + CALIBRATE (minimum finalize)
 
@@ -2178,7 +2086,7 @@ Every artifact produced in degraded mode (fallback was used) must have this bann
 
 ## 18. Token Budget Management
 
-**See `agents/control/commander.md` → "Token Budget Management" section.** The COMMANDER prompt is the authoritative source for budget allocation tiers, borrow rules between tiers, and the 40% single-agent cap.
+**See `echelon-config.yml budget:` for allocation tiers and the 40% single-agent cap. See `agents/control/commander.md` → "Token Budget Management" for enforcement procedures (borrow rules, warning agents).**
 
 ### Budget Enforcement (phase-specific skip rules)
 
@@ -2208,48 +2116,11 @@ The goal of re-runs is monotonic improvement: each run should produce artifacts 
 
 ## 20. Quick Reference: Phase Transitions
 
-```
-INIT ──────► DISCOVER ──► SYNTHESIZER ──► WHY1 ──► WHAT
-                  ▲                 │                 │
-                  │ (re-investigate) │ (CRITICAL)      │
-                  └─────────────────┘                 ▼
-                                                    WHY2
-                                                      │
-                               ┌──────────────────────┤
-                               │ (gates fail)         │ (gates pass)
-                               ▼                      ▼
-                             WHAT ◄────────────── ASSESS
-                                                      │
-                                    ┌─────────────────┤
-                                    │ KILL            │ DEFER (≥2 → kill/escalate)
-                                    ▼                 │ PASS
-                                   DONE               ▼
-                                              SPECIALISTS
-                                                      │
-                                                      ▼
-                                                    HOW
-                                                      │
-                                                      ▼
-                                              TEST ARCHITECT
-                                                      │
-                                                      ▼
-                                                    PLAN
-                                                      │
-                                                      ▼
-                                                 CONSENSUS
-                                              (WHY3 ∥ ASSESS2)
-                                                 then PLAN2
-                                                      │
-                               ┌──────────────────────┤
-                               │ CRITICAL             │ ALL PASS
-                               ▼                      ▼
-                          (route back)           FINALIZE
-                                              GROUND → REFLECT
-                                              → EVOLVE → CALIBRATE
-                                                      │
-                                                      ▼
-                                                    DONE
-```
+See `workflow/definition.yaml phases[]` for the authoritative phase graph — every node, condition, and transition target is defined there. The ordered sequence is:
+
+`init` → `phase1-discover` → `phase1-synthesizer` → `phase1-modeler` → `phase1-tracker` → `phase1-why1` → `phase1-constitution` → `phase1-what` → `phase1-why2` → `checkpoint-assess` → `phase2-decide` → `phase2-strategic-overview` → `phase2-tracker-alignment` → `phase3-how` → `phase3-specialists` → `phase3-sentinel` → `phase3-plan` → `phase3-consensus` → `checkpoint-plan` → `phase4-document` → `done`
+
+Conditional branches (quality gate failures, KILL verdicts, iteration loops, escalation) are defined in each node's `transitions[]` array in `definition.yaml`.
 
 ---
 

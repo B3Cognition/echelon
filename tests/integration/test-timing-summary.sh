@@ -3,9 +3,10 @@
 # Simulates 3 phases start+end, then writes timing_summary entries to journal.
 # Covers TEST-003a-3: journal values match state.json phase_timings.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 
 pass=0
 fail=0
@@ -30,7 +31,7 @@ write_timing_summary() {
   local journal_file="$2"
   local run_id="$3"
 
-  python3 - "$state_file" "$journal_file" "$run_id" <<'PY'
+  $PYTHON - "$state_file" "$journal_file" "$run_id" <<'PY'
 import json
 import os
 import sys
@@ -94,7 +95,7 @@ write_timing_summary "$state_file" "$journal_file" "$RUN_ID"
 # Assertions: timing_summary entries exist for all 3 phases
 for pkey in "${PHASES[@]}"; do
   assert "INT-003a-3: timing_summary for $pkey in journal" "$(
-    python3 - "$journal_file" "$pkey" <<'PY'
+    $PYTHON - "$journal_file" "$pkey" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 entries = [e for e in d.get("entries", []) if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
@@ -105,8 +106,8 @@ done
 
 # Assertions: journal values match state.json (no drift)
 for pkey in "${PHASES[@]}"; do
-  state_elapsed="$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('$pkey',{}).get('elapsed_seconds',-1))")"
-  journal_elapsed="$(python3 - "$journal_file" "$pkey" <<'PY'
+  state_elapsed="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('$pkey',{}).get('elapsed_seconds',-1))")"
+  journal_elapsed="$($PYTHON - "$journal_file" "$pkey" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 entries = [e for e in d.get("entries",[]) if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
@@ -114,7 +115,7 @@ print(entries[0].get("elapsed_seconds",-1) if entries else -1)
 PY
 )"
   assert "INT-003a-3: elapsed_seconds matches between state and journal for $pkey" "$(
-    python3 - "$state_elapsed" "$journal_elapsed" <<'PY'
+    $PYTHON - "$state_elapsed" "$journal_elapsed" <<'PY'
 import sys
 se = float(sys.argv[1])
 je = float(sys.argv[2])
@@ -127,7 +128,7 @@ done
 
 # Assert exactly one timing_summary per phase (no duplicates)
 for pkey in "${PHASES[@]}"; do
-  count="$(python3 - "$journal_file" "$pkey" <<'PY'
+  count="$($PYTHON - "$journal_file" "$pkey" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 entries = [e for e in d.get("entries",[]) if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]

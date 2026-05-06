@@ -2,7 +2,7 @@
 # T-10: Unit test — verify SAGE spec contains all 5 contradiction types and report format template
 set -euo pipefail
 
-SAGE_MD="$(cd "$(dirname "$0")/../.." && pwd)/agents/exploration/sage.md"
+SAGE_MD="$(cd "$(dirname "$0")/../.." && pwd)/extension/agents/exploration/sage.md"
 PASS=0
 FAIL=0
 TOTAL=0

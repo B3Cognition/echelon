@@ -153,12 +153,12 @@ def _episodic_index_path(run_id: str) -> str:
 
 
 def _load_config() -> dict:
-    """Read ca_overlays.soar.chunking_enabled from squad-config.yml.
+    """Read ca_overlays.soar.chunking_enabled from echelon-config.yml.
 
     Returns {"chunking_enabled": False} when key or section absent.
     No YAML library — regex-based parsing.
     """
-    config_path = os.path.join(_repo_root(), "squad-config.yml")
+    config_path = os.path.join(_repo_root(), ".specify", "extensions", "echelon", "echelon-config.yml")
     if not os.path.exists(config_path):
         return {"chunking_enabled": False}
     try:

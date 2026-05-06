@@ -14,7 +14,7 @@ You are dispatched as a subagent by the COMMANDER during FINALIZE and after FEED
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `calibration.*` - Accuracy thresholds and correction factors
 - `risk.*` - Risk level thresholds
@@ -169,7 +169,7 @@ Cross-reference feedback outcomes with entries in `patterns.yaml`:
 
 ### Mode 3: Evolution Loop (during FINALIZE, after Mode 1)
 
-Only execute if `evolution.enabled` is `true` in `squad-config.yml`.
+Only execute if `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`.
 
 #### Step 1: Check Evolution Signal Triggers
 

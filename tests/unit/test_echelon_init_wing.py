@@ -29,7 +29,7 @@ def test_derive_wing_fallback_when_no_remote(tmp_path):
 
 
 def test_provision_wing_idempotent_when_already_set(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({
         "mempalace": {"wing": "existing-wing"},
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
@@ -45,7 +45,7 @@ def test_provision_wing_idempotent_when_already_set(tmp_path):
 
 
 def test_provision_wing_writes_to_echelon_yml(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({
         "deploy": {"type": "http", "blue_port": 3000, "green_port": 3001},
     }))
@@ -63,7 +63,7 @@ def test_provision_wing_writes_to_echelon_yml(tmp_path):
 
 
 def test_provision_wing_collision_reprompts(tmp_path):
-    echelon_yml = tmp_path / "echelon.yml"
+    echelon_yml = tmp_path / "echelon-config.yml"
     echelon_yml.write_text(yaml.dump({"deploy": {"type": "http", "blue_port": 3000, "green_port": 3001}}))
 
     inputs = iter(["colliding-wing", "colliding-wing"])

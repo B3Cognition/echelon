@@ -2,6 +2,7 @@
 # E2E: echelon spec target command — writes/replaces targets: frontmatter
 # Runs in isolated tmpdir; uses Python module directly (no installed binary needed).
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 PYTHONPATH="$REPO_ROOT/src"
@@ -20,7 +21,7 @@ ok_result()   { echo "OK"; }
 fail_result() { printf 'FAIL:%s' "$*"; }
 
 run_spec_target() {
-  PYTHONPATH="$PYTHONPATH" python3 -c "
+  PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$1')
 sys.argv = ['echelon', 'spec', 'target'] + $2
@@ -40,14 +41,14 @@ mkdir -p "$tmpdir/specs/024-psd-import"
 printf '# PSD Import Spec\n' > "$tmpdir/specs/024-psd-import/spec.md"
 
 # ── Test 1: write single target ───────────────────────────────────────────────
-PYTHONPATH="$PYTHONPATH" python3 -c "
+PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
 from echelon.cli import _cmd_spec_target
 _cmd_spec_target(['024', 'og-platform'])
 " > /dev/null 2>&1
 
-result="$(PYTHONPATH="$PYTHONPATH" python3 -c "
+result="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import re, sys
 sys.path.insert(0, '$REPO_ROOT/src')
 from harness.spec_frontmatter import read_frontmatter
@@ -62,14 +63,14 @@ else
 fi
 
 # ── Test 2: replace with multiple targets ─────────────────────────────────────
-PYTHONPATH="$PYTHONPATH" python3 -c "
+PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
 from echelon.cli import _cmd_spec_target
 _cmd_spec_target(['024', 'og-platform', 'fet-frontend-libs'])
 " > /dev/null 2>&1
 
-result="$(PYTHONPATH="$PYTHONPATH" python3 -c "
+result="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/src')
 from harness.spec_frontmatter import read_frontmatter
@@ -96,7 +97,7 @@ mkdir -p "$tmpdir/specs/024-alpha"
 printf '# alpha\n' > "$tmpdir/specs/024-alpha/spec.md"
 
 set +e
-PYTHONPATH="$PYTHONPATH" python3 -c "
+PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
 from echelon.cli import _cmd_spec_target
@@ -104,8 +105,9 @@ _cmd_spec_target(['024', 'og-platform'])
 " > /dev/null 2>&1
 ambig_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
-alpha_has_targets="$(PYTHONPATH="$PYTHONPATH" python3 -c "
+alpha_has_targets="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/src')
 from harness.spec_frontmatter import read_frontmatter

@@ -44,7 +44,7 @@ NEVER accept partial coverage — AMENDED: NEVER accept partial coverage unless 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 - `internalization.*` - Pass/fail thresholds
 
 ## The Triadic Cognitive Model

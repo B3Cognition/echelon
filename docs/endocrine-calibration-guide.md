@@ -10,7 +10,7 @@ Phase 1 uses adrenaline only. Phases 2-4 add dopamine, cortisol, serotonin, oxyt
 
 ## How to Enable
 
-In `squad-config.yml`, set:
+In `echelon-config.yml`, set:
 
 ```yaml
 endocrine:
@@ -87,11 +87,11 @@ Overall pass/fail counts and rates. If overall pass rate is below 70%, consider 
 
 #### Recommended Baseline Adjustments
 
-Copy-pasteable YAML snippet for `squad-config.yml`. Review before applying — these are suggestions, not commands.
+Copy-pasteable YAML snippet for `echelon-config.yml`. Review before applying — these are suggestions, not commands.
 
 ### Step 4: Update Baselines
 
-Edit `squad-config.yml` and update the archetype baselines:
+Edit `echelon-config.yml` and update the archetype baselines:
 
 ```yaml
 endocrine:

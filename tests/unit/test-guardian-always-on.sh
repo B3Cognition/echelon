@@ -4,9 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-COMMANDER="$ROOT/agents/control/commander.md"
-GUARDIAN="$ROOT/agents/specialists/guardian.md"
-SQUAD_RUN="$ROOT/commands/echelon.run.md"
+COMMANDER="$ROOT/extension/agents/control/commander.md"
+GUARDIAN="$ROOT/extension/agents/specialists/guardian.md"
+SQUAD_RUN="$ROOT/extension/commands/echelon.run.md"
 FAILURES=0
 
 assert_grep() {

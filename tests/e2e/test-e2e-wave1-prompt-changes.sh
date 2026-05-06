@@ -27,7 +27,7 @@ check() {
 # ---------------------------------------------------------------------------
 # A-REQ-01: SENTINEL flakiness management (agents/solution/sentinel.md)
 # ---------------------------------------------------------------------------
-SENTINEL="agents/solution/sentinel.md"
+SENTINEL="extension/agents/solution/sentinel.md"
 
 printf "\n=== A-REQ-01: SENTINEL Flakiness Management ===\n"
 check "Detection Protocol heading"      "$SENTINEL" "Detection Protocol"
@@ -39,7 +39,7 @@ check "Review Cadence heading"           "$SENTINEL" "Review Cadence"
 # ---------------------------------------------------------------------------
 # A-REQ-02: CODE_REVIEWER confidence filtering (agents/build/code-reviewer.md)
 # ---------------------------------------------------------------------------
-REVIEWER="agents/build/code-reviewer.md"
+REVIEWER="extension/agents/build/code-reviewer.md"
 
 printf "\n=== A-REQ-02: CODE_REVIEWER Confidence Filtering ===\n"
 check "80% confidence threshold"         "$REVIEWER" "80%"
@@ -53,7 +53,7 @@ check "Stylistic Suppression section"    "$REVIEWER" "Stylistic Suppression"
 # ---------------------------------------------------------------------------
 # B-REQ-05: SAGE contradiction detection (agents/exploration/sage.md)
 # ---------------------------------------------------------------------------
-SAGE="agents/exploration/sage.md"
+SAGE="extension/agents/exploration/sage.md"
 
 printf "\n=== B-REQ-05: SAGE Contradiction Detection ===\n"
 check "Requirement conflicts type"               "$SAGE" "Requirement conflicts"

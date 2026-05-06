@@ -201,7 +201,7 @@ def get_dependency_check_status(state: State, dep_name: str) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Config accessors (squad-config.yml)
+# Config accessors (echelon-config.yml)
 # ---------------------------------------------------------------------------
 
 

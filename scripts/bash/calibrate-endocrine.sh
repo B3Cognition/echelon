@@ -143,7 +143,7 @@ generate_report() {
     echo "Continue running squad sessions and re-run this script after $MIN_RUNS total runs."
     echo ""
     echo "### What to do next"
-    echo "1. Run $((MIN_RUNS - RUN_COUNT)) more squad sessions with \`endocrine.enabled: true\` in squad-config.yml"
+    echo "1. Run $((MIN_RUNS - RUN_COUNT)) more squad sessions with \`endocrine.enabled: true\` in echelon-config.yml"
     echo "2. Re-run: \`scripts/bash/calibrate-endocrine.sh --state-dir $STATE_DIR\`"
     return
   fi
@@ -210,7 +210,7 @@ generate_report() {
   echo ""
   echo "### Recommended Baseline Adjustments"
   echo ""
-  echo "Apply these changes to \`squad-config.yml\` under \`endocrine.baselines\`:"
+  echo "Apply these changes to \`echelon-config.yml\` under \`endocrine.baselines\`:"
   echo ""
   echo "\`\`\`yaml"
   echo "endocrine:"

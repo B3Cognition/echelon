@@ -72,6 +72,13 @@ This gives us: spec-kit's proven task execution + squad's multi-agent quality ga
 
 ## 1. Initialization (BUILD_INIT)
 
+**Build Start State Update (mandatory, runs once before first task):**
+
+1. Set `state.json.spec_status` to `"in-progress"`.
+2. Update `{spec_dir}/spec.md`: change `**Status**: Planned` to `**Status**: In Progress`.
+3. Count all task lines in `{spec_dir}/tasks.md` (lines matching `^\s*- \[[ xX]\]`) — set result as `state.json.build.total_tasks`.
+4. Set `state.json.build.completed_tasks` to `0` and `state.json.build.tasks_completed_pct` to `0`.
+
 ### 1.0 Anchor Project Root
 
 Before any file operation, establish the absolute project root:
@@ -442,9 +449,29 @@ If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
 }
 ```
 
-3. Update `state.json.updated_at` to current timestamp.
+**Recompute percentage:**
+
+1. Recompute `state.json.build.tasks_completed_pct`:
+`tasks_completed_pct = Math.round((build.completed_tasks / build.total_tasks) * 100)`
+Write the new value to `state.json.build.tasks_completed_pct`.
+2. Update `state.json.updated_at` to current timestamp.
 
 **This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for ENGINEERING MANAGER and any external tooling reading state.json.
+
+**MODELER Update (mandatory after every task):**
+Dispatch MODELER with:
+
+- Input: the file(s) written or modified by IMPLEMENTER in this task (from IMPLEMENTER's output)
+- Existing `.specify/squad/mental-model-code.md`
+- Task description and spec FR-* references for this task
+
+MODELER incrementally updates `mental-model-code.md` to reflect the new code.
+
+**Invariant alert gate:** After MODELER returns, COMMANDER checks MODELER's output for any `invariant_violations` list. If non-empty:
+
+- Log each violation as a journal entry with `type: "alert"` and `severity: "HIGH"`
+- Emit warning in build log: `[MODELER ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
+- Do NOT block task progression — violations are tracked for INTEGRATOR to resolve at phase boundaries.
 
 ---
 
@@ -729,6 +756,13 @@ Handle result:
 
 BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.md` contains open gaps.
 
+**Specification Complete (mandatory on VERIFICATION PASS):**
+
+1. Set `state.json.spec_status` to `"implemented"`.
+2. Update `{spec_dir}/spec.md`: change `**Status**: In Progress` to `**Status**: Implemented`.
+3. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from `tasks.md`.
+4. Log journal entry: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
+
 ### 8.2 Collect Reports
 
 Verify all report files are populated:
@@ -756,6 +790,22 @@ Verify all report files are populated:
   "updated_at": "{ISO-8601}"
 }
 ```
+
+**Run History Write (mandatory at BUILD_DONE):**
+1. Read `{spec_dir}/run-history.json` (must exist from Phase A run).
+2. Append to `runs` array:
+   ```json
+   {
+     "run_id": "{state.json.run_id}",
+     "phase": "B",
+     "status": "done",
+     "verification_result": "{PASS|FAIL from verification-summary.md}",
+     "spec_status": "{state.json.spec_status}",
+     "timestamp": "{current UTC ISO-8601}"
+   }
+   ```
+3. If `verification_result` is `"PASS"`: set `authoritative_run` to `"{state.json.run_id}"`.
+4. Write the updated file.
 
 ### 8.4 Run SCOREKEEPER
 
@@ -804,7 +854,7 @@ End of build:
 
 After SCOREKEEPER and before final summary, COMMANDER runs the autonomous feedback pipeline. This closes the learning loop without human input.
 
-**Config gate:** Read `feedback.auto_feedback` from `squad-config.yml` (default: `true`). If `false`, skip to Section 8.6 Print Summary.
+**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip to Section 8.6 Print Summary.
 
 ### 8.5.1 Dispatch AUDITOR (Post-Build Self-Assessment)
 
@@ -850,7 +900,7 @@ For each expert dispatch:
 
 ### 8.5.3 Post-Build Validation (optional)
 
-**Config gate:** Read `feedback.post_build_validation` from `squad-config.yml` (default: `true`). If `false`, skip to 8.5.4.
+**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.post_build_validation` (default: `true`). If `false`, skip to 8.5.4.
 
 **a) Understanding re-scan:**
 
@@ -874,7 +924,7 @@ Dispatch SAGE in post-build-validation mode:
 
 **b) Intent alignment check:**
 
-**Config gate:** Read `feedback.post_build_intent_check` from `squad-config.yml` (default: `true`).
+**Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.post_build_intent_check` (default: `true`).
 
 Dispatch TRACKER in post-build-alignment mode:
 
@@ -894,7 +944,32 @@ Dispatch TRACKER in post-build-alignment mode:
 
 - **description:** "TRACKER: post-build intent alignment check"
 
-If TRACKER reports MISALIGNED: flag as CRITICAL in feedback-report.md. COMMANDER logs but does NOT block — build is already done.
+**Drift Severity Gate (mandatory after TRACKER produces `intent-alignment-final.md`):**
+
+Read `drift_severity` from `intent-alignment-final.md`.
+
+- **`ALIGNED`:** Log in `feedback-report.md` as INFO. Continue to BUILD_DONE.
+
+- **`MINOR_DRIFT`:** Log in `feedback-report.md` as WARNING with the specific unmet intent points. Continue to BUILD_DONE. No correction dispatched.
+
+- **`MAJOR_DRIFT` AND `autonomy_mode != "banzai"`:**
+  1. Dispatch CHANGE CONTROLLER with the unmet intent points as the change description.
+  2. CHANGE CONTROLLER assesses blast radius and creates RW-* rework tasks (max 1 rework pass — `state.json.rework_iteration_count` must be < 1 before entering this path; if already 1, log and continue without rework).
+  3. ENGINEERING MANAGER executes the rework loop for the RW-* tasks.
+  4. After rework: re-dispatch TRACKER for a second alignment check. If still MAJOR_DRIFT after one rework pass, log as CRITICAL in `feedback-report.md` and continue — no infinite loop.
+
+- **`MAJOR_DRIFT` AND `autonomy_mode == "banzai"`:**
+  1. Set `state.json.requires_human_review` to `true`.
+  2. Write `{spec_dir}/drift-escalation.md`:
+     ```
+     # Intent Drift Escalation
+     **Run:** {state.json.run_id}
+     **Severity:** MAJOR_DRIFT
+     **Unmet intent points:** {list from intent-alignment-final.md}
+     **Action required:** Human review needed before this spec can be marked complete.
+     ```
+  3. Log CRITICAL in `feedback-report.md`: `[COMMANDER] MAJOR_DRIFT detected in banzai mode — requires_human_review set. See drift-escalation.md.`
+  4. Continue to BUILD_DONE (banzai no-checkpoint contract preserved).
 
 ### 8.5.4 Auto-Update Knowledge Base
 
@@ -927,7 +1002,50 @@ Append to `feedback-report.md`:
 
 ---
 
-### 8.6 Print Summary
+### 8.6 Consolidation Phase — Constitution Amendment Candidates
+
+Dispatch MIRROR and VETERAN in parallel to extract amendment candidates from this run's learnings.
+
+**Dispatch MIRROR** (`mode: "consolidation"`):
+
+- Context pack: `feedback-report.md`, `intent-alignment-final.md`, `reasoning-journal.json` (last 20 entries), `traceability-matrix.md`
+- Output required: `amendment_candidates` list (may be empty)
+
+**Dispatch VETERAN** (`mode: "consolidation"`):
+
+- Context pack: `{spec_dir}/run-history.json`, MIRROR's `amendment_candidates` (pass directly)
+- Output required: `veteran_amendment_candidates` list (may be empty)
+
+**COMMANDER consolidation (after both complete):**
+
+1. Merge both candidate lists — deduplicate by principle text (exact or near-exact match).
+2. Filter: keep only `confidence: high` or `confidence: medium` candidates.
+3. If merged list is empty: skip the remaining steps. Set `state.json.constitution_amendments_pending` to `0`.
+4. Write `{spec_dir}/constitution-amendment-candidates.md`:
+
+   ```markdown
+   # Constitution Amendment Candidates
+   **Run:** {state.json.run_id}  **Spec:** {spec_id}  **Date:** {timestamp}
+
+   Review each proposal and run `speckit.constitution` to apply approved ones.
+   Reject by deleting the [PROPOSED] block.
+
+   ---
+   [PROPOSED: {principle text}]
+   **Source:** {source from MIRROR/VETERAN}
+   **Confidence:** {high|medium}
+   **Category:** {category}
+   ```
+
+5. Append each candidate as a `[PROPOSED: ...]` block to `.specify/memory/constitution.md` (the existing file). Append after the last existing section — never edit existing content.
+6. Set `state.json.constitution_amendments_pending` to the count of candidates appended.
+7. If `constitution_amendments_pending > 0`: add to the final run summary: `{N} constitution amendment candidate(s) pending human review — see {spec_dir}/constitution-amendment-candidates.md. Run speckit.constitution to approve or reject.`
+
+**Important:** COMMANDER never auto-amends constitution content. Only humans can promote `[PROPOSED]` blocks to permanent principles via `speckit.constitution`. Human review is required.
+
+---
+
+### 8.7 Print Summary
 
 ```
 ============================================
@@ -1045,7 +1163,7 @@ Tasks or gates flagged as DEGRADED must have this banner in their report section
 - **Max total IMPLEMENTER dispatches per task:** 7 (1 initial + 2 per gate for 3 gates)
 - **Max BLOCKED tasks before pause:** 3
 - **Max DEGRADED tasks before warning:** 30% of total tasks
-- **Token budget for build phase:** Configurable in `squad-config.yml`. Default: 2M tokens.
+- **Token budget for build phase:** Configurable in `echelon-config.yml`. Default: 2M tokens.
 - **Wall-clock time limit:** 60 minutes. Force complete with whatever is done.
 
 ---

@@ -52,6 +52,7 @@ Commands:
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
   change  <spec_id> <description>           Plan a scope change
   codegen <spec_id>                         Run SOAR codegen pipeline
+  land    <spec_id>                         Land a spec: merge PR, clean up
   harness init [<target_repo>]              Initialize harness (no LLM)
   harness run  <spec_id> [strategy=<s>]     Run build→verify→PR loop
   spec target  <spec_id> <repo> [repo...]   Set target repos in spec frontmatter
@@ -88,7 +89,7 @@ def _derive_wing_suggestion(project_dir: Path) -> str:
 
 def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
     """
-    Interactively provision wing name into echelon.yml.
+    Interactively provision wing name into echelon-config.yml.
     Idempotent: if wing already set, returns existing value immediately.
     Returns the confirmed wing name.
     """
@@ -136,39 +137,23 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
         config["mempalace"] = {}
     config["mempalace"]["wing"] = chosen
     echelon_yml.write_text(_yaml.dump(config, default_flow_style=False, allow_unicode=True))
-    print(f"✓ wing: {chosen!r} written to echelon.yml")
+    print(f"✓ wing: {chosen!r} written to echelon-config.yml")
     return chosen
 
 
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
-    echelon_yml = project_dir / "echelon.yml"
+    echelon_cfg = ext_dir / "echelon-config.yml"
 
-    # Step 1: Bootstrap echelon.yml
-    if echelon_yml.exists():
-        print(f"✓ echelon.yml already exists")
-    else:
-        template = None
-        for name in ("echelon-config.yml", "config-template.yml"):
-            candidate = ext_dir / name
-            if candidate.exists():
-                template = candidate
-                break
-        if template is None:
-            print(
-                "✗ echelon.yml not found and no template available.\n"
-                f"  Expected template at: {ext_dir / 'echelon-config.yml'}\n"
-                "  Have you run 'specify extension add echelon' first?",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        shutil.copy(template, echelon_yml)
-        print(f"✓ Bootstrapped echelon.yml from {template.name}")
+    # Step 1: Confirm project config exists (created by `specify extension add echelon`)
+    if not echelon_cfg.exists():
         print(
-            "\n  Review echelon.yml and configure the deploy: block before continuing.\n"
-            "  Set type: http or cli, ports (http) or install_path (cli).\n"
+            f"✗ Project config not found: {echelon_cfg}\n"
+            "  Run: specify extension add echelon",
+            file=sys.stderr,
         )
-        sys.exit(0)
+        sys.exit(1)
+    print(f"✓ Project config found: {echelon_cfg}")
 
     # Step 2: Validate deploy config
     try:
@@ -178,9 +163,9 @@ def _cmd_init(project_dir: Path) -> None:
         sys.exit(1)
 
     try:
-        config = yaml.safe_load(echelon_yml.read_text())
+        config = yaml.safe_load(echelon_cfg.read_text())
     except Exception as e:
-        print(f"✗ Cannot parse echelon.yml: {e}", file=sys.stderr)
+        print(f"✗ Cannot parse echelon-config.yml: {e}", file=sys.stderr)
         sys.exit(1)
 
     deploy = config.get("deploy", {})
@@ -192,7 +177,7 @@ def _cmd_init(project_dir: Path) -> None:
         missing = [k for k in ("blue_port", "green_port") if k not in deploy]
         if missing:
             print(
-                f"✗ deploy config incomplete in echelon.yml.\n"
+                f"✗ deploy config incomplete in echelon-config.yml.\n"
                 f"  HTTP type requires: {missing}\n"
                 f"  See config-template.yml for reference.",
                 file=sys.stderr,
@@ -202,7 +187,7 @@ def _cmd_init(project_dir: Path) -> None:
 
     # Step 2b: Provision MemPalace wing
     print("\n▶ Configuring MemPalace wing...")
-    _provision_wing(project_dir, echelon_yml)
+    _provision_wing(project_dir, echelon_cfg)
 
     # Step 3: Run deploy-init.sh
     init_script = ext_dir / "scripts" / "bash" / "deploy-init.sh"
@@ -215,7 +200,7 @@ def _cmd_init(project_dir: Path) -> None:
         sys.exit(1)
 
     result = subprocess.run(
-        ["bash", str(init_script), str(project_dir), str(echelon_yml)],
+        ["bash", str(init_script), str(project_dir), str(echelon_cfg)],
         cwd=str(project_dir),
     )
     if result.returncode != 0:
@@ -229,12 +214,49 @@ def _cmd_init(project_dir: Path) -> None:
         f"║         echelon init — complete          ║\n"
         f"╚══════════════════════════════════════════╝\n"
         f"\n"
-        f"  echelon.yml   → {echelon_yml}\n"
-        f"  deploy-state  → {state_file}\n"
+        f"  config       → {echelon_cfg}\n"
+        f"  deploy-state → {state_file}\n"
         f"\n"
         f"Next step:\n"
         f"  echelon run <description>\n"
     )
+
+
+# ── land (pure Python, no LLM) ────────────────────────────────────────────
+
+def _cmd_land(args: list[str]) -> None:
+    """Land a spec: merge PR, delete branch, clean worktrees, mark done."""
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon land <spec_id>\n\n"
+            "  Merge PR, delete branch, clean worktrees, mark spec as landed.\n",
+        )
+        sys.exit(0)
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.gitops import GitOpsManager
+    from harness.land import land
+
+    spec_id = args[0]
+    project_dir = Path.cwd()
+
+    try:
+        config = load_config()
+    except HarnessValidationError as e:
+        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        sys.exit(1)
+    gitops = GitOpsManager(config)
+
+    success = land(spec_id, project_dir=project_dir, gitops=gitops)
+    if success:
+        print(f"echelon land: {spec_id} landed successfully")
+        sys.exit(0)
+    else:
+        print(f"echelon land: {spec_id} could not be landed (PR merge blocked?)", file=sys.stderr)
+        sys.exit(1)
 
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
@@ -359,7 +381,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.skills.run_skill import run
 
     # Orchestrator mode: spec targets take priority over local echelon.yml.
-    # Check targets first so a polyrepo root with its own echelon.yml (e.g. for
+    # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
     from harness.spec_frontmatter import find_spec_dir, read_frontmatter
     from echelon.orchestrator import validate_targets, run_multi_target
@@ -373,7 +395,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             targets = validate_targets(targets_rel, polyrepo_root)
             sys.exit(run_multi_target(spec_id, targets, args[1:]))
 
-    # Single-repo mode: require local echelon.yml.
+    # Single-repo mode: require local echelon.yml (harness config).
     echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon.yml"
     if not echelon_yml.exists():
         print(
@@ -564,6 +586,10 @@ def main() -> None:
 
     if command == "spec":
         _cmd_spec(args[1:])
+        return
+
+    if command == "land":
+        _cmd_land(args[1:])
         return
 
     if command not in SKILL_MAP:

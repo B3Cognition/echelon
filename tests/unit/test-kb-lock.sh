@@ -2,9 +2,10 @@
 # T026: Unit tests — Story 002d Lock Contract
 # Tests kb-lock.sh acquire/release, stale lock quarantine, cross-run protection.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 KB_DIR="$REPO_ROOT/knowledge-base"
 LOCK_DIR="$KB_DIR/.locks/kb-write.lock"
 METADATA_FILE="$LOCK_DIR/metadata.yaml"
@@ -80,7 +81,7 @@ assert "TEST-002d-1: status shows UNLOCKED after release" "$(
 
 cleanup_lock
 mkdir -p "$LOCK_DIR"
-stale_ts="$(python3 - <<'PY'
+stale_ts="$($PYTHON - <<'PY'
 from datetime import datetime, timezone, timedelta
 dt = datetime.now(timezone.utc) - timedelta(seconds=40)
 print(dt.strftime("%Y-%m-%dT%H:%M:%SZ"))

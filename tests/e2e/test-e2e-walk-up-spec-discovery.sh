@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # E2E: walk-up spec discovery — find_spec_dir via Python helper
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
 PYTHONPATH="$REPO_ROOT/src"
@@ -24,7 +25,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 find_spec() {
   local spec_id="$1" start_dir="$2"
-  PYTHONPATH="$PYTHONPATH" python3 -c "
+  PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 from pathlib import Path
 from harness.spec_frontmatter import find_spec_dir
 r = find_spec_dir('$spec_id', Path('$start_dir'))

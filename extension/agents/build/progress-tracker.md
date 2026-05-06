@@ -24,7 +24,7 @@ Record task completion and perform a drift-threshold check only. Do NOT execute 
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `drift.*` - Drift detection thresholds
 - `quality.*` - Quality metrics targets

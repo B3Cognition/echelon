@@ -71,6 +71,34 @@ def write_targets(spec_dir: Path, targets: List[str]) -> Path:
     return md
 
 
+def write_status(spec_dir: Path, status: str) -> Path:
+    """Write (or replace) the ``status:`` field in spec_dir's frontmatter.
+
+    Creates a frontmatter block if none exists. Returns the modified file path.
+    Preserves all other frontmatter keys.
+    """
+    md = _find_spec_md(spec_dir)
+    if md is None:
+        raise FileNotFoundError(f"No .md file found in {spec_dir}")
+
+    text = md.read_text(encoding="utf-8")
+    m = _FRONTMATTER_RE.match(text)
+    body = text[m.end():] if m else text
+
+    try:
+        data: Dict[str, Any] = yaml.safe_load(m.group(1)) if m else {}
+        data = data if isinstance(data, dict) else {}
+    except yaml.YAMLError:
+        logger.warning("write_status: corrupt YAML frontmatter in %s — dropping existing keys", md)
+        data = {}
+
+    data["status"] = status
+    front = yaml.dump(data, default_flow_style=False, sort_keys=False,
+                      allow_unicode=True).rstrip()
+    md.write_text(f"---\n{front}\n---\n{body}", encoding="utf-8")
+    return md
+
+
 def find_spec_dir(spec_id: str, start_dir: Path) -> Optional[Path]:
     """Walk up from start_dir to find specs/{spec_id}-* directory.
 

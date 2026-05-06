@@ -11,16 +11,22 @@ SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
 KB_DIR="$REPO_ROOT/knowledge-base"
 
-AGENTS_YAML="$REPO_ROOT/agents.yaml"
+AGENTS_YAML="$REPO_ROOT/extension/agents.yaml"
 PROMPT_VERSIONS="$KB_DIR/prompt-versions.yaml"
 INTERNALIZATION_LOG="$KB_DIR/internalization-log.yaml"
 EVOLUTION_SIGNALS="$KB_DIR/evolution-signals.yaml"
 
-# Config: prefer squad-config.yml, fall back to config-template.yml
-if [[ -f "$REPO_ROOT/squad-config.yml" ]]; then
-  CONFIG_FILE="$REPO_ROOT/squad-config.yml"
-else
-  CONFIG_FILE="$REPO_ROOT/config-template.yml"
+# Config resolution: prefer spec-kit ConfigurationManager resolver.
+# Falls back to direct YAML read when specify is unavailable.
+CONFIG_FILE=""
+_ECHELON_RESOLVER_OK=false
+if command -v specify &>/dev/null; then
+  # shellcheck disable=SC2046
+  eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)" 2>/dev/null \
+    && _ECHELON_RESOLVER_OK=true
+fi
+if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
+  CONFIG_FILE="$REPO_ROOT/extension/config-template.yml"
 fi
 
 STATE_FILE=""
@@ -39,7 +45,7 @@ Validates Knowledge Base evolution files with 3 checks:
     - Every evolution-signals entry affected_agents exist in agents.yaml
 
   Check 2: Score/result consistency
-    - Reads internalization thresholds from squad-config.yml (or config-template.yml)
+    - Reads internalization thresholds from ECHELON_CFG_* (resolver) or echelon-config.yml
     - Verifies score and result (PASS/PARTIAL/FAIL) agree per threshold rules
 
   Check 3: Downstream outcome completeness (--state required)
@@ -167,22 +173,42 @@ check_score_consistency() {
   echo "=== Check 2: Score/result consistency ==="
 
   local _check2_out
-  _check2_out=$(python3 - "$CONFIG_FILE" "$INTERNALIZATION_LOG" <<'PY'
-import sys, yaml
+  # Pass thresholds via env: resolver-exported ECHELON_CFG_* takes precedence;
+  # CONFIG_FILE is non-empty only when the resolver was unavailable.
+  _check2_out=$(ECHELON_CFG_INTERNALIZATION_LEGACY_PASS_THRESHOLD="${ECHELON_CFG_INTERNALIZATION_LEGACY_PASS_THRESHOLD:-}" \
+    ECHELON_CFG_INTERNALIZATION_LEGACY_PARTIAL_MIN="${ECHELON_CFG_INTERNALIZATION_LEGACY_PARTIAL_MIN:-}" \
+    ECHELON_CFG_INTERNALIZATION_LEGACY_FAIL_BELOW="${ECHELON_CFG_INTERNALIZATION_LEGACY_FAIL_BELOW:-}" \
+    python3 - "${CONFIG_FILE:-}" "$INTERNALIZATION_LOG" <<'PY'
+import sys, os, yaml
 from pathlib import Path
 
-config_path = Path(sys.argv[1])
+config_arg  = sys.argv[1]
 ilog_path   = Path(sys.argv[2])
 
 errors = 0
 
-# Read thresholds
-with open(config_path) as f:
-    config = yaml.safe_load(f) or {}
-intern = config.get('internalization', {}) or {}
-pass_threshold = intern.get('pass_threshold', 6)
-partial_min    = intern.get('partial_min', 4)
-fail_below     = intern.get('fail_below', 4)
+# Read thresholds: prefer resolver-exported env vars, fall back to config file
+pass_threshold = None
+partial_min    = None
+fail_below     = None
+
+_pt = os.environ.get('ECHELON_CFG_INTERNALIZATION_LEGACY_PASS_THRESHOLD', '')
+_pm = os.environ.get('ECHELON_CFG_INTERNALIZATION_LEGACY_PARTIAL_MIN', '')
+_fb = os.environ.get('ECHELON_CFG_INTERNALIZATION_LEGACY_FAIL_BELOW', '')
+
+if _pt and _pm and _fb:
+    pass_threshold = float(_pt)
+    partial_min    = float(_pm)
+    fail_below     = float(_fb)
+elif config_arg:
+    with open(config_arg) as f:
+        config = yaml.safe_load(f) or {}
+    intern = config.get('internalization', {}).get('legacy', config.get('internalization', {})) or {}
+    pass_threshold = float(intern.get('pass_threshold', 6))
+    partial_min    = float(intern.get('partial_min', 4))
+    fail_below     = float(intern.get('fail_below', 4))
+else:
+    pass_threshold, partial_min, fail_below = 6.0, 4.0, 4.0
 
 # Read entries
 with open(ilog_path) as f:
@@ -291,7 +317,7 @@ echo "  agents.yaml:           $AGENTS_YAML"
 echo "  prompt-versions.yaml:  $PROMPT_VERSIONS"
 echo "  internalization-log:   $INTERNALIZATION_LOG"
 echo "  evolution-signals:     $EVOLUTION_SIGNALS"
-echo "  config:                $CONFIG_FILE"
+echo "  config:                ${CONFIG_FILE:-echelon-config.yml (via resolver)}"
 [[ -n "$STATE_FILE" ]] && echo "  state.json:            $STATE_FILE"
 echo ""
 

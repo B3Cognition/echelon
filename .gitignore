@@ -1,4 +1,5 @@
 *-config.local.yml
+.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -11,10 +12,14 @@ Thumbs.db
 .env*
 .vscode/
 .idea/
-/specs/
+/specs/*
+!/specs/002-build-qa-phase-split/
+/specs/002-build-qa-phase-split/*
+!/specs/002-build-qa-phase-split/contracts/
 .github/*
 !.github/workflows/
 .specify/squad/
 config-belief-graph.json
 .specify/
 .pytest_cache/
+tests/benchmarks/reports/

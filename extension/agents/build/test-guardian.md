@@ -28,7 +28,7 @@ Action: record as non-testable-logic in reasoning journal. Do NOT require covera
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `tests.*` - Minimum test counts by component type
 

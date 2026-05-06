@@ -2,9 +2,10 @@
 # T025: Unit tests — Story 002c Mutation Metadata
 # Tests kb-write.sh append_entry metadata injection and validate_append_only.
 set -uo pipefail
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 REPO_ROOT="$(CDPATH='' cd "$(dirname "$0")/../.." && pwd)"
-SCRIPTS="$REPO_ROOT/scripts/bash"
+SCRIPTS="$REPO_ROOT/extension/scripts/bash"
 FIXTURES="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 
 pass=0
@@ -88,7 +89,7 @@ bash "$SCRIPTS/kb-write.sh" append_entry \
 bash "$SCRIPTS/kb-write.sh" validate_append_only --file "$test_kb" >/dev/null 2>&1 || true
 
 # Now destructively remove a line containing one of the entries (simulate corruption/deletion)
-python3 - "$test_kb" <<'PY'
+$PYTHON - "$test_kb" <<'PY'
 import sys
 from pathlib import Path
 p = Path(sys.argv[1])
@@ -110,6 +111,7 @@ set +e
 bash "$SCRIPTS/kb-write.sh" validate_append_only --file "$test_kb" 2>/tmp/val_stderr_$$
 val_rc=$?
 set -e
+. "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
 
 assert "TEST-002c-3: validate_append_only exits non-zero on removed entry" "$(
   [[ "$val_rc" -ne 0 ]] && ok_result || fail_result "exit 0 (should be non-zero)"

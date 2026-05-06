@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
+. "$SCRIPT_DIR/python-detect.sh"
 KB_DIR="$REPO_ROOT/knowledge-base"
 FIXTURES_DIR="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 ERROR_LOG="$REPO_ROOT/.specify/squad/error.log"
@@ -19,7 +20,7 @@ log_error() {
 validate_file() {
   local file_path="$1"
 
-  python3 - "$file_path" <<'PY'
+  $PYTHON - "$file_path" <<'PY'
 import sys
 from pathlib import Path
 
@@ -58,7 +59,7 @@ add_seed_metadata() {
   local file_path="$1"
   local source_fixture="$2"
   local seeded_at
-  seeded_at="$(python3 -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
+  seeded_at="$($PYTHON -c 'from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))')"
 
   tmp_file="$file_path.tmp.$$"
   {

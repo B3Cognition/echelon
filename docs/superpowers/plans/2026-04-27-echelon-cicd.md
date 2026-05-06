@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `speckit.echelon.cicd` — a command that uses the full echelon cognitive squad to design and implement CI/CD artifacts (Dockerfile, echelon.yml deploy block, db-start.sh, GitHub Actions workflow) for any project stack.
+**Goal:** Add `speckit.echelon.cicd` — a command that uses the full echelon cognitive squad to design and implement CI/CD artifacts (Dockerfile, echelon-config.yml deploy block, db-start.sh, GitHub Actions workflow) for any project stack.
 
 **Architecture:** A thin command file that constructs a well-engineered Anthropic-style prompt and delegates to `speckit.echelon.run`. The command contains zero detection heuristics — all reasoning lives in SCOUT and the squad. Registered in `extension.yml` like all other commands.
 
@@ -29,7 +29,7 @@
 ```markdown
 ---
 name: speckit.echelon.cicd
-description: "Design and implement CI/CD for this project — Dockerfile, echelon.yml deploy block, GitHub Actions CI workflow, and db-start.sh if databases are detected."
+description: "Design and implement CI/CD for this project — Dockerfile, echelon-config.yml deploy block, GitHub Actions CI workflow, and db-start.sh if databases are detected."
 behavior:
   invocation: explicit
 ---
@@ -123,7 +123,7 @@ before generating a Dockerfile.
    and ORMs (e.g. pg, mysql2, prisma, sequelize, typeorm, sqlalchemy, ecto,
    gorm, mongoose, redis, etc.) to identify required backing services.
    For each detected database:
-   - Add a services: block to echelon.yml listing the container image,
+   - Add a services: block to echelon-config.yml listing the container image,
      network alias, volume mount for persistence, and environment variables.
    - Generate a scripts/bash/db-start.sh script that starts each service
      container on the speckit-deploy Docker network (idempotent: skip if
@@ -134,7 +134,7 @@ before generating a Dockerfile.
 
 6. Deploy type — http (web server, needs ports) vs cli (binary, needs
    health_check command). Infer from project type; confirm against existing
-   echelon.yml deploy block if present.
+   echelon-config.yml deploy block if present.
 
 7. Test setup — detect test runner and existing test scripts for the CI
    workflow (e.g. jest, vitest, pytest, go test, cargo test, rspec, mix test).
@@ -147,7 +147,7 @@ Generate exactly these artifacts:
    correct package manager, correct build context. Place at project root or
    apps/{name}/Dockerfile as appropriate.
 
-2. echelon.yml deploy block — update the existing deploy: section in-place.
+2. echelon-config.yml deploy block — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
    (HTTP) or health_check / install_path (CLI). If databases were detected, add
    a services: block. Do not touch other sections.
@@ -204,7 +204,7 @@ In `extension/extension.yml`, locate the `speckit.echelon.deploy` entry (around 
 ```yaml
     - name: "speckit.echelon.cicd"
       file: "commands/echelon.cicd.md"
-      description: "Design and implement CI/CD for this project — Dockerfile, echelon.yml deploy block, GitHub Actions CI, and database services if detected. Re-runnable."
+      description: "Design and implement CI/CD for this project — Dockerfile, echelon-config.yml deploy block, GitHub Actions CI, and database services if detected. Re-runnable."
       behavior:
         execution: isolated
         invocation: explicit
@@ -293,8 +293,8 @@ cd "${TARGET_PROJECT}"
 # Dockerfile
 test -f Dockerfile && echo "✓ Dockerfile" || echo "✗ Dockerfile missing"
 
-# echelon.yml deploy block
-grep -q 'deploy:' echelon.yml && echo "✓ deploy block" || echo "✗ deploy block missing"
+# echelon-config.yml deploy block
+grep -q 'deploy:' echelon-config.yml && echo "✓ deploy block" || echo "✗ deploy block missing"
 
 # GitHub Actions workflow
 test -f .github/workflows/ci.yml && echo "✓ ci.yml" || echo "✗ ci.yml missing"
@@ -317,7 +317,7 @@ Expected: `✓ build ok`
 
 ```bash
 cd "${TARGET_PROJECT}"
-git add Dockerfile echelon.yml .github/workflows/ci.yml
+git add Dockerfile echelon-config.yml .github/workflows/ci.yml
 git add scripts/bash/db-start.sh 2>/dev/null || true
 git commit -m "chore: add CI/CD artifacts via echelon.cicd"
 ```

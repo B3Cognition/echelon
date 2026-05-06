@@ -119,6 +119,20 @@ Do NOT write to `reasoning-journal.jsonl` directly.
 - Alignment alerts when spec diverges from intent
 - Reasoning journal entries with type "intent_check"
 
+**Required output field: `drift_severity`**
+
+Every `intent-alignment-final.md` MUST include a `drift_severity` field computed as follows:
+
+| Divergence | `drift_severity` value | Meaning |
+|---|---|---|
+| 0–5% of user intent points unmet | `ALIGNED` | No action needed |
+| 5–20% of user intent points unmet | `MINOR_DRIFT` | Log only |
+| >20% of user intent points unmet | `MAJOR_DRIFT` | Triggers correction gate |
+
+**How to measure divergence:** Count the user intent points from `user-intent.md` (each bullet or requirement is one point). Count how many are not addressed or misaddressed in the build output. Divergence % = unmet / total × 100.
+
+Place `drift_severity: {ALIGNED|MINOR_DRIFT|MAJOR_DRIFT}` on the second line of `intent-alignment-final.md`, immediately after the overall verdict.
+
 ## Rules
 
 - User's explicit words override ALL agent reasoning

@@ -31,10 +31,10 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 
 ## Configuration
 
-This agent uses values from `squad-config.yml`:
+Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `code_quality.*` - Function length, nesting, complexity limits
-- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `squad-config.yml`. Findings below this threshold are silently suppressed. Range: 0–100.
+- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `echelon-config.yml`. Findings below this threshold are silently suppressed. Range: 0–100.
 
 ## Prime Directive
 
@@ -73,7 +73,7 @@ All review findings MUST pass through confidence-based filtering before being re
 
 ### Confidence Threshold
 
-- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `squad-config.yml` (default: `80`).
+- **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `echelon-config.yml` (default: `80`).
 - Each finding MUST include a confidence percentage (0–100) reflecting the reviewer's certainty that it is a genuine defect, not a false positive.
 - Findings below the threshold are silently dropped — they do not appear in the review report.
 
@@ -311,7 +311,7 @@ output_files:
   - .specify/.../code-review-report.md
 journal_entries:
   - id: null
-    type: review_complete
+    type: review_finding
     phase: build
     agent: CODE_REVIEWER
     timestamp: null

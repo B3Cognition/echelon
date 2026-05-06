@@ -34,7 +34,7 @@ class RunIntent:
     max_outer: int = 5
     max_inner: int = 3
     token_budget: Optional[int] = None
-    auto_merge: bool = False
+    auto_merge: bool = True
     kill_losers: bool = False
     strategies: List[str] = field(default_factory=lambda: ["default"])
     task_description: str = ""
@@ -117,6 +117,10 @@ _BUDGET_PATTERN = re.compile(
     r"(?:budget|token_budget)\s*[=:]\s*(\d+)",
     re.IGNORECASE,
 )
+_NO_AUTO_MERGE_PATTERN = re.compile(
+    r"\b(?:no|disable)[_\s]?auto[_\s]?merge\b",
+    re.IGNORECASE,
+)
 _AUTO_MERGE_PATTERN = re.compile(
     r"\bauto[_\s]?merge\b",
     re.IGNORECASE,
@@ -178,8 +182,18 @@ def parse_intent(text: str) -> RunIntent:
     if budget_match:
         token_budget = int(budget_match.group(1))
 
-    # Extract auto_merge
-    auto_merge = bool(_AUTO_MERGE_PATTERN.search(text))
+    # Extract auto_merge — default True unless explicitly negated.
+    # For guided mode, default to False (FR-MERGE-001) unless user explicitly says "auto_merge".
+    has_negation = bool(_NO_AUTO_MERGE_PATTERN.search(text))
+    has_positive = bool(_AUTO_MERGE_PATTERN.search(text)) and not has_negation
+    if has_negation:
+        auto_merge = False
+    elif has_positive:
+        auto_merge = True
+    elif mode == "guided":
+        auto_merge = False
+    else:
+        auto_merge = True
 
     # Extract kill_losers
     kill_losers = bool(_KILL_LOSERS_PATTERN.search(text))

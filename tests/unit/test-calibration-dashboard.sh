@@ -3,7 +3,7 @@
 
 set -euo pipefail
 
-AUDITOR_MD="$(dirname "$0")/../../agents/learning/auditor.md"
+AUDITOR_MD="$(dirname "$0")/../../extension/agents/learning/auditor.md"
 PASS=0
 FAIL=0
 
@@ -32,7 +32,7 @@ echo "--- Dashboard Sections ---"
 assert_contains "Section 1: Domain Calibration Overview" \
   "Domain Calibration Overview"
 # Sections 2-3 moved to INTERNALIZER after P1 split — check internalizer.md
-INTERNALIZER_MD="$(dirname "$0")/../../agents/learning/internalizer.md"
+INTERNALIZER_MD="$(dirname "$0")/../../extension/agents/learning/internalizer.md"
 if grep -qiE "Agent Internalization Health|internalization.*health|per-agent.*scoring" "$INTERNALIZER_MD" 2>/dev/null; then
   echo "  PASS: Section 2: Agent Internalization Health (in internalizer.md)"
   PASS=$((PASS + 1))

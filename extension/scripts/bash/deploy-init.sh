@@ -9,7 +9,7 @@ set -euo pipefail
 
 # ── Args ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
-ECHELON_YML="${2:-${PROJECT_ROOT}/echelon.yml}"
+ECHELON_YML="${2:-${PROJECT_ROOT}/echelon-config.yml}"
 STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
 
@@ -43,7 +43,7 @@ fi
 
 # ── Read config ──────────────────────────────────────────────────────────────
 if ! grep -q "^deploy:" "${ECHELON_YML}" 2>/dev/null; then
-  echo "✗ deploy config missing in echelon.yml." >&2
+  echo "✗ deploy config missing in echelon-config.yml." >&2
   echo "  Add a deploy: block with type: http|cli." >&2
   echo "  See config-template.yml for reference." >&2
   exit 1
@@ -70,7 +70,7 @@ try:
         print(d.get('install_path', ''))
     print(d.get('container_port', 80))
 except KeyError as e:
-    sys.exit(f'Cannot read deploy config key {e} from echelon.yml')
+    sys.exit(f'Cannot read deploy config key {e} from echelon-config.yml')
 except Exception as e:
     sys.exit(f'Cannot read deploy config: {e}')
 PYEOF
@@ -189,7 +189,7 @@ for f in "${GLOBAL_STATE_DIR}"/*.json; do
     for WANTED in "${BLUE_PORT}" "${GREEN_PORT}"; do
       if [ "${CLAIMED}" = "${WANTED}" ] && [ -n "${CLAIMED}" ]; then
         echo "✗ Port ${WANTED} is already claimed by app '${OTHER_APP}' (${f})." >&2
-        echo "  Choose different blue_port/green_port in echelon.yml." >&2
+        echo "  Choose different blue_port/green_port in echelon-config.yml." >&2
         exit 1
       fi
     done

@@ -1,5 +1,5 @@
 # Echelon Configuration
-# Copy to echelon.yml and customize
+# Copy to echelon-config.yml and customize
 #
 # GUIDANCE NOTATION:
 #   [range: X-Y]     = sensible values, beyond this is likely wasteful or broken
@@ -133,6 +133,17 @@ convergence:
   # [range: 1-3] How many times ASSESS can DEFER before forced PASS/KILL.
   # @belief(claim: "2 DEFERs is enough information-gathering before forcing a decision; 3+ indicates indecision pathology", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.70, severity: medium)
   defer_loop_limit: 2
+
+  # Confidence floor below which INVESTIGATOR is summoned (or human escalation flagged)
+  # [range: 0.3-0.7] Lower = more tolerant of uncertainty before escalating.
+  calibrate_confidence_floor: 0.5
+
+  # FEP-RLIF routing augmentation (FR-FEP-*) — see commander.md for procedures
+  # [range: see FEP-RLIF documentation]
+  evoi_marginal_range: [0.3, 0.7]     # EVOI range where confidence signals augment routing
+  evoi_confidence_floor: 0.6          # Bias toward dispatch when domain confidence_floor < this (FR-FEP-004)
+  evoi_brier_policy_baseline: 0.70    # Policy baseline for confidence_brier accuracy (FR-FEP-007)
+  evoi_brier_gap_threshold: 0.10      # Gap below baseline triggering confidence_floor governance (FR-FEP-007)
 
 # =============================================================================
 # TOKEN BUDGET ALLOCATION (COMMANDER)
