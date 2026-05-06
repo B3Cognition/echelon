@@ -156,3 +156,38 @@ class TestRunSkillAutoLand:
             run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
 
         assert any("land() returned False" in record.message for record in caplog.records)
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.land.land")
+    def test_land_not_called_when_not_converged(
+        self,
+        mock_land: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_config: MagicMock,
+        mock_parse: MagicMock,
+    ) -> None:
+        """land() is NOT called when auto_merge is True but no strategy converged."""
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import run
+
+        intent = RunIntent(spec_id="012", mode="banzai", auto_merge=True)
+        mock_parse.return_value = intent
+
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_failed_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {},
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 50000},
+        }
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        gitops = MagicMock()
+        provider = MagicMock()
+
+        run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
+
+        mock_land.assert_not_called()

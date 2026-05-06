@@ -172,7 +172,8 @@ def run(
     _print_delivery_summary(intent, result_map, comparison, base_dir, config)
 
     # 8. Auto-land if applicable
-    if intent.auto_merge:
+    converged = comparison.get("summary", {}).get("converged", 0) > 0
+    if intent.auto_merge and converged:
         from harness.land import land
         landed = land(intent.spec_id, project_dir=Path(base_dir), gitops=gitops)
         if landed:
