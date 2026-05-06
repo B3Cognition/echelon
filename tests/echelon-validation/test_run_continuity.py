@@ -33,13 +33,16 @@ class TestRunContinuity:
         assert "timestamp" in run_item
 
     def test_run_md_reads_run_history_at_init_to_skip_phase_a(self) -> None:
-        content = (ECHELON / "commands/echelon.run.md").read_text()
+        # Content moved to workflow/phases/init.md (echelon.run.md is now a thin wrapper)
+        content = (ECHELON.parent / "workflow/phases/init.md").read_text()
         assert "run-history.json" in content
         assert re.search(r"Phase A.*already.*done|phase.*A.*complete|skip.*phase.*A", content, re.IGNORECASE)
 
     def test_run_md_writes_run_history_at_done(self) -> None:
-        content = (ECHELON / "commands/echelon.run.md").read_text()
-        matches = re.findall(r"run-history\.json", content)
+        # Content split across workflow/phases/init.md and phase4-document.md
+        init = (ECHELON.parent / "workflow/phases/init.md").read_text()
+        finalize = (ECHELON.parent / "workflow/phases/phase4-document.md").read_text()
+        matches = re.findall(r"run-history\.json", init + finalize)
         assert len(matches) >= 2
 
     def test_build_md_appends_run_history_and_sets_authoritative_run(self) -> None:

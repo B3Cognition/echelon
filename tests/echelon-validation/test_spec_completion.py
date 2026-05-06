@@ -40,7 +40,8 @@ class TestSpecCompletion:
         assert "completed_tasks" in build["properties"]
 
     def test_run_md_sets_spec_status_planned_after_cartographer(self) -> None:
-        content = (ECHELON / "commands/echelon.run.md").read_text()
+        # Content moved to workflow/phases/phase1-what.md (echelon.run.md is now a thin wrapper)
+        content = (ECHELON.parent / "workflow/phases/phase1-what.md").read_text()
         assert re.search(r"spec_status.*planned", content)
         assert re.search(r"Status.*Planned", content)
 

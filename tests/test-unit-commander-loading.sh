@@ -56,9 +56,9 @@ assert "commander.md contains meta-cognition" \
 assert "commander.md contains token budget management" \
   "grep -q 'Token Budget' '$REPO_ROOT/extension/agents/control/commander.md'"
 
-# 9. MANDATORY FIRST STEP heading exists in echelon.run.md
-assert "echelon.run.md has MANDATORY FIRST STEP" \
-  "grep -q 'MANDATORY FIRST STEP' '$REPO_ROOT/extension/commands/echelon.run.md'"
+# 9. echelon.run.md delegates to commander.md (thin wrapper check)
+assert "echelon.run.md delegates to agents/control/commander.md" \
+  "grep -q 'agents/control/commander.md' '$REPO_ROOT/extension/commands/echelon.run.md'"
 
 # 10. MANDATORY FIRST STEP heading exists in echelon.build.md
 assert "echelon.build.md has MANDATORY FIRST STEP" \

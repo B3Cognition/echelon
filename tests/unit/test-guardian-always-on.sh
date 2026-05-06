@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMMANDER="$ROOT/extension/agents/control/commander.md"
 GUARDIAN="$ROOT/extension/agents/specialists/guardian.md"
-SQUAD_RUN="$ROOT/extension/commands/echelon.run.md"
+SQUAD_RUN="$ROOT/workflow/phases/phase3-specialists.md"
 FAILURES=0
 
 assert_grep() {

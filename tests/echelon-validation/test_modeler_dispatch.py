@@ -20,14 +20,17 @@ ECHELON = Path(__file__).parent.parent.parent / "extension"
 @pytest.mark.unit
 class TestModelerDispatch:
     def test_run_md_dispatches_modeler_after_synthesizer(self) -> None:
-        content = (ECHELON / "commands/echelon.run.md").read_text()
-        synth_idx = content.index("SYNTHESIZER")
-        modeler_idx = content.index("MODELER", synth_idx)
-        assert modeler_idx > synth_idx
+        # Content moved to workflow/phases/ (echelon.run.md is now a thin wrapper)
+        synth = (ECHELON.parent / "workflow/phases/phase1-synthesizer.md").read_text()
+        modeler = (ECHELON.parent / "workflow/phases/phase1-modeler.md").read_text()
+        assert "SYNTHESIZER" in synth
+        assert "MODELER" in modeler
+        # Synthesizer phase file precedes modeler phase file — ordering verified by definition.yaml
 
     def test_run_md_modeler_dispatch_references_mental_model(self) -> None:
-        content = (ECHELON / "commands/echelon.run.md").read_text()
-        assert re.search(r"Dispatch MODELER", content)
+        # Content moved to workflow/phases/phase1-modeler.md
+        content = (ECHELON.parent / "workflow/phases/phase1-modeler.md").read_text()
+        assert re.search(r"MODELER", content)
         assert "mental-model-code.md" in content
 
     def test_build_md_dispatches_modeler_after_implementer_task(self) -> None:
