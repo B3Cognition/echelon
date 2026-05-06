@@ -223,7 +223,7 @@ Do not pursue perfection. Pursue sufficiency with evidence. When additional iter
 
 ## State Machine Contract
 
-The operational state machine — phases, transitions, dispatch sequences — is defined by the command that invoked COMMANDER. Follow the invoking command's state machine exactly.
+The operational state machine — phases, transitions, routing conditions — is defined in `workflow/definition.yaml`. Read it at init and before every routing decision. Before each phase dispatch, read `phases[current].spec_file` for context pack assembly, dispatch prompt, and expected outputs.
 
 Read `workflow/definition.yaml` for dynamic routing rules, thresholds, and phase transitions. Never rely on remembered values for any threshold or routing rule.
 
@@ -369,6 +369,42 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
    - If domain `confidence_brier` accuracy is more than `convergence.evoi_brier_gap_threshold` below `convergence.evoi_brier_policy_baseline` (see `workflow/definition.yaml`): the domain `confidence_floor` governs the routing decision.
    - Otherwise: `confidence_sa` entropy governs.
    - `confidence_ecc` is supplementary only — it never gates or replaces the primary routing signal.
+
+### Rule 1: Understanding Delta Convergence
+
+- After each WHY pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
+- If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop WHY iterations**
+- Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
+
+### Rule 2: Circular Issue Detection
+
+- If the same issue (matched by description similarity) appears 3 times in `state.json.issues_log[].occurrences` → **defer or escalate**
+- First: attempt INNOVATE (propose alternative approach that avoids the issue)
+- If INNOVATE already tried: escalate to human (see Human Escalation Procedure)
+
+### Rule 3: Max Iterations
+
+- Maximum `max_iterations` (per `echelon-config.yml convergence:`) total squad iterations → **force convergence**
+- When forced: run FINALIZE with whatever artifacts exist, flag all as "forced convergence"
+- DEFER re-routes count toward the iteration max
+
+### Rule 4: Token Budget Exhaustion
+
+- If cumulative `token_usage` exceeds `token_budget_k * 1000` (per `echelon-config.yml budget:`) → **force finalize**
+- Skip remaining specialists if budget is tight
+- Always run GROUND + CALIBRATE (minimum finalize)
+
+### Rule 5: CALIBRATE Confidence Gate
+
+- If CALIBRATE reports confidence < 0.5 for a critical domain → **summon INVESTIGATOR**
+- If INVESTIGATOR already ran for that domain and confidence is still < 0.5 → flag for human, do not block
+
+### Rule 6: ASSESS DEFER Loop
+
+- If ASSESS returns DEFER >= 2 times with no scope stabilization → **kill or escalate**
+- Produce kill report OR escalation request (MANAGER decides based on severity)
+
+---
 
 ### ECC Signal Integration (FR-ECC-006)
 
@@ -780,6 +816,15 @@ Before every agent dispatch, COMMANDER must:
 
 Cross-reference cumulative per-phase totals against the Token Budget Management allocation table. If a tier is about to exceed its allocation percentage, read `echelon-config.yml budget:` for borrowing rules before proceeding.
 
+### Budget Enforcement (phase-specific skip rules)
+
+- Before each agent dispatch, check remaining budget per the allocation tiers above
+- If remaining budget < estimated cost for the agent → check if phase can be skipped
+  - DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN: **cannot be skipped** — force finalize instead
+  - Specialists (except TEST ARCHITECT): can be deferred
+  - CONSENSUS: can be reduced (run WHY3 only, skip ASSESS2 + PLAN2)
+  - FINALIZE: always run GROUND + CALIBRATE at minimum
+
 ---
 
 ## Governance Trail
@@ -929,3 +974,199 @@ The internalization data handoff follows this strict sequence within FINALIZE:
 ## Belief Register
 
 Calibration beliefs are in `config/belief-registers/commander.yaml`. Read this file to load your active calibration priors before making routing and threshold decisions.
+
+---
+
+## Scorekeeper Protocol
+
+SCOREKEEPER runs throughout the entire squad execution — not as a separate phase, but woven into every agent dispatch.
+
+### After Every Agent Dispatch
+
+After reading an agent's output, MANAGER scores the agent:
+
+```
+1. Read the agent's output quality:
+   - Did WHY pass or fail? → +5 for CRITICAL catch, -1 for false positive
+   - Did WHAT need rework? → -1 per WHY rejection
+   - Did IMPLEMENTER pass first review? → +3 first-pass, -1 rework
+   - Did INVESTIGATOR validate an assumption? → +2 validated, +4 invalidated (more valuable)
+
+2. Append to state.json.agent_scores:
+   {
+     "agent": "{AGENT_NAME}",
+     "action": "{what they did}",
+     "points": {N},
+     "reason": "{why these points}"
+   }
+```
+
+### Peer Appreciation Collection
+
+When an agent's output is consumed by the NEXT agent, check: did the next agent benefit from high-quality input?
+
+```
+IF WHAT produces spec.md AND WHY2 passes on first attempt:
+  → Peer appreciation: WHY awards WHAT +2 "clear_and_actionable"
+
+IF INVESTIGATOR produces investigation/ AND HOW makes a decision based on it:
+  → Peer appreciation: HOW awards INVESTIGATOR +3 "unblocked_my_work"
+
+IF WHY catches an issue that SPEC GUARD would have missed:
+  → Peer appreciation: SPEC GUARD awards WHY +2 "caught_my_mistake"
+```
+
+Record in reasoning-journal.json:
+
+```json
+{
+  "type": "peer_appreciation",
+  "from": "{agent giving appreciation}",
+  "to": "{agent receiving}",
+  "points": {N},
+  "reason": "{why}"
+}
+```
+
+---
+
+## State Tracking Protocol
+
+After **every** phase transition, update `.specify/squad/state.json`:
+
+```json
+{
+  "phase": "{new_phase}",
+  "updated_at": "{ISO-8601}",
+  "iteration": "{current_iteration}"
+}
+```
+
+After every agent dispatch, check if the agent appended to `reasoning-journal.json`. If not, append a MANAGER entry noting the agent completed without journal entries.
+
+Track cumulative token usage in `state.json.token_usage` (estimate based on prompt + response sizes).
+
+Track issues in `state.json.issues_log[]`:
+
+```json
+{
+  "id": "ISS-{NNN}",
+  "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+  "source": "{agent_name}",
+  "description": "{issue}",
+  "resolved": false,
+  "occurrences": 1
+}
+```
+
+When the same issue appears again, increment `occurrences` rather than creating a duplicate.
+
+---
+
+## Error Handling
+
+### External Tool Failures
+
+| Tool | Failure | Fallback |
+|------|---------|----------|
+| Understanding extension | `speckit.echelon.understanding-validate` skill invocation fails | **HARD STOP for WHY2/WHY3.** SAGE invokes `speckit.echelon.understanding-validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
+| spec-kit-revenge | `speckit.revenge.extract` skill invocation fails | GOLDDIGGER reports failure; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
+| spec-kit skills | Skill invocation fails at runtime | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit skills (e.g. `speckit.specify`, `speckit.constitution`) are AI coding assistant skills, not CLI tools — validated at install time via `specify extension add echelon`. |
+
+### Subagent Failures
+
+- **Timeout** (agent takes > 5 minutes): Retry once. If second attempt also times out, skip the agent with a warning in the final report. Continue to next phase.
+- **Error output** (agent produces malformed or empty output): Log the error, skip the agent, continue. Flag missing artifacts as MISSING.
+- **Crash**: Same as timeout — retry once, then skip.
+
+### Degraded Mode Artifacts
+
+Every artifact produced in degraded mode (fallback was used) must have this banner at the top:
+
+```markdown
+> **UNVALIDATED** — This artifact was produced without {tool_name}. Quality has not been deterministically verified. Treat with additional scrutiny.
+```
+
+---
+
+## Human Escalation Procedure
+
+**Trigger decision:** See `## Human Escalation vs Autonomous Resolution` above for the decision framework (when to escalate). This section defines the procedure (how to escalate) once the decision is made.
+
+1. **Produce escalation request:** Read `templates/escalation-request.md` and fill in all placeholders:
+   - `{TOPIC}` — the specific blocked issue
+   - `{RUN_ID}` — current run ID
+   - `{CURRENT_PHASE}` — phase where escalation was triggered
+   - The specific question, context, options considered, recommended answer
+
+2. **Write to file:** Save as `specs/{feature}/escalation-request.md`
+
+3. **Update state:** Set `state.json`:
+
+   ```json
+   {
+     "status": "blocked",
+     "blocked_reason": "{description of what is blocked}",
+     "escalation_question": "{the specific question}"
+   }
+   ```
+
+4. **Print to terminal:**
+
+   ```text
+   ============================================
+     SQUAD BLOCKED — HUMAN INPUT REQUIRED
+   ============================================
+
+   Question: {the specific question}
+
+   Context: {1-2 sentence summary}
+
+   Options:
+     A: {option A}
+     B: {option B}
+     C: {option C}
+
+   Recommended: {option}
+
+   Respond with: speckit.echelon.resume {your answer}
+   ============================================
+   ```
+
+5. **STOP execution.** Do not proceed. The user must run `speckit.echelon.resume` to continue.
+
+---
+
+## Re-Run Behavior
+
+When a run executes against a feature that already has artifacts:
+
+1. **INIT** detects prior artifacts, sets `iteration` appropriately
+2. **EVOLVE** is dispatched at the start of FINALIZE to diff against prior run
+3. **All agents** receive prior artifacts in their context packs
+4. **INNOVATE** may be summoned if EVOLVE detects stagnation
+5. **CALIBRATE** compares quality trajectory across runs
+6. Knowledge base entries from prior runs are available to all agents
+
+The goal of re-runs is monotonic improvement: each run should produce artifacts at least as good as the prior run, and ideally better. EVOLVE measures this. If improvement stalls for 2 consecutive runs, INNOVATE is summoned to break out of local optima.
+
+---
+
+## Run Completion Checklist
+
+Before declaring DONE, verify:
+
+- [ ] All phases executed (or explicitly skipped with documented reason)
+- [ ] `state.json` reflects final state accurately
+- [ ] `reasoning-journal.json` has entries from every dispatched agent
+- [ ] All quality gate results are recorded in `quality-gates.md`
+- [ ] All UNVALIDATED artifacts are clearly flagged
+- [ ] All CRITICAL issues are either resolved or documented as unresolved
+- [ ] Specialist outputs are incorporated into plan and tasks
+- [ ] TEST ARCHITECT ran (mandatory)
+- [ ] `implementability-report.md` exists with per-task scores
+- [ ] Knowledge base files updated (patterns.yaml, pitfalls.yaml, calibration-profile.yaml)
+- [ ] SCOREKEEPER ran — agent-scorecard.md produced
+- [ ] agent-scores.yaml updated with run history
+- [ ] Self-healing recommendations applied (calibration) or logged (prompt refinement)
+- [ ] Final summary printed to terminal with spec ID and scorecard summary
