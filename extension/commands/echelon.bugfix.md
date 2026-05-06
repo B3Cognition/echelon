@@ -179,10 +179,28 @@ on the default branch):
 
 ```bash
 FEATURE_BRANCH="{spec_id}-{spec_name}"
-git checkout "$FEATURE_BRANCH"
+git checkout "$FEATURE_BRANCH" 2>/dev/null
 ```
 
-If the feature branch does not exist, report **"Feature branch `{spec_id}-{spec_name}` not found. Has `echelon.run` been completed for this spec?"** and stop.
+If the feature branch does not exist, create it before proceeding:
+
+1. Derive the feature description from the spec directory name `{spec_name}` (replace
+   hyphens with spaces). For example, directory `042-feed-parser` yields description
+   `feed parser`.
+2. Invoke `speckit.git.feature` via the Skill tool with the derived description.
+   This creates a new branch following spec-kit's naming convention and checks it out.
+3. If `speckit.git.feature` is unavailable (Skill tool errors), fall back to running
+   the script directly:
+
+   ```bash
+   .specify/extensions/git/scripts/bash/create-new-feature.sh --json --allow-existing-branch --short-name "{spec_name}" "{spec_name}"
+   git checkout "{spec_id}-{spec_name}"
+   ```
+
+4. Confirm the branch is active: `git branch --show-current`.
+5. Log: `bugfix: created missing feature branch {FEATURE_BRANCH} for spec {spec_id}`.
+
+Proceed with the rest of Step 5 on the newly created (or existing) feature branch.
 
 Determine the next bugfix index:
 
