@@ -191,3 +191,45 @@ class TestRunSkillAutoLand:
         run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
 
         mock_land.assert_not_called()
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.land.land")
+    def test_land_exception_caught_and_logged(
+        self,
+        mock_land: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_config: MagicMock,
+        mock_parse: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """When land() raises, the exception is caught and a warning is logged."""
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import run
+
+        intent = RunIntent(spec_id="012", mode="banzai", auto_merge=True)
+        mock_parse.return_value = intent
+
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {},
+            "summary": {"converged": 1, "failed": 0, "total_tokens": 10000},
+        }
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        mock_land.side_effect = RuntimeError("git merge failed")
+
+        gitops = MagicMock()
+        provider = MagicMock()
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="harness.skills.run_skill"):
+            # Must not raise
+            run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
+
+        assert any("land() raised" in record.message for record in caplog.records)
+        assert any("git merge failed" in record.message for record in caplog.records)

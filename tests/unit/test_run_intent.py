@@ -131,9 +131,19 @@ class TestParseIntent:
         assert intent.max_outer == 5
         assert intent.max_inner == 3
         assert intent.token_budget is None
-        assert intent.auto_merge is False
+        assert intent.auto_merge is True
         assert intent.kill_losers is False
         assert intent.strategies == ["default"]
+
+    def test_no_auto_merge(self) -> None:
+        """Explicit negation disables auto_merge."""
+        intent = parse_intent("spec 012 banzai no_auto_merge")
+        assert intent.auto_merge is False
+
+    def test_disable_auto_merge(self) -> None:
+        """'disable auto_merge' also disables auto_merge."""
+        intent = parse_intent("spec 012 banzai disable auto_merge")
+        assert intent.auto_merge is False
 
     def test_missing_spec_id_raises(self) -> None:
         """FR-CLI-001: missing spec_id raises with clarifying question."""

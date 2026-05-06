@@ -175,8 +175,11 @@ def run(
     converged = comparison.get("summary", {}).get("converged", 0) > 0
     if intent.auto_merge and converged:
         from harness.land import land
-        landed = land(intent.spec_id, project_dir=Path(base_dir), gitops=gitops)
-        if landed:
-            print("  Auto-landed successfully!", file=sys.stderr)
-        else:
-            logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)
+        try:
+            landed = land(intent.spec_id, project_dir=Path(base_dir), gitops=gitops)
+            if landed:
+                print("  Auto-landed successfully!", file=sys.stderr)
+            else:
+                logger.warning("auto-land: land() returned False for spec %s", intent.spec_id)
+        except Exception as e:
+            logger.warning("auto-land: land() raised for spec %s: %s", intent.spec_id, e)
