@@ -53,14 +53,15 @@ If `$ARGUMENTS` is provided, use it as the focus area for innovation. Otherwise,
 
 ---
 
-## Step 3: Dispatch INNOVATE
+## Step 3: Dispatch speckit-echelon-maverick (MAVERICK)
 
 Read the INNOVATE agent prompt from `.specify/extensions/echelon/agents/specialists/maverick.md`.
 
-Use the **Agent tool** to dispatch INNOVATE as a subagent:
+Use the **Agent tool** to dispatch speckit-echelon-maverick as a subagent:
 
+- **subagent_type:** `speckit-echelon-maverick`
 - **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
-- **description:** "INNOVATE: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
+- **description:** "speckit-echelon-maverick: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
 
 > **After the subagent returns, proceed immediately to Step 4. Do not end your response here.**
 

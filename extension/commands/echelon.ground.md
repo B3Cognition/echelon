@@ -61,14 +61,15 @@ If `$ARGUMENTS` is provided, use it to focus the reality check on a specific are
 
 ---
 
-## Step 3: Dispatch GROUND
+## Step 3: Dispatch speckit-echelon-realist (REALIST)
 
 Read the GROUND agent prompt from `.specify/extensions/echelon/agents/learning/realist.md`.
 
-Use the **Agent tool** to dispatch GROUND as a subagent:
+Use the **Agent tool** to dispatch speckit-echelon-realist as a subagent:
 
+- **subagent_type:** `speckit-echelon-realist`
 - **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{$ARGUMENTS or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
-- **description:** "GROUND: reality check -- {$ARGUMENTS summary or 'full artifact sweep'}"
+- **description:** "speckit-echelon-realist: reality check -- {$ARGUMENTS summary or 'full artifact sweep'}"
 
 > **After the subagent returns, proceed immediately to Step 4. Do not end your response here.**
 
