@@ -69,11 +69,11 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 
 **Rules:**
 
-1. **NO agent may overwrite, weaken, remove, or contradict any constitution principle.** This includes HOW, ASSESS, PLAN, INNOVATE — every agent without exception.
+1. **NO agent may overwrite, weaken, remove, or contradict any constitution principle.** This includes ARCHITECT, GATEKEEPER, ORCHESTRATOR, MAVERICK — every agent without exception.
 
-2. **HOW may APPEND technical principles** (e.g., ADR-level decisions like "use TypeScript strict mode") but these additions:
+2. **speckit-echelon-architect (ARCHITECT) may APPEND technical principles** (e.g., ADR-level decisions like "use TypeScript strict mode") but these additions:
    - MUST NOT contradict any existing human-defined principle
-   - MUST be validated by WHY before taking effect
+   - MUST be validated by speckit-echelon-sage (SAGE) before taking effect
    - MUST be clearly labeled as "squad-generated" vs "human-defined"
 
 3. **If any agent's output conflicts with the constitution:**
