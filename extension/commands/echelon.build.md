@@ -915,8 +915,9 @@ For each expert dispatch:
 
 **a) Understanding re-scan:**
 
-Dispatch SAGE in post-build-validation mode:
+Dispatch speckit-echelon-sage (SAGE) in post-build-validation mode using the Agent tool:
 
+- **subagent_type:** `speckit-echelon-sage`
 - **prompt:**
 
   ```xml
@@ -937,8 +938,9 @@ Dispatch SAGE in post-build-validation mode:
 
 **Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.post_build_intent_check` (default: `true`).
 
-Dispatch TRACKER in post-build-alignment mode:
+Dispatch speckit-echelon-tracker (TRACKER) in post-build-alignment mode using the Agent tool:
 
+- **subagent_type:** `speckit-echelon-tracker`
 - **prompt:**
 
   ```xml
