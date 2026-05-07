@@ -372,15 +372,15 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 
 ### Rule 1: Understanding Delta Convergence
 
-- After each WHY pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
-- If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop WHY iterations**
+- After each SAGE pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
+- If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop SAGE iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
 ### Rule 2: Circular Issue Detection
 
 - If the same issue (matched by description similarity) appears 3 times in `state.json.issues_log[].occurrences` → **defer or escalate**
-- First: attempt INNOVATE (propose alternative approach that avoids the issue)
-- If INNOVATE already tried: escalate to human (see Human Escalation Procedure)
+- First: dispatch speckit-echelon-maverick (MAVERICK) to propose an alternative approach that avoids the issue
+- If speckit-echelon-maverick already ran for this issue: escalate to human (see Human Escalation Procedure)
 
 ### Rule 3: Max Iterations
 
@@ -392,17 +392,17 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 
 - If cumulative `token_usage` exceeds `token_budget_k * 1000` (per `echelon-config.yml budget:`) → **force finalize**
 - Skip remaining specialists if budget is tight
-- Always run GROUND + CALIBRATE (minimum finalize)
+- Always run speckit-echelon-realist (REALIST) + speckit-echelon-auditor (AUDITOR) at minimum (minimum finalize)
 
-### Rule 5: CALIBRATE Confidence Gate
+### Rule 5: AUDITOR Confidence Gate
 
-- If CALIBRATE reports confidence < 0.5 for a critical domain → **summon INVESTIGATOR**
-- If INVESTIGATOR already ran for that domain and confidence is still < 0.5 → flag for human, do not block
+- If speckit-echelon-auditor (AUDITOR) reports confidence < 0.5 for a critical domain → **dispatch speckit-echelon-investigator (INVESTIGATOR)**
+- If speckit-echelon-investigator already ran for that domain and confidence is still < 0.5 → flag for human, do not block
 
-### Rule 6: ASSESS DEFER Loop
+### Rule 6: GATEKEEPER DEFER Loop
 
-- If ASSESS returns DEFER >= 2 times with no scope stabilization → **kill or escalate**
-- Produce kill report OR escalation request (MANAGER decides based on severity)
+- If speckit-echelon-gatekeeper (GATEKEEPER) returns DEFER >= 2 times with no scope stabilization → **kill or escalate**
+- Produce kill report OR escalation request (COMMANDER decides based on severity)
 
 ---
 
@@ -459,10 +459,10 @@ Before every routing decision, ask:
 
 **Escalate to human when:**
 - Same issue appears `convergence.issue_repetition_limit` times without resolution (see `workflow/definition.yaml`)
-- CALIBRATE confidence below `convergence.calibrate_confidence_floor` after INVESTIGATOR investigation (see `workflow/definition.yaml`)
+- speckit-echelon-auditor (AUDITOR) confidence below `convergence.calibrate_confidence_floor` after INVESTIGATOR investigation (see `workflow/definition.yaml`)
 - Agents produce contradictory evidence at the same grade level with no tiebreaker
 - A domain question cannot be answered from available evidence
-- ASSESS produces DEFER `assess.defer_loop_limit` times (default: 2, read via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh assess.defer_max_iterations`) with no scope stabilization
+- speckit-echelon-gatekeeper (GATEKEEPER) produces DEFER `assess.defer_loop_limit` times (default: 2, read via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh assess.defer_max_iterations`) with no scope stabilization
 
 **Resolve autonomously when:**
 - Evidence hierarchy provides a clear winner
