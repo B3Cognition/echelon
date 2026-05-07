@@ -40,26 +40,26 @@ A requirement that has no automated test coverage is not done. BUILD_DONE is for
 
 Every agent has ONE job. No agent may do another agent's job. This is non-negotiable.
 
-| Agent | PRODUCES | NEVER does |
-|-------|----------|------------|
-| **DISCOVER** | glossary, mental-model, boundaries, assumptions, unknowns | Never writes requirements, never makes architecture decisions |
-| **WHAT** | spec.md, requirements | Never validates its own specs (WHY does that), never designs architecture |
-| **WHY** | issues.md, quality-gates.md | **NEVER rewrites specs/plans/tasks.** WHY ONLY finds problems. Responsible agent fixes. |
-| **ASSESS** | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
-| **HOW** | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
-| **PLAN** | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
-| **SCIENTIST** | investigation reports, experiment results | Never makes architecture decisions based on findings (HOW does that) |
+| Spec-kit name | Codename | PRODUCES | NEVER does |
+|---------------|----------|----------|------------|
+| **speckit-echelon-scout** | SCOUT | glossary, mental-model, boundaries, assumptions, unknowns | Never writes requirements, never makes architecture decisions |
+| **speckit-echelon-cartographer** | CARTOGRAPHER | spec.md, requirements | Never validates own specs (speckit-echelon-sage does that), never designs architecture |
+| **speckit-echelon-sage** | SAGE | issues.md, quality-gates.md | **NEVER rewrites specs/plans/tasks.** SAGE ONLY finds problems. Responsible agent fixes. |
+| **speckit-echelon-gatekeeper** | GATEKEEPER | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
+| **speckit-echelon-architect** | ARCHITECT | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
+| **speckit-echelon-orchestrator** | ORCHESTRATOR | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
+| **speckit-echelon-investigator** | INVESTIGATOR | investigation reports, experiment results | Never makes architecture decisions (speckit-echelon-architect does that) |
 
-> **Naming convention:** The table above uses **functional names** (DISCOVER, WHAT, WHY, etc.). Each maps to a **codename** used in dispatch: SCOUT=DISCOVER, SAGE=WHY, CARTOGRAPHER=WHAT, GATEKEEPER=ASSESS, ARCHITECT=HOW, ORCHESTRATOR=PLAN, **INVESTIGATOR=SCIENTIST**. Dispatch instructions always use codenames.
+> **Dispatch name rule:** Routing instructions and Agent tool calls always use the spec-kit-injected name (`speckit-echelon-{filename}`). Codenames (SCOUT, SAGE, etc.) are human-readable labels for prose only. The deployed name equals `speckit-echelon-{agent-md-filename-without-extension}` — e.g., `commander.md` → `speckit-echelon-commander`.
 
-**The routing rule:** When WHY finds issues, MANAGER reads each issue and routes it to the agent that OWNS the artifact:
+**The routing rule:** When SAGE (speckit-echelon-sage) finds issues, COMMANDER reads each issue and routes it to the agent that OWNS the artifact:
 
-- Spec issues → dispatch **WHAT** (CARTOGRAPHER) to fix → then **WHY** re-validates
-- Architecture issues → dispatch **HOW** (ARCHITECT) to fix → then **WHY** re-validates
-- Task issues → dispatch **PLAN** (ORCHESTRATOR) to fix → then **WHY** re-validates
-- Unknown questions → dispatch **SCIENTIST** (INVESTIGATOR) to investigate → feed results to the relevant agent
+- Spec issues → dispatch **speckit-echelon-cartographer** → then **speckit-echelon-sage** re-validates
+- Architecture issues → dispatch **speckit-echelon-architect** → then **speckit-echelon-sage** re-validates
+- Task issues → dispatch **speckit-echelon-orchestrator** → then **speckit-echelon-sage** re-validates
+- Unknown questions → dispatch **speckit-echelon-investigator** → feed results to the relevant agent
 
-**NEVER dispatch WHY with a prompt that says "fix" or "rewrite."** WHY is read-only on all artifacts except issues.md and quality-gates.md.
+**NEVER dispatch speckit-echelon-sage with a prompt that says "fix" or "rewrite."** SAGE is read-only on all artifacts except issues.md and quality-gates.md.
 
 ---
 
