@@ -54,6 +54,7 @@ Load: spec.md, traceability-matrix.md, tasks.md, constitution.md
 
 Use the Agent tool to dispatch a subagent:
 
+- **subagent_type:** `speckit-echelon-verification`
 - Read `agents/build/verification.md` for the full prompt
 - Provide: spec.md (full), all source code paths, all test paths, traceability-matrix.md
 - The agent will check EVERY FR-*, AC-*, and NFR-* against the codebase
@@ -64,9 +65,9 @@ Use the Agent tool to dispatch a subagent:
 
 For split BUILD/QA runs, execute batch reviewers before VERIFICATION:
 
-1. SPEC_GUARD (batch requirement-to-task matrix)
-2. CODE_REVIEWER (holistic inconsistency scoring)
-3. TEST_GUARDIAN (aggregate QA test evidence)
+1. speckit-echelon-spec-guard (SPEC GUARD — batch requirement-to-task matrix)
+2. speckit-echelon-code-reviewer (CODE REVIEWER — holistic inconsistency scoring)
+3. speckit-echelon-test-guardian (TEST GUARDIAN — aggregate QA test evidence)
 4. INTEGRATOR
 5. VISUAL_VALIDATOR (if applicable)
 6. VERIFICATION (final deterministic coverage verdict)

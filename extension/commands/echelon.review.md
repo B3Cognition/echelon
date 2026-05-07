@@ -162,12 +162,15 @@ For each file referenced in the group's comments, read the surrounding ±20 line
 
 ### 4b. DEBUGGER — Root Cause
 
-Dispatch `.specify/extensions/echelon/agents/build/debugger.md` with:
+Dispatch speckit-echelon-debugger using the Agent tool:
 
-- The comment body/bodies for this group
-- The reviewer name(s)
-- The file + line context from 4a
-- `spec.md`
+- **subagent_type:** `speckit-echelon-debugger`
+- **prompt:**
+  - The comment body/bodies for this group
+  - The reviewer name(s)
+  - The file + line context from 4a
+  - `spec.md`
+- **description:** "DEBUGGER: G{i} — root cause analysis"
 
 DEBUGGER must produce:
 - Exact root cause (file + line + mechanism)
@@ -180,12 +183,15 @@ If DEBUGGER cannot identify a root cause (comment is too vague, referenced code 
 
 ### 4c. SENTINEL — Test Strategy
 
-Dispatch `.specify/extensions/echelon/agents/solution/sentinel.md` with:
+Dispatch speckit-echelon-sentinel using the Agent tool:
 
-- `{debugger_report_i}`
-- `spec.md`
-- `coverage-map.md`
-- Existing test files for the affected component
+- **subagent_type:** `speckit-echelon-sentinel`
+- **prompt:**
+  - `{debugger_report_i}`
+  - `spec.md`
+  - `coverage-map.md`
+  - Existing test files for the affected component
+- **description:** "SENTINEL: G{i} — test strategy"
 
 SENTINEL must produce:
 - A failing test specification (assertion only, not implementation)
@@ -195,11 +201,14 @@ Store as `{test_strategy_i}`.
 
 ### 4d. SPEC GUARD — Scope Validation
 
-Dispatch `.specify/extensions/echelon/agents/build/spec-guard.md` with:
+Dispatch speckit-echelon-spec-guard using the Agent tool:
 
-- `spec.md`
-- `coverage-map.md`
-- `{debugger_report_i}`
+- **subagent_type:** `speckit-echelon-spec-guard`
+- **prompt:**
+  - `spec.md`
+  - `coverage-map.md`
+  - `{debugger_report_i}`
+- **description:** "SPEC GUARD: G{i} — scope validation"
 
 SPEC GUARD confirms the fix is within spec boundary. If scope expansion is required, it must say so explicitly.
 
