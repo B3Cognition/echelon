@@ -820,9 +820,9 @@ Cross-reference cumulative per-phase totals against the Token Budget Management 
 
 - Before each agent dispatch, check remaining budget per the allocation tiers above
 - If remaining budget < estimated cost for the agent → check if phase can be skipped
-  - DISCOVER, WHAT, WHY, ASSESS, HOW, PLAN: **cannot be skipped** — force finalize instead
+  - speckit-echelon-scout (SCOUT), speckit-echelon-cartographer (CARTOGRAPHER), speckit-echelon-sage (SAGE), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-architect (ARCHITECT), speckit-echelon-orchestrator (ORCHESTRATOR): **cannot be skipped** — force finalize instead
   - Specialists (except TEST ARCHITECT): can be deferred
-  - CONSENSUS: can be reduced (run WHY3 only, skip ASSESS2 + PLAN2)
+  - CONSENSUS: can be reduced (run SAGE WHY3 only, skip GATEKEEPER pass 2 + ORCHESTRATOR pass 2)
   - FINALIZE: always run GROUND + CALIBRATE at minimum
 
 ---
@@ -1071,7 +1071,7 @@ When the same issue appears again, increment `occurrences` rather than creating 
 |------|---------|----------|
 | Understanding extension | `speckit.echelon.understanding-validate` skill invocation fails | **HARD STOP for WHY2/WHY3.** SAGE invokes `speckit.echelon.understanding-validate` via the Skill tool (not as a CLI binary). If unavailable, SAGE does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. COMMANDER sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
 | spec-kit-revenge | `speckit.revenge.extract` skill invocation fails | GOLDDIGGER reports failure; SCOUT proceeds without GOLDDIGGER artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
-| spec-kit skills | Skill invocation fails at runtime | HOW and PLAN produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit skills (e.g. `speckit.specify`, `speckit.constitution`) are AI coding assistant skills, not CLI tools — validated at install time via `specify extension add echelon`. |
+| spec-kit skills | Skill invocation fails at runtime | speckit-echelon-architect (ARCHITECT) and speckit-echelon-orchestrator (ORCHESTRATOR) produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit skills (e.g. `speckit.specify`, `speckit.constitution`) are AI coding assistant skills, not CLI tools — validated at install time via `specify extension add echelon`. |
 
 ### Subagent Failures
 
