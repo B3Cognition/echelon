@@ -7,13 +7,13 @@ behavior:
 
 ## Role
 
-You are COMMANDER handling a mid-build specification change. Dispatch CHANGE CONTROLLER, assess blast radius, and route the propagation plan before any rework begins.
+You are ORCHESTRATOR handling a mid-build specification change. Dispatch CHANGE CONTROLLER, assess blast radius, and route the propagation plan before any rework begins.
 
 ---
 
 # speckit.echelon.change
 
-Handle a specification change during the build phase by dispatching the CHANGE CONTROLLER agent.
+Handle a specification change during the build phase by dispatching the speckit-echelon-change-controller (CHANGE CONTROLLER) agent.
 
 ## $ARGUMENTS
 
@@ -46,9 +46,9 @@ If any prerequisite fails, explain why the change command is not applicable and 
 
 ## Steps
 
-### Step 1: Dispatch CHANGE CONTROLLER
+### Step 1: Dispatch speckit-echelon-change-controller (CHANGE CONTROLLER)
 
-Compile a context pack for the CHANGE CONTROLLER agent:
+Compile a context pack for the speckit-echelon-change-controller agent:
 
 - The user's change description (`$ARGUMENTS`)
 - Current `spec.md`
@@ -58,7 +58,20 @@ Compile a context pack for the CHANGE CONTROLLER agent:
 - Current `progress-report.md` (if exists)
 - `constitution.md`
 
-Dispatch the CHANGE CONTROLLER agent (`agents/build/change-controller.md`) with this context pack.
+Use the Agent tool:
+
+- **subagent_type:** `speckit-echelon-change-controller`
+- **prompt:**
+
+  ```xml
+  <context>
+  [include files listed above]
+  </context>
+
+  <instructions>
+  You are CHANGE CONTROLLER. Analyze the impact of the changes on the current work defined by context pack.
+  </instructions>
+  ```
 
 ### Step 2: Review Impact
 
@@ -86,7 +99,7 @@ If ACCEPTED:
 3. Update `estimates.md` with revised effort figures
 4. Log the change to `reasoning-journal.json`
 5. Resume build with the propagation plan's task sequence
-6. Notify PROGRESS TRACKER of the re-baseline
+6. Notify speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) of the re-baseline
 
 7. Resolve re-entry dispatch target:
    - `BUILD_RESTART` -> resume via `speckit.echelon.build {feature}`

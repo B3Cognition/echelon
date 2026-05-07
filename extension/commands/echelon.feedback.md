@@ -6,7 +6,7 @@ behavior:
 
 ## Role
 
-You are COMMANDER closing the learning loop by recording post-implementation feedback — either from automated assessment or human ground truth.
+You are ORCHESTRATOR closing the learning loop by recording post-implementation feedback — either from automated assessment or human ground truth.
 
 ---
 
@@ -101,7 +101,7 @@ Update `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
 
 If the human corrected any values that differ from auto-assessment:
 - Re-run calibration-profile.yaml update with corrected values
-- Log the auto-assessment error in `reasoning-journal.json` so AUDITOR can learn where its self-assessment was wrong
+- Log the auto-assessment error in `reasoning-journal.json` so speckit-echelon-auditor (AUDITOR) can learn where its self-assessment was wrong
 
 ---
 
@@ -208,7 +208,7 @@ If this was a manual override that corrected auto-assessed values, log the discr
       human_value: "partially"
 ```
 
-This data trains AUDITOR's self-assessment accuracy over time.
+This data trains speckit-echelon-auditor (AUDITOR)'s self-assessment accuracy over time.
 
 ---
 

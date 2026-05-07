@@ -8,7 +8,7 @@ scripts:
 
 ## Role
 
-You are COMMANDER executing the build phase. Your job is to orchestrate the per-task loop — dispatch agents, route results, and decide when building is truly DONE.
+You are ORCHESTRATOR executing the build phase. Your job is to orchestrate the per-task loop — dispatch agents, route results, and decide when building is truly DONE.
 
 ---
 
@@ -18,9 +18,9 @@ $ARGUMENTS
 
 ---
 
-## COMMANDER Loading — MANDATORY FIRST STEP
+## speckit-echelon-commander (COMMANDER) Loading — MANDATORY FIRST STEP
 
-**Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the COMMANDER. The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and build phase orchestration rules. These govern ALL routing, iteration, and escalation decisions throughout the build.
+**Read the file `agents/control/commander.md` for your complete decision-making framework.** You are the speckit-echelon-commander (COMMANDER). The file contains your Evidence Hierarchy, EVOI analysis, Toulmin conflict resolution, meta-cognition checklist, token budget borrow rules, and build phase orchestration rules. These govern ALL routing, iteration, and escalation decisions throughout the build.
 
 Then execute the build state machine below.
 
@@ -28,7 +28,7 @@ Then execute the build state machine below.
 
 ## Overview
 
-This command runs **Phase B: Building** of the Echelon. You are the **COMMANDER** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
+This command runs **Phase B: Building** of the Echelon. You are the **speckit-echelon-commander (COMMANDER)** — the orchestrator of 6 build-phase cognitive functions that execute the implementation plan produced by Phase A (Understanding).
 
 The user provides:
 
@@ -61,9 +61,9 @@ For task execution, leverage spec-kit's implementation workflow:
    - Project setup (ignore files, directory structure)
    - Task ordering and progress tracking
 2. Squad adds quality gates after each task:
-   - SPEC GUARD verifies code matches spec
-   - CODE REVIEWER checks quality and ADR compliance
-   - TEST GUARDIAN validates test coverage
+   - speckit-echelon-spec-guard (SPEC GUARD) verifies code matches spec
+   - speckit-echelon-code-reviewer (CODE REVIEWER) checks quality and ADR compliance
+   - speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) validates test coverage
 3. On task completion, spec-kit marks it done in tasks.md
 
 This gives us: spec-kit's proven task execution + squad's multi-agent quality gates.
@@ -189,7 +189,7 @@ For `002-build-qa-phase-split`, BUILD execution uses dependency-safe wave lanes:
 
 1. Group tasks by dependency level (same level = same wave).
 2. Execute tasks in each wave before moving to the next wave.
-3. Within a wave, process up to 3 IMPLEMENTER lanes.
+3. Within a wave, process up to 3 speckit-echelon-implementer (IMPLEMENTER) lanes.
 4. A failed task in a wave must not block unrelated tasks in that same wave.
 5. A failed task must block only dependents in later waves.
 
@@ -214,7 +214,7 @@ Before allowing QA entry, enforce blocked semantics:
 }
 ```
 
-### 2.3 Dispatch IMPLEMENTER
+### 2.3 Dispatch speckit-echelon-implementer (IMPLEMENTER)
 
 Compile context pack:
 
@@ -244,15 +244,15 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "IMPLEMENTER: {task_id} — {task_title}"
+- **description:** "speckit-echelon-implementer (IMPLEMENTER): {task_id} — {task_title}"
 
-### 2.4 Handle IMPLEMENTER Result
+### 2.4 Handle speckit-echelon-implementer (IMPLEMENTER) Result
 
-- **DONE / DONE_WITH_CONCERNS** — Proceed to SPEC GUARD
-- **NEEDS_CONTEXT** — MANAGER reads the question, compiles additional context, re-dispatches IMPLEMENTER. Max 2 re-dispatches per task.
+- **DONE / DONE_WITH_CONCERNS** — Proceed to speckit-echelon-spec-guard (SPEC GUARD)
+- **NEEDS_CONTEXT** — MANAGER reads the question, compiles additional context, re-dispatches speckit-echelon-implementer (IMPLEMENTER). Max 2 re-dispatches per task.
 - **BLOCKED** — Log the blocker. Skip to next task. If 3 tasks are BLOCKED, pause and assess (MANAGER may need to re-order tasks or escalate).
 
-**Inline execution mode:** If COMMANDER executes task work directly in the main conversation (without dispatching IMPLEMENTER as a subagent), COMMANDER MUST still execute Sections 3 through 6.3 in sequence: run quality gate checks, track progress, and update `state.json` via Section 6.3. Skipping subagent dispatch does NOT skip state tracking. The `build.completed_tasks` counter must be incremented after every task regardless of execution mode.
+**Inline execution mode:** If speckit-echelon-commander (COMMANDER) executes task work directly in the main conversation (without dispatching speckit-echelon-implementer (IMPLEMENTER) as a subagent), speckit-echelon-commander (COMMANDER) MUST still execute Sections 3 through 6.3 in sequence: run quality gate checks, track progress, and update `state.json` via Section 6.3. Skipping subagent dispatch does NOT skip state tracking. The `build.completed_tasks` counter must be incremented after every task regardless of execution mode.
 
 ### 2.5 Build Handoff Package
 
@@ -271,11 +271,11 @@ If package invariants fail, emit `BUILD_QA_HANDOFF_REJECTED` and stop transition
 
 ## 3. Spec Guard Gate (SPEC_GUARD)
 
-### 3.1 Dispatch SPEC GUARD
+### 3.1 Dispatch speckit-echelon-spec-guard (SPEC GUARD)
 
 Compile context pack:
 
-- Files changed by IMPLEMENTER
+- Files changed by speckit-echelon-implementer (IMPLEMENTER)
 - The task definition (acceptance criteria, FR-* references)
 - Referenced FR-* requirements from `spec.md`
 - Full `spec.md` for cross-reference
@@ -297,21 +297,21 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "SPEC GUARD: {task_id} — spec compliance check"
+- **description:** "speckit-echelon-spec-guard (SPEC GUARD): {task_id} — spec compliance check"
 
 ### 3.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass IMPLEMENTER`. Proceed to CODE REVIEWER.
-- **FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER` + `endocrine.sh on_rework IMPLEMENTER`. Route back to IMPLEMENTER with the specific gaps. IMPLEMENTER fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
-- **WARN** — Proceed to CODE REVIEWER. Warnings are logged but do not block.
+- **PASS** — Run `endocrine.sh on_gate_pass speckit-echelon-implementer (IMPLEMENTER)`. Proceed to speckit-echelon-code-reviewer (CODE REVIEWER).
+- **FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework speckit-echelon-implementer (IMPLEMENTER)`. Route back to speckit-echelon-implementer (IMPLEMENTER) with the specific gaps. speckit-echelon-implementer (IMPLEMENTER) fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
+- **WARN** — Proceed to speckit-echelon-code-reviewer (CODE REVIEWER). Warnings are logged but do not block.
 
 ### On Non-Obvious FAIL
 
-If SPEC GUARD or CODE REVIEWER returns FAIL and the issue is non-obvious (logic error, integration issue, not just missing test or style):
+If speckit-echelon-spec-guard (SPEC GUARD) or speckit-echelon-code-reviewer (CODE REVIEWER) returns FAIL and the issue is non-obvious (logic error, integration issue, not just missing test or style):
 
-1. Dispatch DEBUGGER instead of sending directly back to IMPLEMENTER
-2. DEBUGGER: reproduce → isolate → root cause → fix → verify
-3. If root cause is within task scope → DEBUGGER fixes
+1. Dispatch speckit-echelon-debugger (DEBUGGER) instead of sending directly back to speckit-echelon-implementer (IMPLEMENTER)
+2. speckit-echelon-debugger (DEBUGGER): reproduce → isolate → root cause → fix → verify
+3. If root cause is within task scope → speckit-echelon-debugger (DEBUGGER) fixes
 4. If root cause requires architecture change → MANAGER routes to HOW
 5. If root cause requires spec change → MANAGER routes to WHAT
 
@@ -319,11 +319,11 @@ If SPEC GUARD or CODE REVIEWER returns FAIL and the issue is non-obvious (logic 
 
 ## 4. Code Review Gate (CODE_REVIEW)
 
-### 4.1 Dispatch CODE REVIEWER
+### 4.1 Dispatch speckit-echelon-code-reviewer (CODE REVIEWER)
 
 Compile context pack:
 
-- Files changed by IMPLEMENTER
+- Files changed by speckit-echelon-implementer (IMPLEMENTER)
 - `constitution.md`
 - Relevant ADRs from `research.md`
 - Existing codebase patterns (files from prior tasks)
@@ -345,24 +345,24 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "CODE REVIEWER: {task_id} — quality review"
+- **description:** "speckit-echelon-code-reviewer (CODE REVIEWER): {task_id} — quality review"
 
 ### 4.2 Handle Result
 
-- **APPROVED** — Run `endocrine.sh on_gate_pass IMPLEMENTER`. Proceed to TEST GUARDIAN.
-- **CHANGES_REQUESTED** — Run `endocrine.sh on_gate_fail IMPLEMENTER` + `endocrine.sh on_rework IMPLEMENTER`. Route back to IMPLEMENTER with the specific issues. IMPLEMENTER fixes and re-submits for review. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
-- **BLOCKED** — Run `endocrine.sh on_low_confidence IMPLEMENTER`. Fundamental architectural issue. MANAGER decides: skip task, amend ADR, or escalate to human.
+- **APPROVED** — Run `endocrine.sh on_gate_pass speckit-echelon-implementer (IMPLEMENTER)`. Proceed to speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)).
+- **CHANGES_REQUESTED** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework speckit-echelon-implementer (IMPLEMENTER)`. Route back to speckit-echelon-implementer (IMPLEMENTER) with the specific issues. speckit-echelon-implementer (IMPLEMENTER) fixes and re-submits for review. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
+- **BLOCKED** — Run `endocrine.sh on_low_confidence speckit-echelon-implementer (IMPLEMENTER)`. Fundamental architectural issue. MANAGER decides: skip task, amend ADR, or escalate to human.
 
 ---
 
 ## 5. Test Guardian Gate (TEST_GUARD)
 
-### 5.1 Dispatch TEST GUARDIAN
+### 5.1 Dispatch speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN))
 
 Compile context pack:
 
-- Test files from IMPLEMENTER
-- Source files from IMPLEMENTER
+- Test files from speckit-echelon-implementer (IMPLEMENTER)
+- Source files from speckit-echelon-implementer (IMPLEMENTER)
 - Task acceptance criteria
 - Relevant section of `test-strategy.md`
 - `coverage-map.md`
@@ -384,24 +384,24 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "TEST GUARDIAN: {task_id} — test quality validation"
+- **description:** "speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)): {task_id} — test quality validation"
 
 ### 5.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass IMPLEMENTER`. Task complete. Proceed to PROGRESS TRACKER.
-- **FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER` + `endocrine.sh on_rework IMPLEMENTER`. Route back to IMPLEMENTER to add missing tests. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
-- **WARN** — Task complete with noted improvements. Proceed to PROGRESS TRACKER.
+- **PASS** — Run `endocrine.sh on_gate_pass speckit-echelon-implementer (IMPLEMENTER)`. Task complete. Proceed to speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)).
+- **FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework speckit-echelon-implementer (IMPLEMENTER)`. Route back to speckit-echelon-implementer (IMPLEMENTER) to add missing tests. Max 2 fix cycles. If still failing, flag as DEGRADED and proceed.
+- **WARN** — Task complete with noted improvements. Proceed to speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)).
 
 ---
 
 ## 6. Progress Tracking (PROGRESS)
 
-### 6.1 Dispatch PROGRESS TRACKER
+### 6.1 Dispatch speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER))
 
 Compile context pack:
 
 - Completed task ID and estimated effort
-- Count of review cycles (how many times IMPLEMENTER was re-dispatched)
+- Count of review cycles (how many times speckit-echelon-implementer (IMPLEMENTER) was re-dispatched)
 - `estimates.md`
 - `knowledge-base/calibration-profile.yaml`
 - `knowledge-base/estimates-log.yaml`
@@ -424,19 +424,19 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "PROGRESS TRACKER: {task_id} — effort tracking"
+- **description:** "speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)): {task_id} — effort tracking"
 
 ### 6.2 Handle Alerts
 
-If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
+If speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) flags DRIFT WARNING or PHASE OVERRUN:
 
 - Log the alert in `state.json`
 - Print a warning to terminal
 - Continue building (do not stop unless MANAGER decides to re-scope)
 
-### 6.3 Update Task Result (COMMANDER — mandatory after every task)
+### 6.3 Update Task Result (speckit-echelon-commander (COMMANDER) — mandatory after every task)
 
-**This is a COMMANDER action, not a PROGRESS TRACKER action.** COMMANDER performs this update after PROGRESS TRACKER returns, or after quality gates complete if PROGRESS TRACKER was skipped or if work was executed inline.
+**This is a speckit-echelon-commander (COMMANDER) action, not a speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) action.** speckit-echelon-commander (COMMANDER) performs this update after speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) returns, or after quality gates complete if speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) was skipped or if work was executed inline.
 
 1. **Increment `build.completed_tasks` by 1.**
 2. Record the task result in `state.json.build.task_results`:
@@ -461,22 +461,22 @@ If PROGRESS TRACKER flags DRIFT WARNING or PHASE OVERRUN:
 Write the new value to `state.json.build.tasks_completed_pct`.
 2. Update `state.json.updated_at` to current timestamp.
 
-**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by COMMANDER. The `completed_tasks` counter is the authoritative progress indicator for ENGINEERING MANAGER and any external tooling reading state.json.
+**This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by speckit-echelon-commander (COMMANDER). The `completed_tasks` counter is the authoritative progress indicator for speckit-echelon-engineering-manager (ENGINEERING MANAGER) and any external tooling reading state.json.
 
-**MODELER Update (mandatory after every task):**
-Dispatch MODELER with:
+**speckit-echelon-modeler (MODELER) Update (mandatory after every task):**
+Dispatch speckit-echelon-modeler (MODELER) with:
 
-- Input: the file(s) written or modified by IMPLEMENTER in this task (from IMPLEMENTER's output)
+- Input: the file(s) written or modified by speckit-echelon-implementer (IMPLEMENTER) in this task (from speckit-echelon-implementer (IMPLEMENTER)'s output)
 - Existing `.specify/squad/mental-model-code.md`
 - Task description and spec FR-* references for this task
 
-MODELER incrementally updates `mental-model-code.md` to reflect the new code.
+speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` to reflect the new code.
 
-**Invariant alert gate:** After MODELER returns, COMMANDER checks MODELER's output for any `invariant_violations` list. If non-empty:
+**Invariant alert gate:** After speckit-echelon-modeler (MODELER) returns, speckit-echelon-commander (COMMANDER) checks speckit-echelon-modeler (MODELER)'s output for any `invariant_violations` list. If non-empty:
 
 - Log each violation as a journal entry with `type: "alert"` and `severity: "HIGH"`
-- Emit warning in build log: `[MODELER ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
-- Do NOT block task progression — violations are tracked for INTEGRATOR to resolve at phase boundaries.
+- Emit warning in build log: `[speckit-echelon-modeler (MODELER) ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
+- Do NOT block task progression — violations are tracked for speckit-echelon-integrator (INTEGRATOR) to resolve at phase boundaries.
 
 ---
 
@@ -484,9 +484,9 @@ MODELER incrementally updates `mental-model-code.md` to reflect the new code.
 
 ### When
 
-After all tasks in a phase group (e.g., "Foundation") are complete, run the INTEGRATOR before proceeding to the next phase group.
+After all tasks in a phase group (e.g., "Foundation") are complete, run the speckit-echelon-integrator (INTEGRATOR) before proceeding to the next phase group.
 
-### 7.1 Dispatch INTEGRATOR
+### 7.1 Dispatch speckit-echelon-integrator (INTEGRATOR)
 
 Compile context pack:
 
@@ -513,18 +513,18 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "INTEGRATOR: phase '{phase_group}' — system integration check"
+- **description:** "speckit-echelon-integrator (INTEGRATOR): phase '{phase_group}' — system integration check"
 
 ### 7.2 Handle Result
 
-- **PASS** — Run `endocrine.sh on_gate_pass INTEGRATOR`. Run 7.2.1 (browser-app visual check if applicable). Record checkpoint. Proceed to next phase group.
-- **FAIL** — Run `endocrine.sh on_gate_fail INTEGRATOR` + `endocrine.sh on_low_confidence IMPLEMENTER` (for responsible task). Route integration failures back to the responsible task's IMPLEMENTER. Re-run INTEGRATOR after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
+- **PASS** — Run `endocrine.sh on_gate_pass speckit-echelon-integrator (INTEGRATOR)`. Run 7.2.1 (browser-app visual check if applicable). Record checkpoint. Proceed to next phase group.
+- **FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-integrator (INTEGRATOR)` + `endocrine.sh on_low_confidence speckit-echelon-implementer (IMPLEMENTER)` (for responsible task). Route integration failures back to the responsible task's speckit-echelon-implementer (IMPLEMENTER). Re-run speckit-echelon-integrator (INTEGRATOR) after fixes. Max 2 fix cycles per phase checkpoint. If still failing, flag phase as DEGRADED and proceed.
 
 ### 7.2.1 Visual Validator Dispatch (MANDATORY for browser/SPA apps)
 
 **Detect stack:** Check `research.md` and `plan.md` for browser/SPA indicators: Vite, React, Vue, Svelte, Angular, SolidJS, Astro, Next.js, Nuxt, Remix, static site, or any spec requirement for a web UI.
 
-**If browser/SPA detected:** Dispatch VISUAL VALIDATOR immediately after INTEGRATOR PASS — before recording the checkpoint and before proceeding to the next phase group.
+**If browser/SPA detected:** Dispatch speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) immediately after speckit-echelon-integrator (INTEGRATOR) PASS — before recording the checkpoint and before proceeding to the next phase group.
 
 Use the Agent tool:
 
@@ -543,12 +543,12 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "VISUAL VALIDATOR: phase '{phase_group}' — browser render check"
+- **description:** "speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)): phase '{phase_group}' — browser render check"
 
 Handle result:
 
 - **VISUAL_PASS** — proceed to 7.3.
-- **VISUAL_FAIL** — Run `endocrine.sh on_gate_fail IMPLEMENTER`. Route visual failures back to IMPLEMENTER with the specific rendering issues (blank page, missing components, console errors). IMPLEMENTER fixes, INTEGRATOR re-runs, then VISUAL VALIDATOR re-runs. Max 2 fix cycles. If still failing, flag phase as DEGRADED and escalate to human.
+- **VISUAL_FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)`. Route visual failures back to speckit-echelon-implementer (IMPLEMENTER) with the specific rendering issues (blank page, missing components, console errors). speckit-echelon-implementer (IMPLEMENTER) fixes, speckit-echelon-integrator (INTEGRATOR) re-runs, then speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) re-runs. Max 2 fix cycles. If still failing, flag phase as DEGRADED and escalate to human.
 
 **If not browser/SPA:** skip 7.2.1 and proceed directly to 7.3.
 
@@ -574,11 +574,11 @@ After all tasks are built and all phase checkpoints pass:
 
 ### 8.1 Final Integration
 
-Run INTEGRATOR one last time against the complete codebase (all phases combined).
+Run speckit-echelon-integrator (INTEGRATOR) one last time against the complete codebase (all phases combined).
 
 ### 8.1b Engineering Manager Sign-Off
 
-Before completion, dispatch ENGINEERING MANAGER with:
+Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MANAGER) with:
 
 - `tasks.md`
 - `spec.md`
@@ -607,13 +607,13 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "ENGINEERING MANAGER: final pre-verification sign-off"
+- **description:** "speckit-echelon-engineering-manager (ENGINEERING MANAGER): final pre-verification sign-off"
 
-ENGINEERING MANAGER must confirm:
+speckit-echelon-engineering-manager (ENGINEERING MANAGER) must confirm:
 
 1. Spec-kit task workflow was actually followed.
 2. Task status, state tracking, and reports are internally consistent.
-3. The build is ready for full VERIFICATION.
+3. The build is ready for full speckit-echelon-verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
 
 If any of these fail, do not proceed to BUILD_DONE. Route to rework first.
@@ -679,9 +679,9 @@ fi
 echo "Smoke test PASSED: /api/health returned HTTP $STATUS"
 ```
 
-**Pages that use provider-dependent modules must be `force-dynamic`.** The general rule: if a page imports from an auth provider, i18n library, ORM, or any module that reads from React context or makes async calls at module scope — it cannot be statically generated. Add `export const dynamic = 'force-dynamic'` to the page file. IMPLEMENTER must audit pages for this pattern during implementation and flag any that need it. SENTINEL must include a render test for each such page.
+**Pages that use provider-dependent modules must be `force-dynamic`.** The general rule: if a page imports from an auth provider, i18n library, ORM, or any module that reads from React context or makes async calls at module scope — it cannot be statically generated. Add `export const dynamic = 'force-dynamic'` to the page file. speckit-echelon-implementer (IMPLEMENTER) must audit pages for this pattern during implementation and flag any that need it. speckit-echelon-sentinel (SENTINEL) must include a render test for each such page.
 
-If `verify.sh` does not contain a smoke test, ENGINEERING MANAGER must request IMPLEMENTER add one before sign-off. This is not optional.
+If `verify.sh` does not contain a smoke test, speckit-echelon-engineering-manager (ENGINEERING MANAGER) must request speckit-echelon-implementer (IMPLEMENTER) add one before sign-off. This is not optional.
 
 ### 8.1b.2 verify.sh Security and License Gate (MANDATORY)
 
@@ -717,7 +717,7 @@ Permitted: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
 For polyglot projects (e.g., both `package.json` and `requirements.txt` present),
 run the checks for every detected ecosystem — not just the primary one.
 
-IMPLEMENTER must select the correct commands for the detected ecosystem and add
+speckit-echelon-implementer (IMPLEMENTER) must select the correct commands for the detected ecosystem and add
 them to `verify.sh` after the smoke test block. If the audit or license check
 fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
 
@@ -731,7 +731,7 @@ If a security vulnerability or non-permissive license is found:
 
 ### 8.1c Final Verification
 
-Dispatch VERIFICATION after final integration and EM pre-check.
+Dispatch speckit-echelon-verification (VERIFICATION) after final integration and EM pre-check.
 
 Use the Agent tool:
 
@@ -750,9 +750,9 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "VERIFICATION: final backpropagation check"
+- **description:** "speckit-echelon-verification (VERIFICATION): final backpropagation check"
 
-VERIFICATION must:
+speckit-echelon-verification (VERIFICATION) must:
 
 1. Check every FR-*, AC-*, and NFR-* in `spec.md`.
 2. Verify code, tests, integration evidence, and gate evidence.
@@ -761,11 +761,11 @@ VERIFICATION must:
 Handle result:
 
 - **PASS** — continue to BUILD_DONE
-- **FAIL** — create RW-* tasks, route through IMPLEMENTER and quality gates, then re-run VERIFICATION
+- **FAIL** — create RW-* tasks, route through speckit-echelon-implementer (IMPLEMENTER) and quality gates, then re-run speckit-echelon-verification (VERIFICATION)
 
 BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.md` contains open gaps.
 
-**Specification Complete (mandatory on VERIFICATION PASS):**
+**Specification Complete (mandatory on speckit-echelon-verification (VERIFICATION) PASS):**
 
 1. Set `state.json.spec_status` to `"implemented"`.
 2. Update `{spec_dir}/spec.md`: change `**Status**: In Progress` to `**Status**: Implemented`.
@@ -816,9 +816,9 @@ Verify all report files are populated:
 3. If `verification_result` is `"PASS"`: set `authoritative_run` to `"{state.json.run_id}"`.
 4. Write the updated file.
 
-### 8.4 Run SCOREKEEPER
+### 8.4 Run speckit-echelon-scorekeeper (SCOREKEEPER)
 
-After all build tasks complete, dispatch SCOREKEEPER to produce the build phase scorecard:
+After all build tasks complete, dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the build phase scorecard:
 
 Use the Agent tool:
 
@@ -832,41 +832,41 @@ Use the Agent tool:
 
   <instructions>
   You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
-  Score all build agents: IMPLEMENTER (first-pass approvals vs rework), SPEC GUARD (gaps caught vs missed by VERIFICATION), CODE REVIEWER (issues found), TEST GUARDIAN (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+  Score all build agents: speckit-echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), speckit-echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by speckit-echelon-verification (VERIFICATION)), speckit-echelon-code-reviewer (CODE REVIEWER) (issues found), speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
   </instructions>
   ```
 
-- **description:** "SCOREKEEPER: build phase scoring and badges"
+- **description:** "speckit-echelon-scorekeeper (SCOREKEEPER): build phase scoring and badges"
 
 Build-specific scoring:
 
 ```
 Per task completed:
-  IMPLEMENTER first-pass approval: +3
-  IMPLEMENTER rework required: -1
-  IMPLEMENTER third rework: -3
-  SPEC GUARD caught gap: +3
-  CODE REVIEWER found issue: +2
-  TEST GUARDIAN improved coverage: +2
+  speckit-echelon-implementer (IMPLEMENTER) first-pass approval: +3
+  speckit-echelon-implementer (IMPLEMENTER) rework required: -1
+  speckit-echelon-implementer (IMPLEMENTER) third rework: -3
+  speckit-echelon-spec-guard (SPEC GUARD) caught gap: +3
+  speckit-echelon-code-reviewer (CODE REVIEWER) found issue: +2
+  speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) improved coverage: +2
 
 Per phase gate:
-  INTEGRATOR pass: +2
-  VISUAL VALIDATOR caught visual issue: +4
+  speckit-echelon-integrator (INTEGRATOR) pass: +2
+  speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) caught visual issue: +4
 
 End of build:
-  VERIFICATION 100% coverage: SPEC GUARD gets +5 (Guardian Angel badge candidate)
-  VERIFICATION found gaps: SPEC GUARD gets -2 per gap (Blind Spot badge candidate)
+  speckit-echelon-verification (VERIFICATION) 100% coverage: speckit-echelon-spec-guard (SPEC GUARD) gets +5 (Guardian Angel badge candidate)
+  speckit-echelon-verification (VERIFICATION) found gaps: speckit-echelon-spec-guard (SPEC GUARD) gets -2 per gap (Blind Spot badge candidate)
 ```
 
 ---
 
 ## 8.5 Auto-Feedback & Post-Build Validation (Phase 5)
 
-After SCOREKEEPER and before final summary, COMMANDER runs the autonomous feedback pipeline. This closes the learning loop without human input.
+After speckit-echelon-scorekeeper (SCOREKEEPER) and before final summary, speckit-echelon-commander (COMMANDER) runs the autonomous feedback pipeline. This closes the learning loop without human input.
 
 **Config gate:** Run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh feedback.auto_feedback` (default: `true`). If `false`, skip to Section 8.6 Print Summary.
 
-### 8.5.1 Dispatch AUDITOR (Post-Build Self-Assessment)
+### 8.5.1 Dispatch speckit-echelon-auditor (AUDITOR) (Post-Build Self-Assessment)
 
 Use the Agent tool:
 
@@ -881,31 +881,31 @@ Use the Agent tool:
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol. Operate in **Mode 4: Post-Build Self-Assessment**.
   Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.json (risks), test-strategy.md + test-quality-report.md (tests).
-  Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for COMMANDER triage.
+  Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for speckit-echelon-commander (COMMANDER) triage.
   </instructions>
   ```
 
-- **description:** "AUDITOR: post-build self-assessment — auto-feedback generation"
+- **description:** "speckit-echelon-auditor (AUDITOR): post-build self-assessment — auto-feedback generation"
 
 Context pack: all build artifacts + spec artifacts + state.json + reasoning-journal.json + knowledge-base/
 
-### 8.5.2 COMMANDER Triage of Critical Findings
+### 8.5.2 speckit-echelon-commander (COMMANDER) Triage of Critical Findings
 
 Read `auto-feedback.yaml` → `critical_findings[]`. For each CRITICAL finding (max `feedback.max_expert_dispatches` from config, default 3):
 
 | Finding Type | Expert Dispatched | Prompt Focus |
 |---|---|---|
-| `architecture_pivot` | INVESTIGATOR + MAVERICK | "Why was this ADR abandoned? What should the analysis have caught?" |
-| `unpredicted_risk` | INVESTIGATOR (+ GUARDIAN if security) | "This risk was not predicted. Is it a known domain pattern?" |
-| `effort_overrun` (ratio > 2.0) | REALIST | "Run reference class forecasting. What do similar tasks actually take?" |
-| `requirements_gap` (missing > 3) | SAGE | "Why did Understanding miss these? Which metric should have caught them?" |
-| `test_gap` | SENTINEL | "What coverage pattern would have caught these gaps?" |
+| `architecture_pivot` | speckit-echelon-investigator (INVESTIGATOR) + speckit-echelon-maverick (MAVERICK) | "Why was this ADR abandoned? What should the analysis have caught?" |
+| `unpredicted_risk` | speckit-echelon-investigator (INVESTIGATOR) (+ speckit-echelon-guardian (GUARDIAN) if security) | "This risk was not predicted. Is it a known domain pattern?" |
+| `effort_overrun` (ratio > 2.0) | speckit-echelon-realist (REALIST) | "Run reference class forecasting. What do similar tasks actually take?" |
+| `requirements_gap` (missing > 3) | speckit-echelon-sage (SAGE) | "Why did Understanding miss these? Which metric should have caught them?" |
+| `test_gap` | speckit-echelon-sentinel (SENTINEL) | "What coverage pattern would have caught these gaps?" |
 
 For each expert dispatch:
 1. Include the specific CRITICAL finding as context
 2. Include relevant build artifacts
 3. Expert produces investigation results
-4. COMMANDER writes expert findings back into `auto-feedback.yaml` → `critical_findings[].expert_finding`
+4. speckit-echelon-commander (COMMANDER) writes expert findings back into `auto-feedback.yaml` → `critical_findings[].expert_finding`
 
 **Non-critical findings** (HIGH/MEDIUM/LOW/INFO): auto-update KB directly in Step 8.5.4 without expert dispatch.
 
@@ -932,7 +932,7 @@ Dispatch speckit-echelon-sage (SAGE) in post-build-validation mode using the Age
   </instructions>
   ```
 
-- **description:** "SAGE: post-build Understanding re-scan"
+- **description:** "speckit-echelon-sage (SAGE): post-build Understanding re-scan"
 
 **b) Intent alignment check:**
 
@@ -955,9 +955,9 @@ Dispatch speckit-echelon-tracker (TRACKER) in post-build-alignment mode using th
   </instructions>
   ```
 
-- **description:** "TRACKER: post-build intent alignment check"
+- **description:** "speckit-echelon-tracker (TRACKER): post-build intent alignment check"
 
-**Drift Severity Gate (mandatory after TRACKER produces `intent-alignment-final.md`):**
+**Drift Severity Gate (mandatory after speckit-echelon-tracker (TRACKER) produces `intent-alignment-final.md`):**
 
 Read `drift_severity` from `intent-alignment-final.md`.
 
@@ -966,10 +966,10 @@ Read `drift_severity` from `intent-alignment-final.md`.
 - **`MINOR_DRIFT`:** Log in `feedback-report.md` as WARNING with the specific unmet intent points. Continue to BUILD_DONE. No correction dispatched.
 
 - **`MAJOR_DRIFT` AND `autonomy_mode != "banzai"`:**
-  1. Dispatch CHANGE CONTROLLER with the unmet intent points as the change description.
-  2. CHANGE CONTROLLER assesses blast radius and creates RW-* rework tasks (max 1 rework pass — `state.json.rework_iteration_count` must be < 1 before entering this path; if already 1, log and continue without rework).
-  3. ENGINEERING MANAGER executes the rework loop for the RW-* tasks.
-  4. After rework: re-dispatch TRACKER for a second alignment check. If still MAJOR_DRIFT after one rework pass, log as CRITICAL in `feedback-report.md` and continue — no infinite loop.
+  1. Dispatch speckit-echelon-change-controller (CHANGE CONTROLLER) with the unmet intent points as the change description.
+  2. speckit-echelon-change-controller (CHANGE CONTROLLER) assesses blast radius and creates RW-* rework tasks (max 1 rework pass — `state.json.rework_iteration_count` must be < 1 before entering this path; if already 1, log and continue without rework).
+  3. speckit-echelon-engineering-manager (ENGINEERING MANAGER) executes the rework loop for the RW-* tasks.
+  4. After rework: re-dispatch speckit-echelon-tracker (TRACKER) for a second alignment check. If still MAJOR_DRIFT after one rework pass, log as CRITICAL in `feedback-report.md` and continue — no infinite loop.
 
 - **`MAJOR_DRIFT` AND `autonomy_mode == "banzai"`:**
   1. Set `state.json.requires_human_review` to `true`.
@@ -981,7 +981,7 @@ Read `drift_severity` from `intent-alignment-final.md`.
      **Unmet intent points:** {list from intent-alignment-final.md}
      **Action required:** Human review needed before this spec can be marked complete.
      ```
-  3. Log CRITICAL in `feedback-report.md`: `[COMMANDER] MAJOR_DRIFT detected in banzai mode — requires_human_review set. See drift-escalation.md.`
+  3. Log CRITICAL in `feedback-report.md`: `[speckit-echelon-commander (COMMANDER)] MAJOR_DRIFT detected in banzai mode — requires_human_review set. See drift-escalation.md.`
   4. Continue to BUILD_DONE (banzai no-checkpoint contract preserved).
 
 ### 8.5.4 Auto-Update Knowledge Base
@@ -1017,19 +1017,19 @@ Append to `feedback-report.md`:
 
 ### 8.6 Consolidation Phase — Constitution Amendment Candidates
 
-Dispatch MIRROR and VETERAN in parallel to extract amendment candidates from this run's learnings.
+Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) in parallel to extract amendment candidates from this run's learnings.
 
-**Dispatch MIRROR** (`mode: "consolidation"`):
+**Dispatch speckit-echelon-mirror (MIRROR)** (`mode: "consolidation"`):
 
 - Context pack: `feedback-report.md`, `intent-alignment-final.md`, `reasoning-journal.json` (last 20 entries), `traceability-matrix.md`
 - Output required: `amendment_candidates` list (may be empty)
 
-**Dispatch VETERAN** (`mode: "consolidation"`):
+**Dispatch speckit-echelon-veteran (VETERAN)** (`mode: "consolidation"`):
 
-- Context pack: `{spec_dir}/run-history.json`, MIRROR's `amendment_candidates` (pass directly)
+- Context pack: `{spec_dir}/run-history.json`, speckit-echelon-mirror (MIRROR)'s `amendment_candidates` (pass directly)
 - Output required: `veteran_amendment_candidates` list (may be empty)
 
-**COMMANDER consolidation (after both complete):**
+**speckit-echelon-commander (COMMANDER) consolidation (after both complete):**
 
 1. Merge both candidate lists — deduplicate by principle text (exact or near-exact match).
 2. Filter: keep only `confidence: high` or `confidence: medium` candidates.
@@ -1045,7 +1045,7 @@ Dispatch MIRROR and VETERAN in parallel to extract amendment candidates from thi
 
    ---
    [PROPOSED: {principle text}]
-   **Source:** {source from MIRROR/VETERAN}
+   **Source:** {source from speckit-echelon-mirror (MIRROR)/speckit-echelon-veteran (VETERAN)}
    **Confidence:** {high|medium}
    **Category:** {category}
    ```
@@ -1054,7 +1054,7 @@ Dispatch MIRROR and VETERAN in parallel to extract amendment candidates from thi
 6. Set `state.json.constitution_amendments_pending` to the count of candidates appended.
 7. If `constitution_amendments_pending > 0`: add to the final run summary: `{N} constitution amendment candidate(s) pending human review — see {spec_dir}/constitution-amendment-candidates.md. Run speckit.constitution to approve or reject.`
 
-**Important:** COMMANDER never auto-amends constitution content. Only humans can promote `[PROPOSED]` blocks to permanent principles via `speckit.constitution`. Human review is required.
+**Important:** speckit-echelon-commander (COMMANDER) never auto-amends constitution content. Only humans can promote `[PROPOSED]` blocks to permanent principles via `speckit.constitution`. Human review is required.
 
 ---
 
@@ -1146,16 +1146,16 @@ RISKS ACCEPTED AUTONOMOUSLY:
 
 | Situation | Action |
 |-----------|--------|
-| IMPLEMENTER timeout (> 5 min) | Retry once. If still timeout, skip task as BLOCKED. |
+| speckit-echelon-implementer (IMPLEMENTER) timeout (> 5 min) | Retry once. If still timeout, skip task as BLOCKED. |
 | Review agent timeout | Retry once. If still timeout, skip gate (flag as UNVALIDATED). |
-| IMPLEMENTER produces no files | Flag as BLOCKED. Move to next task. |
+| speckit-echelon-implementer (IMPLEMENTER) produces no files | Flag as BLOCKED. Move to next task. |
 | 3+ tasks BLOCKED | Pause. MANAGER assesses whether build can continue or needs re-planning. |
 
 ### Phase-Level Failures
 
 | Situation | Action |
 |-----------|--------|
-| INTEGRATOR finds > 5 failures | Pause phase. Assess whether tasks need re-ordering or re-specification. |
+| speckit-echelon-integrator (INTEGRATOR) finds > 5 failures | Pause phase. Assess whether tasks need re-ordering or re-specification. |
 | Build command fails completely | Check if `package.json` has the expected scripts. Flag as BLOCKED if not. |
 | All tasks in a phase BLOCKED | Skip phase. Flag as PHASE_SKIPPED. Continue to next phase (may also fail). |
 | `validate-deploy.sh` fails at 1.0b | HARD STOP. Deploy infrastructure not ready. Follow error output to fix, then re-run build. |
@@ -1172,8 +1172,8 @@ Tasks or gates flagged as DEGRADED must have this banner in their report section
 
 ## 10. Convergence Rules
 
-- **Max fix cycles per gate:** 2 (IMPLEMENTER gets 2 chances to fix issues per quality gate)
-- **Max total IMPLEMENTER dispatches per task:** 7 (1 initial + 2 per gate for 3 gates)
+- **Max fix cycles per gate:** 2 (speckit-echelon-implementer (IMPLEMENTER) gets 2 chances to fix issues per quality gate)
+- **Max total speckit-echelon-implementer (IMPLEMENTER) dispatches per task:** 7 (1 initial + 2 per gate for 3 gates)
 - **Max BLOCKED tasks before pause:** 3
 - **Max DEGRADED tasks before warning:** 30% of total tasks
 - **Token budget for build phase:** Configurable in `echelon-config.yml`. Default: 2M tokens.
@@ -1190,48 +1190,48 @@ BUILD_INIT
   ▼
 FOR EACH task (ordered by phase, then dependencies):
   │
-  IMPLEMENTER → writes code + tests
+  speckit-echelon-implementer (IMPLEMENTER) → writes code + tests
     │
     ├─ DONE → continue
     ├─ NEEDS_CONTEXT → MANAGER provides, re-dispatch (max 2)
     └─ BLOCKED → skip task, log
     │
-  SPEC GUARD → verifies code vs FR-* requirements
+  speckit-echelon-spec-guard (SPEC GUARD) → verifies code vs FR-* requirements
     │
     ├─ PASS → continue
-    └─ FAIL → IMPLEMENTER fixes (max 2 cycles)
+    └─ FAIL → speckit-echelon-implementer (IMPLEMENTER) fixes (max 2 cycles)
     │
-  CODE REVIEWER → checks quality + ADR + constitution
+  speckit-echelon-code-reviewer (CODE REVIEWER) → checks quality + ADR + constitution
     │
     ├─ APPROVED → continue
-    └─ CHANGES_REQUESTED → IMPLEMENTER fixes (max 2 cycles)
+    └─ CHANGES_REQUESTED → speckit-echelon-implementer (IMPLEMENTER) fixes (max 2 cycles)
     │
-  TEST GUARDIAN → validates test quality + coverage
+  speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) → validates test quality + coverage
     │
     ├─ PASS → continue
-    └─ FAIL → IMPLEMENTER adds tests (max 2 cycles)
+    └─ FAIL → speckit-echelon-implementer (IMPLEMENTER) adds tests (max 2 cycles)
     │
-  PROGRESS TRACKER → records effort, checks drift
+  speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) → records effort, checks drift
   │
 END FOR
   │
-INTEGRATOR → runs after each phase checkpoint
+speckit-echelon-integrator (INTEGRATOR) → runs after each phase checkpoint
   │
   ├─ PASS → next phase
-  └─ FAIL → IMPLEMENTER fixes integration issues
+  └─ FAIL → speckit-echelon-implementer (IMPLEMENTER) fixes integration issues
   │
 FINAL INTEGRATION → whole-system integration pass
   │
-ENGINEERING MANAGER → workflow compliance + readiness sign-off
+speckit-echelon-engineering-manager (ENGINEERING MANAGER) → workflow compliance + readiness sign-off
   │
-VERIFICATION → full backpropagation check against spec
+speckit-echelon-verification (VERIFICATION) → full backpropagation check against spec
   │
   ├─ PASS → BUILD_DONE
   └─ FAIL → RW-* tasks + rework loop
 
 Before BUILD_DONE can succeed:
-  ENGINEERING MANAGER → verifies workflow compliance and readiness
-  VERIFICATION → proves 100% implemented coverage with zero open gaps
+  speckit-echelon-engineering-manager (ENGINEERING MANAGER) → verifies workflow compliance and readiness
+  speckit-echelon-verification (VERIFICATION) → proves 100% implemented coverage with zero open gaps
 ```
 
 ---

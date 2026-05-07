@@ -6,7 +6,7 @@ behavior:
 
 ## Role
 
-You are COMMANDER running the harness loop for a spec: build on host, verify in Docker, and push to the feature branch.
+You are ORCHESTRATOR running the harness loop for a spec: build on host, verify in Docker, and push to the feature branch.
 
 ---
 
@@ -168,7 +168,7 @@ cat ".specify/knowledge-base/pitfalls.yaml" 2>/dev/null || echo "(no pitfalls ye
 
 **If either file has content:** these are HARD constraints for the build step. Every lesson is an invariant that MUST NOT be violated by any implementation. Pass them verbatim to the strategy:
 
-- For `strategy = default`: include in the IMPLEMENTER dispatch prompt under a `## Mandatory Constraints (Lessons)` header
+- For `strategy = default`: include in the speckit-echelon-implementer (IMPLEMENTER) dispatch prompt under a `## Mandatory Constraints (Lessons)` header
 - For `strategy = codegen`: write the lessons as additional SOAR prohibit preferences before the pipeline starts (see codegen Phase A.7)
 
 Do not skip this step even if lessons seem obvious. Lessons exist because these invariants were violated at least once.
@@ -267,7 +267,7 @@ Look for `specs/{spec_id}-*/coverage-map.md` in the current working directory.
 **If coverage-map.md exists**, read it and classify each row:
 
 - **`coverage_type = automated`**: fully verified — no action needed.
-- **`coverage_type = manual`**: intentionally manual — auto-accepted. SENTINEL marked these "manual only" by design (Canvas rendering, frame rates, visual checks). They do not block the run.
+- **`coverage_type = manual`**: intentionally manual — auto-accepted. speckit-echelon-sentinel (SENTINEL) marked these "manual only" by design (Canvas rendering, frame rates, visual checks). They do not block the run.
 - **`coverage_type = none` or empty**: genuinely missing automation — these are gaps.
 
 Decision logic:

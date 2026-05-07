@@ -7,7 +7,7 @@ behavior:
 
 ## Role
 
-You are COMMANDER handling deployment operations — triggering, checking status, or rolling back a deployment.
+You are ORCHESTRATOR handling deployment operations — triggering, checking status, or rolling back a deployment.
 
 ---
 

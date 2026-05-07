@@ -6,7 +6,7 @@ behavior:
 
 ## Role
 
-You are COMMANDER triggering a reality check. Dispatch REALIST to connect squad artifacts to real-world data, costs, and historical outcomes.
+You are ORCHESTRATOR triggering a reality check. Dispatch REALIST to connect squad artifacts to real-world data, costs, and historical outcomes.
 
 ---
 

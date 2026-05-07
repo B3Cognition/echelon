@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.bugfix
-description: "Diagnostic squad for a bug or enhancement on a delivered spec — DEBUGGER → SENTINEL → SPEC GUARD → writes bugfix plan + tasks → hand off to harness.run."
+description: "Diagnostic squad for a bug or enhancement on a delivered spec — speckit-echelon-debugger (DEBUGGER) → speckit-echelon-sentinel (SENTINEL) → speckit-echelon-spec-guard (SPEC GUARD) → writes bugfix plan + tasks → hand off to harness.run."
 behavior:
   invocation: automatic
 ---

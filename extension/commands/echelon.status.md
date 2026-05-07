@@ -120,7 +120,7 @@ ARTIFACTS:
   WHY:            issues.md, quality-gates.md, assumption-review.md
   ASSESS:         feasibility.md, prioritization.md, estimates.md, mvp-scope.md
   HOW:            plan.md, research.md, data-model.md, constitution.md, contracts/
-  TEST ARCHITECT: test-strategy.md, test-architecture.md, coverage-map.md
+  TEST speckit-echelon-architect (ARCHITECT): test-strategy.md, test-architecture.md, coverage-map.md
   PLAN:           tasks.md, critical-path.md, risk-matrix.md, dependencies.md
   GROUND:         reality-check.md, cost-analysis.md, benchmark-data.md
   SCIENTIST:      investigation/*.md, evidence-grades.md, recommendations.md

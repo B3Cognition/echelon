@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.review
-description: "Automated PR review triage — fetches blocking comments from GitHub/GitLab, groups by proximity + reviewer, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes review-fix-{n}.md + RF{n}-T* tasks. Invoked by harness ReviewLoopController, not by users directly."
+description: "Automated PR review triage — fetches blocking comments from GitHub/GitLab, groups by proximity + reviewer, runs speckit-echelon-debugger (DEBUGGER) → speckit-echelon-sentinel (SENTINEL) → speckit-echelon-spec-guard (SPEC GUARD) per group, writes review-fix-{n}.md + RF{n}-T* tasks. Invoked by harness ReviewLoopController, not by users directly."
 behavior:
   invocation: automatic
 ---
@@ -34,9 +34,9 @@ Squad agents used:
 
 | Phase | Agent | Purpose |
 | ----- | ----- | ------- |
-| Per group | **DEBUGGER** | Root cause for the reviewer's concern |
-| Per group | **SENTINEL** | Failing test that proves the bug and will prove the fix |
-| Per group | **SPEC GUARD** | Confirms fix is within spec boundary |
+| Per group | **speckit-echelon-debugger (DEBUGGER)** | Root cause for the reviewer's concern |
+| Per group | **speckit-echelon-sentinel (SENTINEL)** | Failing test that proves the bug and will prove the fix |
+| Per group | **speckit-echelon-spec-guard (SPEC GUARD)** | Confirms fix is within spec boundary |
 
 ---
 
@@ -154,13 +154,13 @@ Sort groups oldest-first by the earliest `created_at` in the group. Name groups 
 
 ## Step 4: Per-Group Diagnosis
 
-For each group `G{i}`, run DEBUGGER → SENTINEL → SPEC GUARD in sequence. Complete one group fully before starting the next.
+For each group `G{i}`, run speckit-echelon-debugger (DEBUGGER) → speckit-echelon-sentinel (SENTINEL) → speckit-echelon-spec-guard (SPEC GUARD) in sequence. Complete one group fully before starting the next.
 
 ### 4a. Read source context
 
-For each file referenced in the group's comments, read the surrounding ±20 lines from `worktree` (if provided) or the main project directory. Pass this source context to DEBUGGER.
+For each file referenced in the group's comments, read the surrounding ±20 lines from `worktree` (if provided) or the main project directory. Pass this source context to speckit-echelon-debugger (DEBUGGER).
 
-### 4b. DEBUGGER — Root Cause
+### 4b. speckit-echelon-debugger (DEBUGGER) — Root Cause
 
 Dispatch speckit-echelon-debugger using the Agent tool:
 
@@ -170,18 +170,18 @@ Dispatch speckit-echelon-debugger using the Agent tool:
   - The reviewer name(s)
   - The file + line context from 4a
   - `spec.md`
-- **description:** "DEBUGGER: G{i} — root cause analysis"
+- **description:** "speckit-echelon-debugger (DEBUGGER): G{i} — root cause analysis"
 
-DEBUGGER must produce:
+speckit-echelon-debugger (DEBUGGER) must produce:
 - Exact root cause (file + line + mechanism)
 - Minimal fix description (what changes and why)
 - Risk surface (what else could break)
 
 Store as `{debugger_report_i}`.
 
-If DEBUGGER cannot identify a root cause (comment is too vague, referenced code does not exist in worktree): skip this group, log `"Group G{i}: skipped — insufficient context"`, continue to next group.
+If speckit-echelon-debugger (DEBUGGER) cannot identify a root cause (comment is too vague, referenced code does not exist in worktree): skip this group, log `"Group G{i}: skipped — insufficient context"`, continue to next group.
 
-### 4c. SENTINEL — Test Strategy
+### 4c. speckit-echelon-sentinel (SENTINEL) — Test Strategy
 
 Dispatch speckit-echelon-sentinel using the Agent tool:
 
@@ -191,15 +191,15 @@ Dispatch speckit-echelon-sentinel using the Agent tool:
   - `spec.md`
   - `coverage-map.md`
   - Existing test files for the affected component
-- **description:** "SENTINEL: G{i} — test strategy"
+- **description:** "speckit-echelon-sentinel (SENTINEL): G{i} — test strategy"
 
-SENTINEL must produce:
+speckit-echelon-sentinel (SENTINEL) must produce:
 - A failing test specification (assertion only, not implementation)
 - Regression coverage: what adjacent behaviour needs protecting
 
 Store as `{test_strategy_i}`.
 
-### 4d. SPEC GUARD — Scope Validation
+### 4d. speckit-echelon-spec-guard (SPEC GUARD) — Scope Validation
 
 Dispatch speckit-echelon-spec-guard using the Agent tool:
 
@@ -208,9 +208,9 @@ Dispatch speckit-echelon-spec-guard using the Agent tool:
   - `spec.md`
   - `coverage-map.md`
   - `{debugger_report_i}`
-- **description:** "SPEC GUARD: G{i} — scope validation"
+- **description:** "speckit-echelon-spec-guard (SPEC GUARD): G{i} — scope validation"
 
-SPEC GUARD confirms the fix is within spec boundary. If scope expansion is required, it must say so explicitly.
+speckit-echelon-spec-guard (SPEC GUARD) confirms the fix is within spec boundary. If scope expansion is required, it must say so explicitly.
 
 Store as `{spec_guard_report_i}`.
 
@@ -247,19 +247,19 @@ Comments:
 {comment bodies verbatim}
 
 ## Root Cause
-{from DEBUGGER: file, line, mechanism}
+{from speckit-echelon-debugger (DEBUGGER): file, line, mechanism}
 
 ## Fix Scope
-{from DEBUGGER: what changes and why}
+{from speckit-echelon-debugger (DEBUGGER): what changes and why}
 
 ## Risk Surface
-{from DEBUGGER: what else could break}
+{from speckit-echelon-debugger (DEBUGGER): what else could break}
 
 ## Test Strategy
-{from SENTINEL: failing test specification + regression coverage}
+{from speckit-echelon-sentinel (SENTINEL): failing test specification + regression coverage}
 
 ## Spec Compliance
-{from SPEC GUARD: which requirement(s) this addresses, any scope notes}
+{from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
 Then append tasks to `specs/{spec_id}-{spec_name}/tasks.md`:
@@ -272,8 +272,8 @@ Then append tasks to `specs/{spec_id}-{spec_name}/tasks.md`:
 > PR: {pr_url}
 > Status: pending
 
-- [ ] RF{n}-T1: Write failing test — {test from SENTINEL}
-- [ ] RF{n}-T2: Fix {file} — {what changes from DEBUGGER}
+- [ ] RF{n}-T1: Write failing test — {test from speckit-echelon-sentinel (SENTINEL)}
+- [ ] RF{n}-T2: Fix {file} — {what changes from speckit-echelon-debugger (DEBUGGER)}
 - [ ] RF{n}-T3: Verify test passes and all prior tests still pass
 - [ ] RF{n}-T4: Update coverage-map.md if coverage changed
 ```

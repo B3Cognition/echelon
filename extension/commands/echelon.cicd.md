@@ -7,7 +7,7 @@ behavior:
 
 ## Role
 
-You are COMMANDER setting up CI/CD for this project. Your job is to construct
+You are ORCHESTRATOR setting up CI/CD for this project. Your job is to construct
 the feature description below and commission the full echelon cognitive squad to
 design and implement all CI/CD artifacts.
 
@@ -23,7 +23,7 @@ $ARGUMENTS
 
 `echelon.cicd` delegates all project analysis and artifact generation to the
 full cognitive squad via `speckit.echelon.run`. The command itself contains no
-stack-detection heuristics — SCOUT explores the project and the squad reasons
+stack-detection heuristics — speckit-echelon-scout (SCOUT) explores the project and the squad reasons
 about the correct pipeline shape.
 
 Re-runnable: safe to run again when the project evolves. All generated artifacts

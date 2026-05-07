@@ -122,7 +122,7 @@ Map the blocked `phase` to the appropriate agent to re-dispatch:
 | `assess`      | Re-dispatch ASSESS with human answer (scope/feasibility input) |
 | `specialists` | Re-dispatch the blocked specialist with human answer |
 | `how`         | Re-dispatch HOW with human answer as architectural constraint |
-| `test-architect` | Re-dispatch TEST ARCHITECT with human clarification |
+| `test-architect` | Re-dispatch TEST speckit-echelon-architect (ARCHITECT) with human clarification |
 | `plan`        | Re-dispatch PLAN with human answer |
 | `consensus`   | Re-dispatch the blocked consensus agent (WHY3/ASSESS2/PLAN2) |
 | `finalize`    | Re-dispatch the blocked finalize agent (GROUND/CALIBRATE) |

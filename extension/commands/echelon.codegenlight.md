@@ -8,7 +8,7 @@ tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 
 ## Role
 
-You are COMMANDER executing the lightweight SOAR codegen pipeline for brownfield RE and greenfield builds with inviolable quality gates.
+You are ORCHESTRATOR executing the lightweight SOAR codegen pipeline for brownfield RE and greenfield builds with inviolable quality gates.
 
 ---
 
@@ -23,11 +23,11 @@ $ARGUMENTS
 These invariants are constitutionally mandated and CANNOT be overridden by any phase, LLM advisory, or commercial pressure:
 
 - **INV-001:** `chunk never` MUST be the first directive in every `.soar` config file. SOAR chunking is disabled in all production deployments. ISS-007 (Second-Order Chunking Contamination) is Grade A CONFIRMED SEVERE.
-- **INV-002:** Quality constraints MUST be enforced exclusively via SOAR CQ-ISC prohibit preferences. No LLM advisory output, guardrail, or IMPLEMENTER-level logic may substitute for prohibit preferences.
-- **INV-003:** IMPLEMENTER outputs inject `best` preferences ONLY. IMPLEMENTER does NOT inject prohibit, require, or worst preferences.
+- **INV-002:** Quality constraints MUST be enforced exclusively via SOAR CQ-ISC prohibit preferences. No LLM advisory output, guardrail, or speckit-echelon-implementer (IMPLEMENTER)-level logic may substitute for prohibit preferences.
+- **INV-003:** speckit-echelon-implementer (IMPLEMENTER) outputs inject `best` preferences ONLY. speckit-echelon-implementer (IMPLEMENTER) does NOT inject prohibit, require, or worst preferences.
 - **INV-004:** Every SOAR phase transition MUST produce an EPMEM entry. EPMEM recording cannot be disabled.
 - **INV-005:** Every CQ-ISC production rule MUST have `(build ^current-phase <phase>)` as its FIRST LHS condition.
-- **INV-006:** SOAR owns the phase transition decision. IMPLEMENTER advises. IMPLEMENTER does NOT self-advance the pipeline.
+- **INV-006:** SOAR owns the phase transition decision. speckit-echelon-implementer (IMPLEMENTER) advises. speckit-echelon-implementer (IMPLEMENTER) does NOT self-advance the pipeline.
 - **INV-008:** Conflict impasse = correct behaviour, NOT a failure. Impasse triggers human escalation, not autonomous resolution.
 - **INV-010:** Delivery is BLOCKED until all Tier 1 (unit) tests pass via Bash tool execution.
 
@@ -47,7 +47,7 @@ Parse `$ARGUMENTS` to determine mode:
 
 **Parsing rules (in order):**
 1. If `$ARGUMENTS` starts with `--resume`: enter RESUME mode.
-2. If `$ARGUMENTS` starts with `--benchmark`: enter BENCHMARK mode.
+2. If `$ARGUMENTS` starts with `--benchmark`: enter speckit-echelon-benchmark (BENCHMARK) mode.
 3. If the first token contains `*` or ends with `.md` or `.yaml` or `.yml` and matches files on disk (test with `ls <token> 2>/dev/null`): **spec-driven mode** — first token(s) = spec glob, remainder = intent.
 4. If the first token is a filesystem path (test with `test -e <token>`): brownfield mode; first token = target-path, remainder = intent.
 5. Otherwise: greenfield mode; entire `$ARGUMENTS` = intent.
@@ -269,7 +269,7 @@ Print the retrieved requirements block — these are what IMPLEMENT will be veri
 
 ### Step 1.2 — Additional RE (if brownfield target provided)
 
-If a `<target-path>` was given, additionally delegate to GOLDDIGGER via Agent tool:
+If a `<target-path>` was given, additionally delegate to speckit-echelon-golddigger (GOLDDIGGER) via Agent tool:
 ```
 Agent: Analyze <target_path>.
 Produce: glossary.md, mental-model.md, boundaries.md, unknowns.md, assumptions.md in ./codegen-staging/.
@@ -336,7 +336,7 @@ write_state "codegen_implement" "building" 0 null null
 
 ---
 
-## Phase 3: IMPLEMENT — IMPLEMENTER Dispatch Loop
+## Phase 3: IMPLEMENT — speckit-echelon-implementer (IMPLEMENTER) Dispatch Loop
 
 **Print:** `[CODEGEN] Phase IMPLEMENT — Starting (<N> tasks)...`
 
@@ -345,14 +345,14 @@ For each task in `task_queue.pending`:
 ### 3.1 — SOAR dispatches task
 
 Inject task WME into SOAR. SOAR selects DISPATCH_IMPLEMENTER operator.
-Print: `[CODEGEN] Task <task-id>: DISPATCHING to IMPLEMENTER...`
+Print: `[CODEGEN] Task <task-id>: DISPATCHING to speckit-echelon-implementer (IMPLEMENTER)...`
 
-### 3.2 — IMPLEMENTER executes task
+### 3.2 — speckit-echelon-implementer (IMPLEMENTER) executes task
 
-Delegate to IMPLEMENTER via Agent tool (INV-003: `best` preferences ONLY):
+Delegate to speckit-echelon-implementer (IMPLEMENTER) via Agent tool (INV-003: `best` preferences ONLY):
 
 ```
-Agent (IMPLEMENTER role): Implement task <task-id>: <description>
+Agent (speckit-echelon-implementer (IMPLEMENTER) role): Implement task <task-id>: <description>
 Scope: <scope>, Language: <language>
 
 Requirements this task must satisfy (from MemPalace):
@@ -384,7 +384,7 @@ codegen gate --phase IMPLEMENT --language <language> --files <files> --state-fil
 ```
 
 - Exit 0 (ADVANCE): task complete → move to `completed`
-- Exit 1 (RETRY): re-dispatch IMPLEMENTER with violation details. Include the failed FR citation from `requirement_citations` in the retry prompt.
+- Exit 1 (RETRY): re-dispatch speckit-echelon-implementer (IMPLEMENTER) with violation details. Include the failed FR citation from `requirement_citations` in the retry prompt.
 - Exit 2 (ESCALATE): write `codegen-impasse.md`, halt, wait for human
 
 Update harness state on ADVANCE:
