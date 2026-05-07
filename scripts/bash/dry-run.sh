@@ -309,9 +309,15 @@ for i in "${!FLOW[@]}"; do
   label="${FLOW_LABELS[$i]}"
   file=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
-agent = data.get('agents', {}).get('$agent', {})
-print(agent.get('file', 'NOT_FOUND'))
+data = yaml.safe_load(open('$ROOT/extension/extension.yml'))
+codename_map = {}
+for cmd in data.get('provides', {}).get('commands', []):
+    n = cmd.get('name', '')
+    f = cmd.get('file', '')
+    if f.startswith('agents/'):
+        short = n.split('.')[-1].upper().replace('-', '_')
+        codename_map[short] = 'extension/' + f
+print(codename_map.get('$agent', 'NOT_FOUND'))
 " 2>/dev/null || echo "NOT_FOUND")
 
   if [ -f "$ROOT/$file" ]; then
@@ -326,9 +332,15 @@ echo "  Build sequence:"
 for agent in IMPLEMENTER SPEC_GUARD CODE_REVIEWER TEST_GUARDIAN; do
   file=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
-agent = data.get('agents', {}).get('$agent', {})
-print(agent.get('file', 'NOT_FOUND'))
+data = yaml.safe_load(open('$ROOT/extension/extension.yml'))
+codename_map = {}
+for cmd in data.get('provides', {}).get('commands', []):
+    n = cmd.get('name', '')
+    f = cmd.get('file', '')
+    if f.startswith('agents/'):
+        short = n.split('.')[-1].upper().replace('-', '_')
+        codename_map[short] = 'extension/' + f
+print(codename_map.get('$agent', 'NOT_FOUND'))
 " 2>/dev/null || echo "NOT_FOUND")
 
   if [ -f "$ROOT/$file" ]; then
@@ -343,9 +355,15 @@ echo "  Learning sequence:"
 for agent in MIRROR ADAPTIVE AUDITOR REALIST; do
   file=$(python3 -c "
 import yaml
-data = yaml.safe_load(open('$ROOT/extension/agents.yaml'))
-agent = data.get('agents', {}).get('$agent', {})
-print(agent.get('file', 'NOT_FOUND'))
+data = yaml.safe_load(open('$ROOT/extension/extension.yml'))
+codename_map = {}
+for cmd in data.get('provides', {}).get('commands', []):
+    n = cmd.get('name', '')
+    f = cmd.get('file', '')
+    if f.startswith('agents/'):
+        short = n.split('.')[-1].upper().replace('-', '_')
+        codename_map[short] = 'extension/' + f
+print(codename_map.get('$agent', 'NOT_FOUND'))
 " 2>/dev/null || echo "NOT_FOUND")
 
   if [ -f "$ROOT/$file" ]; then
