@@ -38,17 +38,7 @@ A requirement that has no automated test coverage is not done. BUILD_DONE is for
 
 ## Role Separation — ABSOLUTE RULES
 
-Every agent has ONE job. No agent may do another agent's job. This is non-negotiable.
-
-| Spec-kit name | Codename | PRODUCES | NEVER does |
-|---------------|----------|----------|------------|
-| **speckit-echelon-scout** | SCOUT | glossary, mental-model, boundaries, assumptions, unknowns | Never writes requirements, never makes architecture decisions |
-| **speckit-echelon-cartographer** | CARTOGRAPHER | spec.md, requirements | Never validates own specs (speckit-echelon-sage does that), never designs architecture |
-| **speckit-echelon-sage** | SAGE | issues.md, quality-gates.md | **NEVER rewrites specs/plans/tasks.** SAGE ONLY finds problems. Responsible agent fixes. |
-| **speckit-echelon-gatekeeper** | GATEKEEPER | feasibility, estimates, prioritization | Never writes requirements, never designs architecture, never overrides user intent |
-| **speckit-echelon-architect** | ARCHITECT | plan.md, research.md, ADRs, data-model, contracts | Never writes requirements, never estimates effort |
-| **speckit-echelon-orchestrator** | ORCHESTRATOR | tasks.md, critical-path, risk-matrix | Never designs architecture, never writes requirements |
-| **speckit-echelon-investigator** | INVESTIGATOR | investigation reports, experiment results | Never makes architecture decisions (speckit-echelon-architect does that) |
+Every agent has ONE job. No agent may do another agent's job. This is non-negotiable. Each agent's complete NEVER rules live in its own `.md` file — those are authoritative.
 
 > **Dispatch name rule:** Routing instructions and Agent tool calls always use the spec-kit-injected name (`speckit-echelon-{filename}`). Codenames (SCOUT, SAGE, etc.) are human-readable labels for prose only. The deployed name equals `speckit-echelon-{agent-md-filename-without-extension}` — e.g., `commander.md` → `speckit-echelon-commander`.
 
