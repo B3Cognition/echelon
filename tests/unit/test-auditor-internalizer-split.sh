@@ -94,25 +94,14 @@ else
   fail "INTERNALIZER missing NEVER rule about agent prompts"
 fi
 
-# --- agents.yaml has INTERNALIZER ---
+# --- extension.yml has INTERNALIZER ---
 echo ""
-echo "--- agents.yaml registration ---"
-
-AGENTS_YAML="$REPO_ROOT/extension/agents.yaml"
-
-if grep -q "INTERNALIZER:" "$AGENTS_YAML"; then
-  pass "INTERNALIZER registered in agents.yaml"
+echo "--- extension.yml registration ---"
+EXT_YML="$REPO_ROOT/extension/extension.yml"
+if grep -q "speckit.echelon.internalizer" "$EXT_YML" 2>/dev/null; then
+  pass "INTERNALIZER registered in extension.yml"
 else
-  fail "INTERNALIZER not in agents.yaml"
-fi
-
-if grep -q "layer: learning" "$AGENTS_YAML" | head -1 >/dev/null 2>&1; then
-  true  # just check it exists somewhere
-fi
-if grep -A2 "INTERNALIZER:" "$AGENTS_YAML" | grep -q "INTERNALIZE_METRICS"; then
-  pass "INTERNALIZER function is INTERNALIZE_METRICS"
-else
-  fail "INTERNALIZER function mismatch"
+  fail "INTERNALIZER not in extension.yml"
 fi
 
 # --- endocrine.sh has INTERNALIZER ---

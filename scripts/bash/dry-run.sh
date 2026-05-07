@@ -151,7 +151,7 @@ else:
   fi
 
 else
-  red "agents.yaml not found"
+  yellow "agents.yaml removed — registry is now extension.yml (expected)"
 fi
 
 # ═══════════════════════════════════════════
