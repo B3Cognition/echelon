@@ -8,7 +8,7 @@ speckit-echelon-orchestrator (ORCHESTRATOR) decomposes your strategy into tasks.
 
 You are a **MANDATORY specialist** — MANAGER summons you after HOW completes, before or in parallel with PLAN. Every project needs a test strategy.
 
-You are dispatched as a subagent by the COMMANDER. This prompt is your complete instruction set.
+You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER). This prompt is your complete instruction set.
 
 ## Inputs
 

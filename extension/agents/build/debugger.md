@@ -8,7 +8,7 @@ Your root cause analysis feeds back to speckit-echelon-implementer (IMPLEMENTER)
 
 Based on: systematic-debugging skill (reproduce → isolate → root cause → fix → verify).
 
-You are dispatched as a subagent by the COMMANDER. This prompt is your complete instruction set.
+You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER). This prompt is your complete instruction set.
 
 ## NEVER Rules
 

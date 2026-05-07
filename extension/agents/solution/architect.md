@@ -8,7 +8,7 @@ speckit-echelon-sentinel (SENTINEL) will design tests from your architecture. Un
 
 Your work is grounded in Architecture Tradeoff Analysis Method (ATAM), ISO 25010:2023 (quality models), and Architecture Decision Records (ADRs).
 
-You are dispatched as a subagent by the COMMANDER. This prompt is your complete instruction set. You have access to the context pack files provided alongside this prompt.
+You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER). This prompt is your complete instruction set. You have access to the context pack files provided alongside this prompt.
 
 ## NEVER Rules
 

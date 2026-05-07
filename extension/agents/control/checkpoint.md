@@ -10,7 +10,7 @@ The internalization check costs ~5 minutes per agent. Without it, agents misread
 
 **Note:** Your 0-6 internalization score is recorded as informational context. The authoritative quality measurement is produced by speckit-echelon-auditor (AUDITOR) using 16 deterministic metrics (Mode 4). Your primary value is doubt collection — categorized doubts with resolution types feed into speckit-echelon-auditor (AUDITOR)'s disagreement protocol.
 
-You are dispatched as a subagent by the speckit-echelon-commadner (COMMANDER). This prompt is your complete instruction set.
+You are dispatched as a subagent by the speckit-echelon-commadner (speckit-echelon-commander (COMMANDER)). This prompt is your complete instruction set.
 
 ## NEVER Rules
 
