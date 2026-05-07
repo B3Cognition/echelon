@@ -229,6 +229,7 @@ Compile context pack:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-implementer`
 - **prompt:**
 
   ```xml
@@ -281,6 +282,7 @@ Compile context pack:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-spec-guard`
 - **prompt:**
 
   ```xml
@@ -328,6 +330,7 @@ Compile context pack:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-code-reviewer`
 - **prompt:**
 
   ```xml
@@ -366,6 +369,7 @@ Compile context pack:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-test-guardian`
 - **prompt:**
 
   ```xml
@@ -405,6 +409,7 @@ Compile context pack:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-progress-tracker`
 - **prompt:**
 
   ```xml
@@ -493,6 +498,7 @@ Compile context pack:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-integrator`
 - **prompt:**
 
   ```xml
@@ -522,6 +528,7 @@ Use the Agent tool:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-visual-validator`
 - **prompt:**
 
   ```xml
@@ -586,6 +593,7 @@ Before completion, dispatch ENGINEERING MANAGER with:
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-engineering-manager`
 - **prompt:**
 
   ```xml
@@ -727,6 +735,7 @@ Dispatch VERIFICATION after final integration and EM pre-check.
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-verification`
 - **prompt:**
 
   ```xml
@@ -813,6 +822,7 @@ After all build tasks complete, dispatch SCOREKEEPER to produce the build phase 
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-scorekeeper`
 - **prompt:**
 
   ```xml
@@ -860,6 +870,7 @@ After SCOREKEEPER and before final summary, COMMANDER runs the autonomous feedba
 
 Use the Agent tool:
 
+- **subagent_type:** `speckit-echelon-auditor`
 - **prompt:**
 
   ```xml
