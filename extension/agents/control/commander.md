@@ -987,8 +987,8 @@ After reading an agent's output, MANAGER scores the agent:
 
 ```
 1. Read the agent's output quality:
-   - Did WHY pass or fail? → +5 for CRITICAL catch, -1 for false positive
-   - Did WHAT need rework? → -1 per WHY rejection
+   - Did SAGE pass or fail? → +5 for CRITICAL catch, -1 for false positive
+   - Did CARTOGRAPHER need rework? → -1 per SAGE rejection
    - Did IMPLEMENTER pass first review? → +3 first-pass, -1 rework
    - Did INVESTIGATOR validate an assumption? → +2 validated, +4 invalidated (more valuable)
 
@@ -1006,14 +1006,14 @@ After reading an agent's output, MANAGER scores the agent:
 When an agent's output is consumed by the NEXT agent, check: did the next agent benefit from high-quality input?
 
 ```
-IF WHAT produces spec.md AND WHY2 passes on first attempt:
-  → Peer appreciation: WHY awards WHAT +2 "clear_and_actionable"
+IF CARTOGRAPHER produces spec.md AND SAGE WHY2 passes on first attempt:
+  → Peer appreciation: SAGE awards CARTOGRAPHER +2 "clear_and_actionable"
 
-IF INVESTIGATOR produces investigation/ AND HOW makes a decision based on it:
-  → Peer appreciation: HOW awards INVESTIGATOR +3 "unblocked_my_work"
+IF INVESTIGATOR produces investigation/ AND ARCHITECT makes a decision based on it:
+  → Peer appreciation: ARCHITECT awards INVESTIGATOR +3 "unblocked_my_work"
 
-IF WHY catches an issue that SPEC GUARD would have missed:
-  → Peer appreciation: SPEC GUARD awards WHY +2 "caught_my_mistake"
+IF SAGE catches an issue that SPEC GUARD would have missed:
+  → Peer appreciation: SPEC GUARD awards SAGE +2 "caught_my_mistake"
 ```
 
 Record in reasoning-journal.json:
