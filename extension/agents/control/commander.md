@@ -668,7 +668,7 @@ Set `state.json` field `init_reads.completed: true` after this step.
 > 1. Parse `$BELIEF_JSON` to extract `stale_beliefs[].dependent_config_key` values.
 > 2. For each stale belief, identify which dispatch decisions depend on that config key (e.g., `execution.models.control` → model tier selection for control agents).
 > 3. For exit 1 (defer): apply the conservative default for the affected config key (e.g., use `opus` instead of `sonnet` when the "sonnet is sufficient" belief is stale). Log the fallback in `reasoning-journal.json` type `belief_fallback_applied`.
-> 4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. INVESTIGATOR runs before DISCOVER. If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
+> 4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. speckit-echelon-investigator (INVESTIGATOR) runs before speckit-echelon-scout (SCOUT). If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
 > 5. If endocrine system is enabled, call `endocrine.sh update_adrenaline {affected_agent} +0.2` for agents whose dispatch depends on stale beliefs.
 >
 > **Fallback (FR-010):** If the script exits 0 (including when the graph is missing or python3 is unavailable), proceed with no routing changes — full backward compatibility.
