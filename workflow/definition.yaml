@@ -237,7 +237,7 @@ phases:
     label: "Discovery (SCOUT)"
     spec_file: workflow/phases/phase1-discover.md
     type: agent
-    agent: SCOUT
+    agent: speckit-echelon-scout
     tier: exploration
     context_pack:
       - user_request
@@ -274,7 +274,7 @@ phases:
     label: "Knowledge Fusion (SYNTHESIZER)"
     spec_file: workflow/phases/phase1-synthesizer.md
     type: agent
-    agent: SYNTHESIZER
+    agent: speckit-echelon-synthesizer
     tier: exploration
     context_pack:
       - all SCOUT outputs from .specify/squad/staging/
@@ -294,7 +294,7 @@ phases:
     label: "Codebase Map (MODELER)"
     spec_file: workflow/phases/phase1-modeler.md
     type: agent
-    agent: MODELER
+    agent: speckit-echelon-modeler
     tier: exploration
     condition: "mode = brownfield"
     context_pack:
@@ -314,7 +314,7 @@ phases:
     label: "Intent Capture (TRACKER)"
     spec_file: workflow/phases/phase1-tracker.md
     type: agent
-    agent: TRACKER
+    agent: speckit-echelon-tracker
     tier: control
     context_pack:
       - user_request
@@ -333,7 +333,7 @@ phases:
     label: "Assumption Challenge (SAGE WHY1)"
     spec_file: workflow/phases/phase1-why1.md
     type: agent
-    agent: SAGE
+    agent: speckit-echelon-sage
     mode: WHY1
     tier: exploration
     context_pack:
@@ -376,7 +376,7 @@ phases:
     label: "Requirements (CARTOGRAPHER)"
     spec_file: workflow/phases/phase1-what.md
     type: agent
-    agent: CARTOGRAPHER
+    agent: speckit-echelon-cartographer
     tier: exploration
     context_pack:
       - glossary.md
@@ -408,7 +408,7 @@ phases:
     label: "Spec Validation (SAGE WHY2)"
     spec_file: workflow/phases/phase1-why2.md
     type: agent
-    agent: SAGE
+    agent: speckit-echelon-sage
     mode: WHY2
     tier: exploration
     context_pack:
@@ -450,7 +450,7 @@ phases:
     label: "Feasibility Gate (GATEKEEPER)"
     spec_file: workflow/phases/phase2-decide.md
     type: agent
-    agent: GATEKEEPER
+    agent: speckit-echelon-gatekeeper
     tier: feasibility
     context_pack:
       - spec.md
@@ -481,7 +481,7 @@ phases:
     label: "Strategic Overview (STRATEGIST)"
     spec_file: workflow/phases/phase2-strategic-overview.md
     type: agent
-    agent: STRATEGIST
+    agent: speckit-echelon-strategist
     tier: control
     context_pack:
       - spec.md
@@ -498,7 +498,7 @@ phases:
     label: "Intent Alignment Check (TRACKER)"
     spec_file: workflow/phases/phase2-tracker-alignment.md
     type: agent
-    agent: TRACKER
+    agent: speckit-echelon-tracker
     tier: control
     context_pack:
       - user-intent.md
@@ -518,7 +518,7 @@ phases:
     label: "Architecture (ARCHITECT)"
     spec_file: workflow/phases/phase3-how.md
     type: agent
-    agent: ARCHITECT
+    agent: speckit-echelon-architect
     tier: solution
     context_pack:
       - spec.md
@@ -607,7 +607,7 @@ phases:
     label: "Test Strategy (SENTINEL)"
     spec_file: workflow/phases/phase3-sentinel.md
     type: agent
-    agent: SENTINEL
+    agent: speckit-echelon-sentinel
     tier: solution
     context_pack:
       - spec.md
@@ -628,7 +628,7 @@ phases:
     label: "Implementation Planning (ORCHESTRATOR)"
     spec_file: workflow/phases/phase3-plan.md
     type: agent
-    agent: ORCHESTRATOR
+    agent: speckit-echelon-orchestrator
     tier: solution
     context_pack:
       - spec.md
@@ -779,7 +779,7 @@ phases:
     label: "Root Cause Analysis (DEBUGGER)"
     spec_file: workflow/phases/bugfix-2-diagnose.md
     type: agent
-    agent: DEBUGGER
+    agent: speckit-echelon-debugger
     tier: build
     context_pack:
       - user description
@@ -796,7 +796,7 @@ phases:
     label: "Test Strategy (SENTINEL)"
     spec_file: workflow/phases/bugfix-3-test-strategy.md
     type: agent
-    agent: SENTINEL
+    agent: speckit-echelon-sentinel
     tier: solution
     context_pack:
       - debugger_report
@@ -813,7 +813,7 @@ phases:
     label: "Spec Compliance (SPEC GUARD)"
     spec_file: workflow/phases/bugfix-4-spec-compliance.md
     type: agent
-    agent: SPEC_GUARD
+    agent: speckit-echelon-spec-guard
     tier: build
     context_pack:
       - spec.md
@@ -972,7 +972,7 @@ build:
 
   phase_checkpoint:
     trigger: end_of_each_phase_group
-    agent: INTEGRATOR
+    agent: speckit-echelon-integrator
     tier: build
     workflow_state_during: QA_IN_PROGRESS
     verdicts:

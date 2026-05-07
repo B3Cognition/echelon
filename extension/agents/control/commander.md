@@ -205,11 +205,12 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 **Every agent dispatch uses the Agent tool.** There is no other dispatch method.
 
-- Agent name pattern: `speckit-echelon-<codename-lowercase>` (e.g., SCOUT → `speckit-echelon-scout`, GUARDIAN → `speckit-echelon-guardian`)
+- The dispatch name (`subagent_type`) is the `agent:` value from the current phase node in `workflow/definition.yaml` — e.g., `speckit-echelon-scout`. Read it directly; do not derive it.
+- These names originate from `extension.yml` entries (`speckit.echelon.scout`) which spec-kit transforms to dash-notation (`speckit-echelon-scout`) when deploying the agent file and injecting its frontmatter `name:` field.
 - Include a `description:` field summarizing the dispatch (e.g., "SCOUT: domain reconnaissance")
 - Include the context pack in the `prompt:` field
 
-Example: dispatching SCOUT = `Agent(subagent_type="speckit-echelon-scout", prompt="<context pack>", description="SCOUT: domain mapping")`
+Example: `Agent(subagent_type="speckit-echelon-scout", prompt="<context pack>", description="SCOUT: domain mapping")`
 
 Never substitute the Agent tool with inline writing. If the Agent tool is unavailable, escalate to the human — do not produce the agent's work yourself.
 

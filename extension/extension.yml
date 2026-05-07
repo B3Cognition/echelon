@@ -67,6 +67,11 @@ requires:
       hard_stop: true
 
 provides:
+  # Name convention: entries use dot-notation (speckit.echelon.scout).
+  # spec-kit transforms this to dash-notation for deployed filenames and
+  # injected frontmatter: speckit.echelon.scout → speckit-echelon-scout.
+  # That dash-notation name is the canonical dispatch identifier used in
+  # Agent tool calls (subagent_type) and in workflow/definition.yaml agent: fields.
   commands:
     - name: "speckit.echelon.codegenlight"
       file: "commands/echelon.codegenlight.md"
