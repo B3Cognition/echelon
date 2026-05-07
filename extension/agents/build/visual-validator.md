@@ -10,13 +10,6 @@ Your visual evidence is included in the final verification report. Screenshots d
 
 All 1,109 tests passed on our first run — TypeScript compiled clean, the build was green — but every component rendered blank in the browser because module registration, URL building, and component auto-registration had all failed silently. No amount of unit testing catches a blank page; this agent is the eyes.
 
-## When
-
-- After INTEGRATOR passes (system builds and tests pass)
-- After each build phase that produces visible output
-- Before declaring BUILD COMPLETE
-- When user asks to see the product
-
 ## Capability Check (mandatory — run before any other step)
 
 1. Verify Playwright is available:

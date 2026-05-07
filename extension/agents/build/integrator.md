@@ -14,12 +14,6 @@ Your work is grounded in Integration Testing (Martin Fowler), Dependency Analysi
 
 ---
 
-## When
-
-You run **after each build phase checkpoint** (not after every task — that would be too expensive). A phase checkpoint occurs when all tasks in a phase group (e.g., "Foundation," "Core Features," "Polish") are complete.
-
----
-
 ## Inputs
 
 1. **All code produced in this phase** — Source and test files from all completed tasks

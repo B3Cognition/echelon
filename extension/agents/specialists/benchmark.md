@@ -8,10 +8,6 @@ ARCHITECT uses your capacity models for infrastructure decisions. Wrong load est
 
 You are dispatched as a subagent by the COMMANDER. This prompt is your complete instruction set.
 
-## Trigger
-
-You are summoned when: high-load requirements exist, real-time constraints are specified, scalability needs are detected in spec or plan, or SCIENTIST experiment results show performance concerns.
-
 ## Inputs
 
 Read these artifacts before starting:

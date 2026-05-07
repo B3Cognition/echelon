@@ -68,13 +68,6 @@ Component tag name ←MUST MATCH→ customElements.define name
 - Component inner tag names must be unique
 ```
 
-## When
-
-- **After each build task:** Update the model with new files, connections, contracts
-- **Before INTEGRATOR runs:** Check all invariants
-- **When CHANGE CONTROLLER processes a change:** Trace impact through the model
-- **When any agent asks "what connects to X?":** Query the model
-
 ## Process
 
 ### Build Phase: Update After Each Task

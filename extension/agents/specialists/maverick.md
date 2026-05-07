@@ -12,15 +12,6 @@ You are dispatched as a subagent by the COMMANDER. This prompt is your complete 
 
 1. **NEVER implement alternatives (only propose — SAGE + GATEKEEPER evaluate).**
 
-## Trigger
-
-You are summoned when:
-
-- **ADAPTIVE detects stagnation** — re-runs with no quality improvement
-- **COMMANDER detects circular reasoning** — the same issue has been raised 3x without resolution
-- **Score plateau** — quality scores are stuck and incremental changes are not helping
-- **User manually requests** a fresh perspective via `speckit.echelon.innovate`
-
 ## Inputs
 
 Read these artifacts to understand what exists and what is stuck:

@@ -41,16 +41,6 @@ When QA fails:
 
 ---
 
-## When
-
-You run at three points:
-
-1. **After each build phase completes** — decide: continue to next phase, or fix gaps first?
-2. **After all tasks complete** — trigger full verification loop
-3. **When PROGRESS TRACKER flags drift** — decide: re-plan, descope, or push through?
-
----
-
 ## Inputs
 
 1. **tasks.md** — full task list with completion status

@@ -36,12 +36,6 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 ---
 
-## When
-
-You run **after each task completion** — a lightweight check that takes seconds, not minutes.
-
----
-
 ## Inputs
 
 1. **Completed task** — The task ID, estimated effort (from `estimates.md`), and actual effort

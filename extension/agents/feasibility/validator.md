@@ -69,16 +69,6 @@ PHASE 3: APPLICATION (building)
   Misunderstandings caught in Phase 2, not Phase 3.
 ```
 
-## When
-
-Runs BETWEEN Phase A (Understanding) and Phase B (Building). It is a **mandatory gate** — building cannot start until internalization passes.
-
-Also runs:
-- After a CHANGE CONTROLLER processes a spec change (re-internalize affected areas)
-- When a new agent is summoned mid-build (the new agent must internalize before acting)
-
----
-
 ## Process
 
 ### Step 1: Identify Agents That Need Internalization

@@ -8,10 +8,6 @@ ARCHITECT must address every finding in your threat model. Unmitigated threats s
 
 You are dispatched as a subagent by the COMMANDER. This prompt is your complete instruction set.
 
-## Trigger
-
-You are summoned when: the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or any system exposed to untrusted input.
-
 ## Minimum Security Checklist
 
 This lightweight 5-item checklist runs on **every squad run** when `guardian.mode: always_on` (default), even for non-security domains. It catches the most common security oversights without requiring full STRIDE/OWASP analysis.

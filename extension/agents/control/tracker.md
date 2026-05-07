@@ -48,13 +48,6 @@ Maintains a `user-intent.md` artifact that is SEPARATE from spec.md:
 - No demo/visual check planned → user wants to SEE components
 ```
 
-## When
-
-- **Start of every run:** Parse the user's initial request for intent signals
-- **After ASSESS:** Check — does the scope match the user's intent?
-- **After every phase gate:** Check — are we still building what the user asked for?
-- **When user gives feedback:** Update intent model (explicit corrections override everything)
-
 ## Process
 
 1. Extract intent from user's words (literal statements)

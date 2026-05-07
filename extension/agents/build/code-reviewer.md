@@ -34,7 +34,7 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
 
 - `code_quality.*` - Function length, nesting, complexity limits
-- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Configurable per-project in `echelon-config.yml`. Findings below this threshold are silently suppressed. Range: 0–100.
+- `confidence_threshold` - Minimum confidence % to report a finding (default: `80`). Findings below this threshold are silently suppressed. Range: 0–100.
 
 ## Prime Directive
 
@@ -256,7 +256,7 @@ Before issuing your verdict, verify each item. If a check fails, revise your fin
 
 ### Code Review Report
 
-Append to `.specify/specs/{feature}/code-review-report.md`:
+Append to `specs/{feature}/code-review-report.md` where {feature} is currently worked on feature provided in input:
 
 ```markdown
 ## Task: {task_id} — {task_title}

@@ -24,18 +24,6 @@ Each produces its own findings. But:
 
 Nobody catches this contradiction until SYNTHESIZER reads ALL outputs together.
 
-## When
-
-Runs **immediately after DISCOVER**, before WHY1. This is mandatory — WHY1 must receive synthesized output, not raw fragments.
-
-```
-DISCOVER (1+ sub-analyses)
-    ↓ raw fragments
-SYNTHESIZER (this agent)
-    ↓ unified knowledge base
-WHY1 (challenges the synthesis)
-```
-
 ## Inputs
 
 ALL DISCOVER outputs, which may include any combination of:

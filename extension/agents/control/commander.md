@@ -42,7 +42,7 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 
 > **Dispatch name rule:** Routing instructions and Agent tool calls always use the spec-kit-injected name (`speckit-echelon-{filename}`). Codenames (SCOUT, SAGE, etc.) are human-readable labels for prose only. The deployed name equals `speckit-echelon-{agent-md-filename-without-extension}` — e.g., `commander.md` → `speckit-echelon-commander`.
 
-**The routing rule:** When SAGE (speckit-echelon-sage) finds issues, COMMANDER reads each issue and routes it to the agent that OWNS the artifact:
+**The routing rule:** When speckit-echelon-sage (codename SAGE) finds issues, COMMANDER reads each issue and routes it to the agent that OWNS the artifact:
 
 - Spec issues → dispatch **speckit-echelon-cartographer** → then **speckit-echelon-sage** re-validates
 - Architecture issues → dispatch **speckit-echelon-architect** → then **speckit-echelon-sage** re-validates
@@ -143,7 +143,7 @@ scripts/bash/pre-dispatch-gate.sh --agent "{AGENT_CODENAME}" --task "{task_or_ph
 - If exit code 0 (ALLOW): proceed with dispatch
 - If exit code non-zero (DENY): read the denial reason from stdout, log to reasoning-journal.json, and either skip the dispatch or resolve the violation before retrying
 
-### Calibration Injection (FR-001, Spec 010)
+### Calibration Injection
 
 Before EVERY agent dispatch, COMMANDER MUST prepend a **calibration block** to the agent's prompt. This block is assembled from the calibration map built during Run Initialization → Step 0.
 
@@ -350,13 +350,13 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 
 1. **Read** `confidence-thresholds.yaml` for the relevant domain.
 
-2. **Staleness check (FR-FEP-005):** If `generated_at` predates the current session boundary — log a staleness warning to reasoning-journal.json and fall back to default fixed-budget EVOI rules. Do NOT use a stale artifact for routing.
+2. **Staleness check:** If `generated_at` predates the current session boundary — log a staleness warning to reasoning-journal.json and fall back to default fixed-budget EVOI rules. Do NOT use a stale artifact for routing.
 
-3. **Absence fallback (FR-FEP-001):** If `confidence-thresholds.yaml` is absent — proceed with default EVOI rules. No error. The artifact's presence augments but does not gate routing.
+3. **Absence fallback:** If `confidence-thresholds.yaml` is absent — proceed with default EVOI rules. No error. The artifact's presence augments but does not gate routing.
 
-4. **Confidence-floor bias rule (FR-FEP-004):** If `confidence_floor` is below `convergence.evoi_confidence_floor` (see `workflow/definition.yaml`) for the relevant domain — bias toward dispatch. Treat the marginal EVOI as a dispatch trigger (dispatch the agent).
+4. **Confidence-floor bias rule:** If `confidence_floor` is below `convergence.evoi_confidence_floor` (see `workflow/definition.yaml`) for the relevant domain — bias toward dispatch. Treat the marginal EVOI as a dispatch trigger (dispatch the agent).
 
-5. **EVOI conflict precedence (FR-FEP-007):** When both `confidence_sa` entropy signal and `confidence_ecc` signal provide conflicting routing recommendations:
+5. **EVOI conflict precedence:** When both `confidence_sa` entropy signal and `confidence_ecc` signal provide conflicting routing recommendations:
    - If domain `confidence_brier` accuracy is more than `convergence.evoi_brier_gap_threshold` below `convergence.evoi_brier_policy_baseline` (see `workflow/definition.yaml`): the domain `confidence_floor` governs the routing decision.
    - Otherwise: `confidence_sa` entropy governs.
    - `confidence_ecc` is supplementary only — it never gates or replaces the primary routing signal.

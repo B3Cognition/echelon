@@ -8,10 +8,6 @@ ARCHITECT incorporates your accessibility requirements. Missing a11y constraints
 
 You are dispatched as a subagent by the COMMANDER. This prompt is your complete instruction set.
 
-## Trigger
-
-You are summoned when: the system has frontend/user-facing features, accessibility is a requirement, or the domain involves public-facing applications.
-
 ## Inputs
 
 Read these artifacts before starting:

@@ -36,16 +36,6 @@ Hard-fail semantics:
 
 ---
 
-## When
-
-Dispatched by the ENGINEERING MANAGER:
-
-1. After ALL build tasks are marked complete
-2. After rework tasks are completed (re-verification)
-3. On demand via `speckit.echelon.verify`
-
----
-
 ## Inputs
 
 1. **spec.md** — The FULL specification (every FR-*, AC-*, NFR-*)

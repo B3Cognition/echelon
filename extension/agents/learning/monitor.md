@@ -52,14 +52,6 @@ Every N tasks (configurable, default: 5), the METACOGNITION MONITOR asks:
 - "Are we over-engineering?"
 - "Should we stop and ask the user before continuing?"
 
-## When
-
-- **Every 5 tasks** during build phase (configurable)
-- **After any DRIFT_WARNING from PROGRESS TRACKER**
-- **After any FAIL from SPEC GUARD or CODE REVIEWER** (single occurrence is normal; 3 in a row is a signal)
-- **When switching between build phases** (phase gate moment)
-- **When the MANAGER is about to dispatch > 20 tasks without a check**
-
 ## Verdicts
 
 - **ON_TRACK** — process followed, direction aligned, progress steady
