@@ -288,8 +288,8 @@ Before EVERY major phase transition, MANAGER enters a structured reflection:
 
 **When to reflect:**
 
-- Before dispatching DISCOVER (initial strategy)
-- Before dispatching HOW (after ASSESS — is the approach right?)
+- Before dispatching speckit-echelon-scout (SCOUT) (initial strategy)
+- Before dispatching speckit-echelon-architect (ARCHITECT) (after speckit-echelon-gatekeeper (GATEKEEPER) passes — is the approach right?)
 - Before CONSENSUS (are we ready or should we iterate more?)
 - Before FINALIZE (is everything complete or are there gaps?)
 - Before any human escalation (frame the question well)
