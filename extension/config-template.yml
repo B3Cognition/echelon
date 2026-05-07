@@ -454,7 +454,7 @@ internalization:
   # TIER CLASSIFICATION (FR-027)
   # Maps each of the 37 squad agents to an internalization tier.
   # Tiers determine which absorption and accuracy thresholds apply.
-  # Every agent in agents.yaml MUST appear in exactly one tier.
+  # Every agent in extension.yml MUST appear in exactly one tier.
   # ───────────────────────────────────────────────────────────────────────────
   tiers:
     deep:

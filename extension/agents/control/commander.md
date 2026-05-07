@@ -723,7 +723,7 @@ Check `echelon-config.yml` for `specialists.guardian_mode`:
 - **`on_demand`**: Dispatch GUARDIAN only when the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or untrusted input (legacy behavior).
 
 When `specialists.guardian_mode` is `always_on`:
-1. Dispatch GUARDIAN after ASSESS completes (during the Specialist phase)
+1. Dispatch GUARDIAN after speckit-echelon-gatekeeper (GATEKEEPER) completes (during the Specialist phase)
 2. GUARDIAN runs the Minimum Security Checklist regardless of domain classification
 3. If domain signals indicate security relevance, GUARDIAN also runs full STRIDE + OWASP + compliance analysis
 4. GUARDIAN results are included in every subsequent agent's context pack
@@ -823,7 +823,7 @@ Cross-reference cumulative per-phase totals against the Token Budget Management 
   - speckit-echelon-scout (SCOUT), speckit-echelon-cartographer (CARTOGRAPHER), speckit-echelon-sage (SAGE), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-architect (ARCHITECT), speckit-echelon-orchestrator (ORCHESTRATOR): **cannot be skipped** — force finalize instead
   - Specialists (except TEST ARCHITECT): can be deferred
   - CONSENSUS: can be reduced (run SAGE WHY3 only, skip GATEKEEPER pass 2 + ORCHESTRATOR pass 2)
-  - FINALIZE: always run GROUND + CALIBRATE at minimum
+  - FINALIZE: always run speckit-echelon-realist (REALIST) + speckit-echelon-auditor (AUDITOR) at minimum
 
 ---
 
@@ -1144,11 +1144,11 @@ When a run executes against a feature that already has artifacts:
 1. **INIT** detects prior artifacts, sets `iteration` appropriately
 2. **EVOLVE** is dispatched at the start of FINALIZE to diff against prior run
 3. **All agents** receive prior artifacts in their context packs
-4. **INNOVATE** may be summoned if EVOLVE detects stagnation
-5. **CALIBRATE** compares quality trajectory across runs
+4. **speckit-echelon-maverick (MAVERICK)** may be summoned if EVOLVE detects stagnation
+5. **speckit-echelon-auditor (AUDITOR)** compares quality trajectory across runs
 6. Knowledge base entries from prior runs are available to all agents
 
-The goal of re-runs is monotonic improvement: each run should produce artifacts at least as good as the prior run, and ideally better. EVOLVE measures this. If improvement stalls for 2 consecutive runs, INNOVATE is summoned to break out of local optima.
+The goal of re-runs is monotonic improvement: each run should produce artifacts at least as good as the prior run, and ideally better. EVOLVE measures this. If improvement stalls for 2 consecutive runs, speckit-echelon-maverick (MAVERICK) is dispatched to break out of local optima.
 
 ---
 
