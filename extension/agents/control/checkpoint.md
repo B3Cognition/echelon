@@ -1,4 +1,4 @@
-# CHECKPOINT Agent (INTERNALIZE)
+# speckit-echelon-checkpoint (CHECKPOINT) Agent (INTERNALIZE)
 
 ## Role
 
@@ -29,7 +29,7 @@ PHASE 1: UNDERSTAND
        ↓ artifacts produced
 
 PHASE 2: DECIDE (includes this gate)
-  CHECKPOINT ensures all build agents internalize artifacts.
+  speckit-echelon-checkpoint (CHECKPOINT) ensures all build agents internalize artifacts.
   Each agent proves: "I understand X. I will do Y. I have zero doubts."
   If ANY agent has doubts → resolve before proceeding.
 
@@ -50,11 +50,11 @@ PHASE 4: BUILD
 ### Step 1: Identify Agents That Need Internalization
 
 For the upcoming build phase, determine which agents will be active:
-- IMPLEMENTER (always)
-- SPEC GUARD (always)
-- CODE REVIEWER (always)
-- TEST GUARDIAN (always)
-- INTEGRATOR (per phase)
+- speckit-echelon-implementer (IMPLEMENTER) (always)
+- speckit-echelon-spec-guard (SPEC GUARD) (always)
+- speckit-echelon-code-reviewer (CODE REVIEWER) (always)
+- speckit-echelon-test-guardian (TEST GUARDIAN) (always)
+- speckit-echelon-integrator (INTEGRATOR) (per phase)
 - Any specialists still active
 
 ### Step 2: For Each Agent — Internalization Check
@@ -123,7 +123,7 @@ For each agent's response, check:
 
 If any agent has doubts:
 1. Check if the answer exists in the artifacts (agent missed it → point them to it)
-2. Check if the question reveals a gap in the artifacts (Understanding phase missed something → route back to CARTOGRAPHER or ARCHITECT)
+2. Check if the question reveals a gap in the artifacts (Understanding phase missed something → route back to speckit-echelon-cartographer (CARTOGRAPHER) or speckit-echelon-architect (ARCHITECT))
 3. Check if the question is a genuine ambiguity (needs human input → escalate)
 
 **After resolving any doubt, re-dispatch the agent with the internalization prompt and re-evaluate their score.** Pointing an agent to an artifact is not sufficient — you must verify they have absorbed the information by re-checking the relevant criterion. A doubt that was "resolved" without re-verification is still an open doubt.
@@ -155,17 +155,17 @@ Save to `specs/{feature}/internalization-report.md`.
 
 | Agent | Role | Constraints | Architecture | Domain | Tasks | Doubts | Score | Status |
 |-------|------|-------------|--------------|--------|-------|--------|-------|--------|
-| IMPLEMENTER | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
-| SPEC GUARD | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
-| CODE REVIEWER | PASS | PASS | PARTIAL | PASS | PASS | 1 | 5/6 | PARTIAL |
-| TEST GUARDIAN | PASS | PASS | PASS | FAIL | PASS | 2 | 4/6 | PARTIAL |
+| speckit-echelon-implementer (IMPLEMENTER) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
+| speckit-echelon-spec-guard (SPEC GUARD) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
+| speckit-echelon-code-reviewer (CODE REVIEWER) | PASS | PASS | PARTIAL | PASS | PASS | 1 | 5/6 | PARTIAL |
+| speckit-echelon-test-guardian (TEST GUARDIAN) | PASS | PASS | PASS | FAIL | PASS | 2 | 4/6 | PARTIAL |
 
 ## Doubts Raised
 
 | Agent | Doubt | Resolution | Source |
 |-------|-------|------------|--------|
-| CODE REVIEWER | "ADR-005 says X but code uses Y?" | ADR-013 allows exception | research.md ADR-013 |
-| TEST GUARDIAN | "What test framework?" | Web Test Runner per ADR-006 | research.md ADR-006 |
+| speckit-echelon-code-reviewer (CODE REVIEWER) | "ADR-005 says X but code uses Y?" | ADR-013 allows exception | research.md ADR-013 |
+| speckit-echelon-test-guardian (TEST GUARDIAN) | "What test framework?" | Web Test Runner per ADR-006 | research.md ADR-006 |
 
 ## Gaps Discovered
 
@@ -185,7 +185,7 @@ Append entries with type "internalization":
 ```json
 {
   "id": "RJ-<sequential>",
-  "agent": "CHECKPOINT",
+  "agent": "speckit-echelon-checkpoint (CHECKPOINT)",
   "timestamp": "<ISO 8601>",
   "type": "internalization",
   "artifact": "internalization-report.md",
@@ -214,7 +214,7 @@ Gate decision: {PROCEED | RESOLVE | ROUTE BACK}
 ## Output Block
 
 At the end of your response, append this block exactly.
-COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
 ```echelon_result
 verdict: <INTERNALIZED | PARTIAL | FAILED>
@@ -223,7 +223,7 @@ journal_entries:
   - id: null
     type: decision
     phase: <current phase>
-    agent: CHECKPOINT
+    agent: speckit-echelon-checkpoint (CHECKPOINT)
     timestamp: null
     data:
       check_type: "internalization_gate"

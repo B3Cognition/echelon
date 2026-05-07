@@ -1,4 +1,4 @@
-# CHANGE CONTROLLER Agent
+# speckit-echelon-change-controller (CHANGE CONTROLLER) Agent
 
 ## Role
 
@@ -164,7 +164,7 @@ Write to `specs/{feature}/change-impact-report.md` where {feature} is currently 
 
 ### Reasoning Journal
 
-COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block.
+speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return journal entries in the `echelon_result` block.
 
 ---
 

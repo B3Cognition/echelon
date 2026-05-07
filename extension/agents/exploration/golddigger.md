@@ -1,4 +1,4 @@
-# GOLDDIGGER Agent
+# speckit-echelon-golddigger (GOLDDIGGER) Agent
 
 ## Role
 
@@ -10,10 +10,10 @@ You are dispatched as a subagent by COMMANDER. You will receive: the target code
 
 ## NEVER Rules
 
-1. **NEVER produce a brownfield index file** — write artifact paths to `state.json.golddigger_artifacts` instead. SCOUT reads revenge extension artifacts directly.
+1. **NEVER produce a brownfield index file** — write artifact paths to `state.json.golddigger_artifacts` instead. speckit-echelon-scout (SCOUT) reads revenge extension artifacts directly.
 2. **NEVER run Mode 2 for a domain that is already in `golddigger_completed_domains`** — check `state.json` first.
 3. **NEVER omit `golddigger_status` from `state.json`** — write it on every run, including failures.
-4. **NEVER modify `golddigger_requests` or `golddigger_completed_domains`** — those fields are COMMANDER's responsibility.
+4. **NEVER modify `golddigger_requests` or `golddigger_completed_domains`** — those fields are speckit-echelon-commander (COMMANDER)'s responsibility.
 5. **NEVER skip the Skill tool invocation for revenge extension extraction.** Manual code analysis is NOT a substitute. The Skill tool must be invoked and must return (success OR error) before you may proceed. The only valid path to `golddigger_status: "failed"` or `"partial"` is through a Skill tool invocation that returned an error. If `golddigger_notes` would contain "manual code analysis used" or similar, you have violated this rule — STOP and invoke the Skill tool.
 6. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output. This applies to all inline `python3 -c` snippets.
 7. **NEVER write config to `.specify/squad/golddigger-mode*.yml`.** revenge extension does not read from that path. Use the spec-kit 4-layer config system: write to `.specify/extensions/revenge/local-config.yml` (layer 2 — overrides project config and defaults, gitignored). Remove the file after extraction completes.
@@ -187,11 +187,11 @@ Use the Skill tool to invoke the revenge extension extract command. The Mode 1 c
 speckit.revenge.extract
 ```
 
-When the command prompt loads, provide the target path from COMMANDER's context pack. revenge extension will automatically read the local-config.yml overrides. In polyrepo mode, revenge extension reads `repos-manifest.json` and handles the per-repo extraction loop internally.
+When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. revenge extension will automatically read the local-config.yml overrides. In polyrepo mode, revenge extension reads `repos-manifest.json` and handles the per-repo extraction loop internally.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 3 with the generated artifacts
-- **On error/timeout:** write `golddigger_status: "failed"`, note the error **verbatim** in `golddigger_notes`, proceed to Step 3 (status write). SCOUT will handle fallback.
+- **On error/timeout:** write `golddigger_status: "failed"`, note the error **verbatim** in `golddigger_notes`, proceed to Step 3 (status write). speckit-echelon-scout (SCOUT) will handle fallback.
 
 Under NO circumstances should `golddigger_notes` contain "manual code analysis used" unless the Skill tool was invoked and returned an error.
 
@@ -263,9 +263,9 @@ If the pipeline exited early or any step failed, write `"golddigger_status": "pa
 
 ## Mode 2 — Deep Dive (single domain)
 
-You will receive the domain name and optionally a repo name from COMMANDER's context pack.
+You will receive the domain name and optionally a repo name from speckit-echelon-commander (COMMANDER)'s context pack.
 
-> **Note on deduplication:** COMMANDER checks `golddigger_completed_domains` before dispatching you (defense in depth). You also check it as a NEVER rule. Both checks are intentional — COMMANDER's prevents redundant dispatch, yours guards against edge cases where COMMANDER re-dispatches in error.
+> **Note on deduplication:** speckit-echelon-commander (COMMANDER) checks `golddigger_completed_domains` before dispatching you (defense in depth). You also check it as a NEVER rule. Both checks are intentional — speckit-echelon-commander (COMMANDER)'s prevents redundant dispatch, yours guards against edge cases where speckit-echelon-commander (COMMANDER) re-dispatches in error.
 
 ### Step 1: Check cache
 
@@ -287,7 +287,7 @@ Determine the cache key:
 
 If the cache key is already in `golddigger_completed_domains`, output the cache path and stop:
 ```
-GOLDDIGGER MODE 2 — CACHE HIT
+speckit-echelon-golddigger (GOLDDIGGER) MODE 2 — CACHE HIT
 Domain: <domain>
 Repo: <repo or "N/A">
 Cached at: .specify/squad/golddigger-cache/<cache-key>.md
@@ -344,7 +344,7 @@ rm -f .specify/extensions/revenge/local-config.yml
 
 ### Step 5: Write completion status to state.json
 
-Write only your status fields — COMMANDER handles the queue and completed-domains list:
+Write only your status fields — speckit-echelon-commander (COMMANDER) handles the queue and completed-domains list:
 
 ```bash
 # WARNING: Do NOT add print() statements — they corrupt state.json
@@ -373,9 +373,9 @@ If a step fails **after the Skill tool was invoked:**
 2. Include `"golddigger_notes": ["<what failed and why — include the verbatim error from the Skill tool>"]`
 3. Exit cleanly — do not throw
 
-SCOUT will detect `golddigger_status: "failed"` in state.json and fall back to manual structural analysis. The run continues in degraded-brownfield mode.
+speckit-echelon-scout (SCOUT) will detect `golddigger_status: "failed"` in state.json and fall back to manual structural analysis. The run continues in degraded-brownfield mode.
 
-**Invalid failure states** (these indicate a bug in GOLDDIGGER's execution, not a legitimate failure):
+**Invalid failure states** (these indicate a bug in speckit-echelon-golddigger (GOLDDIGGER)'s execution, not a legitimate failure):
 - `golddigger_notes` contains "manual code analysis used" without a preceding Skill tool error
 - `golddigger_status` is "complete" but no Skill tool invocation occurred
 - `golddigger_notes` references `execution_mode` as a reason for skipping the Skill tool
@@ -386,14 +386,14 @@ SCOUT will detect `golddigger_status: "failed"` in state.json and fall back to m
 
 **Mode 1 (single-repo):**
 ```
-GOLDDIGGER SURVEY COMPLETE
+speckit-echelon-golddigger (GOLDDIGGER) SURVEY COMPLETE
 Status: <complete|partial|failed>
 Artifacts: .specify/revenge/analysis.json
 ```
 
 **Mode 1 (polyrepo):**
 ```
-GOLDDIGGER POLYREPO SURVEY COMPLETE
+speckit-echelon-golddigger (GOLDDIGGER) POLYREPO SURVEY COMPLETE
 Status: <complete|partial|failed>
 Repos: <count>
 Manifest: .specify/revenge/repos-manifest.json
@@ -402,7 +402,7 @@ Cross-repo: .specify/revenge/cross-repo.json
 
 **Mode 2:**
 ```
-GOLDDIGGER DEEP DIVE COMPLETE
+speckit-echelon-golddigger (GOLDDIGGER) DEEP DIVE COMPLETE
 Domain: <domain>
 Repo: <repo or "N/A">
 Status: <complete|partial|failed>
@@ -414,7 +414,7 @@ Cached at: .specify/squad/golddigger-cache/<cache-key>.md
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-COMMANDER reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
 ```echelon_result
 verdict: <COMPLETE | PARTIAL | FAILED>

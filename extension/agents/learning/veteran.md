@@ -1,4 +1,4 @@
-# VETERAN Agent (PROJECT SCOPING)
+# speckit-echelon-veteran (VETERAN) Agent (PROJECT SCOPING)
 
 ## Role
 
@@ -69,11 +69,11 @@ This ensures projects benefit from universal learnings without being polluted by
 
 ### Step 6: Demotion Check
 
-If a previously `global` entry is contradicted by a new run (MIRROR flags it):
+If a previously `global` entry is contradicted by a new run (speckit-echelon-mirror (MIRROR) flags it):
 
 1. Do NOT automatically demote. Flag for human review.
 2. Append a reasoning journal entry with `type: "veteran_demotion_candidate"`.
-3. If the contradiction comes from 2+ distinct fingerprints, escalate to COMMANDER.
+3. If the contradiction comes from 2+ distinct fingerprints, escalate to speckit-echelon-commander (COMMANDER).
 
 ---
 
@@ -81,7 +81,7 @@ If a previously `global` entry is contradicted by a new run (MIRROR flags it):
 
 ### Promotion Report
 
-COMMANDER writes to the reasoning journal. Return journal entries in the `echelon_result` block. Include `veteran_promotion_scan` data (current_fingerprint, patterns_scanned, pitfalls_scanned, promotions list, no_promotion_reason) in the `echelon_result` block's journal entry data.
+speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return journal entries in the `echelon_result` block. Include `veteran_promotion_scan` data (current_fingerprint, patterns_scanned, pitfalls_scanned, promotions list, no_promotion_reason) in the `echelon_result` block's journal entry data.
 
 ### Knowledge Base Updates
 
@@ -138,7 +138,7 @@ For each qualifying pattern:
 
 ### Marketplace Report
 
-COMMANDER writes to the reasoning journal. Include `veteran_marketplace_scan` data (marketplace_candidates, marketplace_indexed, marketplace_skipped_reason) in the `echelon_result` block's journal entry data.
+speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Include `veteran_marketplace_scan` data (marketplace_candidates, marketplace_indexed, marketplace_skipped_reason) in the `echelon_result` block's journal entry data.
 
 ---
 
@@ -155,12 +155,12 @@ Promoted entries sync to the global knowledge base at:
 └── project-index.yaml       # Index of all projects with outcomes
 ```
 
-At run start (INIT): read global KB, merge with local (local wins on conflicts), feed merged calibration to ASSESS and merged patterns to MIRROR/REFLECT.
+At run start (INIT): read global KB, merge with local (local wins on conflicts), feed merged calibration to ASSESS and merged patterns to speckit-echelon-mirror (MIRROR)/REFLECT.
 At run end (FINALIZE): promote qualified entries, update `calibration-profile.yaml` with actual accuracy from FEEDBACK.
 
-## CONSOLIDATOR Integration
+## speckit-echelon-consolidator (CONSOLIDATOR) Integration
 
-VETERAN exposes its episodic trace store to CONSOLIDATOR for schema consolidation (Mode 2) and online replay (Mode 1). When CONSOLIDATOR promotes a schema, VETERAN stores it in its schema registry alongside existing patterns. CONSOLIDATOR reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).
+speckit-echelon-veteran (VETERAN) exposes its episodic trace store to speckit-echelon-consolidator (CONSOLIDATOR) for schema consolidation (Mode 2) and online replay (Mode 1). When speckit-echelon-consolidator (CONSOLIDATOR) promotes a schema, speckit-echelon-veteran (VETERAN) stores it in its schema registry alongside existing patterns. speckit-echelon-consolidator (CONSOLIDATOR) reads `consolidated: true` markers on episodic traces to implement adaptive forgetting (reducing replay salience for already-consolidated traces).
 
 ---
 
@@ -185,7 +185,7 @@ journal_entries:
   - id: null
     type: pattern_identified
     phase: finalize
-    agent: VETERAN
+    agent: speckit-echelon-veteran (VETERAN)
     timestamp: null
     data:
       patterns_matched: []
@@ -197,13 +197,13 @@ journal_entries:
 
 **Cross-Run Amendment Candidates (required when dispatched in consolidation phase):**
 
-When COMMANDER dispatches VETERAN with `mode: "consolidation"` in the context pack, VETERAN must:
+When speckit-echelon-commander (COMMANDER) dispatches speckit-echelon-veteran (VETERAN) with `mode: "consolidation"` in the context pack, speckit-echelon-veteran (VETERAN) must:
 
 1. Read `{spec_dir}/run-history.json` to find prior runs for this spec.
-2. Cross-reference MIRROR's candidates (provided in context pack) against patterns seen across multiple runs.
+2. Cross-reference speckit-echelon-mirror (MIRROR)'s candidates (provided in context pack) against patterns seen across multiple runs.
 3. Promote candidates that recur across ≥2 runs from `confidence: medium` to `confidence: high`.
-4. Add any cross-run patterns not already in MIRROR's list.
+4. Add any cross-run patterns not already in speckit-echelon-mirror (MIRROR)'s list.
 
-Format: same `[PROPOSED: ...]` format as MIRROR.
+Format: same `[PROPOSED: ...]` format as speckit-echelon-mirror (MIRROR).
 
-Output: `veteran_amendment_candidates` list (may overlap with MIRROR's — COMMANDER deduplicates by principle text before writing to `constitution-amendment-candidates.md`).
+Output: `veteran_amendment_candidates` list (may overlap with speckit-echelon-mirror (MIRROR)'s — speckit-echelon-commander (COMMANDER) deduplicates by principle text before writing to `constitution-amendment-candidates.md`).
