@@ -306,28 +306,27 @@ This data is consumed by speckit-echelon-cartographer (CARTOGRAPHER) when specki
 
 #### 1b. Generate Behavioral Diagram
 
-**NEVER invoke `speckit.echelon.understanding-diagram` via the Skill tool.** That command has `disable-model-invocation: true` and will always fail with a tool error when called via Skill. Use the Understanding CLI directly via the Bash tool instead:
+Use the Skill tool to generate the entity relationship diagram:
 
-```bash
-understanding diagram "${SPEC_DIR}/spec.md" --diagram "${SPEC_DIR}/spec-diagram.svg"
+```text
+speckit.echelon.understanding-diagram <spec_directory>/spec.md
 ```
 
-The CLI infers format from the file extension. SVG is preferred; PNG is acceptable if SVG rendering is unavailable:
+Pass these output paths to the skill (one path per invocation). The skill uses `--diagram <path>` — format is inferred from the file extension:
 
-```bash
-understanding diagram "${SPEC_DIR}/spec.md" --diagram "${SPEC_DIR}/spec-diagram.png"
-```
+- `<spec_directory>/spec-diagram.svg`
+- `<spec_directory>/spec-diagram.png`
 
 **Never pass `--png`, `--svg`, or similar standalone format flags** — they don't exist. The only correct flag is `--diagram <path.ext>`.
 
 This diagram visualizes the spec's entity model — actors, actions, objects, and their relationships — extracted from the requirements. Use it to:
+
 - **Verify completeness:** Are there orphan actors or objects with no actions? Are there actions without a clear subject?
 - **Verify testability:** Can every relationship be verified by a test scenario?
 - **Share with other agents:** speckit-echelon-verification (VERIFICATION) uses this diagram to check if the code implements all entities/relationships. speckit-echelon-visual-validator (VISUAL VALIDATOR) includes it in reports. REFLECT includes it in knowledge transfer assessment.
 
 **If diagram generation fails** (but validate succeeded): log a `diagram_skipped` journal entry and continue — diagram is useful but never blocking. Common reasons to handle gracefully:
 
-- `speckit-echelon-understanding-diagram` skill is unavailable or returns `disable-model-invocation` error — skip silently, log entry.
 - Graphviz `dot` binary is not on PATH — skip silently, log entry. Do **not** fail the SAGE dispatch over a missing system tool.
 
 ```json
