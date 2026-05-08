@@ -407,6 +407,17 @@ Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives 
 
 Each command is available two ways: as a terminal CLI tool (no Claude session needed) and as a spec-kit skill inside a Claude Code session.
 
+### Command architecture
+
+All major command files (`echelon.run.md`, `echelon.bugfix.md`, `echelon.build.md`, `echelon.codegen.md`, `echelon.codegenlight.md`) are **thin wrappers** (~35–75 lines). They set the role, load `agents/control/commander.md` (the shared behavioral framework for COMMANDER-driven commands), then delegate to `workflow/definition.yaml` and `workflow/phases/` for the full workflow logic.
+
+The workflow is split into two layers:
+
+- **`workflow/definition.yaml`** — phase graph with routing conditions, transitions, agent assignments, convergence thresholds, and the build task-loop state machine. COMMANDER reads this before every routing decision.
+- **`workflow/phases/*.md`** — per-phase spec files with context pack assembly, exact dispatch prompts, and expected outputs. Each phase node in `definition.yaml` points to its spec file via `spec_file:`.
+
+This keeps commands readable and makes individual phases independently editable without touching the command files.
+
 ### echelon — spec authoring
 
 | Terminal | Spec-kit skill | Purpose |
@@ -828,20 +839,31 @@ extension/
 │   ├── learning/        # AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR
 │   └── build/           # IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, EM, INTEGRATOR,
 │                        # PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR
-└── commands/
-    ├── echelon.run.md          # Main squad run orchestration
-    ├── echelon.build.md        # Build phase (agent-driven)
-    ├── echelon.codegen.md      # Build phase (SOAR pipeline)
-    ├── echelon.*.md            # Other echelon commands (10 more)
-    ├── harness.init.md         # Harness initialization
-    ├── harness.run.md          # Build → verify → PR loop
-    ├── harness.status.md       # Loop status
-    ├── harness.resume.md       # Resume blocked loop
-    ├── understanding.scan.md   # 31-metric spec quality scan
-    ├── understanding.validate.md
-    ├── understanding.energy.md
-    ├── understanding.diagram.md
-    └── understanding.batch.md
+├── commands/            # Thin wrappers (~35–75 lines each) — delegate to workflow/phases/
+│   ├── echelon.run.md          # Squad run: reads commander.md + workflow/definition.yaml, starts at init
+│   ├── echelon.bugfix.md       # Bugfix: reads commander.md + phases[], starts at bugfix-1-init
+│   ├── echelon.build.md        # Build phase (agent-driven): starts at build-1-init
+│   ├── echelon.codegen.md      # Build phase (SOAR pipeline): reads workflow/phases/codegen-*.md
+│   ├── echelon.codegenlight.md # Build phase (SOAR, brownfield/greenfield): reads codegenlight-*.md
+│   ├── echelon.*.md            # Other echelon commands (10 more)
+│   ├── harness.init.md         # Harness initialization
+│   ├── harness.run.md          # Build → verify → PR loop
+│   ├── harness.status.md       # Loop status
+│   ├── harness.resume.md       # Resume blocked loop
+│   ├── understanding.scan.md   # 31-metric spec quality scan
+│   ├── understanding.validate.md
+│   ├── understanding.energy.md
+│   ├── understanding.diagram.md
+│   └── understanding.batch.md
+└── workflow/            # Externalized workflow logic (deployed with the extension)
+    ├── definition.yaml          # Phase graph, routing rules, convergence thresholds, build state machine
+    ├── journal-entry-types.yaml # Canonical registry of valid reasoning-journal entry types
+    └── phases/                  # Per-phase spec files — context pack assembly, dispatch prompts, outputs
+        ├── init.md / phase1-*.md / phase2-*.md / phase3-*.md / phase4-document.md
+        ├── bugfix-1-init.md … bugfix-5-finalize.md
+        ├── build-1-init.md … build-8-finalize.md
+        ├── codegen-A-preamble.md … codegen-7-deliver.md / codegen-resume.md
+        └── codegenlight-0-preflight.md … codegenlight-7-deliver.md / codegenlight-resume.md
 src/
 ├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
 ├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
