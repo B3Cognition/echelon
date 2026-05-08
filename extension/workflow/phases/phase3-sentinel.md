@@ -36,16 +36,16 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Precondition: `plan.md` Availability
 
-`plan.md` is the canonical input to SENTINEL. It is produced by ARCHITECT in phase3-how.
+`plan.md` is the canonical input to speckit-echelon-sentinel (SENTINEL). It is produced by speckit-echelon-architect (ARCHITECT) in phase3-how.
 
 - **If `plan.md` exists** → proceed normally with the full context pack.
-- **If `plan.md` is absent** (consequence of ARCHITECT omitting it — see Medium issue #33 in [docs/echelon-run-analysis-05-08.md](../../../../docs/echelon-run-analysis-05-08.md)) → read `architecture.md` as a proxy and append a `degraded_input` journal entry:
+- **If `plan.md` is absent** (consequence of speckit-echelon-architect (ARCHITECT) omitting it — see Medium issue #33 in [docs/echelon-run-analysis-05-08.md](../../../../docs/echelon-run-analysis-05-08.md)) → read `architecture.md` as a proxy and append a `degraded_input` journal entry:
 
   ```json
   {"type": "degraded_input", "agent": "speckit-echelon-sentinel (SENTINEL)", "missing_artifact": "plan.md", "fallback": "architecture.md", "phase": "phase3-sentinel"}
   ```
 
-  Do not block. Proceed with reduced confidence. A future hardening will route back to phase3-how when this happens; for now SENTINEL falls back gracefully.
+  Do not block. Proceed with reduced confidence. A future hardening will route back to phase3-how when this happens; for now speckit-echelon-sentinel (SENTINEL) falls back gracefully.
 
 ### Expected Outputs — ALL THREE REQUIRED
 
@@ -59,7 +59,7 @@ The phase produces exactly three files in `specs/{NNN}-{feature}/`. Skipping any
 
 ```bash
 for f in test-strategy.md test-architecture.md coverage-map.md; do
-  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: SENTINEL missing $f" >&2; exit 1; }
+  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-sentinel (SENTINEL) missing $f" >&2; exit 1; }
 done
 ```
 

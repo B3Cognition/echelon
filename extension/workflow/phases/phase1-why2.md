@@ -33,7 +33,7 @@ Install: specify extension add understanding
 
 4. **STOP execution.** Do not dispatch speckit-echelon-sage (SAGE). Do not proceed.
 
-**MANDATORY — persist Understanding availability check result to state.json before dispatching SAGE:**
+**MANDATORY — persist Understanding availability check result to state.json before dispatching speckit-echelon-sage (SAGE):**
 
 ```json
 "dependency_checks": {

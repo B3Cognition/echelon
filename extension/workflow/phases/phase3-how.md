@@ -35,11 +35,11 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Expected Outputs — ALL REQUIRED
 
-ARCHITECT produces these files in `specs/{NNN}-{feature}/`. Missing any of them breaks downstream phases: SENTINEL needs `plan.md`, ORCHESTRATOR needs `contracts/`.
+speckit-echelon-architect (ARCHITECT) produces these files in `specs/{NNN}-{feature}/`. Missing any of them breaks downstream phases: speckit-echelon-sentinel (SENTINEL) needs `plan.md`, speckit-echelon-orchestrator (ORCHESTRATOR) needs `contracts/`.
 
 | Output | Notes |
 | --- | --- |
-| `plan.md` | High-level implementation plan with phases, stack decisions, and component breakdown. Required by SENTINEL and ORCHESTRATOR. |
+| `plan.md` | High-level implementation plan with phases, stack decisions, and component breakdown. Required by speckit-echelon-sentinel (SENTINEL) and speckit-echelon-orchestrator (ORCHESTRATOR). |
 | `research.md` | ADR rationale, technology comparisons, references. |
 | `data-model.md` | Entity definitions, relationships, validation rules. |
 | `contracts/` | API / interface specifications directory. At minimum one file per external boundary. |
@@ -49,9 +49,9 @@ ARCHITECT produces these files in `specs/{NNN}-{feature}/`. Missing any of them 
 
 ```bash
 for f in plan.md research.md data-model.md; do
-  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: ARCHITECT missing $f" >&2; exit 1; }
+  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing $f" >&2; exit 1; }
 done
-[ -d "specs/${SPEC_DIR}/contracts" ] || { echo "ERROR: ARCHITECT missing contracts/" >&2; exit 1; }
+[ -d "specs/${SPEC_DIR}/contracts" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing contracts/" >&2; exit 1; }
 ```
 
 **Transition:** `phases[phase3-sentinel]` — see `workflow/definition.yaml`

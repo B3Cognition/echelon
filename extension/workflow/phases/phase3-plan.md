@@ -35,7 +35,7 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Expected Outputs — EXACT FILENAMES
 
-ORCHESTRATOR produces these four files in `specs/{NNN}-{feature}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
+speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `specs/{NNN}-{feature}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
 
 | Required filename | Purpose |
 | --- | --- |
@@ -54,7 +54,7 @@ ORCHESTRATOR produces these four files in `specs/{NNN}-{feature}/` with **exactl
 
 ```bash
 for f in tasks.md critical-path.md risk-matrix.md dependencies.md; do
-  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: ORCHESTRATOR missing $f" >&2; exit 1; }
+  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-orchestrator (ORCHESTRATOR) missing $f" >&2; exit 1; }
 done
 ```
 

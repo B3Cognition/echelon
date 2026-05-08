@@ -517,7 +517,7 @@ phases:
     outputs:
       - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
     transitions:
-      - to: phase3-specialists    # specialists run BEFORE ARCHITECT so their findings feed the design
+      - to: phase3-specialists    # specialists run BEFORE speckit-echelon-architect (ARCHITECT) so their findings feed the design
         condition: "alignment = ALIGNED OR alignment = DRIFT"
       - to: escalate
         condition: "alignment = STOP_AND_ASK"
@@ -534,12 +534,12 @@ phases:
       - constitution.md
       - 00-overview.md
       - gatekeeper output (constraints, scope)
-      - security-findings.md        # from GUARDIAN (if exists)
-      - performance-model.md        # from BENCHMARK (if exists)
-      - ux-report.md                # from ADVOCATE (if exists)
-      - domain-knowledge.md         # from ORACLE (if exists)
-      - research.md                 # from INVESTIGATOR (if exists)
-      - alternatives.md             # from MAVERICK (if exists)
+      - security-findings.md        # from speckit-echelon-guardian (GUARDIAN) (if exists)
+      - performance-model.md        # from speckit-echelon-benchmark (BENCHMARK) (if exists)
+      - ux-report.md                # from speckit-echelon-advocate (ADVOCATE) (if exists)
+      - domain-knowledge.md         # from speckit-echelon-oracle (ORACLE) (if exists)
+      - research.md                 # from speckit-echelon-investigator (INVESTIGATOR) (if exists)
+      - alternatives.md             # from speckit-echelon-maverick (MAVERICK) (if exists)
       - reasoning-journal.json [phase=phase2-decide, phase=phase3-specialists]
       - calibration_map entry for speckit-echelon-architect (ARCHITECT)
     outputs:
@@ -560,7 +560,7 @@ phases:
     description: >
       speckit-echelon-guardian (GUARDIAN) always runs first (always_on default).
       Others evaluated in order; each dispatched only after the previous completes
-      post-dispatch protocol. INVESTIGATOR may run in parallel with one domain
+      post-dispatch protocol. speckit-echelon-investigator (INVESTIGATOR) may run in parallel with one domain
       specialist (the only permitted parallelism). All others are strictly sequential.
     agents:
       - id: speckit-echelon-guardian
@@ -568,7 +568,7 @@ phases:
         condition: "guardian_mode = always_on OR domain_security_relevant"
         exempt_from_max_active_specialists: true
         context_pack:
-          - spec.md            # architecture.md does not exist yet — specialists run before ARCHITECT
+          - spec.md            # architecture.md does not exist yet — specialists run before speckit-echelon-architect (ARCHITECT)
           - boundaries.md
           - constitution.md
         outputs:
@@ -611,11 +611,11 @@ phases:
         #   1. stagnation_detected          — EVOLVE: no quality improvement between runs
         #   2. same_issue_count >= issue_repetition_limit — circular: same issue ≥3× unresolved
         #   3. why_reject_count >= 2        — WHY2 rejected spec ≥2 consecutive times
-        #   4. assess_borderline_defer      — GATEKEEPER issued DEFER (not clear PASS or KILL)
-        #   5. hard_tradeoff_detected       — ARCHITECT flagged unresolved ADR with no clear winner
+        #   4. assess_borderline_defer      — speckit-echelon-gatekeeper (GATEKEEPER) issued DEFER (not clear PASS or KILL)
+        #   5. hard_tradeoff_detected       — speckit-echelon-architect (ARCHITECT) flagged unresolved ADR with no clear winner
         #   6. quality_plateau_detected     — max abs delta < 0.02 across last 2 WHY passes
         #   7. agent_blocked               — any agent returned BLOCKED verdict this run
-        #   8. assess_scope_large          — GATEKEEPER estimates > 100 person-weeks
+        #   8. assess_scope_large          — speckit-echelon-gatekeeper (GATEKEEPER) estimates > 100 person-weeks
         condition: >
           stagnation_detected OR
           same_issue_count >= issue_repetition_limit OR
@@ -696,7 +696,7 @@ phases:
     type: staged_parallel            # Stage 1: WHY3 + ASSESS2 in parallel; Stage 2: PLAN2 after both complete
     description: >
       Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
-      (PLAN2 depends on implementability-report.md from ASSESS2). COMMANDER must NOT dispatch PLAN2
+      (PLAN2 depends on implementability-report.md from ASSESS2). speckit-echelon-commander (COMMANDER) must NOT dispatch PLAN2
       in the same parallel batch as WHY3 and ASSESS2.
     agents:
       - id: speckit-echelon-sage
@@ -731,8 +731,8 @@ phases:
         tier: solution
         context_pack:
           - tasks.md
-          - why3-issues               # from SAGE WHY3 output
-          - assess2-concerns          # from GATEKEEPER ASSESS2 output
+          - why3-issues               # from speckit-echelon-sage (SAGE) WHY3 output
+          - assess2-concerns          # from speckit-echelon-gatekeeper (GATEKEEPER) ASSESS2 output
           - implementability-report.md  # MUST exist before PLAN2 is dispatched
         outputs:
           - revised tasks.md  # if changes needed

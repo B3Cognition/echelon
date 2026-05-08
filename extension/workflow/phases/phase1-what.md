@@ -86,18 +86,18 @@ Before updating state.json, verify both invariants:
    }
    ```
 
-**If both checks pass**, verify CARTOGRAPHER ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
+**If both checks pass**, verify speckit-echelon-cartographer (CARTOGRAPHER) ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
 
 ```bash
 # spec.md must contain at least one WHEN/THEN acceptance criterion — proof of enhancement
 grep -q "WHEN\|THEN\|Given\|When\|Then" "${spec_dir}/spec.md" \
-  || { echo "WARN: spec.md has no WHEN/THEN criteria — CARTOGRAPHER may not have run Step 2 (enhancement pass)"; }
+  || { echo "WARN: spec.md has no WHEN/THEN criteria — speckit-echelon-cartographer (CARTOGRAPHER) may not have run Step 2 (enhancement pass)"; }
 # 00-overview.md must exist
 [ -f "${spec_dir}/00-overview.md" ] \
-  || { echo "WARN: 00-overview.md missing — CARTOGRAPHER Step 2 may be incomplete"; }
+  || { echo "WARN: 00-overview.md missing — speckit-echelon-cartographer (CARTOGRAPHER) Step 2 may be incomplete"; }
 ```
 
-If either warning fires: **re-dispatch CARTOGRAPHER** in enhancement-only mode with `spec_dir` pre-set in the context pack. CARTOGRAPHER will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+If either warning fires: **re-dispatch speckit-echelon-cartographer (CARTOGRAPHER)** in enhancement-only mode with `spec_dir` pre-set in the context pack. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
 
 Update state.json:
 
@@ -126,8 +126,8 @@ This step runs immediately after the state.json `spec_id`/`spec_dir` update abov
 
 ### Expected Outputs — BOTH REQUIRED
 
-- `spec.md` (created by `speckit.specify`, enhanced by CARTOGRAPHER with GWT acceptance criteria and glossary cross-references)
-- `00-overview.md` (CARTOGRAPHER-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
+- `spec.md` (created by `speckit.specify`, enhanced by speckit-echelon-cartographer (CARTOGRAPHER) with GWT acceptance criteria and glossary cross-references)
+- `00-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
 
 **Post-dispatch verification (run before Spec Status Transition):**
 

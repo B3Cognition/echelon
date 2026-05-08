@@ -18,10 +18,10 @@ Read and include in the subagent prompt:
 | `boundaries.md` | `.specify/squad/staging/boundaries.md` |
 | `assumptions.md` | `.specify/squad/staging/assumptions.md` |
 | `unknowns.md` | `.specify/squad/staging/unknowns.md` |
-| `calibration_map entry for SAGE` | Built by COMMANDER at init from `knowledge-base/calibration-profile.yaml`. Mark `[ABSENT]` on cold start — COMMANDER injects it via the Pre-Dispatch Calibration Injection protocol. |
+| `calibration_map entry for speckit-echelon-sage (SAGE)` | Built by speckit-echelon-commander (COMMANDER) at init from `knowledge-base/calibration-profile.yaml`. Mark `[ABSENT]` on cold start — speckit-echelon-commander (COMMANDER) injects it via the Pre-Dispatch Calibration Injection protocol. |
 | `reasoning-journal.json` | `.specify/squad/staging/reasoning-journal.json` |
 
-**MANDATORY — verify each file before dispatch.** If a file is absent, include it in the prompt as `[ABSENT: <path>]` rather than silently omitting it. SAGE must know what's missing so it can flag related assumptions accordingly. The calibration_map entry is commonly absent on cold start — that is acceptable; mark it `[ABSENT]`.
+**MANDATORY — verify each file before dispatch.** If a file is absent, include it in the prompt as `[ABSENT: <path>]` rather than silently omitting it. speckit-echelon-sage (SAGE) must know what's missing so it can flag related assumptions accordingly. The calibration_map entry is commonly absent on cold start — that is acceptable; mark it `[ABSENT]`.
 
 ### Dispatch
 
@@ -31,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.json from .specify/squad/staging/; calibration_map entry for SAGE from COMMANDER init (mark [ABSENT] if cold start)]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.json from .specify/squad/staging/; calibration_map entry for speckit-echelon-sage (SAGE) from speckit-echelon-commander (COMMANDER) init (mark [ABSENT] if cold start)]
   </context>
 
   <instructions>

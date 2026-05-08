@@ -1,7 +1,7 @@
 # workflow/journal-entry-types.yaml
 # Canonical registry of all valid reasoning-journal entry types.
 # Agents return entries of these types in their echelon_result block.
-# COMMANDER assigns id and timestamp before writing.
+# speckit-echelon-commander (COMMANDER) assigns id and timestamp before writing.
 #
 # Adding a new type: add it here first, then update the agent prompt.
 # Removing a type: mark deprecated: true — never delete (journal entries are permanent).
@@ -46,27 +46,27 @@ types:
 
   # --- Architecture ---
   adr_self_check:
-    description: "ARCHITECT ADR consistency self-check result — AUDITOR FINALIZE parsing depends on this type name (FR-INH-006)"
+    description: "speckit-echelon-architect (ARCHITECT) ADR consistency self-check result — speckit-echelon-auditor (AUDITOR) FINALIZE parsing depends on this type name (FR-INH-006)"
     agents: [speckit-echelon-architect]
     required_data_fields: [adr_id, never_rule_result, consistency_result]
     optional_data_fields: [concerns]
 
   # --- Feasibility ---
   assessment:
-    description: "GATEKEEPER feasibility or implementability assessment"
+    description: "speckit-echelon-gatekeeper (GATEKEEPER) feasibility or implementability assessment"
     agents: [speckit-echelon-gatekeeper]
     required_data_fields: [verdict, rationale, scope_notes]
     optional_data_fields: [risk_flags, deferred_items]
 
   # --- Build ---
   self_check:
-    description: "IMPLEMENTER inter-step self-check — enables AUDITOR FINALIZE parsing (FR-INH-006)"
+    description: "speckit-echelon-implementer (IMPLEMENTER) inter-step self-check — enables speckit-echelon-auditor (AUDITOR) FINALIZE parsing (FR-INH-006)"
     agents: [speckit-echelon-implementer]
     required_data_fields: [task_id, check_type, result]
     optional_data_fields: [concerns]
 
   implementation_decision:
-    description: "Significant implementation decision made by IMPLEMENTER"
+    description: "Significant implementation decision made by speckit-echelon-implementer (IMPLEMENTER)"
     agents: [speckit-echelon-implementer]
     required_data_fields: [task_id, artifact, section, reasoning]
 
@@ -88,13 +88,13 @@ types:
     optional_data_fields: [missing_cases]
 
   integration_finding:
-    description: "INTEGRATOR phase checkpoint result"
+    description: "speckit-echelon-integrator (INTEGRATOR) phase checkpoint result"
     agents: [speckit-echelon-integrator]
     required_data_fields: [components_checked, failures]
     optional_data_fields: [phase_group]
 
   implementation_complete:
-    description: "IMPLEMENTER task completion record — files changed, tests passing"
+    description: "speckit-echelon-implementer (IMPLEMENTER) task completion record — files changed, tests passing"
     agents: [speckit-echelon-implementer]
     required_data_fields: [task_id, files_changed, tests_passing]
 
@@ -109,7 +109,7 @@ types:
     required_data_fields: [components_checked, failures]
 
   debug_finding:
-    description: "DEBUGGER root cause analysis"
+    description: "speckit-echelon-debugger (DEBUGGER) root cause analysis"
     agents: [speckit-echelon-debugger]
     required_data_fields: [task_id, root_cause, fix_applied]
 
@@ -124,12 +124,12 @@ types:
     required_data_fields: [task_id, effort_recorded, drift_detected]
 
   verification_result:
-    description: "VERIFICATION final coverage check result"
+    description: "speckit-echelon-verification (VERIFICATION) final coverage check result"
     agents: [speckit-echelon-verification]
     required_data_fields: [coverage_pct, gaps]
     optional_data_fields: [requirements_traced, verdict]
 
-  # --- COMMANDER internal ---
+  # --- speckit-echelon-commander (COMMANDER) internal ---
   init_knowledge_read:
     description: "KB files read at run init"
     agents: [speckit-echelon-commander]
@@ -141,7 +141,7 @@ types:
     required_data_fields: [message]
 
   confidence_thresholds_written:
-    description: "COMMANDER wrote confidence-thresholds.yaml"
+    description: "speckit-echelon-commander (COMMANDER) wrote confidence-thresholds.yaml"
     agents: [speckit-echelon-commander]
     required_data_fields: [path, domains_count]
 
@@ -156,7 +156,7 @@ types:
     required_data_fields: [belief_id, config_key, fallback_value]
 
   belief_invalidated:
-    description: "COMMANDER recorded that INVESTIGATOR invalidated a previously held belief"
+    description: "speckit-echelon-commander (COMMANDER) recorded that speckit-echelon-investigator (INVESTIGATOR) invalidated a previously held belief"
     agents: [speckit-echelon-commander]
     required_data_fields: [belief_id, claim, reason]
 
@@ -166,12 +166,12 @@ types:
     required_data_fields: [dependency, phase, fallback_mode]
 
   validator_dispatch:
-    description: "VALIDATOR dispatched (exactly once per build run)"
+    description: "speckit-echelon-validator (VALIDATOR) dispatched (exactly once per build run)"
     agents: [speckit-echelon-commander]
     required_data_fields: [verdict, doubts]
 
   routing_decision:
-    description: "COMMANDER routing decision"
+    description: "speckit-echelon-commander (COMMANDER) routing decision"
     agents: [speckit-echelon-commander]
     required_data_fields: [from_phase, to_phase, reason, evoi_score]
     optional_data_fields: [alternatives_rejected]
@@ -228,79 +228,79 @@ types:
 
   # --- Control ---
   prediction:
-    description: "TRACKER intent prediction"
+    description: "speckit-echelon-tracker (TRACKER) intent prediction"
     agents: [speckit-echelon-tracker]
     required_data_fields: [predicted_intent, confidence, evidence]
 
   social_prediction_error:
-    description: "TRACKER prediction error — model update needed"
+    description: "speckit-echelon-tracker (TRACKER) prediction error — model update needed"
     agents: [speckit-echelon-tracker]
     required_data_fields: [expected, observed, error_magnitude]
 
   tracker_model_update_requested:
-    description: "TRACKER requests a model update from MIRROR"
+    description: "speckit-echelon-tracker (TRACKER) requests a model update from speckit-echelon-mirror (MIRROR)"
     agents: [speckit-echelon-tracker]
     required_data_fields: [reason]
 
   # --- Learning ---
   calibration_update:
-    description: "AUDITOR accuracy calibration update"
+    description: "speckit-echelon-auditor (AUDITOR) accuracy calibration update"
     agents: [speckit-echelon-auditor]
     required_data_fields: [domain, prior_accuracy, new_accuracy, sample_size]
 
   confidence_thresholds_refreshed:
-    description: "AUDITOR triggered confidence threshold refresh"
+    description: "speckit-echelon-auditor (AUDITOR) triggered confidence threshold refresh"
     agents: [speckit-echelon-auditor]
     required_data_fields: [domains_updated]
 
   hallucination_risk_flag:
-    description: "AUDITOR flagged hallucination risk for a domain"
+    description: "speckit-echelon-auditor (AUDITOR) flagged hallucination risk for a domain"
     agents: [speckit-echelon-auditor]
     required_data_fields: [domain, risk_level, evidence]
 
   pattern_extracted:
-    description: "MIRROR extracted a reusable pattern from this run"
+    description: "speckit-echelon-mirror (MIRROR) extracted a reusable pattern from this run"
     agents: [speckit-echelon-mirror]
     required_data_fields: [pattern_id, pattern_summary, applicable_phases]
 
   pattern_identified:
-    description: "VETERAN or CONSOLIDATOR recognized existing patterns as relevant to this run and evaluated them for promotion — distinct from pattern_extracted (which creates new patterns)"
+    description: "speckit-echelon-veteran (VETERAN) or speckit-echelon-consolidator (CONSOLIDATOR) recognized existing patterns as relevant to this run and evaluated them for promotion — distinct from pattern_extracted (which creates new patterns)"
     agents: [speckit-echelon-veteran, speckit-echelon-consolidator]
     required_data_fields: [patterns_matched, pitfalls_flagged, confidence]
 
   pitfall_extracted:
-    description: "MIRROR extracted a pitfall from this run"
+    description: "speckit-echelon-mirror (MIRROR) extracted a pitfall from this run"
     agents: [speckit-echelon-mirror]
     required_data_fields: [pitfall_id, pitfall_summary, trigger_conditions]
 
   quality_trajectory:
-    description: "ADAPTIVE cross-run quality trajectory assessment"
+    description: "speckit-echelon-adaptive (ADAPTIVE) cross-run quality trajectory assessment"
     agents: [speckit-echelon-adaptive]
     required_data_fields: [run_ids_compared, trajectory, regression_detected]
 
   adaptation_triggered:
-    description: "ADAPTIVE detected a quality trajectory shift and recommends a process adaptation"
+    description: "speckit-echelon-adaptive (ADAPTIVE) detected a quality trajectory shift and recommends a process adaptation"
     agents: [speckit-echelon-adaptive]
     required_data_fields: [trajectory, iteration_delta, action_recommended]
 
   retrospective:
-    description: "MIRROR end-of-run synthesis — patterns found, recommendations, agent performance notes"
+    description: "speckit-echelon-mirror (MIRROR) end-of-run synthesis — patterns found, recommendations, agent performance notes"
     agents: [speckit-echelon-mirror]
     required_data_fields: [patterns_found, recommendations, agent_performance_notes]
 
   internalization_score:
-    description: "INTERNALIZER computed internalization metric scores for a set of agents"
+    description: "speckit-echelon-internalizer (INTERNALIZER) computed internalization metric scores for a set of agents"
     agents: [speckit-echelon-internalizer]
     required_data_fields: [overall_score, metrics, gaps]
 
   reality_check:
-    description: "REALIST reality check finding"
+    description: "speckit-echelon-realist (REALIST) reality check finding"
     agents: [speckit-echelon-realist]
     required_data_fields: [artifact, finding, grounded_value]
 
   # --- Unknown fallback ---
   unknown:
-    description: "Entry with an unregistered type — written by COMMANDER with warning"
+    description: "Entry with an unregistered type — written by speckit-echelon-commander (COMMANDER) with warning"
     agents: [speckit-echelon-commander]
     required_data_fields: [original_type, original_data, warning]
     deprecated: false

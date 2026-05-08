@@ -25,7 +25,7 @@ After ASSESS passes, determine which specialists are needed:
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
 | **INNOVATE** | See expanded triggers below | Medium |
 
-**INNOVATE dispatch conditions** are defined in `workflow/definition.yaml` phase3-specialists → `speckit-echelon-maverick.condition` (8 conditions). COMMANDER evaluates each against `state.json` before finalising the specialist list and records the decision as a `routing_decision` journal entry. If `dispatch_innovate: false`, the entry must list which conditions were checked and why none fired.
+**INNOVATE dispatch conditions** are defined in `workflow/definition.yaml` phase3-specialists → `speckit-echelon-maverick.condition` (8 conditions). speckit-echelon-commander (COMMANDER) evaluates each against `state.json` before finalising the specialist list and records the decision as a `routing_decision` journal entry. If `dispatch_innovate: false`, the entry must list which conditions were checked and why none fired.
 
 ### Max Active Specialists
 
@@ -35,7 +35,7 @@ Maximum `max_active_specialists` (default 3) can be active simultaneously. If mo
 
 ### Dispatch Specialists
 
-This phase uses `type: conditional_sequential` (see `workflow/definition.yaml` phase3-specialists). Dispatch each specialist in turn — wait for completion and run the post-dispatch protocol before dispatching the next. INVESTIGATOR is the only exception: it may run in parallel with one domain specialist.
+This phase uses `type: conditional_sequential` (see `workflow/definition.yaml` phase3-specialists). Dispatch each specialist in turn — wait for completion and run the post-dispatch protocol before dispatching the next. speckit-echelon-investigator (INVESTIGATOR) is the only exception: it may run in parallel with one domain specialist.
 
 #### SCIENTIST Dispatch (speckit-echelon-investigator (INVESTIGATOR) codename) — if summoned
 

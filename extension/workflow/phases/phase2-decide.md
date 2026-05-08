@@ -7,7 +7,7 @@
 
 ### Context Pack Assembly — MUST INCLUDE
 
-Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Silently omitting any of these is a routing error — GATEKEEPER calibrates against the calibration profile, scopes against the glossary, and re-uses prior estimates if available.
+Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Silently omitting any of these is a routing error — speckit-echelon-gatekeeper (GATEKEEPER) calibrates against the calibration profile, scopes against the glossary, and re-uses prior estimates if available.
 
 | File | Path | Notes |
 | --- | --- | --- |

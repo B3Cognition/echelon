@@ -5,7 +5,7 @@
 
 ## 12. FINALIZE Phase
 
-> **NEVER skip to step 12.8 without executing 12.1–12.7 in order.** The learning agents (REALIST, MIRROR, AUDITOR, SCOREKEEPER) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, and failure modes repeat. Each step below is mandatory.
+> **NEVER skip to step 12.8 without executing 12.1–12.7 in order.** The learning agents (speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-auditor (AUDITOR), speckit-echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, and failure modes repeat. Each step below is mandatory.
 
 ### 12.1 GROUND Agent — MANDATORY
 
@@ -91,15 +91,15 @@ Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-a
 
 ### 12.4 CALIBRATE Agent — MANDATORY
 
-**Precondition: run the Per-Agent Internalization Data Handoff before dispatching AUDITOR.**
+**Precondition: run the Per-Agent Internalization Data Handoff before dispatching speckit-echelon-auditor (AUDITOR).**
 
-INTERNALIZER must run first so AUDITOR can incorporate per-agent accuracy data into the calibration profile. See `commander.md` §"Per-Agent Internalization Data Handoff" for the full sequence:
+speckit-echelon-internalizer (INTERNALIZER) must run first so speckit-echelon-auditor (AUDITOR) can incorporate per-agent accuracy data into the calibration profile. See `commander.md` §"Per-Agent Internalization Data Handoff" for the full sequence:
 
-1. Collect internalization artifacts (CHECKPOINT's report, verdict reports, prior `agent-scores.yaml`)
-2. Dispatch INTERNALIZER (Measurement pass — 16 metrics per agent)
-3. Dispatch INTERNALIZER (Per-Agent Scoring pass)
-4. **Then** dispatch AUDITOR (Calibration Dashboard Generation — uses INTERNALIZER results)
-5. AUDITOR writes `calibration-dashboard.md` to `specs/{NNN}-{feature}/`
+1. Collect internalization artifacts (speckit-echelon-checkpoint (CHECKPOINT)'s report, verdict reports, prior `agent-scores.yaml`)
+2. Dispatch speckit-echelon-internalizer (INTERNALIZER) (Measurement pass — 16 metrics per agent)
+3. Dispatch speckit-echelon-internalizer (INTERNALIZER) (Per-Agent Scoring pass)
+4. **Then** dispatch speckit-echelon-auditor (AUDITOR) (Calibration Dashboard Generation — uses speckit-echelon-internalizer (INTERNALIZER) results)
+5. speckit-echelon-auditor (AUDITOR) writes `calibration-dashboard.md` to `specs/{NNN}-{feature}/`
 
 Context pack:
 
@@ -108,7 +108,7 @@ Context pack:
 - `knowledge-base/estimates-log.yaml`
 - `reasoning-journal.json`
 - Quality scores from all WHY passes (from state.json)
-- INTERNALIZER outputs (per-agent composite scores and trends)
+- speckit-echelon-internalizer (INTERNALIZER) outputs (per-agent composite scores and trends)
 
 Use the Agent tool:
 
@@ -116,7 +116,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.json, quality scores from all WHY passes in state.json, INTERNALIZER per-agent scores]
+  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.json, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores]
   </context>
 
   <instructions>
