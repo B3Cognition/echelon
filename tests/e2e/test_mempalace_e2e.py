@@ -411,6 +411,7 @@ class TestPipelineEngineWingThreading:
 
     def test_mine_then_pipeline_uses_same_wing(self, project_dir, isolated_palace):
         """Requirements mined via RequirementsMiner and searched via PipelineEngine RE phase use same wing."""
+        pytest.importorskip("mempalace", reason="mempalace SDK not installed in test runner Python")
         from codegen.pipeline.pipeline_engine import PipelineEngine
         from codegen.memory.context import MemPalaceContext
         from codegen.memory.requirements_miner import RequirementsMiner

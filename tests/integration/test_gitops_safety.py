@@ -17,8 +17,8 @@ from harness.gitops import GitOpsManager
 class TestSelfTargeting:
     """Tests for validate_not_self_targeting (FR-INIT-001)."""
 
-    def test_same_path_rejected(self, tmp_path, bare_repo, harness_config):
-        """Self-targeting detected for same absolute path."""
+    def test_same_local_path_allowed(self, tmp_path, bare_repo, harness_config):
+        """Local same-path is explicitly allowed — supports single-repo model (target_repo: '.')."""
         mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
 
         # Create a git repo at tmp_path to simulate harness repo
@@ -27,8 +27,8 @@ class TestSelfTargeting:
             capture_output=True, check=True,
         )
 
-        with pytest.raises(SelfTargetError):
-            mgr.validate_not_self_targeting(str(tmp_path), str(tmp_path))
+        # Must NOT raise: local paths are always allowed by design
+        mgr.validate_not_self_targeting(str(tmp_path), str(tmp_path))
 
     def test_different_path_allowed(self, tmp_path, bare_repo, harness_config):
         """Different paths are allowed."""
