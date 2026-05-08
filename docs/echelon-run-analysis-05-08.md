@@ -246,11 +246,13 @@ The SQUAD COMPLETE banner (with INTERNALIZATION SUMMARY, DIAGNOSTIC MATRIX, CALI
 
 ## Master Summary Table
 
-✅ = fixed in commit `be1241c` (2026-05-08, low-risk batch)
-✅M1 = fixed in commits `fbb0de1` + `ba6ff2d` (2026-05-08, M1 medium doc batch + understanding-diagram fix)
-✅SM = fixed in commits `76cbc22` + `b3fd5b8` (2026-05-08, state-machine externalisation + definition.yaml sync)
-✅M2 = fixed in commit `02808ca` (2026-05-08, M2 script/code batch)
-✅H = fixed in H batch (see below)
+✅ = fixed in commit `be1241c` (2026-05-08, low-risk batch — 23 Low issues, doc/prompt strengthening)
+✅M1 = fixed in commits `fbb0de1` + `ba6ff2d` (2026-05-08, M1 medium doc batch — 16 Medium doc-only issues + understanding-diagram Skill invocation fix)
+✅SM = fixed in commits `76cbc22` + `b3fd5b8` (2026-05-08, state-machine externalisation — moved routing logic from phase MDs into definition.yaml; definition.yaml sync for context_packs and output names)
+✅M2 = fixed in commit `02808ca` (2026-05-08, M2 script/code batch — endocrine.sh path bug, $SH_OUTPUT mode detection, config guard, config resolution)
+✅H = fixed in commit `59a09cd` (2026-05-08, H batch — #1 GUARDIAN timing clarified; #2 journal append bash pattern; #17 CARTOGRAPHER enhancement gate; #30 specialists→ARCHITECT ordering corrected in definition.yaml; #38 staged_parallel + PLAN2 depends_on ASSESS2)
+
+**All 52 issues resolved as of 2026-05-08.**
 
 | # | Status | Severity | Issue | Phase |
 |---|--------|----------|-------|-------|
