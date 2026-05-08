@@ -247,6 +247,8 @@ The SQUAD COMPLETE banner (with INTERNALIZATION SUMMARY, DIAGNOSTIC MATRIX, CALI
 ## Master Summary Table
 
 ✅ = fixed in commit `be1241c` (2026-05-08, low-risk batch)
+✅M1 = fixed in commits `fbb0de1` + `ba6ff2d` (2026-05-08, M1 medium doc batch + understanding-diagram fix)
+✅SM = fixed in commits `76cbc22` + `b3fd5b8` (2026-05-08, state-machine externalisation + definition.yaml sync)
 
 | # | Status | Severity | Issue | Phase |
 |---|--------|----------|-------|-------|
@@ -255,25 +257,25 @@ The SQUAD COMPLETE banner (with INTERNALIZATION SUMMARY, DIAGNOSTIC MATRIX, CALI
 | 30 | open | High | Specialists run AFTER ARCHITECT instead of before — ordering inversion | phase3 |
 | 17 | open | High | CARTOGRAPHER spec enhancement not executed | phase1-what |
 | 38 | open | High | PLAN2 dispatched without ASSESS2's implementability-report.md | phase3-consensus |
-| 3 | open | Medium | `endocrine.sh` wrong path — silent fail every run | pre-dispatch |
-| 4 | open | Medium | `detect-project.sh` not invoked — mode detection is ad hoc | init |
-| 5 | open | Medium | `validate-deploy.sh` hard-stop guard skipped | init |
-| 6 | open | Medium | Config resolution not called | init |
-| 14 | open | Medium | Constitution created without UNDERSTAND context | phase1-constitution |
-| 15 | open | Medium | `00-overview.md` never produced | phase1-what |
-| 16 | open | Medium | Staging artifacts not moved to spec directory | phase1-what |
-| 18 | open | Medium | Fallback path inverted — CARTOGRAPHER handles COMMANDER's role | phase1-what |
-| 22 | open | Medium | `understanding-diagram` crashes with disable-model-invocation (× 3) | phase1-why2 |
-| 27 | open | Medium | `phase-timing.sh` never called at any phase boundary (systematic) | all phases |
-| 31 | open | Medium | Specialists dispatched in parallel (should be sequential) | phase3-specialists |
-| 32 | open | Medium | INNOVATE not dispatched despite WHY2 failing 3× (trigger met) | phase3-specialists |
-| 33 | open | Medium | ARCHITECT missing `plan.md` and `contracts/` | phase3-how |
-| 39–42 | open | Medium | REALIST, MIRROR, AUDITOR, SCOREKEEPER all skipped | phase4-document |
-| 43 | open | Medium | `run-history.json` not written (mandatory) | phase4-document |
-| 44 | open | Medium | Staging not archived or cleaned | phase4-document |
-| 45 | open | Medium | Git not returned to default branch | phase4-document |
-| 47 | open | Medium | ECHELON RUN COMPLETE banner not printed — mandatory HUMAN ACTIONS REQUIRED section absent | phase4-document |
-| 50 | open | Medium | `calibration-dashboard.md` never written; INTERNALIZER never dispatched | phase4-document |
+| 3 | ✅M2 | Medium | `endocrine.sh` wrong path — silent fail every run | pre-dispatch |
+| 4 | ✅M2 | Medium | `detect-project.sh` not invoked — mode detection is ad hoc | init |
+| 5 | ✅M2 | Medium | `validate-deploy.sh` hard-stop guard skipped | init |
+| 6 | ✅M2 | Medium | Config resolution not called | init |
+| 14 | ✅M1 | Medium | Constitution created without UNDERSTAND context | phase1-constitution |
+| 15 | ✅M1 | Medium | `00-overview.md` never produced | phase1-what |
+| 16 | ✅M1 | Medium | Staging artifacts not moved to spec directory | phase1-what |
+| 18 | ✅M1 | Medium | Fallback path inverted — CARTOGRAPHER handles COMMANDER's role | phase1-what |
+| 22 | ✅M1 | Medium | `understanding-diagram` crashes with disable-model-invocation (× 3) | phase1-why2 |
+| 27 | ✅M1 | Medium | `phase-timing.sh` never called at any phase boundary (systematic) | all phases |
+| 31 | ✅SM | Medium | Specialists dispatched in parallel (should be sequential) | phase3-specialists |
+| 32 | ✅SM | Medium | INNOVATE not dispatched despite WHY2 failing 3× (trigger met) | phase3-specialists |
+| 33 | ✅M1 | Medium | ARCHITECT missing `plan.md` and `contracts/` | phase3-how |
+| 39–42 | ✅M1 | Medium | REALIST, MIRROR, AUDITOR, SCOREKEEPER all skipped | phase4-document |
+| 43 | ✅M1 | Medium | `run-history.json` not written (mandatory) | phase4-document |
+| 44 | ✅M1 | Medium | Staging not archived or cleaned | phase4-document |
+| 45 | ✅M1 | Medium | Git not returned to default branch | phase4-document |
+| 47 | ✅M1 | Medium | ECHELON RUN COMPLETE banner not printed — mandatory HUMAN ACTIONS REQUIRED section absent | phase4-document |
+| 50 | ✅M1 | Medium | `calibration-dashboard.md` never written; INTERNALIZER never dispatched | phase4-document |
 | 7 | ✅ fixed | Low | KB learning outputs not read before cold-start write | init |
 | 8 | ✅ fixed | Low | Belief Freshness Gate not run | init |
 | 9 | ✅ fixed | Low | Run History Check skipped (mandatory) | init |

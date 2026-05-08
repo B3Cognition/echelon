@@ -42,7 +42,25 @@ set -euo pipefail
 export LC_ALL=C
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="${ENDOCRINE_REPO_ROOT:-$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)}"
+
+# Detect project root by walking up from pwd until .specify/ is found.
+# This works in both dev context (script at extension/scripts/bash/) and
+# installed context (script at .specify/extensions/echelon/scripts/bash/).
+# The 3-level fallback covers dev mode where no .specify exists in the tree.
+_endocrine_find_repo_root() {
+  local dir
+  dir="$(pwd)"
+  while [ "$dir" != "/" ]; do
+    if [ -d "$dir/.specify" ]; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  # Fallback for dev/test: 3 levels up from the script file
+  CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd
+}
+REPO_ROOT="${ENDOCRINE_REPO_ROOT:-$(_endocrine_find_repo_root)}"
 SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$REPO_ROOT/.specify/squad}"
 STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 

@@ -15,41 +15,41 @@ echo "PROJECT_ROOT=${PROJECT_ROOT}"
 
 Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
 
-**Verify echelon-config.yml exists:**
-
-The config lives at `.specify/extensions/echelon/echelon-config.yml` (written by `echelon init`). Fail fast if absent:
-
-```bash
-ECHELON_EXT=".specify/extensions/echelon"
-if [ ! -f "${ECHELON_EXT}/echelon-config.yml" ]; then
-  echo "✗ echelon-config.yml not found at ${ECHELON_EXT}/echelon-config.yml" >&2
-  echo "  Run 'echelon init' first to create the project configuration." >&2
-  exit 1
-fi
-echo "✓ echelon-config.yml found"
-```
-
-**Guard: deploy infrastructure must be initialized:**
+**MANDATORY — Run this check with the Bash tool before any other init step:**
 
 ```bash
 ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
-bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
+if [ ! -f "${ECHELON_EXT}/echelon-config.yml" ]; then
+  echo "✗ echelon-config.yml not found at ${ECHELON_EXT}/echelon-config.yml" >&2
+  echo "  Run 'speckit.echelon.init' first to create the project configuration." >&2
+  exit 1
+fi
+echo "✓ echelon-config.yml found at ${ECHELON_EXT}/echelon-config.yml"
 ```
 
-If exit code is non-zero, HARD STOP:
+If this exits non-zero: **HARD STOP**. Do not proceed. Print:
 
-```
-✗ Deploy infrastructure not initialized.
+```text
+✗ echelon-config.yml not found.
   Run speckit.echelon.init first, then re-run speckit.echelon.run.
 ```
 
+> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon init`). Do NOT call it from `echelon.run` — it will fail on fresh projects that have not yet run a build.
+
 ### 1.1 Detect Greenfield vs Brownfield
 
-The `detect-project.sh` script ran via the frontmatter `scripts.sh` field. Its output is available as `$SH_OUTPUT`.
+The `startup-banner.sh` frontmatter script chains to `detect-project.sh` and its output (`"greenfield"` or `"brownfield"`) is available as `$SH_OUTPUT`.
 
-- If user provided a repo path: run detect-project.sh against that path
-- If `$SH_OUTPUT` says "brownfield" OR user provided a repo path with >5 source files: mode = brownfield
-- Otherwise: mode = greenfield
+**MANDATORY — use `$SH_OUTPUT` as the authoritative mode signal. Do NOT detect mode ad hoc by examining file counts or directory structure yourself.**
+
+```bash
+mode = $SH_OUTPUT        # "greenfield" | "brownfield"
+```
+
+Override rules:
+
+- If the user explicitly provided a repo path as an argument: re-run `detect-project.sh` against that path and use its output instead.
+- If `$SH_OUTPUT` is empty or unavailable (script failed): default to `greenfield` and log a `cold_start_warning` journal entry noting that mode detection was skipped.
 
 ### 1.2 Create Staging Area
 
@@ -177,14 +177,18 @@ fi
 
 Prior run data is included in agent context packs so the squad can track improvement, detect regressions, and avoid re-discovering the same issues.
 
-### 1.6 Load Configuration
+### 1.6 Load Configuration — MANDATORY
 
-Resolve config via the spec-kit ConfigurationManager. In a shell context:
+**NEVER read `echelon-config.yml` directly to retrieve threshold values.** Direct YAML reads bypass the config layering (manifest defaults → project overrides → local overrides → env vars) and ignore any env-var overrides set by CI or the harness. All threshold values used during the run MUST come from the `ECHELON_CFG_*` env vars set by the resolver below.
+
+Run this with the Bash tool before any threshold is referenced:
 
 ```bash
 # shellcheck disable=SC2046
 eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)"
 ```
+
+If `specify` is unavailable, fall back to reading `echelon-config.yml` directly **and log a `dependency_failure` journal entry** noting that config layering was skipped. This is degraded mode — values may differ from what CI would use.
 
 This merges manifest defaults → `echelon-config.yml` (project overrides) → `local-config.yml` → `SPECKIT_ECHELON_*` env vars. Key defaults when no project config exists:
 
