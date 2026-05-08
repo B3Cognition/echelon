@@ -323,7 +323,14 @@ This diagram visualizes the spec's entity model — actors, actions, objects, an
 - **Verify testability:** Can every relationship be verified by a test scenario?
 - **Share with other agents:** speckit-echelon-verification (VERIFICATION) uses this diagram to check if the code implements all entities/relationships. speckit-echelon-visual-validator (VISUAL VALIDATOR) includes it in reports. REFLECT includes it in knowledge transfer assessment.
 
-**If diagram generation fails** (but validate succeeded): log the failure but continue — diagram is useful but not blocking.
+**If diagram generation fails** (but validate succeeded): log a `diagram_skipped` journal entry and continue — diagram is useful but never blocking. Common reasons to handle gracefully:
+
+- `speckit-echelon-understanding-diagram` skill is unavailable or returns `disable-model-invocation` error — skip silently, log entry.
+- Graphviz `dot` binary is not on PATH — skip silently, log entry. Do **not** fail the SAGE dispatch over a missing system tool.
+
+```json
+{"type": "diagram_skipped", "agent": "speckit-echelon-sage (SAGE)", "reason": "<brief reason>", "phase": "<current phase>"}
+```
 
 #### 2. Check Quality Gate Thresholds
 
@@ -667,6 +674,14 @@ speckit-echelon-sage (SAGE) cannot issue a WHY3 PASS verdict if any requirement 
 ## Decision Recording
 
 After every blocking decision (PASS or FAIL verdict), append an entry to `knowledge-base/sage-decisions.yaml`. This is mandatory — no decision may go unrecorded.
+
+**MANDATORY — path is always `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`.**
+
+- NEVER write to `.specify/squad/staging/knowledge-base/sage-decisions.yaml`.
+- NEVER write to any staging subdirectory.
+- The `knowledge-base/` directory is project-level and persistent across runs. Writing to staging would make the decision history invisible to future runs and to AUDITOR/INTERNALIZER.
+
+This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes write to the same file.
 
 ### Required Fields
 

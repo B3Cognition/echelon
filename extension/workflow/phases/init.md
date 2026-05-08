@@ -117,8 +117,11 @@ Create `.specify/squad/state.json`:
 
 Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
 
-**Run History Check (mandatory at INIT):**
-1. Check if `{spec_dir}/run-history.json` exists (only possible if `spec_dir` was specified as an argument — if starting fresh with no spec_dir yet, skip this check).
+### Run History Check — MANDATORY STEP
+
+> **Do not skip this check.** Skipping it breaks Phase A → Phase B continuity: future runs cannot detect that Phase A is already complete, causing duplicate work.
+
+1. Check if `{spec_dir}/run-history.json` exists (only possible if `spec_dir` was specified as an argument — if starting fresh with no spec_dir yet, proceed to step 3).
 2. If `run-history.json` exists:
    - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
    - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.

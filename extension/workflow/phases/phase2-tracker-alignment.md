@@ -29,4 +29,14 @@ If speckit-echelon-tracker (TRACKER) reports MISALIGNED:
 - In `guided` or `semi` mode: pause for human confirmation
 - In `banzai` mode: log the divergence, proceed with speckit-echelon-gatekeeper (GATEKEEPER)'s scope
 
+### Output Filename — MANDATORY
+
+The output file MUST be named exactly `intent-alignment-check.md`. **NEVER** produce `alignment-report.md`, `alignment.md`, `tracker-alignment.md`, or any other variant — downstream phases (and any future automated checks) look up this file by exact name.
+
+Verification before transitioning to phase3-specialists:
+
+```bash
+[ -f "specs/${SPEC_DIR}/intent-alignment-check.md" ] || { echo "ERROR: intent-alignment-check.md missing" >&2; exit 1; }
+```
+
 **Transition:** `phases[phase3-specialists]` — see `workflow/definition.yaml`

@@ -5,14 +5,21 @@
 
 ## 6. ASSESS Phase (Kill Gate)
 
-### Context Pack Assembly
+### Context Pack Assembly — MUST INCLUDE
 
-Read and include in the subagent prompt:
+Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Silently omitting any of these is a routing error — GATEKEEPER calibrates against the calibration profile, scopes against the glossary, and re-uses prior estimates if available.
 
-- `spec.md` + `glossary.md` + `assumptions.md`
-- `issues.md` (from WHY2)
-- `calibration-profile.yaml` + `estimates-log.yaml`
-- `reasoning-journal.json`
+| File | Path | Notes |
+| --- | --- | --- |
+| `spec.md` | `specs/{NNN}-{feature}/spec.md` | Required |
+| `glossary.md` | `specs/{NNN}-{feature}/glossary.md` (or `.specify/squad/staging/glossary.md` if not yet moved) | Required |
+| `assumptions.md` | `specs/{NNN}-{feature}/assumptions.md` (or staging) | Required |
+| `issues.md` | `specs/{NNN}-{feature}/issues.md` | From WHY2 |
+| `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
+| `estimates-log.yaml` | `knowledge-base/estimates-log.yaml` | Mark `[ABSENT]` on cold start |
+| `reasoning-journal.json` | `.specify/squad/staging/reasoning-journal.json` | Required |
+
+**Verification before dispatch:** for each row, run `[ -f <path> ] && echo "OK $path" || echo "ABSENT $path"`. Absences are acceptable for `calibration-profile.yaml` and `estimates-log.yaml` only.
 
 ### Dispatch
 

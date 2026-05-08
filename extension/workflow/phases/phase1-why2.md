@@ -33,7 +33,19 @@ Install: specify extension add understanding
 
 4. **STOP execution.** Do not dispatch speckit-echelon-sage (SAGE). Do not proceed.
 
-Persist `state.json.dependency_checks.understanding` with `status`, `checked_at`.
+**MANDATORY — persist Understanding availability check result to state.json before dispatching SAGE:**
+
+```json
+"dependency_checks": {
+  "understanding": {
+    "status": "available",
+    "checked_at": "<ISO-8601>",
+    "version": "<version string from skill output if available, else null>"
+  }
+}
+```
+
+If the skill is unavailable, set `status: "unavailable"` and HARD STOP per the BLOCKED banner above — do not skip this write and continue.
 
 ### Context Pack Assembly
 
@@ -74,7 +86,23 @@ Read WHY2 outputs:
 
 1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
 2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in speckit-echelon-cartographer (CARTOGRAPHER)'s context pack so speckit-echelon-cartographer (CARTOGRAPHER) knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
-3. **Track quality scores** — append to `state.json.quality_scores[]` an object with ALL of these fields: `pass` (iteration label), `overall`, `structure`, `readability`, `cognitive`, `semantic`, `testability`, `behavioral`, `depth`. All score values come from Understanding output (quality-gates.md). If a category score is not available, set to `null`.
+3. **Track quality scores — MANDATORY append on every WHY2 pass (pass or fail):** append to `state.json.quality_scores[]` an object with **every** field below. Missing a field breaks the convergence delta check in step 4.
+
+   ```json
+   {
+     "pass": "WHY2-iter-{N}",
+     "overall": <float|null>,
+     "structure": <float|null>,
+     "readability": <float|null>,
+     "cognitive": <float|null>,
+     "semantic": <float|null>,
+     "testability": <float|null>,
+     "behavioral": <float|null>,
+     "depth": <float|null>
+   }
+   ```
+
+   All score values come from Understanding output (quality-gates.md). Use `null` only when Understanding genuinely did not return that category (e.g., spec has zero requirements). Do not skip the append even on FAIL — convergence depends on the full series.
 4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 

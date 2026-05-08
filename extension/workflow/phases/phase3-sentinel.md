@@ -34,11 +34,34 @@ Use the Agent tool to dispatch a subagent with:
 
 - **description:** "speckit-echelon-sentinel (SENTINEL): testability-informed test strategy and coverage mapping"
 
-### Expected Outputs
+### Precondition: `plan.md` Availability
 
-- `test-strategy.md`
-- `test-architecture.md`
-- `coverage-map.md`
+`plan.md` is the canonical input to SENTINEL. It is produced by ARCHITECT in phase3-how.
+
+- **If `plan.md` exists** → proceed normally with the full context pack.
+- **If `plan.md` is absent** (consequence of ARCHITECT omitting it — see Medium issue #33 in [docs/echelon-run-analysis-05-08.md](../../../../docs/echelon-run-analysis-05-08.md)) → read `architecture.md` as a proxy and append a `degraded_input` journal entry:
+
+  ```json
+  {"type": "degraded_input", "agent": "speckit-echelon-sentinel (SENTINEL)", "missing_artifact": "plan.md", "fallback": "architecture.md", "phase": "phase3-sentinel"}
+  ```
+
+  Do not block. Proceed with reduced confidence. A future hardening will route back to phase3-how when this happens; for now SENTINEL falls back gracefully.
+
+### Expected Outputs — ALL THREE REQUIRED
+
+The phase produces exactly three files in `specs/{NNN}-{feature}/`. Skipping any of them is a phase failure.
+
+- `test-strategy.md` — overall strategy, pyramid, prioritization
+- `test-architecture.md` — per-module test layout, harness configuration, fixture topology
+- `coverage-map.md` — every acceptance criterion → test approach mapping
+
+**Verification (run before transition):**
+
+```bash
+for f in test-strategy.md test-architecture.md coverage-map.md; do
+  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: SENTINEL missing $f" >&2; exit 1; }
+done
+```
 
 ### Gate Check
 

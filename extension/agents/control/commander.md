@@ -33,6 +33,9 @@ A requirement that has no automated test coverage is not done. BUILD_DONE is for
 4. **NEVER skip phases.**
 5. **NEVER proceed after a dispatch without executing the Post-Dispatch Protocol.**
 6. **NEVER accept a `deferred-risky` ADR without recording explicit user approval in state.json.** "Manual testing will cover it" is not a resolution — it is a NEVER-rule violation.
+7. **NEVER announce a phase transition before the Post-Dispatch Protocol completes.** Order is rigid: write journal entries → update `state.json` with `last_dispatch.post_dispatch_complete: true` → only then announce or dispatch the next phase. Announcing first leaves an interrupted state behind on resume.
+8. **NEVER skip the pre-dispatch gate on rework iterations.** The pre-dispatch gate runs on every dispatch — first iteration, second, third, and beyond. There is no `iteration > 1` exemption.
+9. **NEVER call `Write` on an existing file without reading it first.** Use `Edit` for any file that may exist on disk. `Write` is reserved for first-time creation.
 
 ---
 
@@ -141,6 +144,8 @@ Also update `last_dispatch` in the same write:
 ```
 Run `scripts/bash/state-backup.sh` if the update includes a phase transition.
 
+**MANDATORY — Atomic write discipline:** All `state_updates[]` fields plus `last_dispatch` MUST land in a single `Edit` operation on `state.json`. Do not split them across multiple `Edit` calls. A partial write leaves `post_dispatch_complete: false` while other fields are already updated, making resume recovery ambiguous.
+
 ### Step D — Then and only then proceed
 
 Evaluate phase transitions and dispatch the next agent only after Steps A–C are complete.
@@ -157,6 +162,8 @@ scripts/bash/pre-dispatch-gate.sh --agent "{AGENT_CODENAME}" --task "{task_or_ph
 
 - If exit code 0 (ALLOW): proceed with dispatch
 - If exit code non-zero (DENY): read the denial reason from stdout, log to reasoning-journal.json, and either skip the dispatch or resolve the violation before retrying
+
+**This gate runs on every dispatch — first call, second call, and every rework iteration.** There is no iteration-count threshold that exempts a dispatch from the gate. Skipping it on iteration ≥ 2 is a NEVER rule violation (#8).
 
 ### Calibration Injection
 
@@ -256,7 +263,7 @@ speckit-echelon-commander (COMMANDER) is the **only** writer of `reasoning-journ
    - `by_verdict[entry.data.verdict OR echelon_result.verdict]` — append entry id (if verdict present)
    - `timeline` — append entry id
 5. Update `last_entry_id` and `last_updated` in index.
-6. Write updated index to `reasoning-journal-index.json`.
+6. **Use `Edit` (not `Write`) on `reasoning-journal-index.json`** to apply the changes incrementally. `Write` is permitted only on the very first creation (see "Index initialization" below) or after an `index_rebuilt` recovery. Overwriting the index with `Write` mid-run risks losing entries appended by parallel-dispatched agents.
 
 ### Index initialization
 
@@ -381,6 +388,15 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 - After each speckit-echelon-sage (SAGE) pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
 - If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop speckit-echelon-sage (SAGE) iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
+
+**EVOI vs delta — ordering rule:** EVOI is a *pre-iteration* decision aid. Evaluate it **before** dispatching the next SAGE pass to decide whether the pass is worth the cost. EVOI cannot retroactively declare convergence after the delta test says NO on the current pass — that is a backwards application. The valid sequence is:
+
+1. Delta test says NO → consider whether to dispatch another SAGE pass.
+2. Compute EVOI for the next candidate pass.
+3. If EVOI < 0 → skip the pass, force best-effort convergence.
+4. If EVOI ≥ 0 → dispatch.
+
+Forcing convergence based solely on a negative EVOI score on a *single* pass (without the delta test or iteration-limit being met) is only permitted when `iteration >= max_iterations` or token budget is exhausted. Write the reason in the journal as either `evoi_budget_exhausted` or `evoi_max_iterations_reached`.
 
 **Hard plateau rule (overrides EVOI):** If, after 4 or more WHY2/WHY3 iterations, the cumulative improvement in `overall` score from iteration 1 to the current pass is less than 0.05, immediately force `best_effort` convergence — regardless of EVOI estimates. A large iteration count with tiny total gain indicates a systemic issue (parsing errors, threshold misalignment, spec format violation) that additional CARTOGRAPHER amendments cannot fix. EVOI estimates in this situation are unreliable because they are built on a sequence of scores with low variance. Note the stall reason in the journal and surface the gap to the user.
 
@@ -605,7 +621,7 @@ If the file is absent, set `valid_types = null` and skip validation (fail-open).
 
 ### 0.1 Read Knowledge-Base Learning Outputs
 
-**This step is mandatory on every run. Files may not exist on the first run — skip gracefully.**
+**This step is mandatory on every run. Files may not exist on the first run — attempt the read regardless, record absence explicitly.**
 
 Read the following files from `knowledge-base/`:
 
@@ -614,9 +630,9 @@ Read the following files from `knowledge-base/`:
 3. `knowledge-base/pitfalls.yaml` — known failure modes for context injection into agents
 4. `knowledge-base/agent-scores.yaml` — historical agent performance for dispatch decisions
 
-For each file: if it exists, read and extract relevant fields. If absent, note absence and continue without error.
+For each file: attempt to read. If the file exists, extract relevant fields. If absent, add it to `files_absent[]`. Never skip the read attempt — the attempt is what differentiates "genuinely absent" from "never checked."
 
-**After reading, append to `reasoning-journal.json`:**
+**MANDATORY — write `init_knowledge_read` journal entry immediately after the reads, even if ALL four files are absent:**
 
 ```json
 {
@@ -624,11 +640,13 @@ For each file: if it exists, read and extract relevant fields. If absent, note a
   "type": "init_knowledge_read",
   "agent": "speckit-echelon-commander (COMMANDER)",
   "timestamp": "<ISO 8601>",
-  "files_read": ["<list of files that existed and were read>"],
+  "files_read": ["<list of files that existed and were read — empty array if none>"],
   "files_absent": ["<list of files that did not exist>"],
   "cold_start": true
 }
 ```
+
+Do not write `confidence-thresholds.yaml` (step 0.5) before this journal entry is written. The entry is the evidence that step 0.1 ran.
 
 **Cold-start detection:** If `knowledge-base/feedback/` does not exist OR contains fewer than 3 files, set `cold_start: true` and append a warning entry:
 
@@ -666,28 +684,38 @@ Log `calibration_map_agents_loaded: {count}` in the `init_knowledge_read` journa
 
 Set `state.json` field `init_reads.completed: true` after this step.
 
-> **Belief Freshness Gate** — after `init_reads.completed` is set, run:
-> ```bash
-> BELIEF_JSON=$(scripts/bash/belief-freshness-check.sh 2>/dev/null)
-> BELIEF_EXIT=$?
-> ```
-> The script reads `config-belief-graph.json` and classifies beliefs by staleness and severity.
->
-> **Graduated exit codes (FR-001):**
-> - **Exit 0**: All beliefs fresh, or graph missing/unparseable. Proceed normally.
-> - **Exit 1**: High-severity expired beliefs OR 3+ low-confidence beliefs detected. **Defer** affected dispatches — log a `belief_gate_triggered` entry in `reasoning-journal.json`, flag the affected config keys, and apply conservative fallbacks for those keys until beliefs are re-verified. Do NOT dispatch speckit-echelon-investigator (INVESTIGATOR) (the beliefs are stale but not critical).
-> - **Exit 2**: Critical-severity expired beliefs detected. **Dispatch speckit-echelon-investigator (INVESTIGATOR)** with each critical belief's claim as an investigation question before any dispatch that depends on those beliefs. Log `belief_gate_triggered` with `recommended_action: investigate`.
->
-> **When exit code is non-zero**, `$BELIEF_JSON` contains structured JSON (written to stdout) with fields: `exit_code`, `recommended_action` ("defer" or "investigate"), `stale_beliefs[]` (each with `belief_id`, `claim`, `severity`, `confidence`, `status`, `dependent_config_key`), and `summary`.
->
-> **speckit-echelon-commander (COMMANDER) routing protocol:**
-> 1. Parse `$BELIEF_JSON` to extract `stale_beliefs[].dependent_config_key` values.
-> 2. For each stale belief, identify which dispatch decisions depend on that config key (e.g., `execution.models.control` → model tier selection for control agents).
-> 3. For exit 1 (defer): apply the conservative default for the affected config key (e.g., use `opus` instead of `sonnet` when the "sonnet is sufficient" belief is stale). Log the fallback in `reasoning-journal.json` type `belief_fallback_applied`.
-> 4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. speckit-echelon-investigator (INVESTIGATOR) runs before speckit-echelon-scout (SCOUT). If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
-> 5. If endocrine system is enabled, call `endocrine.sh update_adrenaline {affected_agent} +0.2` for agents whose dispatch depends on stale beliefs.
->
-> **Fallback (FR-010):** If the script exits 0 (including when the graph is missing or python3 is unavailable), proceed with no routing changes — full backward compatibility.
+### 0.2 Belief Freshness Gate (FR-001) — MANDATORY
+
+**Precondition:** `init_reads.completed: true` (set by step 0.1).
+
+Run the belief freshness check before any agent dispatch:
+
+```bash
+BELIEF_JSON=$(scripts/bash/belief-freshness-check.sh 2>/dev/null)
+BELIEF_EXIT=$?
+```
+
+The script reads `config-belief-graph.json` and classifies beliefs by staleness and severity.
+
+**Graduated exit codes (FR-001):**
+
+- **Exit 0**: All beliefs fresh, or graph missing/unparseable. Proceed normally.
+- **Exit 1**: High-severity expired beliefs OR 3+ low-confidence beliefs detected. **Defer** affected dispatches — log a `belief_gate_triggered` entry in `reasoning-journal.json`, flag the affected config keys, and apply conservative fallbacks for those keys until beliefs are re-verified. Do NOT dispatch speckit-echelon-investigator (INVESTIGATOR) (the beliefs are stale but not critical).
+- **Exit 2**: Critical-severity expired beliefs detected. **Dispatch speckit-echelon-investigator (INVESTIGATOR)** with each critical belief's claim as an investigation question before any dispatch that depends on those beliefs. Log `belief_gate_triggered` with `recommended_action: investigate`.
+
+**When exit code is non-zero**, `$BELIEF_JSON` contains structured JSON (written to stdout) with fields: `exit_code`, `recommended_action` ("defer" or "investigate"), `stale_beliefs[]` (each with `belief_id`, `claim`, `severity`, `confidence`, `status`, `dependent_config_key`), and `summary`.
+
+**speckit-echelon-commander (COMMANDER) routing protocol:**
+
+1. Parse `$BELIEF_JSON` to extract `stale_beliefs[].dependent_config_key` values.
+2. For each stale belief, identify which dispatch decisions depend on that config key (e.g., `execution.models.control` → model tier selection for control agents).
+3. For exit 1 (defer): apply the conservative default for the affected config key (e.g., use `opus` instead of `sonnet` when the "sonnet is sufficient" belief is stale). Log the fallback in `reasoning-journal.json` type `belief_fallback_applied`.
+4. For exit 2 (investigate): queue the belief's claim for INVESTIGATOR dispatch. speckit-echelon-investigator (INVESTIGATOR) runs before speckit-echelon-scout (SCOUT). If INVESTIGATOR validates the belief, update `config-belief-graph.json` verified_date to today. If invalidated, keep the conservative fallback and log `belief_invalidated`.
+5. If endocrine system is enabled, call `endocrine.sh update_adrenaline {affected_agent} +0.2` for agents whose dispatch depends on stale beliefs.
+
+**Fallback (FR-010):** If the script exits 0 (including when the graph is missing or python3 is unavailable), proceed with no routing changes — full backward compatibility.
+
+**Skipping this gate is a NEVER-rule violation.** The check must run on every initialization, even on cold starts. If `belief-freshness-check.sh` is itself missing, log a `belief_gate_unavailable` warning entry and proceed.
 
 ---
 
@@ -900,7 +928,18 @@ If `governance-trail.json` does not exist at run start, speckit-echelon-commande
 
 ## Completion Signal
 
-When the squad run is complete, output:
+**Before printing the signal:**
+
+1. Call `scripts/bash/phase-timing.sh end_phase phase4-build` to close the final phase timing window.
+2. Read `state.json.phase_timings` and append one `timing_summary` journal entry per phase to `reasoning-journal.jsonl`:
+
+   ```json
+   {"type": "timing_summary", "phase": "<phase>", "run_id": "<run_id>", "elapsed_seconds": <N>, "budget_seconds": <N>, "over_budget": <true|false>, "anomaly_reason": "<EXCEEDED_BUDGET_20_PERCENT|null>"}
+   ```
+
+3. Then set `state.json.status: "done"` and print the signal below.
+
+When the squad run is complete, output every field in the template — use `N/A` or `COLD START` where data is absent, but never omit a line:
 
 ```
 SQUAD COMPLETE — all artifacts written to <spec_directory>
@@ -909,7 +948,7 @@ Token usage: <used>/<budget> (<percentage>%)
 Quality gates: <passed>/<total>
 Issues: <resolved>/<total> (<deferred> deferred, <escalated> escalated)
 Artifacts produced: <list>
-Warnings: <list of degraded or incomplete areas>
+Warnings: <list of degraded or incomplete areas — emit this line even if empty: "Warnings: none">
 
 INTERNALIZATION SUMMARY:
   Gate: {pass_count}/{total} PASS, {fail_count} FAIL, {exempt_count} EXEMPT
@@ -922,7 +961,7 @@ INTERNALIZATION SUMMARY:
     ...
 
   Disagreement Alerts:
-    {any entries with disagreement_flag: metrics-pass-doubts-high}
+    {any entries with disagreement_flag: metrics-pass-doubts-high — emit "none" if absent}
 
   DIAGNOSTIC MATRIX:
     Understanding: {overall_score} ({HIGH|LOW})
@@ -940,6 +979,14 @@ CALIBRATION DASHBOARD: calibration-dashboard.md written to <spec_directory>
   Domains at risk: {list of HIGH risk domains}
   Agents declining: {list of agents with declining internalization trend}
 ```
+
+**Format constraints (enforced):**
+
+- `Understanding:` in the DIAGNOSTIC MATRIX uses exactly `(HIGH|LOW)` — these are the only valid values. Do not write `(MARGINAL)`, `(MEDIUM)`, or any other label. If the score is between 0.60–0.75 it is still classified as `HIGH` or `LOW` relative to the `quality_gates.overall` threshold: at or above threshold → `HIGH`, below → `LOW`.
+- `Warnings:` is always emitted. If there are no warnings, emit `Warnings: none`.
+- `Disagreement Alerts:` is always emitted. If there are none, emit `none`.
+- `Issues:` format must include deferred and escalated counts: `<resolved>/<total> (<deferred> deferred, <escalated> escalated)`.
+- On cold start (no AUDITOR/INTERNALIZER data), the Per-Agent table rows use `N/A` for Absorption, Accuracy, and Verdict columns — but the table header and rows must still be present (one row per dispatched agent).
 
 ---
 

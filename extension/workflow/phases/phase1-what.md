@@ -98,9 +98,20 @@ Update state.json:
 }
 ```
 
-**Spec Status Transition (mandatory):**
-Update `state.json.spec_status` to `"planned"`.
-Update `{spec_dir}/spec.md`: find the line `**Status**: Draft` and change it to `**Status**: Planned`.
+### Spec Status Transition — MANDATORY
+
+This step runs immediately after the state.json `spec_id`/`spec_dir` update above. Skipping it leaves downstream phases reading a stale `Status: Draft` flag.
+
+1. Update `state.json.spec_status` to `"planned"` (in the same Edit operation as `spec_id`/`spec_dir` per the atomic-write discipline in [commander.md](../../agents/control/commander.md) Post-Dispatch Protocol).
+2. Update `{spec_dir}/spec.md`: replace the line `**Status**: Draft` with `**Status**: Planned`.
+3. **Verification (run before transitioning to phase1-why2):**
+
+   ```bash
+   grep -q '^\*\*Status\*\*: Planned' "${spec_dir}/spec.md" || { echo "ERROR: spec.md still shows Draft" >&2; exit 1; }
+   python3 -c "import json; assert json.load(open('.specify/squad/state.json'))['spec_status']=='planned'" || { echo "ERROR: state.json.spec_status not 'planned'" >&2; exit 1; }
+   ```
+
+   If either check fails, halt the phase and resolve before proceeding.
 
 ### Expected Outputs
 

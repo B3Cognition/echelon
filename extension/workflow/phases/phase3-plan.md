@@ -33,12 +33,30 @@ Use the Agent tool to dispatch a subagent with:
 
 - **description:** "speckit-echelon-orchestrator (ORCHESTRATOR): task breakdown, critical path, dependencies, risk"
 
-### Expected Outputs
+### Expected Outputs — EXACT FILENAMES
 
-- `tasks.md`
-- `critical-path.md`
-- `risk-matrix.md`
-- `dependencies.md`
+ORCHESTRATOR produces these four files in `specs/{NNN}-{feature}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
+
+| Required filename | Purpose |
+| --- | --- |
+| `tasks.md` | Task list |
+| `critical-path.md` | Critical path analysis |
+| `risk-matrix.md` | Per-task risk scoring |
+| `dependencies.md` | Task dependency map |
+
+**NEVER** substitute or omit:
+
+- NEVER write `dependency-graph.md` instead of `dependencies.md`.
+- NEVER omit `risk-matrix.md` (some risk content may also live in tasks.md, but the standalone file is required).
+- NEVER rename to `task-list.md`, `plan.md`, or any other variant.
+
+**Verification (run before transition to phase3-consensus):**
+
+```bash
+for f in tasks.md critical-path.md risk-matrix.md dependencies.md; do
+  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: ORCHESTRATOR missing $f" >&2; exit 1; }
+done
+```
 
 Before this transition, speckit-echelon-commander (COMMANDER) performs phase-boundary timing writes in order:
 

@@ -9,12 +9,19 @@
 
 ### Context Pack Assembly
 
-Read and include in the subagent prompt (all from `.specify/squad/staging/`):
+Read and include in the subagent prompt:
 
-- `glossary.md` + `mental-model.md` + `boundaries.md`
-- `assumptions.md` + `unknowns.md`
-- `calibration-profile.yaml`
-- `reasoning-journal.json`
+| File | Path |
+|------|------|
+| `glossary.md` | `.specify/squad/staging/glossary.md` |
+| `mental-model.md` | `.specify/squad/staging/mental-model.md` |
+| `boundaries.md` | `.specify/squad/staging/boundaries.md` |
+| `assumptions.md` | `.specify/squad/staging/assumptions.md` |
+| `unknowns.md` | `.specify/squad/staging/unknowns.md` |
+| `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` (NOT staging — project-level KB) |
+| `reasoning-journal.json` | `.specify/squad/staging/reasoning-journal.json` |
+
+**MANDATORY — verify each file before dispatch.** If a file is absent, include it in the prompt as `[ABSENT: <path>]` rather than silently omitting it. SAGE must know what's missing so it can flag related assumptions accordingly. `calibration-profile.yaml` is commonly absent on cold start — that is acceptable; mark it `[ABSENT]`.
 
 ### Dispatch
 
@@ -24,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, calibration-profile.yaml, reasoning-journal.json — all from .specify/squad/staging/]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md from .specify/squad/staging/; calibration-profile.yaml from knowledge-base/ (mark [ABSENT] if missing); reasoning-journal.json from .specify/squad/staging/]
   </context>
 
   <instructions>

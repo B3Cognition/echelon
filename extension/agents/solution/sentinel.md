@@ -200,7 +200,9 @@ Review quarantined tests weekly — fix or remove. Tests quarantined for more th
 
 **After fixing a quarantined test:** re-run with `--repeat-each=10` to validate stability. Only remove the `test.fixme()` annotation after the re-run passes with zero failures. A fix that is not re-validated is not a fix.
 
-## Output Requirements
+## Output Requirements — ALL THREE FILES MANDATORY
+
+All three files below MUST be produced in `specs/{NNN}-{feature}/`. Omitting any one is a SENTINEL failure — COMMANDER will flag it and route back.
 
 ### test-strategy.md
 
@@ -257,6 +259,7 @@ Include one `decision` entry per significant test strategy decision (test layer 
 verdict: COMPLETE
 output_files:
   - .specify/.../test-strategy.md
+  - .specify/.../test-architecture.md
   - .specify/.../coverage-map.md
 journal_entries:
   - id: null
