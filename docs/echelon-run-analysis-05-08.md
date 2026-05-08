@@ -249,14 +249,16 @@ The SQUAD COMPLETE banner (with INTERNALIZATION SUMMARY, DIAGNOSTIC MATRIX, CALI
 ✅ = fixed in commit `be1241c` (2026-05-08, low-risk batch)
 ✅M1 = fixed in commits `fbb0de1` + `ba6ff2d` (2026-05-08, M1 medium doc batch + understanding-diagram fix)
 ✅SM = fixed in commits `76cbc22` + `b3fd5b8` (2026-05-08, state-machine externalisation + definition.yaml sync)
+✅M2 = fixed in commit `02808ca` (2026-05-08, M2 script/code batch)
+✅H = fixed in H batch (see below)
 
 | # | Status | Severity | Issue | Phase |
 |---|--------|----------|-------|-------|
-| 1 | open | High | GUARDIAN not dispatched at init (mandatory always-on) | init |
-| 2 | open | High | `reasoning-journal.jsonl` overwritten not appended | init |
-| 30 | open | High | Specialists run AFTER ARCHITECT instead of before — ordering inversion | phase3 |
-| 17 | open | High | CARTOGRAPHER spec enhancement not executed | phase1-what |
-| 38 | open | High | PLAN2 dispatched without ASSESS2's implementability-report.md | phase3-consensus |
+| 1 | ✅H | High | GUARDIAN not dispatched at init (mandatory always-on) | init |
+| 2 | ✅H | High | `reasoning-journal.jsonl` overwritten not appended | init |
+| 30 | ✅H | High | Specialists run AFTER ARCHITECT instead of before — ordering inversion | phase3 |
+| 17 | ✅H | High | CARTOGRAPHER spec enhancement not executed | phase1-what |
+| 38 | ✅H | High | PLAN2 dispatched without ASSESS2's implementability-report.md | phase3-consensus |
 | 3 | ✅M2 | Medium | `endocrine.sh` wrong path — silent fail every run | pre-dispatch |
 | 4 | ✅M2 | Medium | `detect-project.sh` not invoked — mode detection is ad hoc | init |
 | 5 | ✅M2 | Medium | `validate-deploy.sh` hard-stop guard skipped | init |

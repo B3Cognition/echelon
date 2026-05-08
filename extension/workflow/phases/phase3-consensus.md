@@ -28,9 +28,11 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 - `implementability-report.md` (from ASSESS2 — dispatch ASSESS2 first, then PLAN2 reads its output)
 - `reasoning-journal.json`
 
-### Dispatch (Parallel)
+### Dispatch — Two Stages (see `definition.yaml` `phase3-consensus.type: staged_parallel`)
 
-Dispatch WHY3 and ASSESS2 in parallel (single message, two Agent tool calls):
+This phase uses `type: staged_parallel`. **NEVER dispatch all three agents in one parallel batch.** PLAN2 requires `implementability-report.md` from ASSESS2 — dispatching it simultaneously means it runs without that input.
+
+**Stage 1 (parallel):** dispatch WHY3 and ASSESS2 together. Wait for BOTH to complete.
 
 **WHY3:**
 
@@ -66,7 +68,11 @@ Dispatch WHY3 and ASSESS2 in parallel (single message, two Agent tool calls):
 
 - **description:** "ASSESS2: implementability check and effort re-estimation"
 
-After WHY3 and ASSESS2 complete, dispatch PLAN2:
+**Stage 2 (sequential):** after Stage 1 is fully complete, verify `implementability-report.md` exists, then dispatch PLAN2:
+
+```bash
+[ -f "specs/${SPEC_DIR}/implementability-report.md" ] || { echo "ERROR: ASSESS2 did not produce implementability-report.md — cannot dispatch PLAN2" >&2; exit 1; }
+```
 
 **PLAN2:**
 

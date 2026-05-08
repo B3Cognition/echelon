@@ -123,7 +123,14 @@ For **each** entry in `journal_entries[]`:
      }
      ```
 
-4. Append the entry as a **single JSON line** to `.specify/squad/reasoning-journal.jsonl`.
+4. **Append** the entry as a single JSON line to `.specify/squad/reasoning-journal.jsonl` using the **Bash tool with shell redirection** — NEVER the Write or Edit tool:
+
+   ```bash
+   echo '<single-line JSON>' >> "${PROJECT_ROOT}/.specify/squad/reasoning-journal.jsonl"
+   ```
+
+   **NEVER use `Write` on `reasoning-journal.jsonl`.** `Write` overwrites the file, destroying all prior entries. `Edit` is also prohibited — the file is append-only and has no string to match for replacement. The `>>` redirect is the only valid operation.
+
 5. Update `reasoning-journal-index.json` dimensions:
    - `by_phase`, `by_type`, `by_agent`, `by_iteration` — always
    - `by_task`, `by_severity`, `by_verdict` — when present in entry data
@@ -759,21 +766,26 @@ domains:
 
 ---
 
-### 1. Dispatch speckit-echelon-guardian (GUARDIAN) (always-on by default)
+### 1. Register GUARDIAN Dispatch Mode (init-time config read)
 
-Check `echelon-config.yml` for `specialists.guardian_mode`:
+> **Timing note:** GUARDIAN's actual dispatch happens in `phase3-specialists` (after GATEKEEPER passes), not here at init. This step reads the configuration so COMMANDER knows to include GUARDIAN in every run's specialist phase without re-reading config later. See `workflow/definition.yaml` `init.guardian_init` entry and `phase3-specialists.agents[speckit-echelon-guardian]`.
 
-- **`always_on`** (default): Dispatch speckit-echelon-guardian (GUARDIAN) on every squad run, regardless of whether the domain involves security-sensitive areas. speckit-echelon-guardian (GUARDIAN) runs its **Minimum Security Checklist** (5-item lightweight check) for all domains, and performs full STRIDE/OWASP analysis only when security-relevant domain signals are detected.
-- **`on_demand`**: Dispatch speckit-echelon-guardian (GUARDIAN) only when the domain involves authentication, payments, PII, regulatory compliance, multi-tenancy, or untrusted input (legacy behavior).
+Read `echelon-config.yml` for `specialists.guardian_mode` and record the mode:
 
-When `specialists.guardian_mode` is `always_on`:
-1. Dispatch speckit-echelon-guardian (GUARDIAN) after speckit-echelon-gatekeeper (GATEKEEPER) completes (during the Specialist phase)
-2. speckit-echelon-guardian (GUARDIAN) runs the Minimum Security Checklist regardless of domain classification
-3. If domain signals indicate security relevance, speckit-echelon-guardian (GUARDIAN) also runs full STRIDE + OWASP + compliance analysis
-4. speckit-echelon-guardian (GUARDIAN) results are included in every subsequent agent's context pack
-5. speckit-echelon-guardian (GUARDIAN) does NOT count toward the `max_active_specialists` cap (same exemption as TEST speckit-echelon-architect (ARCHITECT))
+```bash
+GUARDIAN_MODE=$(bash "${ECHELON_EXT}/scripts/bash/echelon-config-get.sh" specialists.guardian_mode 2>/dev/null || echo "always_on")
+```
 
-Log `guardian_dispatch_mode` in `state.json` (`always_on` or `on_demand`).
+- **`always_on`** (default): GUARDIAN dispatched in **every** squad run during `phase3-specialists`, first in the sequential order. Runs Minimum Security Checklist for non-security domains; full STRIDE + OWASP when domain signals are security-relevant.
+- **`on_demand`**: GUARDIAN dispatched only when domain involves auth, payments, PII, regulatory compliance, or untrusted input.
+
+Log `guardian_dispatch_mode` in `state.json` now, so it is available when `phase3-specialists` evaluates dispatch conditions:
+
+```json
+{"guardian_dispatch_mode": "always_on"}
+```
+
+**NEVER reach `phase3-specialists` without this value set.** An absent `guardian_dispatch_mode` in state.json means GUARDIAN's dispatch condition cannot be evaluated and it will be silently skipped.
 
 ### 2. Spec-Kit Dependency Check (inline)
 

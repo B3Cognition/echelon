@@ -151,9 +151,11 @@ conflict_resolution:
 # PHASE GRAPH
 #
 # Each phase has:
-#   type:          commander_internal | agent | parallel | conditional_sequential | human_gate | terminal
+#   type:          commander_internal | agent | parallel | conditional_sequential | staged_parallel | human_gate | terminal
 #                  conditional_sequential — multiple possible agents, evaluated one at a time in order;
 #                                           each dispatched only after the previous completes post-dispatch.
+#                  staged_parallel        — agents grouped into stages; all agents in a stage run in parallel;
+#                                           next stage dispatched only after all agents in current stage complete.
 #   agent(s):      which agent(s) to invoke (omitted for commander_internal)
 #   tier:          model-tier selection key from echelon-config.yml execution.models
 #   context_pack:  artifacts injected into the agent's dispatch prompt
@@ -515,7 +517,7 @@ phases:
     outputs:
       - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
     transitions:
-      - to: phase3-how
+      - to: phase3-specialists    # specialists run BEFORE ARCHITECT so their findings feed the design
         condition: "alignment = ALIGNED OR alignment = DRIFT"
       - to: escalate
         condition: "alignment = STOP_AND_ASK"
@@ -532,15 +534,22 @@ phases:
       - constitution.md
       - 00-overview.md
       - gatekeeper output (constraints, scope)
-      - reasoning-journal.json [phase=phase2-decide]
+      - security-findings.md        # from GUARDIAN (if exists)
+      - performance-model.md        # from BENCHMARK (if exists)
+      - ux-report.md                # from ADVOCATE (if exists)
+      - domain-knowledge.md         # from ORACLE (if exists)
+      - research.md                 # from INVESTIGATOR (if exists)
+      - alternatives.md             # from MAVERICK (if exists)
+      - reasoning-journal.json [phase=phase2-decide, phase=phase3-specialists]
       - calibration_map entry for speckit-echelon-architect (ARCHITECT)
     outputs:
+      - plan.md
       - architecture.md
       - adr/ADR-*.md
       - data-model.md
-      - api-contracts.md
+      - contracts/
     transitions:
-      - to: phase3-specialists
+      - to: phase3-sentinel         # specialists already ran; go directly to test strategy
         condition: always
 
   # --------------------------------------------------------------------------
@@ -559,9 +568,8 @@ phases:
         condition: "guardian_mode = always_on OR domain_security_relevant"
         exempt_from_max_active_specialists: true
         context_pack:
-          - spec.md
-          - architecture.md
-          - adr/ADR-*.md
+          - spec.md            # architecture.md does not exist yet — specialists run before ARCHITECT
+          - boundaries.md
           - constitution.md
         outputs:
           - security-findings.md
@@ -683,15 +691,17 @@ phases:
 
   # --------------------------------------------------------------------------
   - id: phase3-consensus
-    label: "Consensus Gate (WHY3 + ASSESS2 + PLAN2)"
+    label: "Consensus Gate (WHY3 + ASSESS2 → PLAN2)"
     spec_file: workflow/phases/phase3-consensus.md
-    type: parallel
+    type: staged_parallel            # Stage 1: WHY3 + ASSESS2 in parallel; Stage 2: PLAN2 after both complete
     description: >
-      Dispatch all three agents in parallel. speckit-echelon-commander (COMMANDER) then reads all three
-      outputs before making the next routing decision.
+      Stage 1: dispatch WHY3 and ASSESS2 in parallel. Stage 2: dispatch PLAN2 only after BOTH complete
+      (PLAN2 depends on implementability-report.md from ASSESS2). COMMANDER must NOT dispatch PLAN2
+      in the same parallel batch as WHY3 and ASSESS2.
     agents:
       - id: speckit-echelon-sage
         mode: WHY3
+        stage: 1
         tier: exploration
         context_pack:
           - spec.md
@@ -704,6 +714,7 @@ phases:
 
       - id: speckit-echelon-gatekeeper
         mode: ASSESS2
+        stage: 1
         tier: feasibility
         context_pack:
           - architecture.md
@@ -711,14 +722,18 @@ phases:
           - test-strategy.md
         outputs:
           - assess2-verdict: PASS | REJECTED
+          - implementability-report.md     # required by PLAN2
 
       - id: speckit-echelon-orchestrator
         mode: PLAN2
+        stage: 2                           # dispatched AFTER stage 1 completes
+        depends_on: [speckit-echelon-gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
         context_pack:
           - tasks.md
-          - why3-issues       # from speckit-echelon-sage (SAGE) WHY3 output
-          - assess2-concerns  # from speckit-echelon-gatekeeper (GATEKEEPER) ASSESS2 output
+          - why3-issues               # from SAGE WHY3 output
+          - assess2-concerns          # from GATEKEEPER ASSESS2 output
+          - implementability-report.md  # MUST exist before PLAN2 is dispatched
         outputs:
           - revised tasks.md  # if changes needed
 

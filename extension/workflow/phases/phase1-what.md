@@ -86,7 +86,18 @@ Before updating state.json, verify both invariants:
    }
    ```
 
-**If both checks pass**, proceed normally.
+**If both checks pass**, verify CARTOGRAPHER ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
+
+```bash
+# spec.md must contain at least one WHEN/THEN acceptance criterion — proof of enhancement
+grep -q "WHEN\|THEN\|Given\|When\|Then" "${spec_dir}/spec.md" \
+  || { echo "WARN: spec.md has no WHEN/THEN criteria — CARTOGRAPHER may not have run Step 2 (enhancement pass)"; }
+# 00-overview.md must exist
+[ -f "${spec_dir}/00-overview.md" ] \
+  || { echo "WARN: 00-overview.md missing — CARTOGRAPHER Step 2 may be incomplete"; }
+```
+
+If either warning fires: **re-dispatch CARTOGRAPHER** in enhancement-only mode with `spec_dir` pre-set in the context pack. CARTOGRAPHER will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
 
 Update state.json:
 
