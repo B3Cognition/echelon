@@ -73,21 +73,3 @@ Otherwise execute in order:
 8. `workflow/phases/codegenlight-7-deliver.md` — Phase 7: DELIVER + terminal summary (with Mode field) + SOAR integration reference
 
 On any error condition: consult `workflow/phases/codegenlight-resume.md` §Error Handling.
-```
-
-**Verify:**
-```bash
-wc -l extension/commands/echelon.codegenlight.md
-# Expected: 75-90 lines
-
-grep -c "INV-00" extension/commands/echelon.codegenlight.md
-# Expected: 8
-
-grep -c "ISS-007" extension/commands/echelon.codegenlight.md
-# Expected: 1 (INV-001 note present in codegenlight only)
-
-grep -c "### 0\.\|### 3\.\|write_state\|HARNESS_STATE_FILE\|SOAR Integration Points" extension/commands/echelon.codegenlight.md
-# Expected: 0 (old inline content gone)
-```
-
-**Commit:** `git commit -m "refactor: thin echelon.codegenlight.md to phase-delegating wrapper"`

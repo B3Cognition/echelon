@@ -62,18 +62,3 @@ Otherwise execute in order:
 10. `workflow/phases/codegen-7-deliver.md` — Phase 7: DELIVER + terminal summary + harness integration
 
 On any error condition: consult `workflow/phases/codegen-resume.md` §Error Handling.
-```
-
-**Verify:**
-```bash
-wc -l extension/commands/echelon.codegen.md
-# Expected: 60-75 lines
-
-grep -c "INV-00" extension/commands/echelon.codegen.md
-# Expected: 8
-
-grep -c "### A\.\|### 0\.\|### 3\.\|write_state\|HARNESS_STATE_FILE" extension/commands/echelon.codegen.md
-# Expected: 0 (old inline content gone)
-```
-
-**Commit:** `git commit -m "refactor: thin echelon.codegen.md to phase-delegating wrapper"`
