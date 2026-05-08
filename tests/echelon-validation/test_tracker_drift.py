@@ -32,12 +32,14 @@ class TestTrackerDrift:
         assert re.search(r"20%|0\.20", content)
 
     def test_build_md_has_severity_tiered_drift_gate(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert "MAJOR_DRIFT" in content
         assert "MINOR_DRIFT" in content
 
     def test_build_md_dispatches_change_controller_on_major_drift(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert re.search(
             r"MAJOR_DRIFT[\s\S]{0,500}CHANGE CONTROLLER|CHANGE CONTROLLER[\s\S]{0,200}MAJOR_DRIFT",
             content,
@@ -45,6 +47,7 @@ class TestTrackerDrift:
         )
 
     def test_build_md_sets_requires_human_review_in_banzai_mode(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert "requires_human_review" in content
         assert "drift-escalation.md" in content

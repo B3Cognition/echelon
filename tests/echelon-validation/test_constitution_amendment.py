@@ -32,15 +32,18 @@ class TestConstitutionAmendment:
         assert re.search(r"run-history\.json|cross-run", content, re.IGNORECASE)
 
     def test_build_md_has_consolidation_phase_with_candidates_file(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert re.search(r"consolidation|Consolidation", content, re.IGNORECASE)
         assert "constitution-amendment-candidates.md" in content
 
     def test_build_md_appends_proposed_blocks_and_tracks_pending(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert "[PROPOSED" in content
         assert "constitution_amendments_pending" in content
 
     def test_build_md_requires_human_approval_no_auto_amendment(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert re.search(r"human.*review|human.*approve|speckit\.constitution", content, re.IGNORECASE)
