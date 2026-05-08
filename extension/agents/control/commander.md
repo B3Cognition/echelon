@@ -990,7 +990,9 @@ CALIBRATION DASHBOARD: calibration-dashboard.md written to <spec_directory>
 
 ---
 
-## Per-Agent Internalization Data Handoff
+## Per-Agent Internalization Data Handoff — MANDATORY in FINALIZE
+
+**This section is invoked by phase4-document.md §12.4 CALIBRATE step.** It must run before AUDITOR is dispatched. AUDITOR cannot produce a valid `calibration-dashboard.md` without INTERNALIZER's per-agent scores.
 
 At end of run (during FINALIZE), speckit-echelon-commander (COMMANDER) collects per-agent internalization data and passes it to speckit-echelon-auditor (AUDITOR) for scoring and dashboard generation.
 

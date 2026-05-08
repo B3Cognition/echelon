@@ -5,7 +5,9 @@
 
 ## 12. FINALIZE Phase
 
-### 12.1 GROUND Agent
+> **NEVER skip to step 12.8 without executing 12.1–12.7 in order.** The learning agents (REALIST, MIRROR, AUDITOR, SCOREKEEPER) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, and failure modes repeat. Each step below is mandatory.
+
+### 12.1 GROUND Agent — MANDATORY
 
 Context pack:
 
@@ -32,7 +34,7 @@ Use the Agent tool:
 
 Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
 
-### 12.2 REFLECT Agent
+### 12.2 REFLECT Agent — MANDATORY
 
 Context pack:
 
@@ -87,7 +89,17 @@ Use the Agent tool:
 
 Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-alerts.md`
 
-### 12.4 CALIBRATE Agent
+### 12.4 CALIBRATE Agent — MANDATORY
+
+**Precondition: run the Per-Agent Internalization Data Handoff before dispatching AUDITOR.**
+
+INTERNALIZER must run first so AUDITOR can incorporate per-agent accuracy data into the calibration profile. See `commander.md` §"Per-Agent Internalization Data Handoff" for the full sequence:
+
+1. Collect internalization artifacts (CHECKPOINT's report, verdict reports, prior `agent-scores.yaml`)
+2. Dispatch INTERNALIZER (Measurement pass — 16 metrics per agent)
+3. Dispatch INTERNALIZER (Per-Agent Scoring pass)
+4. **Then** dispatch AUDITOR (Calibration Dashboard Generation — uses INTERNALIZER results)
+5. AUDITOR writes `calibration-dashboard.md` to `specs/{NNN}-{feature}/`
 
 Context pack:
 
@@ -96,6 +108,7 @@ Context pack:
 - `knowledge-base/estimates-log.yaml`
 - `reasoning-journal.json`
 - Quality scores from all WHY passes (from state.json)
+- INTERNALIZER outputs (per-agent composite scores and trends)
 
 Use the Agent tool:
 
@@ -103,12 +116,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.json, quality scores from all WHY passes in state.json]
+  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.json, quality scores from all WHY passes in state.json, INTERNALIZER per-agent scores]
   </context>
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
   </instructions>
   ```
 
@@ -178,9 +191,10 @@ Additional artifacts (conditional):
 - `evolution-report.md` (if EVOLVE ran)
 - `risk-acceptance-log.md` (if speckit-echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
 
-### 12.7 Run speckit-echelon-scorekeeper (SCOREKEEPER)
+### 12.7 Run speckit-echelon-scorekeeper (SCOREKEEPER) — MANDATORY
 
-Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol).
+Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
+
 Read the scorecard output and apply any automatic self-healing actions.
 
 ### 12.8 Set Final State
@@ -195,9 +209,11 @@ Update `state.json`:
 }
 ```
 
-**Run History Write (mandatory at DONE):**
+**Run History Write — MANDATORY at DONE. Without this, future runs cannot detect that Phase A is complete and will redo all of Phase A unnecessarily.**
+
 1. Read or create `{spec_dir}/run-history.json`.
 2. Append to `runs` array:
+
    ```json
    {
      "run_id": "{state.json.run_id}",
@@ -208,9 +224,26 @@ Update `state.json`:
      "timestamp": "{current UTC ISO-8601}"
    }
    ```
-3. Write the updated file.
 
-### 12.9 Print Final Summary
+3. Write the updated file.
+4. **Verify:**
+
+   ```bash
+   python3 -c "
+   import json, sys
+   run_id = open('.specify/squad/state.json').read()
+   run_id = json.loads(run_id)['run_id']
+   runs = json.load(open('${spec_dir}/run-history.json'))['runs']
+   assert any(r['run_id'] == run_id for r in runs), 'run_id not found in run-history.json'
+   print('run-history.json OK')
+   " || { echo "ERROR: run-history.json write failed" >&2; exit 1; }
+   ```
+
+### 12.9 Print Final Summary — MANDATORY
+
+> **NEVER set `state.json.status = "done"` or begin staging cleanup (12.10) before printing this banner.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
+>
+> The **HUMAN ACTIONS REQUIRED** section is unconditionally required — always print it. If there are no pending actions, print `None — squad resolved all items autonomously.` Never omit the section.
 
 Print to terminal:
 
@@ -278,7 +311,9 @@ NOTE: No application source files were modified by this command.
 ============================================
 ```
 
-### 12.10 Archive and Cleanup Staging Area
+### 12.10 Archive and Cleanup Staging Area — MANDATORY
+
+**Precondition:** Only run after `run-history.json` is written (12.8) and `state.json.status = "done"`. Do not archive a partial run.
 
 Archive the completed run artifacts, then clean staging:
 
@@ -309,7 +344,9 @@ rm -rf .specify/squad/staging
 - `feedback/` — post-implementation outcome data
 - `agent-scores.yaml` — agent performance history
 
-### 12.11 Return to Default Branch
+### 12.11 Return to Default Branch — MANDATORY
+
+> **NEVER end the run on the feature branch.** Leaving the repo checked out on `{NNN}-{feature}` causes a "branch already checked out" conflict the next time the harness creates a worktree.
 
 After archiving, switch the working directory back to the default branch so
 harness.run can create clean worktrees without hitting a "branch already checked

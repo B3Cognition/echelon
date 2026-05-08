@@ -113,9 +113,18 @@ This step runs immediately after the state.json `spec_id`/`spec_dir` update abov
 
    If either check fails, halt the phase and resolve before proceeding.
 
-### Expected Outputs
+### Expected Outputs — BOTH REQUIRED
 
-- `spec.md` (created by `speckit.specify`, enhanced by speckit-echelon-cartographer (CARTOGRAPHER))
-- `00-overview.md`
+- `spec.md` (created by `speckit.specify`, enhanced by CARTOGRAPHER with GWT acceptance criteria and glossary cross-references)
+- `00-overview.md` (CARTOGRAPHER-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
+
+**Post-dispatch verification (run before Spec Status Transition):**
+
+```bash
+[ -f "${spec_dir}/spec.md" ]        || { echo "ERROR: spec.md missing" >&2; exit 1; }
+[ -f "${spec_dir}/00-overview.md" ] || { echo "ERROR: 00-overview.md missing" >&2; exit 1; }
+# Confirm staging was moved (at least glossary.md must be in spec_dir)
+[ -f "${spec_dir}/glossary.md" ]    || echo "WARN: staging artifacts may not have been moved to spec_dir"
+```
 
 **Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`

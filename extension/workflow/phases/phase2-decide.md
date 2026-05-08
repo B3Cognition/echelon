@@ -55,11 +55,14 @@ Read ASSESS outputs:
 - **DEFER** verdict → reduce scope, re-route to WHAT. Track DEFER count. **DEFER loop >= 2 with no scope stabilization → kill or escalate to human.**
 - **PASS** → proceed to specialist summoning.
 
-Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
+**MANDATORY — run before transitioning to phase2-strategic-overview:**
 
-1. Ensure `phase2-decide` timing is active (budget `1800` seconds) by calling `start_phase phase2-decide 1800` before the first phase2 dispatch (`WHAT`) if no `start_ts` exists.
-2. For intra-phase transition (`assess` -> `strategic_overview`), do not close the phase timing window yet.
-3. Persist `state.json` after timing update before dispatching the next agent.
+```bash
+# Start phase2-decide timing if not already started (idempotent — skips if start_ts exists)
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase2-decide 1800
+```
+
+Do NOT close phase2-decide here — it spans through phase2-strategic-overview and phase2-tracker-alignment. It closes in phase3-specialists.
 
 Phase budget map for consistency across all transitions:
 

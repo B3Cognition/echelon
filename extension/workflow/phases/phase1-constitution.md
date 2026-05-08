@@ -18,27 +18,51 @@ If `state.json.constitution_status` is `"pending"`:
 
 - Continue with constitution creation below
 
-### Prepare Constitution Context
+### Prepare Constitution Context — MANDATORY
 
-Gather UNDERSTAND findings from `.specify/squad/staging/`:
+**NEVER call `speckit.constitution` before completing all four extractions below.** A constitution created without domain context is a generic template with no project-specific principles — it provides no governance value.
 
-1. **Domain context:** Extract key concepts from `glossary.md` and `mental-model.md`
-2. **Boundaries:** Extract external dependencies and constraints from `boundaries.md`
-3. **Assumptions:** Extract validated assumptions that should become principles from `assumptions.md`
-4. **User constraints:** Any team size, timeline, tech stack preferences from user input
+Read each staging file and extract the key data that should drive constitution principles:
+
+**1. Domain context** — read `glossary.md` and `mental-model.md`. Extract:
+
+- The 3–5 core domain concepts
+- The primary user/system boundary
+- Any domain-specific quality requirements (e.g., "sub-second latency", "GDPR compliance")
+
+**2. Boundaries** — read `boundaries.md`. Extract:
+
+- External systems the project must integrate with
+- Hard constraints (what the project must NOT do)
+- Security or compliance requirements implied by external boundaries
+
+**3. Assumptions to encode as principles** — read `assumptions.md`. Extract:
+
+- Validated assumptions that should be policy (e.g., "single developer team → prefer simple over clever")
+- Invalidated assumptions that need guarding against (e.g., "framework overhead is unacceptable → no runtime frameworks")
+
+**4. User constraints** — from the original user request and `user-intent.md`. Extract:
+
+- Technology preferences stated explicitly
+- Autonomy level (banzai → encode "no manual steps")
+- Any timeline, scale, or team constraints
+
+After all four extractions, construct the context string for `speckit.constitution`. The quality of the constitution is directly proportional to the specificity of this context — vague input produces generic output.
 
 ### Create Constitution via Spec-Kit
 
-**Call `speckit.constitution`** with the gathered context:
+**Call `speckit.constitution`** with the gathered context, substituting real extracted values (not placeholders):
 
 ```text
 speckit.constitution
 
 Based on our understanding phase:
-- Domain: {summarize from glossary/mental-model}
-- Key constraints: {from boundaries}
-- Team/project context: {from user input if provided}
-- Validated assumptions to encode: {from assumptions.md}
+- Domain: {actual domain summary from glossary/mental-model — e.g., "single-page interactive demo application with animated UI"}
+- Core concepts: {3-5 terms from glossary — e.g., "Fancy Tier, viewport, prefers-reduced-motion"}
+- Key constraints: {actual constraints from boundaries — e.g., "no external CDN, 500KB page budget, static hosting only"}
+- Team/project context: {from user input — e.g., "solo developer, banzai mode, demo project"}
+- Validated assumptions to encode: {actual assumptions — e.g., "no runtime framework, CSS-primary animation"}
+- Quality requirements: {domain-specific — e.g., "FCP < 3s, WCAG AA accessibility"}
 
 Please establish the project constitution.
 ```

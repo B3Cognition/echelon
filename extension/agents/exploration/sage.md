@@ -306,15 +306,17 @@ This data is consumed by speckit-echelon-cartographer (CARTOGRAPHER) when specki
 
 #### 1b. Generate Behavioral Diagram
 
-Use the Skill tool to generate the entity relationship diagram:
+**NEVER invoke `speckit.echelon.understanding-diagram` via the Skill tool.** That command has `disable-model-invocation: true` and will always fail with a tool error when called via Skill. Use the Understanding CLI directly via the Bash tool instead:
 
-```
-speckit.echelon.understanding-diagram <spec_directory>/spec.md
+```bash
+understanding diagram "${SPEC_DIR}/spec.md" --diagram "${SPEC_DIR}/spec-diagram.svg"
 ```
 
-Pass these output paths to the skill (one path per invocation). The skill uses `--diagram <path>` — format is inferred from the file extension:
-- `<spec_directory>/spec-diagram.svg`
-- `<spec_directory>/spec-diagram.png`
+The CLI infers format from the file extension. SVG is preferred; PNG is acceptable if SVG rendering is unavailable:
+
+```bash
+understanding diagram "${SPEC_DIR}/spec.md" --diagram "${SPEC_DIR}/spec-diagram.png"
+```
 
 **Never pass `--png`, `--svg`, or similar standalone format flags** — they don't exist. The only correct flag is `--diagram <path.ext>`.
 

@@ -97,16 +97,21 @@ Read outputs from all three consensus agents:
   - PLAN2 missing tasks for specialist outputs → back to PLAN
   - Increment iteration. Check limits.
 
-Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
+**MANDATORY — run before transitioning to phase4-document:**
 
-1. Keep `phase4-build` open for `consensus` -> `finalize` (same phase).
-2. If `phase4-build.start_ts` is missing (resume edge case), run `start_phase phase4-build 7200` before dispatching FINALIZE.
-3. Persist `state.json` before dispatch.
+```bash
+# Ensure phase4-build is open (start if missing — resume edge case)
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
+# (idempotent — skips if already started)
+```
 
-At run close (after FINALIZE and before setting status `done`), speckit-echelon-commander (COMMANDER) must:
+phase4-build stays open through FINALIZE. Close it in phase4-document §12 before setting `status: done`:
 
-1. Call `scripts/bash/phase-timing.sh end_phase phase4-build`.
-2. Read `state.json.phase_timings` and append one `timing_summary` entry per phase to `reasoning-journal.json` with fields: `type`, `phase`, `run_id`, `elapsed_seconds`, `budget_seconds`, `over_budget`, `anomaly_reason`.
-3. Ensure anomaly reason enum for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
+```bash
+# At run close — in phase4-document BEFORE setting state.json.status = "done"
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase4-build
+```
+
+Then append one `timing_summary` journal entry per phase to `reasoning-journal.jsonl`. The anomaly reason enum value for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
 
 **Transition:** `phases[phase4-document]` — see `workflow/definition.yaml`

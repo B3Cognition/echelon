@@ -33,12 +33,25 @@ Use the Agent tool to dispatch a subagent with:
 
 - **description:** "speckit-echelon-architect (ARCHITECT): architecture design and technology decisions"
 
-### Expected Outputs
+### Expected Outputs — ALL REQUIRED
 
-- `plan.md`
-- `research.md`
-- `data-model.md`
-- `contracts/` (API/interface specs)
-- `constitution.md`
+ARCHITECT produces these files in `specs/{NNN}-{feature}/`. Missing any of them breaks downstream phases: SENTINEL needs `plan.md`, ORCHESTRATOR needs `contracts/`.
+
+| Output | Notes |
+| --- | --- |
+| `plan.md` | High-level implementation plan with phases, stack decisions, and component breakdown. Required by SENTINEL and ORCHESTRATOR. |
+| `research.md` | ADR rationale, technology comparisons, references. |
+| `data-model.md` | Entity definitions, relationships, validation rules. |
+| `contracts/` | API / interface specifications directory. At minimum one file per external boundary. |
+| `constitution.md` | Only if new technical principles were added; append-only to existing file. |
+
+**Post-dispatch verification (MANDATORY — run before transitioning to phase3-sentinel):**
+
+```bash
+for f in plan.md research.md data-model.md; do
+  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: ARCHITECT missing $f" >&2; exit 1; }
+done
+[ -d "specs/${SPEC_DIR}/contracts" ] || { echo "ERROR: ARCHITECT missing contracts/" >&2; exit 1; }
+```
 
 **Transition:** `phases[phase3-sentinel]` — see `workflow/definition.yaml`

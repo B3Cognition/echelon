@@ -58,10 +58,15 @@ for f in tasks.md critical-path.md risk-matrix.md dependencies.md; do
 done
 ```
 
-Before this transition, speckit-echelon-commander (COMMANDER) performs phase-boundary timing writes in order:
+**MANDATORY — run before transitioning to phase3-consensus:**
 
-1. Close `phase3-solution` with `scripts/bash/phase-timing.sh end_phase phase3-solution`.
-2. Open `phase4-build` with `scripts/bash/phase-timing.sh start_phase phase4-build 7200`.
-3. Confirm updated `phase_timings` are flushed to `state.json` before consensus dispatch.
+```bash
+# Close phase3-solution (writes end_ts, elapsed_seconds, over_budget)
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase3-solution
+# Open phase4-build
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
+```
+
+Confirm `state.json.phase_timings` is updated before dispatching consensus agents.
 
 **Transition:** `phases[phase3-consensus]` — see `workflow/definition.yaml`

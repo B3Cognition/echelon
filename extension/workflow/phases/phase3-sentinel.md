@@ -67,10 +67,14 @@ done
 
 If TEST speckit-echelon-architect (ARCHITECT) flags untestable acceptance criteria → route back to WHAT for amendment. Increment iteration. Check limits.
 
-Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
+**MANDATORY — run before transitioning to phase3-plan:**
 
-1. Keep `phase3-solution` open (intra-phase transition: `test-architect` -> `plan`).
-2. If missing from recovered state, initialize `phase3-solution` using `start_phase phase3-solution 2400` before dispatching PLAN.
-3. Persist `state.json` timing updates before dispatch.
+```bash
+# Ensure phase3-solution is open (start if missing — recovery/restart case)
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase3-solution 2400
+# (idempotent — skips if already started)
+```
+
+phase3-solution stays open through PLAN. It closes in phase3-plan before consensus dispatch.
 
 **Transition:** `phases[phase3-plan]` — see `workflow/definition.yaml`

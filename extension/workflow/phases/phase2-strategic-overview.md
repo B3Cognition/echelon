@@ -27,10 +27,14 @@ Use the Agent tool:
 
 Read the strategic overview. Use it to prioritize specialist allocation: spend speckit-echelon-investigator (INVESTIGATOR) time on high-blast-radius decisions, not low-risk areas.
 
-Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
+**MANDATORY — run before transitioning to phase2-tracker-alignment:**
 
-1. Keep `phase2-decide` open (this is still an intra-phase transition: `strategic_overview` -> `specialists`).
-2. If `phase2-decide` was never started due to restart recovery, initialize with `start_phase phase2-decide 1800` before continuing.
-3. Persist `state.json` after timing reconciliation and before dispatching specialists.
+```bash
+# Ensure phase2-decide window is open (start if missing due to restart recovery)
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase2-decide 1800
+# (idempotent — skips if already started)
+```
+
+phase2-decide stays open through this phase — it closes in phase3-specialists.
 
 **Transition:** `phases[phase2-tracker-alignment]` — see `workflow/definition.yaml`

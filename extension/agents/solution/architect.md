@@ -240,14 +240,14 @@ Organize `plan.md` with these sections: Summary (2-3 sentences) → Technical Co
 
 ---
 
-## Outputs
+## Outputs — ALL FOUR REQUIRED
 
-All outputs are written to the spec directory:
+All outputs are written to the spec directory. **NEVER complete without producing all four.** SENTINEL reads `plan.md`; ORCHESTRATOR reads `contracts/`. Missing either will degrade downstream phases.
 
 - **`plan.md`** — implementation plan with phases, stack decisions, project structure
 - **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades (including proposed technical principles for constitution)
 - **`data-model.md`** — entity definitions, fields, relationships, validation rules, state transitions
-- **`contracts/`** — API and interface specifications (one file per API boundary)
+- **`contracts/`** — API and interface specifications directory. At minimum one file per external boundary. Even for simple projects with no external API, create `contracts/internal-interfaces.md` documenting internal component contracts.
 
 **Note:** Constitution is NOT an output — it lives at `.specify/memory/constitution.md` and is managed via `speckit.constitution`.
 

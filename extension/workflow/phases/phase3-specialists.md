@@ -36,6 +36,23 @@ After ASSESS passes, determine which specialists are needed:
 7. **Any agent reports BLOCKED:** Before escalating to human, try INNOVATE first
 8. **First run with complex scope:** If ASSESS estimates > 100 person-weeks, proactively run INNOVATE to check if a simpler approach exists
 
+**MANDATORY — evaluate every INNOVATE trigger before finalising the specialist list.** COMMANDER must explicitly check each condition against current state and record the decision:
+
+```text
+INNOVATE evaluation (check each trigger before dispatch):
+  Trigger 1 (re-run stagnation):    state.json.iteration > 0 AND no quality improvement? → [yes/no]
+  Trigger 2 (circular reasoning):   any issues_log entry with occurrences >= 3?          → [yes/no]
+  Trigger 3 (WHY rejects 2+ times): len(state.json.quality_scores) >= 2 AND gates failed? → [yes/no]
+  Trigger 4 (borderline DEFER):     GATEKEEPER issued DEFER verdict?                      → [yes/no]
+  Trigger 5 (hard HOW tradeoff):    ARCHITECT flagged unresolved ADR decision?             → [yes/no]
+  Trigger 6 (quality plateau):      max abs delta across last 2 WHY passes < 0.02?        → [yes/no]
+  Trigger 7 (agent BLOCKED):        any agent returned BLOCKED verdict this run?          → [yes/no]
+  Trigger 8 (complex scope):        ASSESS estimates > 100 person-weeks?                  → [yes/no]
+  dispatch_innovate: [true/false — true if ANY trigger is yes]
+```
+
+Log this evaluation as a `routing_decision` journal entry. If `dispatch_innovate: false`, record which triggers were checked and why none fired. If skipping INNOVATE without this evaluation, that is a NEVER rule violation.
+
 ### Max Active Specialists
 
 Maximum `max_active_specialists` (default 3) can be active simultaneously. If more are needed, prioritize by domain signal strength. Defer lower-priority specialists (their insights can be incorporated in future runs).
@@ -45,6 +62,8 @@ Maximum `max_active_specialists` (default 3) can be active simultaneously. If mo
 ### Dispatch Specialists
 
 For each specialist to summon, dispatch sequentially (unless they are independent — speckit-echelon-investigator (INVESTIGATOR) investigations can run in parallel with domain specialists).
+
+**NEVER dispatch multiple specialists in a single parallel batch call (multi-Agent message).** The only permitted parallelism is INVESTIGATOR running alongside one domain specialist. All other combinations must be sequential — each specialist dispatched, post-dispatch protocol executed, then the next dispatched. Parallel batching skips the inter-dispatch post-dispatch protocol and corrupts the journal.
 
 #### SCIENTIST Dispatch (speckit-echelon-investigator (INVESTIGATOR) codename) — if summoned
 
@@ -201,11 +220,15 @@ Use the Agent tool:
 
 After all specialists complete, collect their outputs. Update `state.json.active_specialists` with the list of specialists that ran.
 
-Before this transition, speckit-echelon-commander (COMMANDER) performs phase-boundary timing writes in order:
+**MANDATORY — run before transitioning to phase3-how:**
 
-1. Close `phase2-decide` by calling `scripts/bash/phase-timing.sh end_phase phase2-decide`.
-2. Open `phase3-solution` by calling `scripts/bash/phase-timing.sh start_phase phase3-solution 2400`.
-3. `end_phase` writes `end_ts`, `elapsed_seconds`, `over_budget`, and `anomaly_reason`; if over budget (>120%), it also appends a `timing_anomaly` journal entry.
-4. Persist state updates before routing to HOW.
+```bash
+# Close phase2-decide (writes end_ts, elapsed_seconds, over_budget, anomaly_reason)
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase2-decide
+# Open phase3-solution
+bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase3-solution 2400
+```
+
+If `end_phase` detects over-budget (>120%), it appends a `timing_anomaly` journal entry automatically. Persist state updates before routing to phase3-how.
 
 **Transition:** `phases[phase3-how]` — see `workflow/definition.yaml`

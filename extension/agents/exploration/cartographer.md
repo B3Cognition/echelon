@@ -66,21 +66,31 @@ You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT e
    - Spec-kit creates the branch: `{NNN}-{feature-name}`
    - Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
    - Spec-kit generates initial `spec.md` from its versioned template
-3. Move staging artifacts to the new spec directory:
+3. **Move ALL staging artifacts to the new spec directory — MANDATORY:**
+
    ```bash
    mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
    ```
-4. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
+
+   **NEVER skip this move.** Downstream agents (ARCHITECT, GATEKEEPER, SENTINEL) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
+
+4. **NEVER re-invoke `speckit.specify` if the spec directory is missing after the first call.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `CARTOGRAPHER BLOCKED — spec_dir missing after speckit.specify succeeded` and let COMMANDER handle recovery per `phase1-what.md §4.2 Fallback`.
+
+5. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
 
 ### Step 2: Enhance Spec with Squad Intelligence
+
+This step is where CARTOGRAPHER adds its primary value. A spec.md that comes out of this step looking identical to what `speckit.specify` produced means Step 2 was skipped — that is a protocol violation.
 
 1. Read the spec-kit generated `spec.md` — it provides the template structure
 2. If unknowns remain, call `speckit.clarify` for structured Q&A
 3. Enhance with squad intelligence:
    - speckit-echelon-scout (SCOUT) insights that spec-kit couldn't know (domain-specific findings)
-   - Additional acceptance criteria from the synthesized knowledge base
+   - Add Given/When/Then (EARS-style) acceptance criteria to every user story
+   - Cross-reference entities from `glossary.md` — every term used in a requirement must appear in the glossary
    - Cross-references to contradictions-and-gaps.md (if speckit-echelon-synthesizer (SYNTHESIZER) produced it)
-4. Output: enhanced spec.md (spec-kit template + squad intelligence)
+4. **Produce `00-overview.md`** in `specs/{NNN}-{feature-name}/`: a 1–2 page human-readable summary of what the feature does, its key design choices, and the primary constraints. This is the first file a new developer reads. It is distinct from `spec.md`.
+5. Output: enhanced spec.md + 00-overview.md (spec-kit template + squad intelligence)
 
 This gives us: spec-kit's proven templates + branch workflow + squad's domain analysis.
 
