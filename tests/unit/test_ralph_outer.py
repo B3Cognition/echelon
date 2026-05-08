@@ -412,3 +412,85 @@ class TestPromptHelpers:
         assert "AssertionError" in result
         assert "spec 001" in result
         assert "re-running" in result
+
+
+@pytest.mark.unit
+class TestSignalDuringBuild:
+    """SIGINT during build must set interrupted status without running verify."""
+
+    def test_sigint_during_build_yields_interrupted_status(self, tmp_path: Path) -> None:
+        """_interrupted set inside exec_build → status=interrupted, final_verify=None."""
+        from harness.llm_provider import ClaudeCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=ClaudeCliProvider)
+        controller, provider, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+
+        def build_sets_interrupted(worktree_path: str, prompt: str) -> BuildResult:
+            controller._interrupted = True
+            return BuildResult(
+                exit_code=1, status="unknown", impasse_file=None,
+                stdout="", stderr="", duration_ms=500,
+            )
+
+        llm.exec_build.side_effect = build_sets_interrupted
+
+        result = controller.run_loop(
+            max_outer=2,
+            build_command="echelon codegen",
+            build_prompt="build a hello world",
+        )
+
+        assert result.status == "interrupted"
+        assert result.termination_reason == "user_cancel"
+        # Verify must not have run — an interrupted build has no verified output
+        assert result.final_verify is None
+
+
+@pytest.mark.unit
+class TestVerifyLocallyUnknownProjectType:
+    """Unknown project type must fail verification, not silently pass."""
+
+    def test_unknown_project_type_returns_failed_verify(self, tmp_path: Path) -> None:
+        """Empty worktree → VerifyResult(passed=False) with id='local-verify-skipped'."""
+        from harness.verify_result import FailureCategory
+
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert len(result.failures) == 1
+        assert result.failures[0].id == "local-verify-skipped"
+        assert result.failures[0].category == FailureCategory.BUILD
+
+    def test_unknown_project_type_does_not_converge(self, tmp_path: Path) -> None:
+        """Build succeeds + unknown project type → status=failed, not converged."""
+        from harness.llm_provider import ClaudeCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=ClaudeCliProvider)
+        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,  # skip inner loop — not under test here
+            build_command="echelon codegen",
+            build_prompt="build a hello world",
+        )
+
+        assert result.status == "failed"
+        assert result.final_verify is not None
+        assert result.final_verify.passed is False
+        assert any(f.id == "local-verify-skipped" for f in result.final_verify.failures)

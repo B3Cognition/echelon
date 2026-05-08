@@ -310,7 +310,8 @@ def _cmd_harness_init(args: list[str]) -> None:
         sys.exit(1)
 
     config_file = Path(base_dir) / ".specify" / "extensions" / "echelon" / "echelon.yml"
-    mirror_dir = Path(base_dir) / ".specify" / "harness" / "mirror.git"
+    from harness.paths import harness_dir
+    mirror_dir = harness_dir(Path(base_dir)) / "mirror.git"
 
     image_note = ""
     if config.base_image is None:
@@ -402,6 +403,17 @@ def _cmd_harness_run(args: list[str]) -> None:
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
             "  Fix: run 'echelon harness init' first, or add 'targets:' to your spec.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from harness.paths import harness_dir as _harness_dir
+    mirror_path = _harness_dir(Path.cwd()) / "mirror.git"
+    if not mirror_path.exists():
+        print(
+            "✗ Harness mirror not initialised for this project.\n"
+            f"  Expected: {mirror_path}\n"
+            "  Fix: run 'echelon harness init' to create the mirror.",
             file=sys.stderr,
         )
         sys.exit(1)

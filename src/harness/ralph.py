@@ -140,6 +140,7 @@ class RalphController:
         tokens_used = state.get("tokens_used", 0)
         start_outer = state.get("outer_iter", 0)
         last_verify_failures_text: str = ""
+        final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
 
         for outer_iter in range(start_outer, max_outer):
             # Check termination conditions
@@ -197,10 +198,18 @@ class RalphController:
                             pr_url, tokens_used,
                         )
 
-                    if self.check_cancel():
+                    # Check termination after build — catches SIGINT that fired during
+                    # the build phase, which check_cancel() alone does not detect.
+                    termination = self._check_termination(tokens_used, token_budget)
+                    if termination:
+                        term_status = (
+                            "interrupted" if termination == "user_cancel"
+                            else "cancelled" if termination == "killed_by_coordinator"
+                            else "failed"
+                        )
                         return self._finalize(
-                            status="cancelled",
-                            reason="killed_by_coordinator",
+                            status=term_status,
+                            reason=termination,
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -324,7 +333,7 @@ class RalphController:
             inner_iterations=total_inner_iterations,
             pr_url=pr_url,
             tokens_used=tokens_used,
-            final_verify=None,
+            final_verify=final_verify,
         )
 
     # === Inner loop ===
@@ -351,8 +360,9 @@ class RalphController:
         current_verify = verify_result
 
         for inner_iter in range(1, max_inner + 1):
-            # Check cancel
-            if self.check_cancel():
+            # Check termination (covers both SIGINT and coordinator cancel)
+            termination = self._check_termination(tokens_used, token_budget)
+            if termination:
                 return {
                     "converged": False,
                     "blocked": False,
@@ -627,12 +637,26 @@ class RalphController:
                 ("build", "npm run build"),
             ]
         else:
-            # Unknown project type — skip local verification
+            # Unknown project type — cannot verify locally.
+            # Return passed=False so the harness does not falsely claim convergence.
+            # Users can add a verify_command to echelon.yml to enable verification.
             logger.warning(
-                "Cannot detect project type in %s; skipping local verification",
+                "Cannot detect project type in %s; local verification skipped",
                 worktree_path,
             )
-            return VerifyResult(passed=True, failures=[], duration_s=0.0)
+            return VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.BUILD,
+                    id="local-verify-skipped",
+                    error=(
+                        f"Cannot detect project type in {worktree_path}; "
+                        "local verification skipped. "
+                        "Add verify_command to echelon.yml to enable verification."
+                    ),
+                )],
+                duration_s=0.0,
+            )
 
         for stage, cmd in commands:
             try:
@@ -866,7 +890,14 @@ class RalphController:
                 allowlist=self._config.network.allowlist,
                 proxy_image=self._config.network.proxy_image,
             ),
-            env={},
+            env={
+                # SPEC_KIT_ROOT lets common.sh find .specify/ when walking up from /workspace
+                # is blocked by the container boundary (e.g. Docker).
+                # ECHELON_HARNESS_RUN tells spec-kit scripts to skip branch-name validation
+                # since branch management is the harness's responsibility.
+                "SPEC_KIT_ROOT": str(self._gitops.base_dir),
+                "ECHELON_HARNESS_RUN": "1",
+            },
             secrets_env={},
             post_create_command=None,
             forward_ports=[],

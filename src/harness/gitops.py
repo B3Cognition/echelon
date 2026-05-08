@@ -25,11 +25,9 @@ from typing import Dict, Optional
 
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
+from harness.paths import MIRROR_REL_PATH, harness_dir
 
 logger = logging.getLogger(__name__)
-
-# Default mirror location
-MIRROR_REL_PATH = ".specify/harness/mirror.git"
 
 # Command timeout for git operations (seconds)
 GIT_CMD_TIMEOUT = 120
@@ -115,6 +113,11 @@ class GitOpsManager:
                 )
 
     @property
+    def base_dir(self) -> Path:
+        """Project root directory."""
+        return self._base_dir
+
+    @property
     def mirror_path(self) -> Path:
         """Path to the bare mirror repository."""
         return self._mirror_path
@@ -124,7 +127,7 @@ class GitOpsManager:
     def clone_mirror(self, target_url: str) -> str:
         """Clone target repo as bare mirror.
 
-        git clone --mirror <target_url> .specify/harness/mirror.git
+        git clone --mirror <target_url> .specify/extensions/echelon/harness/mirror.git
 
         Returns:
             Path to the mirror directory.
@@ -255,7 +258,7 @@ class GitOpsManager:
         it is merged to main.
 
         When base_branch is None (legacy / no-echelon mode): a new branch named
-        'harness/{spec_id}/{strategy_id}/iter-{outer_iter}' is created from the
+        'harness/{spec_id}-{strategy_id}-iter-{outer_iter}' is created from the
         default branch HEAD (original behaviour).
 
         Returns:
@@ -271,7 +274,7 @@ class GitOpsManager:
 
         # Worktree directory — same path regardless of branching mode.
         worktree_dir = (
-            self._base_dir / ".specify" / "harness" / "worktrees"
+            harness_dir(self._base_dir) / "worktrees"
             / spec_id / strategy_id / f"iter-{outer_iter}"
         )
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -349,7 +352,7 @@ class GitOpsManager:
         else:
             # Legacy mode: create a new harness/* branch from default branch HEAD.
             default_branch = self.get_default_branch()
-            branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
+            branch_name = f"harness/{spec_id}-{strategy_id}-iter-{outer_iter}"
             try:
                 _run_git(
                     ["branch", branch_name, default_branch],
@@ -790,12 +793,12 @@ class GitOpsManager:
         """Return path to the most recently created worktree for this spec/strategy.
 
         Worktrees are created at:
-            {base_dir}/.specify/harness/worktrees/{spec_id}/{strategy_id}/iter-{N}
+            {base_dir}/.specify/extensions/echelon/harness/worktrees/{spec_id}/{strategy_id}/iter-{N}
 
         Returns the highest-mtime iter directory, or None if none exists.
         """
         target = (
-            self._base_dir / ".specify" / "harness" / "worktrees"
+            harness_dir(self._base_dir) / "worktrees"
             / spec_id / strategy_id
         )
         if not target.exists():
@@ -1008,7 +1011,7 @@ class GitOpsManager:
             spec_id = parts[wt_idx + 1]
             strategy_id = parts[wt_idx + 2]
             iter_part = parts[wt_idx + 3]
-            return f"harness/{spec_id}/{strategy_id}/{iter_part}"
+            return f"harness/{spec_id}-{strategy_id}-{iter_part}"
         except (ValueError, IndexError):
             return None
 

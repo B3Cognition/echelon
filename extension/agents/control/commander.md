@@ -382,6 +382,8 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 - If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop speckit-echelon-sage (SAGE) iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
+**Hard plateau rule (overrides EVOI):** If, after 4 or more WHY2/WHY3 iterations, the cumulative improvement in `overall` score from iteration 1 to the current pass is less than 0.05, immediately force `best_effort` convergence — regardless of EVOI estimates. A large iteration count with tiny total gain indicates a systemic issue (parsing errors, threshold misalignment, spec format violation) that additional CARTOGRAPHER amendments cannot fix. EVOI estimates in this situation are unreliable because they are built on a sequence of scores with low variance. Note the stall reason in the journal and surface the gap to the user.
+
 ### Rule 2: Circular Issue Detection
 
 - If the same issue (matched by description similarity) appears 3 times in `state.json.issues_log[].occurrences` → **defer or escalate**

@@ -46,14 +46,18 @@ console = Console()
 
 # Quality Gates (Research-Backed Thresholds)
 # Based on ISO 29148:2018, IEEE 830-1998, ISO 25010:2023
+# These are CLI-standalone defaults. When run under an echelon project,
+# echelon-config.yml quality_gates section overrides these values — it is
+# the single source of truth. Keep these in sync with extension/echelon-config.yml.
 QUALITY_GATES = {
-    "overall": 0.70,        # Minimum acceptable quality
-    "structure": 0.70,      # ISO 29148 §5.2.5 - Atomicity & Completeness
-    "testability": 0.70,    # ISO 29148 - Verifiability (mandatory)
-    "semantic": 0.60,       # Lucassen 2017 - Actor-Action-Object
-    "cognitive": 0.60,      # Sweller 1988 - Cognitive Load
-    "readability": 0.50,    # Flesch 1948 - Understanding (lower for technical)
-    # behavioral: No gate (context-dependent)
+    "overall": 0.75,        # Minimum acceptable quality (ISO 29148:2018)
+    "structure": 0.75,      # ISO 29148 §5.2.5 - Atomicity & Completeness
+    "testability": 0.75,    # ISO 29148 - Verifiability (mandatory)
+    "semantic": 0.65,       # Lucassen 2017 - Actor-Action-Object
+    "cognitive": 0.65,      # Sweller 1988 - Cognitive Load
+    "readability": 0.55,    # Flesch 1948 - Understanding (lower for technical)
+    "depth": 0.40,          # B3 Benchmark v0.1 - Cross-reference density (Understanding v3.6+)
+    "behavioral": 0.55,     # Harel 2003/2005 - Observable outcomes
 }
 
 

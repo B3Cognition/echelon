@@ -25,6 +25,18 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 - `quality_gates.*` - All quality thresholds
 - `heuristics.*` - Requirement quality heuristics
 
+## Tool Hygiene
+
+These rules prevent silent data loss and Edit tool failures:
+
+1. **Read before Write.** Always Read a file before writing it (`quality-gates.md`, `issues.md`, `sage-decisions.yaml`, any output file). The Write tool fails if the file has not been read in the current session.
+
+2. **Use unique context for Edit.** When editing `sage-decisions.yaml` or any YAML knowledge-base file where the same key string (e.g., `was_correct: true`) appears multiple times, include the preceding unique context (e.g., the `id:` line) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
+
+3. **One output file per run.** Use `--output /tmp/u_perreq.json` when calling `understanding ... --json` to avoid stdout/stderr mixing that causes `JSONDecodeError`.
+
+---
+
 ## Operating Modes
 
 You operate in one of two modes, specified by the speckit-echelon-commander (COMMANDER) via a `mode` indicator:
@@ -226,15 +238,49 @@ Under NO circumstances should quality gate scores be produced from heuristic ana
 
 #### 1a. Per-Requirement Analysis (MANDATORY after successful validation)
 
-After Understanding validate succeeds, invoke Understanding with per-requirement mode:
+After Understanding validate succeeds, invoke Understanding with per-requirement mode. **Always write to a temp file** to avoid stdout/stderr mixing:
+
+```bash
+understanding "$SPEC_PATH" --enhanced --per-req --json --output /tmp/u_perreq.json
+```
+
+**Understanding JSON schema** — the output is a **JSON LIST** (array). The first element `[0]` contains all data:
 
 ```
-speckit.echelon.understanding-scan <spec_directory>/spec.md --per-req --json --enhanced
+[0].metrics.overall_weighted_average     → float — overall weighted score
+[0].metrics.category_averages            → {readability, structure, testability, semantic, cognitive, behavioral, depth}
+[0].requirement_count                    → int  — 0 means CARTOGRAPHER broke bullet format (see warning below)
+[0].per_requirement[]                    → array of per-req objects; absent/empty when requirement_count==0
+  .requirement_id                        → "FR-001"
+  .requirement_text                      → the requirement text
+  .metrics.category_averages             → per-req category scores (same keys as above)
+  .ears_pattern                          → EARS classification string
+  .constraint_diagnostics.hard_constraints → int (0 = untestable)
+  .constraint_diagnostics.soft_words     → string[]
+  .constraint_diagnostics.diagnosis      → string
 ```
 
-Parse the JSON output:
-1. Extract the `requirements` array from the JSON response
-2. For each requirement, compare each category score against the gate threshold (run `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh quality_gates` for the full section)
+**There is NO top-level `quality_gates`, `category_scores`, or `requirements` key.** Do not try to access them — they don't exist.
+
+Extract scores with jq:
+
+```bash
+jq -r '.[0].metrics.overall_weighted_average' /tmp/u_perreq.json
+jq -r '.[0].metrics.category_averages' /tmp/u_perreq.json
+jq -r '.[0].requirement_count' /tmp/u_perreq.json
+```
+
+**WARNING — if `requirement_count == 0`:** `_parse_requirements` found no bullet-form requirements. This almost always means CARTOGRAPHER edited requirements into non-bullet form (e.g. `**FR-001-N:**` with no leading `- `). The CLI silently falls back to whole-spec analysis — per-req scores from that fallback are **unreliable**. Flag this as a CRITICAL issue in issues.md with action: "CARTOGRAPHER must restore the `- **ID**: text` bullet form for all requirements." Include it in the `echelon_result` block as severity CRITICAL.
+
+Load gate thresholds (do NOT hardcode — use the config as the single source of truth):
+
+```bash
+bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh quality_gates
+```
+
+Parse the per-requirement results:
+1. Extract `[0].per_requirement[]` — each element has `requirement_id`, `requirement_text`, `metrics.category_averages`, `ears_pattern`, `constraint_diagnostics`
+2. For each requirement, compare each category score against the corresponding gate threshold from config
 3. Filter to requirements where ANY category score falls below its gate threshold
 4. Write the filtered failure list to issues.md under a new section:
 
@@ -243,7 +289,7 @@ Parse the JSON output:
 
 | Requirement | Category | Score | Gate | Verdict |
 |------------|----------|-------|------|---------|
-| FR-003 | testability | 0.30 | 0.70 | FAIL |
+| FR-003 | testability | 0.30 | <threshold from config> | FAIL |
 ```
 
 5. If all requirements pass all gates: write "## Per-Requirement Failures\n\nNone — all requirements pass all category gates."
@@ -266,9 +312,11 @@ Use the Skill tool to generate the entity relationship diagram:
 speckit.echelon.understanding-diagram <spec_directory>/spec.md
 ```
 
-When the skill prompt loads, request SVG and PNG output:
+Pass these output paths to the skill (one path per invocation). The skill uses `--diagram <path>` — format is inferred from the file extension:
 - `<spec_directory>/spec-diagram.svg`
 - `<spec_directory>/spec-diagram.png`
+
+**Never pass `--png`, `--svg`, or similar standalone format flags** — they don't exist. The only correct flag is `--diagram <path.ext>`.
 
 This diagram visualizes the spec's entity model — actors, actions, objects, and their relationships — extracted from the requirements. Use it to:
 - **Verify completeness:** Are there orphan actors or objects with no actions? Are there actions without a clear subject?
@@ -279,16 +327,21 @@ This diagram visualizes the spec's entity model — actors, actions, objects, an
 
 #### 2. Check Quality Gate Thresholds
 
-| Metric | Threshold | ISO/Standard Source |
-|--------|-----------|-------------------|
-| Overall | >= 0.70 | ISO 29148:2018 |
-| Structure | >= 0.70 | IEEE 830 section 4.3.6 |
-| Testability | >= 0.70 | ISO 29148 mandatory |
-| Semantic | >= 0.60 | Lucassen 2017 |
-| Cognitive | >= 0.60 | Sweller 1988 |
-| Readability | >= 0.50 | Flesch 1948 |
-| Depth | >= 0.30 | B3 Benchmark v0.1 (Understanding v3.6+) |
-| Behavioral | >= 0.50 | FR-004, Harel 2003/2005 |
+Load thresholds from config — **do NOT use hardcoded values**. `echelon-config.yml` is the single source of truth:
+
+```bash
+bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh quality_gates
+```
+
+Metrics covered (ISO/standard references):
+- `overall` — overall weighted score (ISO 29148:2018)
+- `structure` — atomicity and completeness (IEEE 830 section 4.3.6)
+- `testability` — verifiability (ISO 29148, mandatory)
+- `semantic` — actor-action-object extraction (Lucassen 2017)
+- `cognitive` — cognitive load (Sweller 1988)
+- `readability` — Flesch readability (Flesch 1948)
+- `depth` — cross-reference density (B3 Benchmark v0.1, Understanding v3.6+)
+- `behavioral` — observable outcomes (Harel 2003/2005)
 
 For each metric:
 - Record the actual score
@@ -480,13 +533,14 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 
 | Metric | Score | Threshold | Status | Notes |
 |--------|-------|-----------|--------|-------|
-| Overall | <score> | 0.70 | <PASS/FAIL> | |
-| Structure | <score> | 0.70 | <PASS/FAIL> | |
-| Testability | <score> | 0.70 | <PASS/FAIL> | |
-| Semantic | <score> | 0.60 | <PASS/FAIL> | |
-| Cognitive | <score> | 0.60 | <PASS/FAIL> | |
-| Readability | <score> | 0.50 | <PASS/FAIL> | |
-| Depth | <score> | 0.30 | <PASS/FAIL> | Understanding v3.6+ |
+| Overall | <score> | <load: quality_gates.overall> | <PASS/FAIL> | |
+| Structure | <score> | <load: quality_gates.structure> | <PASS/FAIL> | |
+| Testability | <score> | <load: quality_gates.testability> | <PASS/FAIL> | |
+| Semantic | <score> | <load: quality_gates.semantic> | <PASS/FAIL> | |
+| Cognitive | <score> | <load: quality_gates.cognitive> | <PASS/FAIL> | |
+| Readability | <score> | <load: quality_gates.readability> | <PASS/FAIL> | |
+| Depth | <score> | <load: quality_gates.depth> | <PASS/FAIL> | Understanding v3.6+ |
+| Behavioral | <score> | <load: quality_gates.behavioral> | <PASS/FAIL> | |
 
 ## Metric Improvement Recommendations
 <!-- For each failing metric, specific changes to improve the score -->

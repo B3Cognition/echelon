@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
+from harness.paths import harness_dir
 from harness.spec_frontmatter import find_spec_dir, write_status
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ def land(
     Returns False only when PR merge is blocked — caller must retry or merge manually.
     """
     if state_dir is None:
-        state_dir = project_dir / ".specify" / "harness" / "state"
+        state_dir = harness_dir(project_dir) / "state"
 
     feature_branch = gitops.find_feature_branch(spec_id)
     if feature_branch is None:
@@ -75,7 +76,7 @@ def land(
 
 
 def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
-    worktree_base = project_dir / ".specify" / "harness" / "worktrees" / spec_id
+    worktree_base = harness_dir(project_dir) / "worktrees" / spec_id
     if not worktree_base.exists():
         return
     for strategy_dir in sorted(worktree_base.iterdir()):
@@ -91,10 +92,10 @@ def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
 
 
 def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
-    """Delete local harness/{spec_id}/* branches left over from legacy harness runs."""
+    """Delete local harness/{spec_id}-* branches left over from harness runs."""
     try:
         result = subprocess.run(
-            ["git", "branch", "--list", f"harness/{spec_id}/*"],
+            ["git", "branch", "--list", f"harness/{spec_id}-*"],
             capture_output=True,
             text=True,
             timeout=30,

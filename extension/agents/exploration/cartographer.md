@@ -20,6 +20,41 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER). T
 6. **NEVER create spec.md manually.** The Skill tool (`speckit.specify`) must be invoked and must return before any spec file is created. If the Skill tool was not invoked, you are not in a blocked state — go back and invoke it.
 7. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output.
 
+## Spec Format Invariants
+
+These formatting rules are **inviolable**. `understanding --per-req` parses requirements using a regex that requires exact bullet form. Violating these rules silently drops requirements from per-requirement analysis and zeroes out quality scores.
+
+### Requirement line format
+
+Every requirement MUST be a bullet in this exact form:
+
+```markdown
+- **<ID>**: <requirement text>
+```
+
+- The line MUST start with `- **` (dash, space, double-asterisk).
+- The ID MUST match `[A-Z]{1,5}-\d{3,4}` — **exactly 3 or 4 digits, no letter suffix, no dash-suffix**.
+- Valid: `FR-001`, `SC-042`, `NFR-003`
+- **Invalid: `FR-004a`, `FR-001-N`, `SC-002b`** — these IDs are invisible to the quality analysis tool.
+- A colon and space MUST follow the closing `**`: `**: `.
+
+### Splitting requirements
+
+When splitting one requirement into multiple atomic ones, allocate new numeric IDs from the next available block. Examples:
+- Splitting `FR-004` into 4 parts → use `FR-005`, `FR-006`, `FR-007`, `FR-008` (not `FR-004a/b/c/d`).
+- Splitting a SHALL NOT constraint out of an existing FR → allocate a new ID (e.g., `FR-101`), not a suffixed variant.
+
+### Headers vs. bullets
+
+**NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
+
+## Tool Hygiene
+
+1. **Read before Write.** Always Read a file before writing to it in the current session. `state.json`, `spec.md`, `sage-decisions.yaml`, or any output file — read first or the Write tool will fail.
+2. **Unique old_string in Edit calls.** When editing YAML files where the same key string appears multiple times, include enough surrounding context (preceding `id:` or key line) to make `old_string` unique. If the string is repeated, use `replace_all: true`.
+
+---
+
 ## Spec-Kit Integration
 
 You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT expect speckit-echelon-commander (COMMANDER) to do it.
