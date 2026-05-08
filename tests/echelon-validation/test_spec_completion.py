@@ -41,17 +41,19 @@ class TestSpecCompletion:
 
     def test_run_md_sets_spec_status_planned_after_cartographer(self) -> None:
         # Content moved to workflow/phases/phase1-what.md (echelon.run.md is now a thin wrapper)
-        content = (ECHELON.parent / "workflow/phases/phase1-what.md").read_text()
+        content = (ECHELON / "workflow/phases/phase1-what.md").read_text()
         assert re.search(r"spec_status.*planned", content)
         assert re.search(r"Status.*Planned", content)
 
     def test_build_md_sets_spec_status_in_progress_at_start(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-1-init.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-1-init.md").read_text()
         assert re.search(r"spec_status.*in-progress", content)
         assert re.search(r"Status.*In Progress", content)
 
     def test_build_md_sets_spec_status_implemented_on_verification_pass(self) -> None:
-        content = (ECHELON / "commands/echelon.build.md").read_text()
+        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
+        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
         assert re.search(r"spec_status.*implemented", content)
         assert re.search(r"Status.*Implemented", content)
         assert "tasks_completed_pct" in content
