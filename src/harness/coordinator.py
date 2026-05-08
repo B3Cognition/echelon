@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from harness.budget import slice_budget
+from harness.paths import harness_dir
 from harness.config import HarnessConfig
 from harness.llm_provider import ClaudeCliProvider
 from harness.escalation import EscalationHandler
@@ -53,9 +54,9 @@ class StrategyCoordinator:
         self._gitops = gitops
         self._config = config
         self._base_dir = base_dir
-        self._state_dir = Path(base_dir) / ".specify" / "harness" / "state"
-        self._strategies_dir = Path(base_dir) / ".specify" / "harness" / "strategies"
-        self._escalation_dir = Path(base_dir) / ".specify" / "harness"
+        self._state_dir = harness_dir(Path(base_dir)) / "state"
+        self._strategies_dir = harness_dir(Path(base_dir)) / "strategies"
+        self._escalation_dir = harness_dir(Path(base_dir))
 
         # Convergence event for kill_losers
         self._convergence_event = threading.Event()

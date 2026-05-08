@@ -98,7 +98,7 @@ class MultiStubSandboxProvider:
 
 def _create_strategy_files(base_dir: Path, spec_id: str, strategy_ids: list) -> None:
     """Create empty strategy files so the loader doesn't raise."""
-    strategies_dir = base_dir / ".specify" / "harness" / "strategies" / spec_id
+    strategies_dir = base_dir / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / spec_id
     strategies_dir.mkdir(parents=True, exist_ok=True)
     for sid in strategy_ids:
         (strategies_dir / f"{sid}.md").write_text(
@@ -173,7 +173,7 @@ class TestMultiStrategy:
         assert len(results) == 2
 
         # Both strategies should have independent state files
-        state_dir = tmp_harness_dir / ".specify" / "harness" / "state" / "test-spec"
+        state_dir = tmp_harness_dir / ".specify" / "extensions" / "echelon" / "harness" / "state" / "test-spec"
         alpha_state = state_dir / "alpha.json"
         beta_state = state_dir / "beta.json"
 
@@ -272,9 +272,9 @@ class TestMultiStrategy:
         for run_idx in range(3):
             run_dir = tmp_harness_dir / f"run_{run_idx}"
             run_dir.mkdir(parents=True, exist_ok=True)
-            (run_dir / ".specify" / "harness" / "state").mkdir(parents=True)
-            (run_dir / ".specify" / "harness" / "escalations").mkdir(parents=True)
-            (run_dir / ".specify" / "harness" / "strategies").mkdir(parents=True)
+            (run_dir / ".specify" / "extensions" / "echelon" / "harness" / "state").mkdir(parents=True)
+            (run_dir / ".specify" / "extensions" / "echelon" / "harness" / "escalations").mkdir(parents=True)
+            (run_dir / ".specify" / "extensions" / "echelon" / "harness" / "strategies").mkdir(parents=True)
             _create_strategy_files(run_dir, f"spec-{run_idx}", ["s1", "s2"])
 
             stub = StubLLM(mode="converge_on_first", tokens_per_call=500)
@@ -303,7 +303,7 @@ class TestMultiStrategy:
             assert len(results) == 2
 
             # Verify each state file is valid JSON
-            state_dir = run_dir / ".specify" / "harness" / "state" / f"spec-{run_idx}"
+            state_dir = run_dir / ".specify" / "extensions" / "echelon" / "harness" / "state" / f"spec-{run_idx}"
             for sf in state_dir.glob("*.json"):
                 data = json.loads(sf.read_text())
                 assert "status" in data, (

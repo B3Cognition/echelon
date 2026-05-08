@@ -124,7 +124,7 @@ class TestRalphEscalation:
         )
 
         # Check escalation directory for files
-        esc_dir = tmp_harness_dir / ".specify" / "harness" / "escalations"
+        esc_dir = tmp_harness_dir / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
         esc_files = list(esc_dir.glob("*.md"))
         assert len(esc_files) > 0, "Escalation file should have been created"
 

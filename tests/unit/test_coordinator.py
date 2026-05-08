@@ -58,7 +58,7 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
 
     # Create strategy dir for default
-    strat_dir = tmp_path / ".specify" / "harness" / "strategies" / "spec-001"
+    strat_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / "spec-001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
     return StrategyCoordinator(
@@ -179,7 +179,7 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     )
 
     # Create strategy dir
-    strat_dir = tmp_path / ".specify" / "harness" / "strategies" / "001"
+    strat_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / "001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
     gitops = MagicMock()
@@ -236,7 +236,7 @@ def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
         final_verify=None,
     )
 
-    strat_dir = tmp_path / ".specify" / "harness" / "strategies" / "001"
+    strat_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / "001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
     gitops = MagicMock()

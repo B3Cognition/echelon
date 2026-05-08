@@ -24,7 +24,8 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
     Returns:
         Status dict for programmatic use.
     """
-    state_dir = Path(base_dir) / ".specify" / "harness" / "state"
+    from harness.paths import harness_dir
+    state_dir = harness_dir(Path(base_dir)) / "state"
 
     if not state_dir.exists():
         print("No active loops.", file=sys.stderr)

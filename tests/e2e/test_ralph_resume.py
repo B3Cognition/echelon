@@ -69,7 +69,7 @@ class TestRalphResume:
         blocked_outer = blocked_state.get("outer_iter", 0)
 
         # Phase 2: Find escalation file and add answer
-        esc_dir = tmp_harness_dir / ".specify" / "harness" / "escalations"
+        esc_dir = tmp_harness_dir / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
         esc_files = list(esc_dir.glob("*.md"))
         assert len(esc_files) > 0, "Should have escalation file"
 
@@ -139,7 +139,7 @@ class TestRalphResume:
         assert result.status == "blocked"
 
         # Find escalation file and record it in state (without adding answer)
-        esc_dir = tmp_harness_dir / ".specify" / "harness" / "escalations"
+        esc_dir = tmp_harness_dir / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
         esc_files = list(esc_dir.glob("*.md"))
         assert len(esc_files) > 0
 

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from harness.config import HarnessConfig
+from harness.paths import harness_dir
 
 logger = logging.getLogger(__name__)
 
@@ -159,8 +160,8 @@ def run_gc(
         Dict with counts of removed items.
     """
     base = Path(base_dir) if base_dir else Path.cwd()
-    worktree_base = base / ".specify" / "harness" / "worktrees"
-    state_base = base / ".specify" / "harness" / "state"
+    worktree_base = harness_dir(base) / "worktrees"
+    state_base = harness_dir(base) / "state"
 
     result = {
         "containers_removed": 0,

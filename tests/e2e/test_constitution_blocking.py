@@ -92,7 +92,7 @@ class TestConstitutionBlocking:
         )
 
         # Check for escalation files
-        esc_dir = tmp_harness_dir / ".specify" / "harness" / "escalations"
+        esc_dir = tmp_harness_dir / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
         esc_files = list(esc_dir.glob("*.md"))
 
         if result.status == "blocked":

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from harness.escalation import EscalationHandler
+from harness.paths import harness_dir
 from harness.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ def resume(
         return
 
     # 2. Load state
-    state_dir = Path(base_dir) / ".specify" / "harness" / "state"
+    state_dir = harness_dir(Path(base_dir)) / "state"
     state_store = StateStore(state_dir, spec_id, strategy_id)
     state = state_store.read()
 
@@ -69,7 +70,7 @@ def resume(
 
     # 4. Resume with answer
     escalation_file = state.get("escalation_file")
-    escalation_handler = EscalationHandler(str(Path(base_dir) / ".specify" / "harness"))
+    escalation_handler = EscalationHandler(str(harness_dir(Path(base_dir))))
 
     if escalation_file:
         escalation_handler.resume(escalation_file, answer)

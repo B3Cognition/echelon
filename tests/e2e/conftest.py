@@ -33,11 +33,11 @@ from tests.e2e.stub_llm import StubLLM, StubSandboxProvider
 @pytest.fixture
 def tmp_harness_dir(tmp_path: Path) -> Path:
     """Create a temporary harness directory structure."""
-    state_dir = tmp_path / ".specify" / "harness" / "state"
+    state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
     state_dir.mkdir(parents=True)
-    esc_dir = tmp_path / ".specify" / "harness" / "escalations"
+    esc_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
     esc_dir.mkdir(parents=True)
-    strategies_dir = tmp_path / ".specify" / "harness" / "strategies"
+    strategies_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies"
     strategies_dir.mkdir(parents=True)
     return tmp_path
 
@@ -150,13 +150,13 @@ def make_ralph_controller(
     """
     from harness.ralph import RalphController
 
-    state_dir = tmp_dir / ".specify" / "harness" / "state"
+    state_dir = tmp_dir / ".specify" / "extensions" / "echelon" / "harness" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
 
     state_store = StateStore(state_dir, spec_id, strategy_id)
     mode_controller = ModeController(mode)
     escalation_handler = EscalationHandler(
-        str(tmp_dir / ".specify" / "harness")
+        str(tmp_dir / ".specify" / "extensions" / "echelon" / "harness")
     )
     stub_provider = StubSandboxProvider(stub_llm)
 
