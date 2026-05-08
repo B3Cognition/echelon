@@ -100,9 +100,9 @@ Read outputs from all three consensus agents:
 **MANDATORY — run before transitioning to phase4-document:**
 
 ```bash
-# Ensure phase4-build is open (start if missing — resume edge case)
+# Budget: definition.yaml phases[phase3-plan].timing_window_transition.open_budget_seconds = 7200
+# Ensure phase4-build is open (idempotent — skips if already started)
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
-# (idempotent — skips if already started)
 ```
 
 phase4-build stays open through FINALIZE. Close it in phase4-document §12 before setting `status: done`:

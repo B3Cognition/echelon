@@ -30,9 +30,9 @@ Read the strategic overview. Use it to prioritize specialist allocation: spend s
 **MANDATORY — run before transitioning to phase2-tracker-alignment:**
 
 ```bash
-# Ensure phase2-decide window is open (start if missing due to restart recovery)
+# Budget: definition.yaml phases[phase2-decide].budget_seconds = 1800
+# Ensure phase2-decide window is open (idempotent — skips if already started)
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase2-decide 1800
-# (idempotent — skips if already started)
 ```
 
 phase2-decide stays open through this phase — it closes in phase3-specialists.

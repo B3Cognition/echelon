@@ -58,6 +58,7 @@ Read ASSESS outputs:
 **MANDATORY — run before transitioning to phase2-strategic-overview:**
 
 ```bash
+# Budget: definition.yaml phases[phase2-decide].budget_seconds = 1800
 # Start phase2-decide timing if not already started (idempotent — skips if start_ts exists)
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase2-decide 1800
 ```

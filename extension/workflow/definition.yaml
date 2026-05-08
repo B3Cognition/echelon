@@ -151,7 +151,9 @@ conflict_resolution:
 # PHASE GRAPH
 #
 # Each phase has:
-#   type:          commander_internal | agent | parallel | human_gate | terminal
+#   type:          commander_internal | agent | parallel | conditional_sequential | human_gate | terminal
+#                  conditional_sequential — multiple possible agents, evaluated one at a time in order;
+#                                           each dispatched only after the previous completes post-dispatch.
 #   agent(s):      which agent(s) to invoke (omitted for commander_internal)
 #   tier:          model-tier selection key from echelon-config.yml execution.models
 #   context_pack:  artifacts injected into the agent's dispatch prompt
@@ -451,6 +453,9 @@ phases:
     spec_file: workflow/phases/phase2-decide.md
     type: agent
     agent: speckit-echelon-gatekeeper
+    timing_window_start: phase2-decide   # opens timing window; budget below
+    budget_seconds: 1800                 # wall-clock budget for the phase2-decide window
+                                         # (spans phase2-decide + phase2-strategic-overview + phase2-tracker-alignment)
     tier: feasibility
     context_pack:
       - spec.md
@@ -540,11 +545,12 @@ phases:
   - id: phase3-specialists
     label: "Specialist Consultation"
     spec_file: workflow/phases/phase3-specialists.md
-    type: conditional_parallel
+    type: conditional_sequential
     description: >
-      speckit-echelon-guardian (GUARDIAN) always runs (always_on default).
-      Others summoned based on conditions below.
-      Dispatch in parallel up to max_parallel_agents from echelon-config.yml.
+      speckit-echelon-guardian (GUARDIAN) always runs first (always_on default).
+      Others evaluated in order; each dispatched only after the previous completes
+      post-dispatch protocol. INVESTIGATOR may run in parallel with one domain
+      specialist (the only permitted parallelism). All others are strictly sequential.
     agents:
       - id: speckit-echelon-guardian
         tier: specialists
@@ -591,12 +597,34 @@ phases:
 
       - id: speckit-echelon-maverick
         tier: specialists
-        condition: "stagnation_detected OR same_issue_count >= issue_repetition_limit"
+        # Dispatch when ANY of the 8 INNOVATE triggers is true:
+        #   1. stagnation_detected          — EVOLVE: no quality improvement between runs
+        #   2. same_issue_count >= issue_repetition_limit — circular: same issue ≥3× unresolved
+        #   3. why_reject_count >= 2        — WHY2 rejected spec ≥2 consecutive times
+        #   4. assess_borderline_defer      — GATEKEEPER issued DEFER (not clear PASS or KILL)
+        #   5. hard_tradeoff_detected       — ARCHITECT flagged unresolved ADR with no clear winner
+        #   6. quality_plateau_detected     — max abs delta < 0.02 across last 2 WHY passes
+        #   7. agent_blocked               — any agent returned BLOCKED verdict this run
+        #   8. assess_scope_large          — GATEKEEPER estimates > 100 person-weeks
+        condition: >
+          stagnation_detected OR
+          same_issue_count >= issue_repetition_limit OR
+          why_reject_count >= 2 OR
+          assess_borderline_defer OR
+          hard_tradeoff_detected OR
+          quality_plateau_detected OR
+          agent_blocked OR
+          assess_scope_large
         outputs:
           - alternatives.md
 
     limits:
       max_active_specialists: 3   # Excludes speckit-echelon-guardian (GUARDIAN)
+
+    timing_window_transition:        # closes phase2-decide, opens phase3-solution
+      close: phase2-decide
+      open: phase3-solution
+      open_budget_seconds: 2400      # phase3-solution budget (spans specialists→sentinel→plan)
 
     transitions:
       - to: phase3-sentinel
@@ -640,7 +668,12 @@ phases:
     outputs:
       - tasks.md
       - critical-path.md
-      - dependency-graph.md
+      - risk-matrix.md
+      - dependencies.md
+    timing_window_transition:        # closes phase3-solution, opens phase4-build
+      close: phase3-solution
+      open: phase4-build
+      open_budget_seconds: 7200      # phase4-build budget (spans consensus + finalize)
     transitions:
       - to: phase3-consensus
         condition: always

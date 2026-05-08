@@ -61,9 +61,10 @@ done
 **MANDATORY — run before transitioning to phase3-consensus:**
 
 ```bash
-# Close phase3-solution (writes end_ts, elapsed_seconds, over_budget)
+# Budgets: definition.yaml phases[phase3-plan].timing_window_transition
+#   close: phase3-solution (open_budget_seconds=2400)
+#   open:  phase4-build (open_budget_seconds=7200)
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase3-solution
-# Open phase4-build
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
 ```
 

@@ -25,33 +25,7 @@ After ASSESS passes, determine which specialists are needed:
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
 | **INNOVATE** | See expanded triggers below | Medium |
 
-**INNOVATE Expanded Triggers** — INNOVATE should run more often than other specialists. It catches design ruts early:
-
-1. **Re-run stagnation:** EVOLVE detects no improvement between runs → INNOVATE
-2. **Circular reasoning:** Same issue raised 3x without resolution → INNOVATE before escalation
-3. **WHY rejects spec 2+ times:** The spec keeps failing quality gates → INNOVATE reframes the problem
-4. **ASSESS borderline DEFER:** Feasibility is marginal (not clear KILL, not clear PASS) → INNOVATE proposes simpler alternatives
-5. **HOW faces a hard tradeoff:** Architecture decision has no clear winner → INNOVATE applies TRIZ contradiction resolution
-6. **Quality scores plateau:** WHY scores improve < 2% over 2 iterations → INNOVATE breaks the local optimum
-7. **Any agent reports BLOCKED:** Before escalating to human, try INNOVATE first
-8. **First run with complex scope:** If ASSESS estimates > 100 person-weeks, proactively run INNOVATE to check if a simpler approach exists
-
-**MANDATORY — evaluate every INNOVATE trigger before finalising the specialist list.** COMMANDER must explicitly check each condition against current state and record the decision:
-
-```text
-INNOVATE evaluation (check each trigger before dispatch):
-  Trigger 1 (re-run stagnation):    state.json.iteration > 0 AND no quality improvement? → [yes/no]
-  Trigger 2 (circular reasoning):   any issues_log entry with occurrences >= 3?          → [yes/no]
-  Trigger 3 (WHY rejects 2+ times): len(state.json.quality_scores) >= 2 AND gates failed? → [yes/no]
-  Trigger 4 (borderline DEFER):     GATEKEEPER issued DEFER verdict?                      → [yes/no]
-  Trigger 5 (hard HOW tradeoff):    ARCHITECT flagged unresolved ADR decision?             → [yes/no]
-  Trigger 6 (quality plateau):      max abs delta across last 2 WHY passes < 0.02?        → [yes/no]
-  Trigger 7 (agent BLOCKED):        any agent returned BLOCKED verdict this run?          → [yes/no]
-  Trigger 8 (complex scope):        ASSESS estimates > 100 person-weeks?                  → [yes/no]
-  dispatch_innovate: [true/false — true if ANY trigger is yes]
-```
-
-Log this evaluation as a `routing_decision` journal entry. If `dispatch_innovate: false`, record which triggers were checked and why none fired. If skipping INNOVATE without this evaluation, that is a NEVER rule violation.
+**INNOVATE dispatch conditions** are defined in `workflow/definition.yaml` phase3-specialists → `speckit-echelon-maverick.condition` (8 conditions). COMMANDER evaluates each against `state.json` before finalising the specialist list and records the decision as a `routing_decision` journal entry. If `dispatch_innovate: false`, the entry must list which conditions were checked and why none fired.
 
 ### Max Active Specialists
 
@@ -61,9 +35,7 @@ Maximum `max_active_specialists` (default 3) can be active simultaneously. If mo
 
 ### Dispatch Specialists
 
-For each specialist to summon, dispatch sequentially (unless they are independent — speckit-echelon-investigator (INVESTIGATOR) investigations can run in parallel with domain specialists).
-
-**NEVER dispatch multiple specialists in a single parallel batch call (multi-Agent message).** The only permitted parallelism is INVESTIGATOR running alongside one domain specialist. All other combinations must be sequential — each specialist dispatched, post-dispatch protocol executed, then the next dispatched. Parallel batching skips the inter-dispatch post-dispatch protocol and corrupts the journal.
+This phase uses `type: conditional_sequential` (see `workflow/definition.yaml` phase3-specialists). Dispatch each specialist in turn — wait for completion and run the post-dispatch protocol before dispatching the next. INVESTIGATOR is the only exception: it may run in parallel with one domain specialist.
 
 #### SCIENTIST Dispatch (speckit-echelon-investigator (INVESTIGATOR) codename) — if summoned
 
@@ -223,9 +195,10 @@ After all specialists complete, collect their outputs. Update `state.json.active
 **MANDATORY — run before transitioning to phase3-how:**
 
 ```bash
-# Close phase2-decide (writes end_ts, elapsed_seconds, over_budget, anomaly_reason)
+# Budgets: definition.yaml phases[phase3-specialists].timing_window_transition
+#   close: phase2-decide (budget_seconds=1800)
+#   open:  phase3-solution (open_budget_seconds=2400)
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase2-decide
-# Open phase3-solution
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase3-solution 2400
 ```
 
