@@ -20,7 +20,7 @@ def test_get_latest_worktree_returns_most_recent(tmp_path):
     """get_latest_worktree returns highest-mtime worktree dir for spec/strategy."""
     gitops = _make_gitops(tmp_path)
 
-    wt_base = tmp_path / ".specify" / "harness" / "worktrees" / "001" / "default"
+    wt_base = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "worktrees" / "001" / "default"
     iter1 = wt_base / "iter-1"
     iter2 = wt_base / "iter-2"
     iter1.mkdir(parents=True)
@@ -41,7 +41,7 @@ def test_get_latest_worktree_returns_none_when_no_dir(tmp_path):
 def test_get_latest_worktree_returns_none_when_empty(tmp_path):
     """get_latest_worktree returns None when strategy dir exists but has no children."""
     gitops = _make_gitops(tmp_path)
-    wt_base = tmp_path / ".specify" / "harness" / "worktrees" / "001" / "default"
+    wt_base = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "worktrees" / "001" / "default"
     wt_base.mkdir(parents=True)
 
     result = gitops.get_latest_worktree("001", "default")
