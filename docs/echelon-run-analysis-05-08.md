@@ -246,52 +246,54 @@ The SQUAD COMPLETE banner (with INTERNALIZATION SUMMARY, DIAGNOSTIC MATRIX, CALI
 
 ## Master Summary Table
 
-| # | Severity | Issue | Phase |
-|---|----------|-------|-------|
-| 1 | High | GUARDIAN not dispatched at init (mandatory always-on) | init |
-| 2 | High | `reasoning-journal.jsonl` overwritten not appended | init |
-| 30 | High | Specialists run AFTER ARCHITECT instead of before — ordering inversion | phase3 |
-| 17 | High | CARTOGRAPHER spec enhancement not executed | phase1-what |
-| 38 | High | PLAN2 dispatched without ASSESS2's implementability-report.md | phase3-consensus |
-| 3 | Medium | `endocrine.sh` wrong path — silent fail every run | pre-dispatch |
-| 4 | Medium | `detect-project.sh` not invoked — mode detection is ad hoc | init |
-| 5 | Medium | `validate-deploy.sh` hard-stop guard skipped | init |
-| 6 | Medium | Config resolution not called | init |
-| 14 | Medium | Constitution created without UNDERSTAND context | phase1-constitution |
-| 15 | Medium | `00-overview.md` never produced | phase1-what |
-| 16 | Medium | Staging artifacts not moved to spec directory | phase1-what |
-| 18 | Medium | Fallback path inverted — CARTOGRAPHER handles COMMANDER's role | phase1-what |
-| 22 | Medium | `understanding-diagram` crashes with disable-model-invocation (× 3) | phase1-why2 |
-| 27 | Medium | `phase-timing.sh` never called at any phase boundary (systematic) | all phases |
-| 31 | Medium | Specialists dispatched in parallel (should be sequential) | phase3-specialists |
-| 32 | Medium | INNOVATE not dispatched despite WHY2 failing 3× (trigger met) | phase3-specialists |
-| 33 | Medium | ARCHITECT missing `plan.md` and `contracts/` | phase3-how |
-| 39–42 | Medium | REALIST, MIRROR, AUDITOR, SCOREKEEPER all skipped | phase4-document |
-| 43 | Medium | `run-history.json` not written (mandatory) | phase4-document |
-| 44 | Medium | Staging not archived or cleaned | phase4-document |
-| 45 | Medium | Git not returned to default branch | phase4-document |
-| 7 | Low | KB learning outputs not read before cold-start write | init |
-| 8 | Low | Belief Freshness Gate not run | init |
-| 9 | Low | Run History Check skipped (mandatory) | init |
-| 10 | Low | State.json written in fragments (recurring, all phases) | all |
-| 11 | Low | TRACKER post-dispatch order inverted | phase1-tracker |
-| 12 | Low | WHY1 context pack missing `calibration-profile.yaml` | phase1-why1 |
-| 13 | Low | `sage-decisions.yaml` in inconsistent paths (WHY1 vs WHY2) | phase1-why1/2 |
-| 19 | Low | `spec_status` not updated to "planned" | phase1-what |
-| 20 | Low | `dependency_checks.understanding` not persisted | phase1-why2 |
-| 21 | Low | `quality_scores[]` not appended — convergence check broken | phase1-why2 |
-| 23 | Low | Graphviz not installed — diagram generation fails silently | phase1-why2 |
-| 24 | Low | Pre-dispatch gate skipped for CARTOGRAPHER iter 3 / SAGE WHY2 iter 3 | phase1-why2 |
-| 25 | Low | EVOI forces convergence when delta criterion mathematically says NO | phase1-why2 |
-| 26 | Low | COMMANDER write error on `quality-gates.md` (unread file) | phase1-why2 |
-| 28 | Low | GATEKEEPER context pack missing `glossary.md` and `calibration-profile.yaml` | phase2-decide |
-| 29 | Low | TRACKER alignment output filename wrong (`alignment-report.md` vs `intent-alignment-check.md`) | phase2-tracker-alignment |
-| 34 | Low | SENTINEL missing `test-architecture.md` | phase3-sentinel |
-| 35 | Low | SENTINEL uses `architecture.md` as proxy for missing `plan.md` | phase3-sentinel |
-| 36 | Low | ORCHESTRATOR: `risk-matrix.md` absent; wrong filename `dependency-graph.md` | phase3-plan |
-| 37 | Low | ORCHESTRATOR edits `spec.md` outside its mandate | phase3-plan |
-| 46 | Low | Phase timing summary never written | phase4-document |
-| 47 | Medium | ECHELON RUN COMPLETE banner not printed — mandatory HUMAN ACTIONS REQUIRED section absent | phase4-document |
-| 48 | Low | SQUAD COMPLETE signal format deviations (see Part 4 detail) | phase4-document |
-| 49 | Low | `reasoning-journal-index.json` full overwrite instead of incremental update | phase4-document |
-| 50 | Medium | `calibration-dashboard.md` never written; INTERNALIZER never dispatched | phase4-document |
+✅ = fixed in commit `be1241c` (2026-05-08, low-risk batch)
+
+| # | Status | Severity | Issue | Phase |
+|---|--------|----------|-------|-------|
+| 1 | open | High | GUARDIAN not dispatched at init (mandatory always-on) | init |
+| 2 | open | High | `reasoning-journal.jsonl` overwritten not appended | init |
+| 30 | open | High | Specialists run AFTER ARCHITECT instead of before — ordering inversion | phase3 |
+| 17 | open | High | CARTOGRAPHER spec enhancement not executed | phase1-what |
+| 38 | open | High | PLAN2 dispatched without ASSESS2's implementability-report.md | phase3-consensus |
+| 3 | open | Medium | `endocrine.sh` wrong path — silent fail every run | pre-dispatch |
+| 4 | open | Medium | `detect-project.sh` not invoked — mode detection is ad hoc | init |
+| 5 | open | Medium | `validate-deploy.sh` hard-stop guard skipped | init |
+| 6 | open | Medium | Config resolution not called | init |
+| 14 | open | Medium | Constitution created without UNDERSTAND context | phase1-constitution |
+| 15 | open | Medium | `00-overview.md` never produced | phase1-what |
+| 16 | open | Medium | Staging artifacts not moved to spec directory | phase1-what |
+| 18 | open | Medium | Fallback path inverted — CARTOGRAPHER handles COMMANDER's role | phase1-what |
+| 22 | open | Medium | `understanding-diagram` crashes with disable-model-invocation (× 3) | phase1-why2 |
+| 27 | open | Medium | `phase-timing.sh` never called at any phase boundary (systematic) | all phases |
+| 31 | open | Medium | Specialists dispatched in parallel (should be sequential) | phase3-specialists |
+| 32 | open | Medium | INNOVATE not dispatched despite WHY2 failing 3× (trigger met) | phase3-specialists |
+| 33 | open | Medium | ARCHITECT missing `plan.md` and `contracts/` | phase3-how |
+| 39–42 | open | Medium | REALIST, MIRROR, AUDITOR, SCOREKEEPER all skipped | phase4-document |
+| 43 | open | Medium | `run-history.json` not written (mandatory) | phase4-document |
+| 44 | open | Medium | Staging not archived or cleaned | phase4-document |
+| 45 | open | Medium | Git not returned to default branch | phase4-document |
+| 47 | open | Medium | ECHELON RUN COMPLETE banner not printed — mandatory HUMAN ACTIONS REQUIRED section absent | phase4-document |
+| 50 | open | Medium | `calibration-dashboard.md` never written; INTERNALIZER never dispatched | phase4-document |
+| 7 | ✅ fixed | Low | KB learning outputs not read before cold-start write | init |
+| 8 | ✅ fixed | Low | Belief Freshness Gate not run | init |
+| 9 | ✅ fixed | Low | Run History Check skipped (mandatory) | init |
+| 10 | ✅ fixed | Low | State.json written in fragments (recurring, all phases) | all |
+| 11 | ✅ fixed | Low | TRACKER post-dispatch order inverted | phase1-tracker |
+| 12 | ✅ fixed | Low | WHY1 context pack missing `calibration-profile.yaml` | phase1-why1 |
+| 13 | ✅ fixed | Low | `sage-decisions.yaml` in inconsistent paths (WHY1 vs WHY2) | phase1-why1/2 |
+| 19 | ✅ fixed | Low | `spec_status` not updated to "planned" | phase1-what |
+| 20 | ✅ fixed | Low | `dependency_checks.understanding` not persisted | phase1-why2 |
+| 21 | ✅ fixed | Low | `quality_scores[]` not appended — convergence check broken | phase1-why2 |
+| 23 | ✅ fixed | Low | Graphviz not installed — diagram generation fails silently | phase1-why2 |
+| 24 | ✅ fixed | Low | Pre-dispatch gate skipped for CARTOGRAPHER iter 3 / SAGE WHY2 iter 3 | phase1-why2 |
+| 25 | ✅ fixed | Low | EVOI forces convergence when delta criterion mathematically says NO | phase1-why2 |
+| 26 | ✅ fixed | Low | COMMANDER write error on `quality-gates.md` (unread file) | phase1-why2 |
+| 28 | ✅ fixed | Low | GATEKEEPER context pack missing `glossary.md` and `calibration-profile.yaml` | phase2-decide |
+| 29 | ✅ fixed | Low | TRACKER alignment output filename wrong (`alignment-report.md` vs `intent-alignment-check.md`) | phase2-tracker-alignment |
+| 34 | ✅ fixed | Low | SENTINEL missing `test-architecture.md` | phase3-sentinel |
+| 35 | ✅ fixed | Low | SENTINEL uses `architecture.md` as proxy for missing `plan.md` | phase3-sentinel |
+| 36 | ✅ fixed | Low | ORCHESTRATOR: `risk-matrix.md` absent; wrong filename `dependency-graph.md` | phase3-plan |
+| 37 | ✅ fixed | Low | ORCHESTRATOR edits `spec.md` outside its mandate | phase3-plan |
+| 46 | ✅ fixed | Low | Phase timing summary never written | phase4-document |
+| 48 | ✅ fixed | Low | SQUAD COMPLETE signal format deviations (see Part 4 detail) | phase4-document |
+| 49 | ✅ fixed | Low | `reasoning-journal-index.json` full overwrite instead of incremental update | phase4-document |
