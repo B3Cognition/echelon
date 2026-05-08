@@ -1,7 +1,7 @@
 # Phase: build-5-test-guard
 # Source: echelon.build.md §5 — Test Guardian Gate (TEST_GUARD)
-# Agent: TEST GUARDIAN
-# Read by: COMMANDER before each TEST GUARDIAN dispatch
+# Agent: speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN))
+# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) dispatch
 
 ## 5. Test Guardian Gate (TEST_GUARD)
 

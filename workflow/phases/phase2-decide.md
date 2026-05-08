@@ -1,7 +1,7 @@
 # Phase: phase2-decide
 # Source: echelon.run.md §6 — ASSESS Phase (Kill Gate)
-# Agent: GATEKEEPER
-# Read by: COMMANDER before dispatching GATEKEEPER
+# Agent: speckit-echelon-gatekeeper (GATEKEEPER)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-gatekeeper (GATEKEEPER)
 
 ## 6. ASSESS Phase (Kill Gate)
 
@@ -31,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
   </instructions>
   ```
 
-- **description:** "GATEKEEPER: feasibility, estimation, prioritization, kill gate"
+- **description:** "speckit-echelon-gatekeeper (GATEKEEPER): feasibility, estimation, prioritization, kill gate"
 
 ### Expected Outputs
 
@@ -48,7 +48,7 @@ Read ASSESS outputs:
 - **DEFER** verdict → reduce scope, re-route to WHAT. Track DEFER count. **DEFER loop >= 2 with no scope stabilization → kill or escalate to human.**
 - **PASS** → proceed to specialist summoning.
 
-Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
 
 1. Ensure `phase2-decide` timing is active (budget `1800` seconds) by calling `start_phase phase2-decide 1800` before the first phase2 dispatch (`WHAT`) if no `start_ts` exists.
 2. For intra-phase transition (`assess` -> `strategic_overview`), do not close the phase timing window yet.

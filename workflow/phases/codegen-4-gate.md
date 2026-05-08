@@ -1,7 +1,7 @@
 # Phase: codegen-4-gate
 # Source: echelon.codegen.md §Phase 4 — GATE CQ-ISC Verification
 # Shared: used by both echelon.codegen and echelon.codegenlight
-# Read by: ORCHESTRATOR before Phase 4 GATE execution
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 4 GATE execution
 
 ---
 

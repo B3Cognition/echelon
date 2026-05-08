@@ -1,6 +1,6 @@
 # Phase: codegenlight-0-preflight
 # Source: echelon.codegenlight.md §Phase 0 — Pre-Flight Checks
-# Read by: ORCHESTRATOR before Phase 1 RE
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE
 
 Before entering any pipeline phase, run ALL of these checks via Bash tool.
 

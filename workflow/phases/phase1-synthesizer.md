@@ -1,11 +1,11 @@
 # Phase: phase1-synthesizer
-# Source: echelon.run.md §2b — SYNTHESIZER Phase
-# Agent: SYNTHESIZER
-# Read by: COMMANDER before dispatching SYNTHESIZER
+# Source: echelon.run.md §2b — speckit-echelon-synthesizer (SYNTHESIZER) Phase
+# Agent: speckit-echelon-synthesizer (SYNTHESIZER)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-synthesizer (SYNTHESIZER)
 
-## 2b. SYNTHESIZER Phase
+## 2b. speckit-echelon-synthesizer (SYNTHESIZER) Phase
 
-SYNTHESIZER fuses ALL DISCOVER outputs into a unified knowledge base. This is mandatory — WHY1 must receive synthesized output, not raw fragments.
+speckit-echelon-synthesizer (SYNTHESIZER) fuses ALL DISCOVER outputs into a unified knowledge base. This is mandatory — WHY1 must receive synthesized output, not raw fragments.
 
 ### Context Pack Assembly
 
@@ -31,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
   </instructions>
   ```
 
-- **description:** "SYNTHESIZER: fuse discovery outputs into unified knowledge base"
+- **description:** "speckit-echelon-synthesizer (SYNTHESIZER): fuse discovery outputs into unified knowledge base"
 
 ### Expected Outputs
 

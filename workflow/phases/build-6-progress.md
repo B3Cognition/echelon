@@ -1,7 +1,7 @@
 # Phase: build-6-progress
 # Source: echelon.build.md §6 — Progress Tracking (PROGRESS)
-# Agents: PROGRESS TRACKER, then MODELER (COMMANDER-dispatched)
-# Read by: COMMANDER after each task's quality gates complete
+# Agents: speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)), then speckit-echelon-modeler (MODELER) (speckit-echelon-commander (COMMANDER)-dispatched)
+# Read by: speckit-echelon-commander (COMMANDER) after each task's quality gates complete
 
 ## 6. Progress Tracking (PROGRESS)
 

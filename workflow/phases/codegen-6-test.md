@@ -1,7 +1,7 @@
 # Phase: codegen-6-test
 # Source: echelon.codegen.md §Phase 6 — TEST Tier 1 Gate
 # Shared: used by both echelon.codegen and echelon.codegenlight
-# Read by: ORCHESTRATOR before Phase 6 TEST execution
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 6 TEST execution
 
 ## Phase 6: TEST — Tier 1 Gate
 

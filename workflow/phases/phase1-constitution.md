@@ -1,7 +1,7 @@
 # Phase: phase1-constitution
 # Source: echelon.run.md §3.5 — Constitution Creation
-# Agent: COMMANDER internal (calls speckit.constitution)
-# Read by: COMMANDER — this is a commander_internal phase
+# Agent: speckit-echelon-commander (COMMANDER) internal (calls speckit.constitution)
+# Read by: speckit-echelon-commander (COMMANDER) — this is a commander_internal phase
 
 ## 3.5 Constitution Creation (Bridge UNDERSTAND → DECIDE)
 
@@ -78,8 +78,8 @@ After `speckit.constitution` completes:
 
 For brownfield projects where constitution doesn't exist:
 
-1. **Option A:** If GOLDDIGGER ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the revenge extension artifacts.
-2. **Option B:** SCOUT's discovery outputs may include implicit patterns — use these as constitution input
+1. **Option A:** If speckit-echelon-golddigger (GOLDDIGGER) ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the revenge extension artifacts.
+2. **Option B:** speckit-echelon-scout (SCOUT)'s discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `speckit.constitution` is called with the derived context
 
 **Transition:** `phases[phase1-what]` — see `workflow/definition.yaml`

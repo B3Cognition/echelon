@@ -1,11 +1,11 @@
 # Phase: phase1-tracker
-# Source: echelon.run.md §2c — TRACKER Intent Model Capture
-# Agent: TRACKER
-# Read by: COMMANDER before dispatching TRACKER
+# Source: echelon.run.md §2c — speckit-echelon-tracker (TRACKER) Intent Model Capture
+# Agent: speckit-echelon-tracker (TRACKER)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-tracker (TRACKER)
 
-## 2c. TRACKER — Intent Model Capture
+## 2c. speckit-echelon-tracker (TRACKER) — Intent Model Capture
 
-> **Note:** TRACKER captures the user's stated intent before requirements formalization. This produces `user-intent.md` which GATEKEEPER needs to honor NEVER rule #3 ("NEVER override user intent").
+> **Note:** speckit-echelon-tracker (TRACKER) captures the user's stated intent before requirements formalization. This produces `user-intent.md` which speckit-echelon-gatekeeper (GATEKEEPER) needs to honor NEVER rule #3 ("NEVER override user intent").
 
 ### Context Pack Assembly
 
@@ -28,11 +28,11 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol.
-  Read the user's original request and SCOUT's discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  Read the user's original request and speckit-echelon-scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
   </instructions>
   ```
 
-- **description:** "TRACKER: capture user intent model before requirements formalization"
+- **description:** "speckit-echelon-tracker (TRACKER): capture user intent model before requirements formalization"
 
 ### Expected Outputs
 

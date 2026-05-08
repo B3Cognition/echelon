@@ -1,7 +1,7 @@
 # Phase: build-2-implement
 # Source: echelon.build.md §2 — Task Iteration (BUILD_LOOP)
-# Agent: IMPLEMENTER
-# Read by: COMMANDER before each IMPLEMENTER dispatch
+# Agent: speckit-echelon-implementer (IMPLEMENTER)
+# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-implementer (IMPLEMENTER) dispatch
 
 ## 2. Task Iteration (BUILD_LOOP)
 

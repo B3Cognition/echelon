@@ -1,7 +1,7 @@
 # Phase: build-7-integration
 # Source: echelon.build.md §7 — Phase Checkpoint (INTEGRATION)
-# Agents: INTEGRATOR, then optionally VISUAL VALIDATOR
-# Read by: COMMANDER after all tasks in a phase group complete
+# Agents: speckit-echelon-integrator (INTEGRATOR), then optionally speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))
+# Read by: speckit-echelon-commander (COMMANDER) after all tasks in a phase group complete
 
 ## 7. Phase Checkpoint (INTEGRATION)
 

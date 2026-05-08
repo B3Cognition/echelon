@@ -1,7 +1,7 @@
 # Phase: phase2-strategic-overview
 # Source: echelon.run.md §6b — STRATEGIC OVERVIEW (Risk Map)
-# Agent: STRATEGIST
-# Read by: COMMANDER before dispatching STRATEGIST
+# Agent: speckit-echelon-strategist (STRATEGIST)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-strategist (STRATEGIST)
 
 ### 6b. STRATEGIC OVERVIEW (Risk Map)
 
@@ -25,9 +25,9 @@ Use the Agent tool:
 
 - **description:** "STRATEGIC OVERVIEW: risk-weighted project map"
 
-Read the strategic overview. Use it to prioritize specialist allocation: spend INVESTIGATOR time on high-blast-radius decisions, not low-risk areas.
+Read the strategic overview. Use it to prioritize specialist allocation: spend speckit-echelon-investigator (INVESTIGATOR) time on high-blast-radius decisions, not low-risk areas.
 
-Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
 
 1. Keep `phase2-decide` open (this is still an intra-phase transition: `strategic_overview` -> `specialists`).
 2. If `phase2-decide` was never started due to restart recovery, initialize with `start_phase phase2-decide 1800` before continuing.

@@ -1,6 +1,6 @@
 # Phase: codegen-A-preamble
 # Source: echelon.codegen.md §Phase A — Echelon Preamble
-# Read by: ORCHESTRATOR before starting codegen pipeline (skip entirely on --resume)
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before starting codegen pipeline (skip entirely on --resume)
 
 ### A.1 Parse arguments
 

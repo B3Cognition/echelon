@@ -1,6 +1,6 @@
 # Phase: build-8-finalize
 # Source: echelon.build.md §8–§12 — Build Complete through Harness Integration
-# Read by: COMMANDER after all phase checkpoints pass
+# Read by: speckit-echelon-commander (COMMANDER) after all phase checkpoints pass
 
 ## 8. Build Complete (BUILD_DONE)
 

@@ -1,7 +1,7 @@
 # Phase: codegen-5-impasse
 # Source: echelon.codegen.md §Phase 5 — Conflict Impasse Human Escalation
 # Shared: used by both echelon.codegen and echelon.codegenlight
-# Read by: ORCHESTRATOR when SOAR detects a conflict impasse (INV-008)
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) when SOAR detects a conflict impasse (INV-008)
 
 ---
 

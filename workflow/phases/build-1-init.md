@@ -1,6 +1,6 @@
 # Phase: build-1-init
 # Source: echelon.build.md §1 — Build Initialization (BUILD_INIT)
-# Read by: COMMANDER before starting build workflow
+# Read by: speckit-echelon-commander (COMMANDER) before starting build workflow
 
 ---
 

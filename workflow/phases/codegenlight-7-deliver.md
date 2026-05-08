@@ -1,6 +1,6 @@
 # Phase: codegenlight-7-deliver
 # Source: echelon.codegenlight.md §Phase 7 + Terminal Summary + SOAR Integration Points
-# Read by: ORCHESTRATOR after TEST gate passes
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) after TEST gate passes
 
 **Print:** `[CODEGEN] Phase DELIVER — Assembling delivery package...`
 

@@ -1,6 +1,6 @@
 # Phase: bugfix-1-init
 # Source: echelon.bugfix.md §Steps 0–1 — Init
-# Read by: COMMANDER before starting bugfix workflow
+# Read by: speckit-echelon-commander (COMMANDER) before starting bugfix workflow
 
 ---
 

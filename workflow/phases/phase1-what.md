@@ -1,11 +1,11 @@
 # Phase: phase1-what
 # Source: echelon.run.md §4 — WHAT Phase (Requirements Definition)
-# Agent: CARTOGRAPHER
-# Read by: COMMANDER before dispatching CARTOGRAPHER
+# Agent: speckit-echelon-cartographer (CARTOGRAPHER)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-cartographer (CARTOGRAPHER)
 
 ## 4. WHAT Phase (Requirements Definition)
 
-> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. CARTOGRAPHER owns spec creation — it calls `speckit.specify` itself.
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. speckit-echelon-cartographer (CARTOGRAPHER) owns spec creation — it calls `speckit.specify` itself.
 
 ### 4.1 Context Pack Assembly
 
@@ -17,9 +17,9 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 - `reasoning-journal.json` (filtered to DISCOVER + WHY1 entries)
 - User input (original request)
 
-### 4.2 Dispatch CARTOGRAPHER
+### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
 
-CARTOGRAPHER calls `speckit.specify` itself (via Skill tool) — just like GOLDDIGGER calls revenge extension and SAGE calls Understanding via Skill tool. COMMANDER does NOT call `speckit.specify`.
+speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) — just like speckit-echelon-golddigger (GOLDDIGGER) calls revenge extension and speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
 
 Use the Agent tool to dispatch a subagent with:
 
@@ -32,26 +32,26 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with SCOUT's domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
   </instructions>
   ```
 
-- **description:** "CARTOGRAPHER: spec creation and requirements definition"
+- **description:** "speckit-echelon-cartographer (CARTOGRAPHER): spec creation and requirements definition"
 
-#### CARTOGRAPHER Fallback (if CARTOGRAPHER signals BLOCKED on speckit.specify)
+#### speckit-echelon-cartographer (CARTOGRAPHER) Fallback (if speckit-echelon-cartographer (CARTOGRAPHER) signals BLOCKED on speckit.specify)
 
-If CARTOGRAPHER returns `CARTOGRAPHER BLOCKED — speckit.specify unavailable`:
+If speckit-echelon-cartographer (CARTOGRAPHER) returns `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — speckit.specify unavailable`:
 
-1. COMMANDER calls `speckit.specify` directly (via Skill tool) with the same feature description CARTOGRAPHER would have used (derive from DISCOVER staging artifacts)
+1. speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly (via Skill tool) with the same feature description speckit-echelon-cartographer (CARTOGRAPHER) would have used (derive from DISCOVER staging artifacts)
 2. After the Skill returns (success or error):
-   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch CARTOGRAPHER with the spec directory already created (add `spec_dir` to the context pack prompt). Continue to 4.3 immediately — **do not stop**.
+   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with the spec directory already created (add `spec_dir` to the context pack prompt). Continue to 4.3 immediately — **do not stop**.
    - **Error:** Set `state.json.status = "blocked"`, set `blocked_reason = "speckit.specify unavailable"`, print the BLOCKED banner, stop.
 
-This is the only case where COMMANDER calls `speckit.specify` directly. Do NOT use this path pre-emptively.
+This is the only case where speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly. Do NOT use this path pre-emptively.
 
-### 4.3 Post-CARTOGRAPHER
+### 4.3 Post-speckit-echelon-cartographer (CARTOGRAPHER)
 
-After CARTOGRAPHER completes, read its output to get the created `spec_id` and `spec_dir`.
+After speckit-echelon-cartographer (CARTOGRAPHER) completes, read its output to get the created `spec_id` and `spec_dir`.
 
 #### Branch + Directory Verification (MANDATORY)
 
@@ -61,7 +61,7 @@ Before updating state.json, verify both invariants:
    ```bash
    git branch --show-current
    ```
-   The output must equal `{NNN}-{feature-name}` from CARTOGRAPHER's output.
+   The output must equal `{NNN}-{feature-name}` from speckit-echelon-cartographer (CARTOGRAPHER)'s output.
 
 2. **Spec directory exists:**
    ```bash
@@ -74,14 +74,14 @@ Before updating state.json, verify both invariants:
    ```bash
    git checkout -b {NNN}-{feature-name}
    ```
-2. If `specs/{NNN}-{feature-name}/` is missing, create it and re-dispatch CARTOGRAPHER with `spec_dir` pre-set in the context pack — CARTOGRAPHER will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
+2. If `specs/{NNN}-{feature-name}/` is missing, create it and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with `spec_dir` pre-set in the context pack — speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
 3. Log a `branch_recovery` entry to `journal.json`:
    ```json
    {
      "type": "branch_recovery",
      "phase": "phase1-what",
-     "agent": "COMMANDER",
-     "detail": "Feature branch was absent after CARTOGRAPHER completed — created manually",
+     "agent": "speckit-echelon-commander (COMMANDER)",
+     "detail": "Feature branch was absent after speckit-echelon-cartographer (CARTOGRAPHER) completed — created manually",
      "timestamp": "{ISO-8601}"
    }
    ```
@@ -104,7 +104,7 @@ Update `{spec_dir}/spec.md`: find the line `**Status**: Draft` and change it to 
 
 ### Expected Outputs
 
-- `spec.md` (created by `speckit.specify`, enhanced by CARTOGRAPHER)
+- `spec.md` (created by `speckit.specify`, enhanced by speckit-echelon-cartographer (CARTOGRAPHER))
 - `00-overview.md`
 
 **Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`

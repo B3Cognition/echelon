@@ -1,7 +1,7 @@
 # Phase: phase3-consensus
 # Source: echelon.run.md §11 — CONSENSUS Phase (Parallel Validation)
-# Agent: parallel — SAGE (WHY3), GATEKEEPER (ASSESS2), ORCHESTRATOR (PLAN2)
-# Read by: COMMANDER before dispatching consensus agents
+# Agent: parallel — speckit-echelon-sage (SAGE) (WHY3), speckit-echelon-gatekeeper (GATEKEEPER) (ASSESS2), speckit-echelon-orchestrator (ORCHESTRATOR) (PLAN2)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching consensus agents
 
 ## 11. CONSENSUS Phase (Parallel Validation)
 
@@ -97,13 +97,13 @@ Read outputs from all three consensus agents:
   - PLAN2 missing tasks for specialist outputs → back to PLAN
   - Increment iteration. Check limits.
 
-Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
 
 1. Keep `phase4-build` open for `consensus` -> `finalize` (same phase).
 2. If `phase4-build.start_ts` is missing (resume edge case), run `start_phase phase4-build 7200` before dispatching FINALIZE.
 3. Persist `state.json` before dispatch.
 
-At run close (after FINALIZE and before setting status `done`), COMMANDER must:
+At run close (after FINALIZE and before setting status `done`), speckit-echelon-commander (COMMANDER) must:
 
 1. Call `scripts/bash/phase-timing.sh end_phase phase4-build`.
 2. Read `state.json.phase_timings` and append one `timing_summary` entry per phase to `reasoning-journal.json` with fields: `type`, `phase`, `run_id`, `elapsed_seconds`, `budget_seconds`, `over_budget`, `anomaly_reason`.

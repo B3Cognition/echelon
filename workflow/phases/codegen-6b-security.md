@@ -1,6 +1,6 @@
 # Phase: codegen-6b-security
 # Source: echelon.codegen.md §Phase 6b — SECURITY Scan and License Gate
-# Read by: ORCHESTRATOR before Phase 6b SECURITY execution (echelon.codegen only)
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 6b SECURITY execution (echelon.codegen only)
 
 ## Phase 6b: SECURITY — Security Scan and License Gate
 

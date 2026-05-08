@@ -1,6 +1,6 @@
 # Phase: codegenlight-resume
 # Source: echelon.codegenlight.md §RESUME Mode + §Error Handling
-# Read by: ORCHESTRATOR when invoked with --resume, or on any error condition
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) when invoked with --resume, or on any error condition
 
 ## RESUME Mode
 

@@ -1,7 +1,7 @@
 # Phase: build-3-spec-guard
 # Source: echelon.build.md §3 — Spec Guard Gate (SPEC_GUARD)
-# Agent: SPEC GUARD
-# Read by: COMMANDER before each SPEC GUARD dispatch
+# Agent: speckit-echelon-spec-guard (SPEC GUARD)
+# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-spec-guard (SPEC GUARD) dispatch
 
 ## 3. Spec Guard Gate (SPEC_GUARD)
 

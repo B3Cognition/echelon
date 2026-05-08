@@ -1,6 +1,6 @@
 # Phase: bugfix-5-finalize
 # Source: echelon.bugfix.md §Steps 5–6 — Write Artifacts + Handoff
-# Read by: COMMANDER before executing finalization sequence
+# Read by: speckit-echelon-commander (COMMANDER) before executing finalization sequence
 
 ## Step 5: Write Bugfix Artifacts
 
@@ -66,19 +66,19 @@ Write `specs/{spec_id}-{spec_name}/bugfix-{n}.md`:
 # Bugfix {n}: {description}
 
 ## Root Cause
-{from DEBUGGER: file, line, mechanism}
+{from speckit-echelon-debugger (DEBUGGER): file, line, mechanism}
 
 ## Fix Scope
-{from DEBUGGER: what changes and why}
+{from speckit-echelon-debugger (DEBUGGER): what changes and why}
 
 ## Risk Surface
-{from DEBUGGER: what else could break}
+{from speckit-echelon-debugger (DEBUGGER): what else could break}
 
 ## Test Strategy
-{from SENTINEL: failing test specification + regression coverage}
+{from speckit-echelon-sentinel (SENTINEL): failing test specification + regression coverage}
 
 ## Spec Compliance
-{from SPEC GUARD: which requirement(s) this addresses, any scope notes}
+{from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
 Then append the bugfix tasks to `specs/{spec_id}-{spec_name}/tasks.md`. Add a clearly delimited section at the end:
@@ -90,8 +90,8 @@ Then append the bugfix tasks to `specs/{spec_id}-{spec_name}/tasks.md`. Add a cl
 > Source: bugfix-{n}.md
 > Status: pending
 
-- [ ] BF{n}-T1: Write failing test — {test from SENTINEL}
-- [ ] BF{n}-T2: Fix {file} — {what changes from DEBUGGER}
+- [ ] BF{n}-T1: Write failing test — {test from speckit-echelon-sentinel (SENTINEL)}
+- [ ] BF{n}-T2: Fix {file} — {what changes from speckit-echelon-debugger (DEBUGGER)}
 - [ ] BF{n}-T3: Verify test passes and all prior tests still pass
 - [ ] BF{n}-T4: Update coverage-map.md if coverage changed
 ```
@@ -115,7 +115,7 @@ Print the handoff block and stop:
   ✓ echelon.bugfix — {spec_id}: {spec_name}
 ════════════════════════════════════════════════
   Issue:      {description}
-  Root cause: {one-liner from DEBUGGER}
+  Root cause: {one-liner from speckit-echelon-debugger (DEBUGGER)}
   Fix:        {what changes — N files}
   Risk:       {risk surface summary}
 

@@ -1,6 +1,6 @@
 # Phase: codegen-7-deliver
 # Source: echelon.codegen.md §Phase 7 + Terminal Summary + Harness Integration
-# Read by: ORCHESTRATOR after TEST (and SECURITY) gates pass
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) after TEST (and SECURITY) gates pass
 
 ## Phase 7: DELIVER
 

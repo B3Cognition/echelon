@@ -1,7 +1,7 @@
 # Phase: phase3-plan
 # Source: echelon.run.md §10 — PLAN Phase (Task Breakdown)
-# Agent: ORCHESTRATOR
-# Read by: COMMANDER before dispatching ORCHESTRATOR
+# Agent: speckit-echelon-orchestrator (ORCHESTRATOR)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-orchestrator (ORCHESTRATOR)
 
 ## 10. PLAN Phase (Task Breakdown)
 
@@ -31,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
   </instructions>
   ```
 
-- **description:** "ORCHESTRATOR: task breakdown, critical path, dependencies, risk"
+- **description:** "speckit-echelon-orchestrator (ORCHESTRATOR): task breakdown, critical path, dependencies, risk"
 
 ### Expected Outputs
 
@@ -40,7 +40,7 @@ Use the Agent tool to dispatch a subagent with:
 - `risk-matrix.md`
 - `dependencies.md`
 
-Before this transition, COMMANDER performs phase-boundary timing writes in order:
+Before this transition, speckit-echelon-commander (COMMANDER) performs phase-boundary timing writes in order:
 
 1. Close `phase3-solution` with `scripts/bash/phase-timing.sh end_phase phase3-solution`.
 2. Open `phase4-build` with `scripts/bash/phase-timing.sh start_phase phase4-build 7200`.

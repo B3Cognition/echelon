@@ -1,6 +1,6 @@
 # Phase: codegenlight-1-re
 # Source: echelon.codegenlight.md §Phase 1 — RE Requirements Lookup + Domain Research
-# Read by: ORCHESTRATOR before Phase 1 RE execution
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before Phase 1 RE execution
 
 **Print:** `[CODEGEN] Phase RE — Starting...`
 

@@ -1,7 +1,7 @@
 # Phase: phase3-specialists
 # Source: echelon.run.md §7 — Specialist Summoning
-# Agent: conditional_parallel (GUARDIAN mandatory; others conditional)
-# Read by: COMMANDER before dispatching specialists
+# Agent: conditional_parallel (speckit-echelon-guardian (GUARDIAN) mandatory; others conditional)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching specialists
 
 ## 7. Specialist Summoning
 
@@ -17,9 +17,9 @@ After ASSESS passes, determine which specialists are needed:
 
 | Specialist | Summon When | Max Priority |
 |-----------|-------------|--------------|
-| **TEST ARCHITECT** | ALWAYS (mandatory) | Required |
-| **SCIENTIST** (INVESTIGATOR) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
-| **SECURITY** (GUARDIAN) | ALWAYS when `guardian.mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
+| **TEST speckit-echelon-architect (ARCHITECT)** | ALWAYS (mandatory) | Required |
+| **SCIENTIST** (speckit-echelon-investigator (INVESTIGATOR)) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
+| **SECURITY** (speckit-echelon-guardian (GUARDIAN)) | ALWAYS when `guardian.mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
@@ -40,13 +40,13 @@ After ASSESS passes, determine which specialists are needed:
 
 Maximum `max_active_specialists` (default 3) can be active simultaneously. If more are needed, prioritize by domain signal strength. Defer lower-priority specialists (their insights can be incorporated in future runs).
 
-**Exception:** TEST ARCHITECT and GUARDIAN (when `guardian.mode: always_on`) do not count toward the cap — they are mandatory and always run.
+**Exception:** TEST speckit-echelon-architect (ARCHITECT) and speckit-echelon-guardian (GUARDIAN) (when `guardian.mode: always_on`) do not count toward the cap — they are mandatory and always run.
 
 ### Dispatch Specialists
 
-For each specialist to summon, dispatch sequentially (unless they are independent — INVESTIGATOR investigations can run in parallel with domain specialists).
+For each specialist to summon, dispatch sequentially (unless they are independent — speckit-echelon-investigator (INVESTIGATOR) investigations can run in parallel with domain specialists).
 
-#### SCIENTIST Dispatch (INVESTIGATOR codename) — if summoned
+#### SCIENTIST Dispatch (speckit-echelon-investigator (INVESTIGATOR) codename) — if summoned
 
 Context pack:
 
@@ -69,13 +69,13 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "INVESTIGATOR: investigating unknowns — {topic summary}"
+- **description:** "speckit-echelon-investigator (INVESTIGATOR): investigating unknowns — {topic summary}"
 
-#### SECURITY Dispatch (GUARDIAN codename) — always-on by default
+#### SECURITY Dispatch (speckit-echelon-guardian (GUARDIAN) codename) — always-on by default
 
 **Dispatch mode** is controlled by `echelon-config.yml` → `guardian.mode` (default: `always_on`).
 
-- **`always_on`**: Dispatch GUARDIAN on every run. If the domain is NOT security-sensitive, GUARDIAN runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, GUARDIAN runs the full STRIDE + OWASP + compliance analysis.
+- **`always_on`**: Dispatch speckit-echelon-guardian (GUARDIAN) on every run. If the domain is NOT security-sensitive, speckit-echelon-guardian (GUARDIAN) runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, speckit-echelon-guardian (GUARDIAN) runs the full STRIDE + OWASP + compliance analysis.
 - **`on_demand`**: Dispatch only when domain involves auth, payments, PII, regulatory compliance (legacy behavior).
 
 Context pack:
@@ -98,7 +98,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "GUARDIAN: security analysis (mode: {guardian.mode})"
+- **description:** "speckit-echelon-guardian (GUARDIAN): security analysis (mode: {guardian.mode})"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
 
@@ -122,7 +122,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "ORACLE: {domain} domain analysis"
+- **description:** "speckit-echelon-oracle (ORACLE): {domain} domain analysis"
 
 #### PERFORMANCE Dispatch (if summoned)
 
@@ -146,7 +146,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "BENCHMARK: load modeling and capacity analysis"
+- **description:** "speckit-echelon-benchmark (BENCHMARK): load modeling and capacity analysis"
 
 #### UX / A11Y Dispatch (if summoned)
 
@@ -170,7 +170,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "ADVOCATE: accessibility and usability analysis"
+- **description:** "speckit-echelon-advocate (ADVOCATE): accessibility and usability analysis"
 
 #### INNOVATE Dispatch (if summoned)
 
@@ -195,13 +195,13 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "MAVERICK: alternative approaches and assumption challenges"
+- **description:** "speckit-echelon-maverick (MAVERICK): alternative approaches and assumption challenges"
 
 ### Post-Specialist
 
 After all specialists complete, collect their outputs. Update `state.json.active_specialists` with the list of specialists that ran.
 
-Before this transition, COMMANDER performs phase-boundary timing writes in order:
+Before this transition, speckit-echelon-commander (COMMANDER) performs phase-boundary timing writes in order:
 
 1. Close `phase2-decide` by calling `scripts/bash/phase-timing.sh end_phase phase2-decide`.
 2. Open `phase3-solution` by calling `scripts/bash/phase-timing.sh start_phase phase3-solution 2400`.

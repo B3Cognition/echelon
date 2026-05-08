@@ -1,6 +1,6 @@
 # Phase: init
 # Source: echelon.run.md §1 — Initialization (INIT)
-# Read by: COMMANDER before starting any phase dispatch
+# Read by: speckit-echelon-commander (COMMANDER) before starting any phase dispatch
 
 ## 1. Initialization (INIT)
 
@@ -122,8 +122,8 @@ Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). 
 2. If `run-history.json` exists:
    - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
    - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.
-   - If Phase A is done AND constitution hash matches: log `[COMMANDER] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Set `state.json.phase` to `"phase1-constitution"` to signal resume.
-   - If Phase A is done but constitution hash differs: log `[COMMANDER] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
+   - If Phase A is done AND constitution hash matches: log `[speckit-echelon-commander (COMMANDER)] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Set `state.json.phase` to `"phase1-constitution"` to signal resume.
+   - If Phase A is done but constitution hash differs: log `[speckit-echelon-commander (COMMANDER)] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
 3. If `run-history.json` does not exist: continue normally (new spec, first run).
 
 ### 1.4 Initialize Staging Reasoning Journal
@@ -200,7 +200,7 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 **If EXISTS:**
 
 - Read the constitution — it will guide all architectural decisions
-- Store constitution principles in context for ARCHITECT and all build agents
+- Store constitution principles in context for speckit-echelon-architect (ARCHITECT) and all build agents
 - Set `state.json.constitution_status` to `"exists"`
 
 **If MISSING:**
@@ -211,9 +211,9 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 
 ### Spec-kit Availability
 
-spec-kit skill availability is validated at install time (`specify extension add echelon`). COMMANDER assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, COMMANDER sets `state.json.fallback_mode = true` and `execution_mode = manual_specification` at that point.
+spec-kit skill availability is validated at install time (`specify extension add echelon`). speckit-echelon-commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, speckit-echelon-commander (COMMANDER) sets `state.json.fallback_mode = true` and `execution_mode = manual_specification` at that point.
 
-CARTOGRAPHER dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
+speckit-echelon-cartographer (CARTOGRAPHER) dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
 
 For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
 
@@ -228,11 +228,11 @@ scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
 - Exit 0: Continue
 - Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
 
-### 1.8 GOLDDIGGER Mode 1 dispatch (brownfield path only)
+### 1.8 speckit-echelon-golddigger (GOLDDIGGER) Mode 1 dispatch (brownfield path only)
 
 If `detected_mode` is `brownfield`:
 
-1. Dispatch GOLDDIGGER in Mode 1 (Survey) before DISCOVER:
+1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Survey) before DISCOVER:
    - Use the Agent tool
    - **prompt:**
 
@@ -246,23 +246,23 @@ If `detected_mode` is `brownfield`:
      Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
      </instructions>
      ```
-2. Block until GOLDDIGGER completes.
+2. Block until speckit-echelon-golddigger (GOLDDIGGER) completes.
 3. Read `state.json.golddigger_status`:
-   - `complete`: proceed — SCOUT will read artifact paths from `state.json.golddigger_artifacts`
-   - `partial` or `failed`: log degraded-brownfield warning; proceed (SCOUT falls back to manual structural analysis)
+   - `complete`: proceed — speckit-echelon-scout (SCOUT) will read artifact paths from `state.json.golddigger_artifacts`
+   - `partial` or `failed`: log degraded-brownfield warning; proceed (speckit-echelon-scout (SCOUT) falls back to manual structural analysis)
 
-If `revenge extension` is not listed or `extensions` is empty: skip GOLDDIGGER, proceed directly to DISCOVER.
+If `revenge extension` is not listed or `extensions` is empty: skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER.
 
-**GOLDDIGGER Mode 2 Queue (Phase 1 agents):**
+**speckit-echelon-golddigger (GOLDDIGGER) Mode 2 Queue (Phase 1 agents):**
 
-After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, MODELER) completes, before dispatching the next agent:
+After each Phase 1 agent (DISCOVER/speckit-echelon-scout (SCOUT), speckit-echelon-synthesizer (SYNTHESIZER), WHY1/speckit-echelon-sage (SAGE), speckit-echelon-cartographer (CARTOGRAPHER), speckit-echelon-modeler (MODELER)) completes, before dispatching the next agent:
 
 1. Read `state.json.golddigger_requests` — if empty or absent, continue
 2. For each pending request entry (each entry is an object: `{domain, repo, requested_by, reason}`):
    - **Backward compatibility:** If a `golddigger_requests` entry is a plain string (old format), treat it as `{domain: <string>, repo: null, requested_by: "unknown", reason: ""}`.
    a. Compute the cache key: if `repo` is non-null → `"{repo}--{domain}"`, if `repo` is null → `"{domain}"`
    b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
-   c. Otherwise: dispatch GOLDDIGGER in Mode 2 (Deep Dive) for that domain
+   c. Otherwise: dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 2 (Deep Dive) for that domain
       - **prompt:**
 
         ```xml
@@ -276,7 +276,7 @@ After each Phase 1 agent (DISCOVER/SCOUT, SYNTHESIZER, WHY1/SAGE, CARTOGRAPHER, 
         </instructions>
         ```
 
-   d. After GOLDDIGGER completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
+   d. After speckit-echelon-golddigger (GOLDDIGGER) completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
 3. Continue to next Phase 1 agent dispatch.
 
 **Transition:** `phases[phase1-discover]` — see `workflow/definition.yaml`

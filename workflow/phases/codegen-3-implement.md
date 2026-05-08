@@ -1,7 +1,7 @@
 # Phase: codegen-3-implement
 # Source: echelon.codegen.md §Phase 3 — IMPLEMENT Dispatch Loop
 # Shared: used by both echelon.codegen and echelon.codegenlight
-# Read by: ORCHESTRATOR before each IMPLEMENT loop iteration
+# Read by: speckit-echelon-orchestrator (ORCHESTRATOR) before each IMPLEMENT loop iteration
 
 ---
 

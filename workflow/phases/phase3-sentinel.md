@@ -1,9 +1,9 @@
 # Phase: phase3-sentinel
-# Source: echelon.run.md §9 — TEST ARCHITECT Phase
-# Agent: SENTINEL
-# Read by: COMMANDER before dispatching SENTINEL
+# Source: echelon.run.md §9 — TEST speckit-echelon-architect (ARCHITECT) Phase
+# Agent: speckit-echelon-sentinel (SENTINEL)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-sentinel (SENTINEL)
 
-## 9. TEST ARCHITECT Phase (Mandatory)
+## 9. TEST speckit-echelon-architect (ARCHITECT) Phase (Mandatory)
 
 ### Context Pack Assembly
 
@@ -28,11 +28,11 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol.
-  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to CARTOGRAPHER. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
   </instructions>
   ```
 
-- **description:** "SENTINEL: testability-informed test strategy and coverage mapping"
+- **description:** "speckit-echelon-sentinel (SENTINEL): testability-informed test strategy and coverage mapping"
 
 ### Expected Outputs
 
@@ -42,9 +42,9 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Gate Check
 
-If TEST ARCHITECT flags untestable acceptance criteria → route back to WHAT for amendment. Increment iteration. Check limits.
+If TEST speckit-echelon-architect (ARCHITECT) flags untestable acceptance criteria → route back to WHAT for amendment. Increment iteration. Check limits.
 
-Before this transition, COMMANDER updates timing state via `scripts/bash/phase-timing.sh`:
+Before this transition, speckit-echelon-commander (COMMANDER) updates timing state via `scripts/bash/phase-timing.sh`:
 
 1. Keep `phase3-solution` open (intra-phase transition: `test-architect` -> `plan`).
 2. If missing from recovered state, initialize `phase3-solution` using `start_phase phase3-solution 2400` before dispatching PLAN.

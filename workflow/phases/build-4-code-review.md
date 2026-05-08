@@ -1,7 +1,7 @@
 # Phase: build-4-code-review
 # Source: echelon.build.md §4 — Code Review Gate (CODE_REVIEW)
-# Agent: CODE REVIEWER
-# Read by: COMMANDER before each CODE REVIEWER dispatch
+# Agent: speckit-echelon-code-reviewer (CODE REVIEWER)
+# Read by: speckit-echelon-commander (COMMANDER) before each speckit-echelon-code-reviewer (CODE REVIEWER) dispatch
 
 ## 4. Code Review Gate (CODE_REVIEW)
 

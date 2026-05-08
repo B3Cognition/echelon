@@ -1,7 +1,7 @@
 # Phase: phase3-how
 # Source: echelon.run.md §8 — HOW Phase (Architecture)
-# Agent: ARCHITECT
-# Read by: COMMANDER before dispatching ARCHITECT
+# Agent: speckit-echelon-architect (ARCHITECT)
+# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-architect (ARCHITECT)
 
 ## 8. HOW Phase (Architecture)
 
@@ -31,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
   </instructions>
   ```
 
-- **description:** "ARCHITECT: architecture design and technology decisions"
+- **description:** "speckit-echelon-architect (ARCHITECT): architecture design and technology decisions"
 
 ### Expected Outputs
 

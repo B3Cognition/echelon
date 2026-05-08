@@ -1,7 +1,7 @@
 # Phase: phase4-document
 # Source: echelon.run.md §12 — FINALIZE Phase
-# Agent: COMMANDER internal (sequential: REALIST, MIRROR, ADAPTIVE, AUDITOR, SCOREKEEPER)
-# Read by: COMMANDER before executing finalization sequence
+# Agent: speckit-echelon-commander (COMMANDER) internal (sequential: speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), speckit-echelon-auditor (AUDITOR), speckit-echelon-scorekeeper (SCOREKEEPER))
+# Read by: speckit-echelon-commander (COMMANDER) before executing finalization sequence
 
 ## 12. FINALIZE Phase
 
@@ -28,7 +28,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "REALIST: reality check and reference class forecasting"
+- **description:** "speckit-echelon-realist (REALIST): reality check and reference class forecasting"
 
 Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
 
@@ -55,7 +55,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "MIRROR: post-run learning extraction"
+- **description:** "speckit-echelon-mirror (MIRROR): post-run learning extraction"
 
 ### 12.3 EVOLVE Agent (if re-run)
 
@@ -83,7 +83,7 @@ Use the Agent tool:
   </instructions>
   ```
 
-- **description:** "ADAPTIVE: cross-run diffing and improvement measurement"
+- **description:** "speckit-echelon-adaptive (ADAPTIVE): cross-run diffing and improvement measurement"
 
 Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-alerts.md`
 
@@ -108,18 +108,18 @@ Use the Agent tool:
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or INVESTIGATOR investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
   </instructions>
   ```
 
-- **description:** "AUDITOR: accuracy tracking and confidence profiling"
+- **description:** "speckit-echelon-auditor (AUDITOR): accuracy tracking and confidence profiling"
 
 ### 12.5 CALIBRATE Confidence Check
 
 After CALIBRATE completes, read `confidence-flags.md`:
 
-- If any domain has **confidence < 0.5** → summon INVESTIGATOR for that domain (if not already investigated). This is a late-stage safety net.
-- If INVESTIGATOR was already summoned and confidence is still < 0.5 → flag for human in the final report (do not block delivery).
+- If any domain has **confidence < 0.5** → summon speckit-echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
+- If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → flag for human in the final report (do not block delivery).
 
 ### 12.6 Collect Final Artifacts
 
@@ -139,7 +139,7 @@ prioritization.md                 | ASSESS          | ...
 estimates.md                      | ASSESS          | ...
 mvp-scope.md                      | ASSESS          | ...
 plan.md                           | HOW             | ...
-research.md                       | HOW+INVESTIGATOR   | ...
+research.md                       | HOW+speckit-echelon-investigator (INVESTIGATOR)   | ...
 data-model.md                     | HOW             | ...
 contracts/                        | HOW             | ...
 constitution.md                   | HOW             | ...
@@ -147,9 +147,9 @@ tasks.md                          | PLAN            | ...
 critical-path.md                  | PLAN            | ...
 risk-matrix.md                    | PLAN            | ...
 dependencies.md                   | PLAN            | ...
-test-strategy.md                  | TEST ARCHITECT  | ...
-test-architecture.md              | TEST ARCHITECT  | ...
-coverage-map.md                   | TEST ARCHITECT  | ...
+test-strategy.md                  | TEST speckit-echelon-architect (ARCHITECT)  | ...
+test-architecture.md              | TEST speckit-echelon-architect (ARCHITECT)  | ...
+coverage-map.md                   | TEST speckit-echelon-architect (ARCHITECT)  | ...
 issues.md                         | WHY             | ...
 quality-gates.md                  | WHY             | ...
 reality-check.md                  | GROUND          | ...
@@ -164,10 +164,10 @@ Additional artifacts (conditional):
 
 - `reference-architectures.md` (greenfield only)
 - `assumption-review.md` (if WHY1 produced it)
-- `investigation/*.md` (if INVESTIGATOR ran)
-- `evidence-grades.md` (if INVESTIGATOR ran)
-- `experiment-results.md` (if INVESTIGATOR ran)
-- `recommendations.md` (if INVESTIGATOR ran)
+- `investigation/*.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
+- `evidence-grades.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
+- `experiment-results.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
+- `recommendations.md` (if speckit-echelon-investigator (INVESTIGATOR) ran)
 - `threat-model.md` (if SECURITY ran)
 - `compliance-requirements.md` (if SECURITY ran)
 - `performance-requirements.md` (if PERFORMANCE ran)
@@ -176,11 +176,11 @@ Additional artifacts (conditional):
 - `user-flow.md` (if UX/A11Y ran)
 - `alternatives.md` (if INNOVATE ran)
 - `evolution-report.md` (if EVOLVE ran)
-- `risk-acceptance-log.md` (if GUARDIAN produced Risk Acceptance Records)
+- `risk-acceptance-log.md` (if speckit-echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
 
-### 12.7 Run SCOREKEEPER
+### 12.7 Run speckit-echelon-scorekeeper (SCOREKEEPER)
 
-Dispatch SCOREKEEPER to produce the final scorecard (see Section 13 for full protocol).
+Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol).
 Read the scorecard output and apply any automatic self-healing actions.
 
 ### 12.8 Set Final State
