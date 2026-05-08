@@ -459,10 +459,12 @@ phases:
     tier: feasibility
     context_pack:
       - spec.md
-      - constitution.md
+      - glossary.md
       - 00-overview.md
       - assumptions.md
+      - issues.md                              # from WHY2 — per-requirement failures
       - knowledge-base/calibration-profile.yaml
+      - knowledge-base/estimates-log.yaml      # if exists
       - reasoning-journal.json [phase=phase1-* summary]
       - calibration_map entry for speckit-echelon-gatekeeper (GATEKEEPER)
     outputs:
@@ -511,7 +513,7 @@ phases:
       - gatekeeper output (scope adjustments)
       - strategic-overview.md
     outputs:
-      - alignment-report.md   # ALIGNED | DRIFT | STOP_AND_ASK
+      - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
     transitions:
       - to: phase3-how
         condition: "alignment = ALIGNED OR alignment = DRIFT"
@@ -646,6 +648,7 @@ phases:
       - calibration_map entry for speckit-echelon-sentinel (SENTINEL)
     outputs:
       - test-strategy.md
+      - test-architecture.md
       - coverage-map.md
     transitions:
       - to: phase3-plan

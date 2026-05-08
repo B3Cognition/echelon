@@ -13,6 +13,7 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | --- | --- | --- |
 | `spec.md` | `specs/{NNN}-{feature}/spec.md` | Required |
 | `glossary.md` | `specs/{NNN}-{feature}/glossary.md` (or `.specify/squad/staging/glossary.md` if not yet moved) | Required |
+| `00-overview.md` | `specs/{NNN}-{feature}/00-overview.md` | Required |
 | `assumptions.md` | `specs/{NNN}-{feature}/assumptions.md` (or staging) | Required |
 | `issues.md` | `specs/{NNN}-{feature}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
