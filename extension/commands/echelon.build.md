@@ -20,7 +20,7 @@ dispatch prompt, and expected outputs.
 
 Also read `workflow/definition.yaml` `build:` for the task loop routing config:
 wave lane ordering, per-agent verdict routing, state field names, and
-force-complete conditions. COMMANDER consults this section throughout the build
+force-complete conditions. speckit-echelon-commander (COMMANDER) consults this section throughout the build
 loop — it is not replaced by the phase nodes above.
 
 **This command implements. It never produces ADR/SPEC/PLAN/TASKS artifacts.**

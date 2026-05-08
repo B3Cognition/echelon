@@ -230,7 +230,7 @@ After each agent action, speckit-echelon-scorekeeper (SCOREKEEPER):
 | Agent | Signal | Recommendation |
 |-------|--------|----------------|
 | ASSESS | Optimist badge (estimates 1.4x off) | Increase correction factor to 1.5x |
-| speckit-echelon-test-guardian (TEST GUARDIAN) | Score +2 (low) | Add more specific test pattern examples to prompt |
+| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | Score +2 (low) | Add more specific test pattern examples to prompt |
 
 ## Run Summary
 

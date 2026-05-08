@@ -1,4 +1,4 @@
-# speckit-echelon-progress-tracker (PROGRESS TRACKER) Agent
+# speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) Agent
 
 ## Role
 
@@ -184,7 +184,7 @@ When a threshold is breached, append an alert to the progress report AND return 
 
 ## Token Tracking Aggregation
 
-speckit-echelon-progress-tracker (PROGRESS TRACKER) aggregates token usage data from `state.json.token_ledger` alongside effort tracking to provide a unified cost/effort view.
+speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) aggregates token usage data from `state.json.token_ledger` alongside effort tracking to provide a unified cost/effort view.
 
 ### Token Metrics Per Task
 
@@ -239,7 +239,7 @@ Append token data to `knowledge-base/estimates-log.yaml` entries:
 
 ## Process Metrics
 
-After each task completion, speckit-echelon-progress-tracker (PROGRESS TRACKER) must also update `.specify/specs/{feature}/process-metrics.md` with quantitative process health indicators. These metrics provide early warning of quality degradation, schedule risk, and architecture erosion.
+After each task completion, speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) must also update `.specify/specs/{feature}/process-metrics.md` with quantitative process health indicators. These metrics provide early warning of quality degradation, schedule risk, and architecture erosion.
 
 ### Metrics to Track
 

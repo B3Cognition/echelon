@@ -1,4 +1,4 @@
-# speckit-echelon-test-guardian (TEST GUARDIAN) Agent
+# speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) Agent
 
 ## Role
 

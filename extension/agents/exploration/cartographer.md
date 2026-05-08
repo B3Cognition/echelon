@@ -72,15 +72,15 @@ You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT e
    mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
    ```
 
-   **NEVER skip this move.** Downstream agents (ARCHITECT, GATEKEEPER, SENTINEL) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
+   **NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
 
-4. **NEVER re-invoke `speckit.specify` if the spec directory is missing after the first call.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `CARTOGRAPHER BLOCKED — spec_dir missing after speckit.specify succeeded` and let COMMANDER handle recovery per `phase1-what.md §4.2 Fallback`.
+4. **NEVER re-invoke `speckit.specify` if the spec directory is missing after the first call.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — spec_dir missing after speckit.specify succeeded` and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
 
 5. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
 
 ### Step 2: Enhance Spec with Squad Intelligence
 
-This step is where CARTOGRAPHER adds its primary value. A spec.md that comes out of this step looking identical to what `speckit.specify` produced means Step 2 was skipped — that is a protocol violation.
+This step is where speckit-echelon-cartographer (CARTOGRAPHER) adds its primary value. A spec.md that comes out of this step looking identical to what `speckit.specify` produced means Step 2 was skipped — that is a protocol violation.
 
 1. Read the spec-kit generated `spec.md` — it provides the template structure
 2. If unknowns remain, call `speckit.clarify` for structured Q&A

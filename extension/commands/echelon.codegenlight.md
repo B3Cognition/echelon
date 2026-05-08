@@ -25,11 +25,11 @@ These invariants are constitutionally mandated and CANNOT be overridden by any
 phase, LLM advisory, or commercial pressure:
 
 - **INV-001:** `chunk never` MUST be the first directive in every `.soar` config file. SOAR chunking is disabled in all production deployments. ISS-007 (Second-Order Chunking Contamination) is Grade A CONFIRMED SEVERE.
-- **INV-002:** Quality constraints MUST be enforced exclusively via SOAR CQ-ISC prohibit preferences. No LLM advisory output, guardrail, or IMPLEMENTER-level logic may substitute for prohibit preferences.
-- **INV-003:** IMPLEMENTER outputs inject `best` preferences ONLY. IMPLEMENTER does NOT inject prohibit, require, or worst preferences.
+- **INV-002:** Quality constraints MUST be enforced exclusively via SOAR CQ-ISC prohibit preferences. No LLM advisory output, guardrail, or speckit-echelon-implementer (IMPLEMENTER)-level logic may substitute for prohibit preferences.
+- **INV-003:** speckit-echelon-implementer (IMPLEMENTER) outputs inject `best` preferences ONLY. speckit-echelon-implementer (IMPLEMENTER) does NOT inject prohibit, require, or worst preferences.
 - **INV-004:** Every SOAR phase transition MUST produce an EPMEM entry. EPMEM recording cannot be disabled.
 - **INV-005:** Every CQ-ISC production rule MUST have `(build ^current-phase <phase>)` as its FIRST LHS condition.
-- **INV-006:** SOAR owns the phase transition decision. IMPLEMENTER advises. IMPLEMENTER does NOT self-advance the pipeline.
+- **INV-006:** SOAR owns the phase transition decision. speckit-echelon-implementer (IMPLEMENTER) advises. speckit-echelon-implementer (IMPLEMENTER) does NOT self-advance the pipeline.
 - **INV-008:** Conflict impasse = correct behaviour, NOT a failure. Impasse triggers human escalation, not autonomous resolution.
 - **INV-010:** Delivery is BLOCKED until all Tier 1 (unit) tests pass via Bash tool execution.
 
@@ -49,7 +49,7 @@ Parse `$ARGUMENTS` to determine mode:
 
 **Parsing rules (in order):**
 1. If `$ARGUMENTS` starts with `--resume`: enter RESUME mode.
-2. If `$ARGUMENTS` starts with `--benchmark`: enter BENCHMARK mode.
+2. If `$ARGUMENTS` starts with `--benchmark`: enter speckit-echelon-benchmark (BENCHMARK) mode.
 3. If the first token contains `*` or ends with `.md`/`.yaml`/`.yml` and matches files on disk: **spec-driven mode**.
 4. If the first token is a filesystem path (`test -e <token>`): **brownfield mode**.
 5. Otherwise: **greenfield mode**.
@@ -64,7 +64,7 @@ On `--resume`: read `workflow/phases/codegenlight-resume.md` and jump to `curren
 
 Otherwise execute in order:
 1. `workflow/phases/codegenlight-0-preflight.md` — WING from config, spec detection/mining, env check, state init, SOAR bridge
-2. `workflow/phases/codegenlight-1-re.md` — Phase 1: RE lookup + brownfield GOLDDIGGER / greenfield research
+2. `workflow/phases/codegenlight-1-re.md` — Phase 1: RE lookup + brownfield speckit-echelon-golddigger (GOLDDIGGER) / greenfield research
 3. `workflow/phases/codegen-2-decompose.md` — Phase 2: DECOMPOSE (shared)
 4. `workflow/phases/codegen-3-implement.md` — Phase 3: IMPLEMENT dispatch loop (shared, repeat until task_queue.pending empty)
 5. `workflow/phases/codegen-4-gate.md` — Phase 4: GATE CQ-ISC verification (shared)

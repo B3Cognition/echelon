@@ -46,9 +46,9 @@ When QA fails:
 1. **tasks.md** — full task list with completion status
 2. **traceability-matrix.md** — from speckit-echelon-spec-guard (SPEC GUARD) (current coverage state)
 3. **spec.md** — the full specification (ground truth)
-4. **process-metrics.md** — from speckit-echelon-progress-tracker (PROGRESS TRACKER) (CPI, SPI, quality metrics)
+4. **process-metrics.md** — from speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) (CPI, SPI, quality metrics)
 5. **integration-report.md** — from speckit-echelon-integrator (INTEGRATOR) (system health)
-6. **progress-report.md** — from speckit-echelon-progress-tracker (PROGRESS TRACKER) (effort tracking)
+6. **progress-report.md** — from speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) (effort tracking)
 7. **All build reports** — spec-compliance, code-review, test-quality
 8. **coverage-map.md** — planned requirement-to-test mapping
 9. **reasoning-journal.jsonl / state.json** — evidence that required gates actually ran
@@ -62,7 +62,7 @@ When QA fails:
 Before declaring a phase or the full build ready for verification, confirm the workflow itself was followed:
 
 1. Tasks were completed through the spec-kit task flow, not inferred solely from files on disk.
-2. Each completed task has gate evidence from speckit-echelon-spec-guard (SPEC GUARD), speckit-echelon-code-reviewer (CODE REVIEWER), and speckit-echelon-test-guardian (TEST GUARDIAN).
+2. Each completed task has gate evidence from speckit-echelon-spec-guard (SPEC GUARD), speckit-echelon-code-reviewer (CODE REVIEWER), and speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)).
 3. `tasks.md`, `state.json`, and build reports agree on task status.
 4. `coverage-map.md` and `traceability-matrix.md` are present and current enough for backpropagation.
 
@@ -130,7 +130,7 @@ This is the critical backpropagation check:
 
 5. IF coverage = 100%:
    - Run speckit-echelon-integrator (INTEGRATOR) one final time (full system check)
-   - Run speckit-echelon-test-guardian (TEST GUARDIAN) on aggregate test quality
+   - Run speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) on aggregate test quality
   - Confirm zero open items in gap-report.md and excess-report.md
   - IF all pass → BUILD COMPLETE
    - ELSE → fix and re-verify
@@ -170,9 +170,9 @@ The build is COMPLETE only when ALL of these are true:
 | excess-report.md reviewed and accepted (or empty) | speckit-echelon-verification (VERIFICATION) | YES |
 | Zero FAIL verdicts from speckit-echelon-spec-guard (SPEC GUARD) | speckit-echelon-spec-guard (SPEC GUARD) reports | YES |
 | Zero CHANGES_REQUESTED from speckit-echelon-code-reviewer (CODE REVIEWER) | Code review reports | YES |
-| speckit-echelon-test-guardian (TEST GUARDIAN) aggregate: all PASS | Test quality reports | YES |
+| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) aggregate: all PASS | Test quality reports | YES |
 | speckit-echelon-integrator (INTEGRATOR) final: PASS | Integration report | YES |
-| Process metrics: no CRITICAL alerts | speckit-echelon-progress-tracker (PROGRESS TRACKER) | YES |
+| Process metrics: no CRITICAL alerts | speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) | YES |
 | No unresolved change requests | speckit-echelon-change-controller (CHANGE CONTROLLER) | YES |
 | Knowledge transfer: TRANSFER_READY or AT_RISK (not NOT_READY) | REFLECT | RECOMMENDED |
 

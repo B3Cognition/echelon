@@ -77,7 +77,7 @@ For the upcoming build phase, determine which agents will be active:
 - speckit-echelon-implementer (IMPLEMENTER) (always)
 - speckit-echelon-spec-guard (SPEC GUARD) (always)
 - speckit-echelon-code-reviewer (CODE REVIEWER) (always)
-- speckit-echelon-test-guardian (TEST GUARDIAN) (always)
+- speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (always)
 - speckit-echelon-engineering-manager (ENGINEERING MANAGER) (always)
 - speckit-echelon-integrator (INTEGRATOR) (per phase)
 - Any specialists still active
@@ -177,15 +177,15 @@ Save to `.specify/specs/{feature}/internalization-report.md` and feed into Agent
 | speckit-echelon-implementer (IMPLEMENTER) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
 | speckit-echelon-spec-guard (SPEC GUARD) | PASS | PASS | PASS | PASS | PASS | 0 | 6/6 | INTERNALIZED |
 | speckit-echelon-code-reviewer (CODE REVIEWER) | PASS | PASS | PARTIAL | PASS | PASS | 1 | 5/6 | PARTIAL |
-| speckit-echelon-test-guardian (TEST GUARDIAN) | PASS | PASS | PASS | FAIL | PASS | 2 | 4/6 | PARTIAL |
+| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | PASS | PASS | PASS | FAIL | PASS | 2 | 4/6 | PARTIAL |
 
 ## Doubts Raised
 
 | Agent | Doubt | Resolution | Source |
 |-------|-------|------------|--------|
 | speckit-echelon-code-reviewer (CODE REVIEWER) | "ADR-005 says component encapsulation but some modules use a different approach?" | ADR-013 allows fallback for media components | research.md ADR-013 |
-| speckit-echelon-test-guardian (TEST GUARDIAN) | "What test framework for component tests?" | Web Test Runner per ADR-006 | research.md ADR-006 |
-| speckit-echelon-test-guardian (TEST GUARDIAN) | "Is the data visualization SVG or Canvas?" | SVG per FR-VIZ-001 | spec.md FR-VIZ-001 |
+| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | "What test framework for component tests?" | Web Test Runner per ADR-006 | research.md ADR-006 |
+| speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) | "Is the data visualization SVG or Canvas?" | SVG per FR-VIZ-001 | spec.md FR-VIZ-001 |
 
 ## Gaps Discovered
 

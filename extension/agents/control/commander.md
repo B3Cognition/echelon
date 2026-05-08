@@ -71,18 +71,18 @@ The constitution (`constitution.md` or `.specify/memory/constitution.md`) is the
 
 3. **If any agent's output conflicts with the constitution:**
    - The output is WRONG, not the constitution
-   - COMMANDER routes back to the agent: "Your output violates constitution principle X. Revise."
+   - speckit-echelon-commander (COMMANDER) routes back to the agent: "Your output violates constitution principle X. Revise."
    - The agent revises its output to comply
 
 4. **If the constitution itself has a gap** (situation not covered):
-   - COMMANDER flags the gap as a human escalation
+   - speckit-echelon-commander (COMMANDER) flags the gap as a human escalation
    - Prints: "Constitution gap detected: {description}. No principle covers {situation}."
    - STOP and wait for human to add/update the constitution via `speckit.constitution`
    - Resume after human updates
 
 5. **If an agent believes a constitution principle is wrong:**
-   - The agent reports to COMMANDER: "Constitution principle X may need revision because {evidence}"
-   - COMMANDER escalates to human — NEVER auto-modifies the constitution
+   - The agent reports to speckit-echelon-commander (COMMANDER): "Constitution principle X may need revision because {evidence}"
+   - speckit-echelon-commander (COMMANDER) escalates to human — NEVER auto-modifies the constitution
    - Human decides via `speckit.constitution` whether to amend
 
 **Only the human can amend the constitution. The squad follows it. Period.**
@@ -302,9 +302,9 @@ If the index is absent or corrupt mid-run:
 
 ---
 
-## COMMANDER Reflection Protocol
+## speckit-echelon-commander (COMMANDER) Reflection Protocol
 
-Before EVERY major phase transition, COMMANDER enters a structured reflection:
+Before EVERY major phase transition, speckit-echelon-commander (COMMANDER) enters a structured reflection:
 
 **When to reflect:**
 
@@ -396,16 +396,16 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 - If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop speckit-echelon-sage (SAGE) iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
 
-**EVOI vs delta — ordering rule:** EVOI is a *pre-iteration* decision aid. Evaluate it **before** dispatching the next SAGE pass to decide whether the pass is worth the cost. EVOI cannot retroactively declare convergence after the delta test says NO on the current pass — that is a backwards application. The valid sequence is:
+**EVOI vs delta — ordering rule:** EVOI is a *pre-iteration* decision aid. Evaluate it **before** dispatching the next speckit-echelon-sage (SAGE) pass to decide whether the pass is worth the cost. EVOI cannot retroactively declare convergence after the delta test says NO on the current pass — that is a backwards application. The valid sequence is:
 
-1. Delta test says NO → consider whether to dispatch another SAGE pass.
+1. Delta test says NO → consider whether to dispatch another speckit-echelon-sage (SAGE) pass.
 2. Compute EVOI for the next candidate pass.
 3. If EVOI < 0 → skip the pass, force best-effort convergence.
 4. If EVOI ≥ 0 → dispatch.
 
 Forcing convergence based solely on a negative EVOI score on a *single* pass (without the delta test or iteration-limit being met) is only permitted when `iteration >= max_iterations` or token budget is exhausted. Write the reason in the journal as either `evoi_budget_exhausted` or `evoi_max_iterations_reached`.
 
-**Hard plateau rule (overrides EVOI):** If, after 4 or more WHY2/WHY3 iterations, the cumulative improvement in `overall` score from iteration 1 to the current pass is less than 0.05, immediately force `best_effort` convergence — regardless of EVOI estimates. A large iteration count with tiny total gain indicates a systemic issue (parsing errors, threshold misalignment, spec format violation) that additional CARTOGRAPHER amendments cannot fix. EVOI estimates in this situation are unreliable because they are built on a sequence of scores with low variance. Note the stall reason in the journal and surface the gap to the user.
+**Hard plateau rule (overrides EVOI):** If, after 4 or more WHY2/WHY3 iterations, the cumulative improvement in `overall` score from iteration 1 to the current pass is less than 0.05, immediately force `best_effort` convergence — regardless of EVOI estimates. A large iteration count with tiny total gain indicates a systemic issue (parsing errors, threshold misalignment, spec format violation) that additional speckit-echelon-cartographer (CARTOGRAPHER) amendments cannot fix. EVOI estimates in this situation are unreliable because they are built on a sequence of scores with low variance. Note the stall reason in the journal and surface the gap to the user.
 
 ### Rule 2: Circular Issue Detection
 
@@ -766,9 +766,9 @@ domains:
 
 ---
 
-### 1. Register GUARDIAN Dispatch Mode (init-time config read)
+### 1. Register speckit-echelon-guardian (GUARDIAN) Dispatch Mode (init-time config read)
 
-> **Timing note:** GUARDIAN's actual dispatch happens in `phase3-specialists` (after GATEKEEPER passes), not here at init. This step reads the configuration so COMMANDER knows to include GUARDIAN in every run's specialist phase without re-reading config later. See `workflow/definition.yaml` `init.guardian_init` entry and `phase3-specialists.agents[speckit-echelon-guardian]`.
+> **Timing note:** GUARDIAN's actual dispatch happens in `phase3-specialists` (after speckit-echelon-gatekeeper (GATEKEEPER) passes), not here at init. This step reads the configuration so speckit-echelon-commander (COMMANDER) knows to include GUARDIAN in every run's specialist phase without re-reading config later. See `workflow/definition.yaml` `init.guardian_init` entry and `phase3-specialists.agents[speckit-echelon-guardian]`.
 
 Read `echelon-config.yml` for `specialists.guardian_mode` and record the mode:
 
@@ -776,8 +776,8 @@ Read `echelon-config.yml` for `specialists.guardian_mode` and record the mode:
 GUARDIAN_MODE=$(bash "${ECHELON_EXT}/scripts/bash/echelon-config-get.sh" specialists.guardian_mode 2>/dev/null || echo "always_on")
 ```
 
-- **`always_on`** (default): GUARDIAN dispatched in **every** squad run during `phase3-specialists`, first in the sequential order. Runs Minimum Security Checklist for non-security domains; full STRIDE + OWASP when domain signals are security-relevant.
-- **`on_demand`**: GUARDIAN dispatched only when domain involves auth, payments, PII, regulatory compliance, or untrusted input.
+- **`always_on`** (default): speckit-echelon-guardian (GUARDIAN) dispatched in **every** squad run during `phase3-specialists`, first in the sequential order. Runs Minimum Security Checklist for non-security domains; full STRIDE + OWASP when domain signals are security-relevant.
+- **`on_demand`**: speckit-echelon-guardian (GUARDIAN) dispatched only when domain involves auth, payments, PII, regulatory compliance, or untrusted input.
 
 Log `guardian_dispatch_mode` in `state.json` now, so it is available when `phase3-specialists` evaluates dispatch conditions:
 
@@ -785,7 +785,7 @@ Log `guardian_dispatch_mode` in `state.json` now, so it is available when `phase
 {"guardian_dispatch_mode": "always_on"}
 ```
 
-**NEVER reach `phase3-specialists` without this value set.** An absent `guardian_dispatch_mode` in state.json means GUARDIAN's dispatch condition cannot be evaluated and it will be silently skipped.
+**NEVER reach `phase3-specialists` without this value set.** An absent `guardian_dispatch_mode` in state.json means speckit-echelon-guardian (GUARDIAN)'s dispatch condition cannot be evaluated and it will be silently skipped.
 
 ### 2. Spec-Kit Dependency Check (inline)
 
@@ -998,13 +998,13 @@ CALIBRATION DASHBOARD: calibration-dashboard.md written to <spec_directory>
 - `Warnings:` is always emitted. If there are no warnings, emit `Warnings: none`.
 - `Disagreement Alerts:` is always emitted. If there are none, emit `none`.
 - `Issues:` format must include deferred and escalated counts: `<resolved>/<total> (<deferred> deferred, <escalated> escalated)`.
-- On cold start (no AUDITOR/INTERNALIZER data), the Per-Agent table rows use `N/A` for Absorption, Accuracy, and Verdict columns — but the table header and rows must still be present (one row per dispatched agent).
+- On cold start (no speckit-echelon-auditor (AUDITOR)/speckit-echelon-internalizer (INTERNALIZER) data), the Per-Agent table rows use `N/A` for Absorption, Accuracy, and Verdict columns — but the table header and rows must still be present (one row per dispatched agent).
 
 ---
 
 ## Per-Agent Internalization Data Handoff — MANDATORY in FINALIZE
 
-**This section is invoked by phase4-document.md §12.4 CALIBRATE step.** It must run before AUDITOR is dispatched. AUDITOR cannot produce a valid `calibration-dashboard.md` without INTERNALIZER's per-agent scores.
+**This section is invoked by phase4-document.md §12.4 CALIBRATE step.** It must run before speckit-echelon-auditor (AUDITOR) is dispatched. speckit-echelon-auditor (AUDITOR) cannot produce a valid `calibration-dashboard.md` without speckit-echelon-internalizer (INTERNALIZER)'s per-agent scores.
 
 At end of run (during FINALIZE), speckit-echelon-commander (COMMANDER) collects per-agent internalization data and passes it to speckit-echelon-auditor (AUDITOR) for scoring and dashboard generation.
 

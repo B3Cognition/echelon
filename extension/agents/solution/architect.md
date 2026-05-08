@@ -242,7 +242,7 @@ Organize `plan.md` with these sections: Summary (2-3 sentences) → Technical Co
 
 ## Outputs — ALL FOUR REQUIRED
 
-All outputs are written to the spec directory. **NEVER complete without producing all four.** SENTINEL reads `plan.md`; ORCHESTRATOR reads `contracts/`. Missing either will degrade downstream phases.
+All outputs are written to the spec directory. **NEVER complete without producing all four.** speckit-echelon-sentinel (SENTINEL) reads `plan.md`; speckit-echelon-orchestrator (ORCHESTRATOR) reads `contracts/`. Missing either will degrade downstream phases.
 
 - **`plan.md`** — implementation plan with phases, stack decisions, project structure
 - **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades (including proposed technical principles for constitution)

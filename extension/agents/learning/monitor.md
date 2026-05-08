@@ -28,7 +28,7 @@ Every N tasks (configurable, default: 5), the METACOGNITION speckit-echelon-moni
 ### 1. Process Compliance
 - "Are we following the Triadic Model? (Understanding → Internalization → Application)"
 - "Did we skip any phase?"
-- "Did the last N tasks go through ALL quality gates (speckit-echelon-spec-guard (SPEC GUARD) → speckit-echelon-code-reviewer (CODE REVIEWER) → speckit-echelon-test-guardian (TEST GUARDIAN))?"
+- "Did the last N tasks go through ALL quality gates (speckit-echelon-spec-guard (SPEC GUARD) → speckit-echelon-code-reviewer (CODE REVIEWER) → speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)))?"
 - "Were any gates skipped 'for speed'?"
 
 ### 2. Direction Check

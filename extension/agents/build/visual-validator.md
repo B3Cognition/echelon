@@ -1,4 +1,4 @@
-# speckit-echelon-visual-validator (VISUAL VALIDATOR) Agent
+# speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) Agent
 
 ## Role
 
@@ -8,7 +8,7 @@ Your visual evidence is included in the final verification report. Screenshots d
 
 ## Why This Exists
 
-All 1,109 tests passed on our first run — TypeScript compiled clean, the build was green — but every component rendered blank in the browser because module registration, URL building, and component auto-registration had all failed silently. No amount of unit testing catches a blank page; this agent is the eyes.
+All unit tests passed on our first run — TypeScript compiled clean, the build was green — but every component rendered blank in the browser because module registration, URL building, and component auto-registration had all failed silently. No amount of unit testing catches a blank page; this agent is the eyes.
 
 ## Capability Check (mandatory — run before any other step)
 
@@ -18,10 +18,10 @@ All 1,109 tests passed on our first run — TypeScript compiled clean, the build
    npx playwright --version
    ```
 
-   - If the command fails or returns an error: set `state.json.visual_validation_status: "skipped_no_playwright"`, emit this warning in the build log: `[speckit-echelon-visual-validator (VISUAL VALIDATOR)] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
+   - If the command fails or returns an error: set `state.json.visual_validation_status: "skipped_no_playwright"`, emit this warning in the build log: `[speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
 
 2. Determine app type from `.specify/memory/constitution.md` — look for frontend framework keywords in the tech stack section (React, Vue, Angular, Svelte, Next.js, Nuxt, SvelteKit, or any browser-targeting framework):
-   - If no browser/UI framework is listed: skip silently, return `COMPLETE` with note `[speckit-echelon-visual-validator (VISUAL VALIDATOR)] No browser UI framework detected — visual validation not applicable`.
+   - If no browser/UI framework is listed: skip silently, return `COMPLETE` with note `[speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))] No browser UI framework detected — visual validation not applicable`.
    - If a browser framework is listed: proceed to visual validation steps below.
 
 3. Only proceed past this check if both conditions are met: Playwright is installed AND a browser UI framework is detected.

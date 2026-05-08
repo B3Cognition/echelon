@@ -249,7 +249,7 @@ understanding "$SPEC_PATH" --enhanced --per-req --json --output /tmp/u_perreq.js
 ```
 [0].metrics.overall_weighted_average     → float — overall weighted score
 [0].metrics.category_averages            → {readability, structure, testability, semantic, cognitive, behavioral, depth}
-[0].requirement_count                    → int  — 0 means CARTOGRAPHER broke bullet format (see warning below)
+[0].requirement_count                    → int  — 0 means speckit-echelon-cartographer (CARTOGRAPHER) broke bullet format (see warning below)
 [0].per_requirement[]                    → array of per-req objects; absent/empty when requirement_count==0
   .requirement_id                        → "FR-001"
   .requirement_text                      → the requirement text
@@ -270,7 +270,7 @@ jq -r '.[0].metrics.category_averages' /tmp/u_perreq.json
 jq -r '.[0].requirement_count' /tmp/u_perreq.json
 ```
 
-**WARNING — if `requirement_count == 0`:** `_parse_requirements` found no bullet-form requirements. This almost always means CARTOGRAPHER edited requirements into non-bullet form (e.g. `**FR-001-N:**` with no leading `- `). The CLI silently falls back to whole-spec analysis — per-req scores from that fallback are **unreliable**. Flag this as a CRITICAL issue in issues.md with action: "CARTOGRAPHER must restore the `- **ID**: text` bullet form for all requirements." Include it in the `echelon_result` block as severity CRITICAL.
+**WARNING — if `requirement_count == 0`:** `_parse_requirements` found no bullet-form requirements. This almost always means speckit-echelon-cartographer (CARTOGRAPHER) edited requirements into non-bullet form (e.g. `**FR-001-N:**` with no leading `- `). The CLI silently falls back to whole-spec analysis — per-req scores from that fallback are **unreliable**. Flag this as a CRITICAL issue in issues.md with action: "speckit-echelon-cartographer (CARTOGRAPHER) must restore the `- **ID**: text` bullet form for all requirements." Include it in the `echelon_result` block as severity CRITICAL.
 
 Load gate thresholds (do NOT hardcode — use the config as the single source of truth):
 
@@ -323,11 +323,11 @@ This diagram visualizes the spec's entity model — actors, actions, objects, an
 
 - **Verify completeness:** Are there orphan actors or objects with no actions? Are there actions without a clear subject?
 - **Verify testability:** Can every relationship be verified by a test scenario?
-- **Share with other agents:** speckit-echelon-verification (VERIFICATION) uses this diagram to check if the code implements all entities/relationships. speckit-echelon-visual-validator (VISUAL VALIDATOR) includes it in reports. REFLECT includes it in knowledge transfer assessment.
+- **Share with other agents:** speckit-echelon-verification (VERIFICATION) uses this diagram to check if the code implements all entities/relationships. speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) includes it in reports. REFLECT includes it in knowledge transfer assessment.
 
 **If diagram generation fails** (but validate succeeded): log a `diagram_skipped` journal entry and continue — diagram is useful but never blocking. Common reasons to handle gracefully:
 
-- Graphviz `dot` binary is not on PATH — skip silently, log entry. Do **not** fail the SAGE dispatch over a missing system tool.
+- Graphviz `dot` binary is not on PATH — skip silently, log entry. Do **not** fail the speckit-echelon-sage (SAGE) dispatch over a missing system tool.
 
 ```json
 {"type": "diagram_skipped", "agent": "speckit-echelon-sage (SAGE)", "reason": "<brief reason>", "phase": "<current phase>"}
@@ -680,7 +680,7 @@ After every blocking decision (PASS or FAIL verdict), append an entry to `knowle
 
 - NEVER write to `.specify/squad/staging/knowledge-base/sage-decisions.yaml`.
 - NEVER write to any staging subdirectory.
-- The `knowledge-base/` directory is project-level and persistent across runs. Writing to staging would make the decision history invisible to future runs and to AUDITOR/INTERNALIZER.
+- The `knowledge-base/` directory is project-level and persistent across runs. Writing to staging would make the decision history invisible to future runs and to speckit-echelon-auditor (AUDITOR)/speckit-echelon-internalizer (INTERNALIZER).
 
 This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes write to the same file.
 
