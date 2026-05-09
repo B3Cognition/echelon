@@ -103,7 +103,30 @@ grep -q "WHEN\|THEN\|Given\|When\|Then" "${spec_dir}/spec.md" \
   || { echo "WARN: 00-overview.md missing — speckit-echelon-cartographer (CARTOGRAPHER) Step 2 may be incomplete"; }
 ```
 
-If either warning fires: **re-dispatch speckit-echelon-cartographer (CARTOGRAPHER)** in enhancement-only mode using the prompt below. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+If either warning fires: **re-dispatch speckit-echelon-cartographer (CARTOGRAPHER)** in enhancement-only mode using the prompt below. Additionally, run the constitution check below regardless of whether CARTOGRAPHER warnings fired.
+
+**Constitution placeholder check** (run after every CARTOGRAPHER dispatch, regardless of outcome):
+
+```bash
+grep -E '\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' \
+  .specify/memory/constitution.md && echo "CONSTITUTION_PLACEHOLDERS_FOUND" || echo "CONSTITUTION_CLEAN"
+```
+
+If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution was written without the skill (protocol violation logged in journal). Apply the fix now before advancing to Phase 2:
+
+```bash
+TODAY=$(date +%Y-%m-%d)
+sed -i '' \
+  -e 's/\[CONSTITUTION_VERSION\]/1.0.0/g' \
+  -e "s/\[RATIFICATION_DATE\]/$TODAY/g" \
+  -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
+  .specify/memory/constitution.md
+printf '{"type":"constitution_placeholder_fix","phase":"phase1-what","method":"sed_fallback","version":"1.0.0","date":"%s"}\n' \
+  "$TODAY" >> .specify/squad/reasoning-journal.jsonl
+echo "[CONSTITUTION] Placeholder fix applied at §4.3 catch — constitution.md was not created via speckit.constitution"
+```
+
+Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
 
 **Enhancement-only re-dispatch prompt:**
 

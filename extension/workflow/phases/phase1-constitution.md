@@ -18,6 +18,10 @@ If `state.json.constitution_status` is `"pending"`:
 
 - Continue with constitution creation below
 
+### NEVER Rules
+
+**NEVER write `constitution.md` via Bash directly.** `speckit.constitution` is the only permitted creation path — the same way CARTOGRAPHER must call `speckit.specify` and may not create `spec.md` manually. A Bash-written constitution skips version assignment, date population, template sync, and the Sync Impact Report. If you find yourself writing to `.specify/memory/constitution.md` via the Write or Bash tool instead of the Skill tool, STOP — you are violating this rule.
+
 ### Prepare Constitution Context — MANDATORY
 
 **NEVER call `speckit.constitution` before completing all four extractions below.** A constitution created without domain context is a generic template with no project-specific principles — it provides no governance value.
@@ -51,6 +55,8 @@ After all four extractions, construct the context string for `speckit.constituti
 
 ### Create Constitution via Spec-Kit
 
+**Print:** `[CONSTITUTION] Calling speckit.constitution — extracting principles from UNDERSTAND artifacts`
+
 **Call `speckit.constitution`** with the gathered context, substituting real extracted values (not placeholders):
 
 ```text
@@ -77,9 +83,42 @@ Spec-kit will:
 
 After `speckit.constitution` completes:
 
-1. Verify `.specify/memory/constitution.md` exists
-2. Read and store constitution principles in context
-3. Update `state.json.constitution_status` to `"exists"`
+**Print:** `[CONSTITUTION] Verifying constitution.md — checking for unfilled placeholders`
+
+1. Verify `.specify/memory/constitution.md` exists — if missing, the skill failed; STOP and report.
+2. Check for unfilled template placeholders:
+
+   ```bash
+   grep -E '\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' \
+     .specify/memory/constitution.md && echo "PLACEHOLDERS_FOUND" || echo "CLEAN"
+   ```
+
+   If `PLACEHOLDERS_FOUND`: the skill returned without filling the governance header (this is a known failure mode when context is sparse). Fill the knowable fields directly — do NOT re-invoke the skill:
+
+   ```bash
+   TODAY=$(date +%Y-%m-%d)
+   sed -i '' \
+     -e 's/\[CONSTITUTION_VERSION\]/1.0.0/g' \
+     -e "s/\[RATIFICATION_DATE\]/$TODAY/g" \
+     -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
+     .specify/memory/constitution.md
+   echo "[CONSTITUTION] Placeholder fix applied: version=1.0.0, date=$TODAY"
+   ```
+
+3. Read and store constitution principles in context.
+4. Write journal entry:
+
+   ```bash
+   # append to reasoning-journal.jsonl
+   printf '{"type":"constitution_created","phase":"phase1-constitution","method":"speckit.constitution","placeholders_fixed":%s,"timestamp":"%s"}\n' \
+     "$(grep -qE '\[CONSTITUTION_VERSION\]' .specify/memory/constitution.md && echo true || echo false)" \
+     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+     >> .specify/squad/reasoning-journal.jsonl
+   ```
+
+5. Update `state.json.constitution_status` to `"exists"`.
+
+**Print:** `[CONSTITUTION] Complete ✓`
 
 ### Mode-Specific Behavior
 
