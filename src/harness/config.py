@@ -173,6 +173,7 @@ class HarnessConfig:
     visual_tests: VisualTestsConfig = field(default_factory=VisualTestsConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     review_loop: ReviewLoopConfig = field(default_factory=ReviewLoopConfig)
+    verify_command: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +411,7 @@ def _parse_config(data: Dict[str, Any]) -> HarnessConfig:
         visual_tests=_parse_visual_tests(data),
         llm=_parse_llm(data),
         review_loop=_parse_review_loop(data),
+        verify_command=data.get("verify_command") or None,
     )
 
 

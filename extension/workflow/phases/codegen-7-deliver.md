@@ -15,7 +15,16 @@ SOAR selects DELIVER only when: all Tier 1 tests pass, Ψ ≥ 0.70, zero CQ-ISC 
    ```
 3. Update `codegen-state.json`: `wall_clock_end = now`.
 
-**Git operations:** Present for user approval — do NOT execute without it:
+**Git operations:**
+
+If `$HARNESS_BUILD_STATUS_FILE` is set (running under harness) — execute automatically without prompting:
+```bash
+git add <generated files>
+git commit -m "codegen: <intent summary>"
+```
+
+If `$HARNESS_BUILD_STATUS_FILE` is NOT set (standalone `echelon codegen` invocation) — present for user approval before executing:
+
 ```
 [CODEGEN] Proposed git operations:
   git add <generated files>

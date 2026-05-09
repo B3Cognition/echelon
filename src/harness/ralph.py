@@ -604,6 +604,26 @@ class RalphController:
 
         wt = Path(worktree_path)
 
+        # Explicit override: verify_command in config takes priority over detection.
+        if self._config.verify_command:
+            import subprocess as _sp
+            cmd = self._config.verify_command.split()
+            try:
+                res = _sp.run(cmd, cwd=worktree_path, capture_output=True, text=True, timeout=300)
+                if res.returncode != 0:
+                    out = (res.stdout + res.stderr).strip()
+                    failures.append(FailureEntry(
+                        category=FailureCategory.TEST,
+                        id="verify-command",
+                        error=out[-2000:] if len(out) > 2000 else out,
+                    ))
+            except Exception as e:
+                failures.append(FailureEntry(
+                    category=FailureCategory.OTHER, id="verify-command-error", error=str(e),
+                ))
+            duration_s = time.monotonic() - start
+            return VerifyResult(passed=not failures, failures=failures, duration_s=duration_s)
+
         # Python project: skip all npm/pnpm/yarn steps, delegate to verify.sh
         # Python takes priority over Node when both pyproject.toml and package.json exist
         # (e.g., a full-stack project where the primary runtime is Python).
@@ -611,6 +631,8 @@ class RalphController:
             (wt / "pyproject.toml").exists()
             or (wt / "setup.py").exists()
             or (wt / "requirements.txt").exists()
+            or any(wt.glob("test_*.py"))
+            or any(wt.glob("*_test.py"))
         )
         is_node = (wt / "package.json").exists() and not has_python_markers
         is_python = has_python_markers
@@ -719,14 +741,15 @@ class RalphController:
         # Prefer uv when a lockfile is present (handles venv + deps automatically)
         use_uv = (wt / "uv.lock").exists() and shutil.which("uv") is not None
 
+        _pytest_args = ["--tb=short", "-q", "--no-header", "--override-ini=addopts=",
+                        "--ignore=tests/test_playwright"]
+        pytest_bin = shutil.which("pytest")
         pytest_cmd = (
-            ["uv", "run", "--no-sync", "pytest", "--tb=short", "-q",
-             "--no-header", "--override-ini=addopts=",
-             "--ignore=tests/test_playwright"]
+            ["uv", "run", "--no-sync", "pytest"] + _pytest_args
             if use_uv
-            else ["python", "-m", "pytest", "--tb=short", "-q",
-                  "--no-header", "--override-ini=addopts=",
-                  "--ignore=tests/test_playwright"]
+            else ([pytest_bin] + _pytest_args
+                  if pytest_bin
+                  else ["python", "-m", "pytest"] + _pytest_args)
         )
 
         try:
