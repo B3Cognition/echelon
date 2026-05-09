@@ -30,6 +30,19 @@ Requires `harness.init` to have been run first.
 
 ---
 
+## Environment Variables (injected by harness)
+
+**`HARNESS_BUILD_STATUS_FILE`** — Path where the build skill writes its outcome JSON
+(`{"status":"done"}` or `{"status":"impasse",...}`). Set only when running under harness —
+use as the harness-mode signal.
+
+**`HARNESS_SOURCE_DIR`** — Absolute path to the harness Python source (`src/harness/`).
+If you need to understand harness internals (e.g., why verify failed), read files there
+directly — do NOT search the filesystem. Key files: `ralph.py` (outer/inner loop),
+`gitops.py` (git ops), `config.py` (config schema).
+
+---
+
 ## Step 1: Check Initialized
 
 ```bash

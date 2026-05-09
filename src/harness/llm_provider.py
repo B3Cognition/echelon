@@ -127,4 +127,7 @@ class ClaudeCliProvider:
         env = {**os.environ, "HARNESS_BUILD_STATUS_FILE": status_file}
         if self._config_dir and self._cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
+        # Let agents navigate directly to harness source for debugging/fix sessions
+        # rather than spending turns on filesystem searches.
+        env["HARNESS_SOURCE_DIR"] = str(Path(__file__).parent)
         return env

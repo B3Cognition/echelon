@@ -398,6 +398,13 @@ def init_harness(
 
     logger.info("Harness config written to %s (harness: section)", config_file)
 
+    # Create strategies dir so codegen preflight finds it without noise
+    strategies_dir = harness_dir(base) / "strategies"
+    strategies_dir.mkdir(parents=True, exist_ok=True)
+    gitkeep = strategies_dir / ".gitkeep"
+    if not gitkeep.exists():
+        gitkeep.touch()
+
     # Step 14: Bind-mount acknowledgement
     if not bind_mount_ack:
         logger.warning(
