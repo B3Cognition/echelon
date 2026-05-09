@@ -60,9 +60,11 @@ assert "commander.md contains token budget management" \
 assert "echelon.run.md delegates to agents/control/commander.md" \
   "grep -q 'agents/control/commander.md' '$REPO_ROOT/extension/commands/echelon.run.md'"
 
-# 10. MANDATORY FIRST STEP heading exists in echelon.build.md
-assert "echelon.build.md has MANDATORY FIRST STEP" \
-  "grep -q 'MANDATORY FIRST STEP' '$REPO_ROOT/extension/commands/echelon.build.md'"
+# 10. echelon.build.md delegates to commander.md (thin wrapper check)
+# NOTE: the "MANDATORY FIRST STEP" heading was intentionally removed in commit a0519d2
+# when echelon.build.md was refactored into a thin phase-delegating wrapper.
+assert "echelon.build.md references agents/control/commander.md" \
+  "grep -q 'agents/control/commander.md' '$REPO_ROOT/extension/commands/echelon.build.md'"
 
 # 11. No SCIENTIST references in commander.md (ISS-001 fix)
 assert "commander.md has no SCIENTIST references (use INVESTIGATOR)" \

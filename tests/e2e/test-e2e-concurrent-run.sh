@@ -42,11 +42,18 @@ trap cleanup_all EXIT
 cp "$FIXTURES/estimates-log.yaml" "$test_kb"
 
 # Worker A: acquires lock, writes entry-A, holds for LOCK_HOLD_SECONDS, releases.
-# Worker B: tries to acquire lock while A holds it (31s hold > 30s timeout boundary);
+# Worker B: tries to acquire lock while A holds it (hold > 30s timeout boundary);
 #           times out, creates a .pending file for entry-B.
 # After both workers exit, a merge run is triggered to process the pending file.
+#
+# NOTE: This test relies on wall-clock timing to force a lock timeout.
+# kb-lock.sh has a DEFAULT_WAIT_SECONDS=30 timeout; Worker A must hold longer.
+# We use a 20-second margin (50s hold vs 30s timeout) so CI on slow machines
+# is unlikely to produce a race at the boundary. The ideal fix would be a
+# signal/semaphore mechanism so the test is deterministic, but that requires
+# changes to kb-lock.sh itself.
 
-LOCK_HOLD_SECONDS=31
+LOCK_HOLD_SECONDS=50
 
 # Run Worker A inline (foreground, holds lock 31s in background)
 (
@@ -87,7 +94,7 @@ sleep 1
 ) &
 WORKER_B_PID=$!
 
-# Wait for both workers (Worker A runs ~32s; Worker B runs ~31s for timeout)
+# Wait for both workers (Worker A runs ~51s; Worker B times out after 30s + overhead)
 wait "$WORKER_A_PID" || true
 wait "$WORKER_B_PID" || true
 
