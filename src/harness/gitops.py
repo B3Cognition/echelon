@@ -187,7 +187,7 @@ class GitOpsManager:
         """
         if not self._mirror_path.exists():
             raise GitOpsError(
-                f"Mirror does not exist at {self._mirror_path}. Run clone_mirror first.",
+                f"Mirror does not exist at {self._mirror_path}. Run 'echelon harness init' to create it.",
                 command="fetch_mirror",
             )
         try:
@@ -268,7 +268,7 @@ class GitOpsManager:
         """
         if not self._mirror_path.exists():
             raise GitOpsError(
-                f"Mirror does not exist at {self._mirror_path}. Run clone_mirror first.",
+                f"Mirror does not exist at {self._mirror_path}. Run 'echelon harness init' to create it.",
                 command="create_worktree",
             )
 
@@ -881,7 +881,7 @@ class GitOpsManager:
             timestamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
             stash_msg = f"harness-auto-stash-{current_branch}-{timestamp}"
             try:
-                _run_git(["stash", "push", "-u", "-m", stash_msg], cwd=cwd)
+                _run_git(["stash", "push", "-m", stash_msg], cwd=cwd)
                 logger.warning(
                     "Stashed uncommitted changes from '%s' as '%s'. "
                     "Recover with: git stash pop",

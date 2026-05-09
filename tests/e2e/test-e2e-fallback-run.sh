@@ -124,7 +124,7 @@ else:
             "timestamp": now,
         })
 
-# Simulate CARTOGRAPHER dispatch: always dispatched (AC-001a-4)
+# Simulate CARTOGRAPHER dispatch: always dispatched
 fallback_mode = state.get("fallback_mode", False)
 spec_content = ""
 if fallback_mode:

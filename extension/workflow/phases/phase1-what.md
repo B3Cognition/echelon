@@ -33,6 +33,12 @@ Use the Agent tool to dispatch a subagent with:
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
   You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+
+  Do NOT return until ALL of the following are true:
+  1. `specs/{spec_id}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
+  2. `specs/{spec_id}/00-overview.md` exists (your 1–2 page human-readable summary).
+  3. All staging artifacts have been moved from `.specify/squad/staging/` to `specs/{spec_id}/`.
+  Calling `speckit.specify` alone is NOT sufficient — Step 2 (spec enhancement) is mandatory before returning.
   </instructions>
   ```
 
@@ -97,7 +103,24 @@ grep -q "WHEN\|THEN\|Given\|When\|Then" "${spec_dir}/spec.md" \
   || { echo "WARN: 00-overview.md missing — speckit-echelon-cartographer (CARTOGRAPHER) Step 2 may be incomplete"; }
 ```
 
-If either warning fires: **re-dispatch speckit-echelon-cartographer (CARTOGRAPHER)** in enhancement-only mode with `spec_dir` pre-set in the context pack. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+If either warning fires: **re-dispatch speckit-echelon-cartographer (CARTOGRAPHER)** in enhancement-only mode using the prompt below. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+
+**Enhancement-only re-dispatch prompt:**
+
+```xml
+<context>
+[include same context pack as first dispatch, plus current contents of specs/{spec_id}/spec.md]
+spec_dir: specs/{spec_id}
+</context>
+
+<instructions>
+You are CARTOGRAPHER in enhancement-only mode. The spec directory already exists at `{spec_dir}`. Skip Step 1 (do NOT call speckit.specify again). Go directly to Step 2: enhance spec.md with Given/When/Then acceptance criteria and cross-references, then produce 00-overview.md. Read cartographer.md §"Step 2: Enhance Spec with Squad Intelligence" for the full protocol.
+
+Do NOT return until:
+1. `{spec_dir}/spec.md` contains Given/When/Then acceptance criteria for every user story.
+2. `{spec_dir}/00-overview.md` exists.
+</instructions>
+```
 
 Update state.json:
 

@@ -2,7 +2,6 @@ tests/
 .github/
 docs/
 .superpowers/
-knowledge-base/
 .git/
 specs/
 .pytest_cache/
