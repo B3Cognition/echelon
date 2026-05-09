@@ -367,8 +367,12 @@ phases:
     spec_file: workflow/phases/phase1-constitution.md
     type: commander_internal
     description: >
-      speckit-echelon-commander (COMMANDER) synthesizes constitution.md from speckit-echelon-scout (SCOUT) + speckit-echelon-sage (SAGE) artifacts.
-      No agent dispatch.
+      speckit-echelon-commander (COMMANDER) calls the speckit.constitution Skill
+      (Skill tool invocation — not an agent dispatch) to create constitution.md.
+      COMMANDER prepares the context pack from SCOUT + SAGE artifacts, then
+      invokes the skill. Writing constitution.md via Bash directly is prohibited —
+      speckit.constitution is the only permitted creation path (it assigns version,
+      dates, and runs template sync). See phase1-constitution.md for full protocol.
     outputs:
       - constitution.md
     transitions:
