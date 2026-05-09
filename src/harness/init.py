@@ -307,7 +307,7 @@ def init_harness(
             logger.warning(
                 "Could not detect a base image for this repo. "
                 "Falling back to ubuntu:22.04. "
-                "Set base_image in .specify/extensions/echelon/echelon.yml "
+                "Set base_image in .specify/extensions/echelon/echelon-config.yml "
                 "once you know your stack."
             )
 
@@ -335,11 +335,11 @@ def init_harness(
     # Enable visual tests when Playwright is detected
     config.visual_tests.enabled = has_playwright
 
-    # Step 13: Write harness section into echelon.yml (unified config file).
-    # load_config() reads .specify/extensions/echelon/echelon.yml, harness: key.
+    # Step 13: Write harness section into echelon-config.yml (unified config file).
+    # load_config() reads .specify/extensions/echelon/echelon-config.yml, harness: key.
     config_dir = base / ".specify" / "extensions" / "echelon"
     config_dir.mkdir(parents=True, exist_ok=True)
-    config_file = config_dir / "echelon.yml"
+    config_file = config_dir / "echelon-config.yml"
 
     harness_data = {
         "target_repo": config.target_repo,
@@ -376,7 +376,7 @@ def init_harness(
     }
 
     if yaml is not None:
-        # Merge into existing echelon.yml (preserves echelon squad settings)
+        # Merge into existing echelon-config.yml (preserves echelon squad settings)
         existing: dict = {}
         if config_file.exists():
             existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}

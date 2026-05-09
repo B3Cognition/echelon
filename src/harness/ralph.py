@@ -639,7 +639,7 @@ class RalphController:
         else:
             # Unknown project type — cannot verify locally.
             # Return passed=False so the harness does not falsely claim convergence.
-            # Users can add a verify_command to echelon.yml to enable verification.
+            # Users can add a verify_command to echelon-config.yml to enable verification.
             logger.warning(
                 "Cannot detect project type in %s; local verification skipped",
                 worktree_path,
@@ -652,7 +652,7 @@ class RalphController:
                     error=(
                         f"Cannot detect project type in {worktree_path}; "
                         "local verification skipped. "
-                        "Add verify_command to echelon.yml to enable verification."
+                        "Add verify_command to echelon-config.yml to enable verification."
                     ),
                 )],
                 duration_s=0.0,

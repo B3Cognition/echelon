@@ -8,7 +8,7 @@ import pytest
 
 from echelon.orchestrator import run_multi_target, validate_targets
 
-_ECHELON_YML = ".specify/extensions/echelon/echelon.yml"
+_ECHELON_YML = ".specify/extensions/echelon/echelon-config.yml"
 
 
 def _make_target(tmp_path: Path, name: str, initialised: bool = True) -> Path:

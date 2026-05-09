@@ -22,7 +22,7 @@ fail_result() { printf 'FAIL:%s' "$*"; }
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-ECHELON_YML=".specify/extensions/echelon/echelon.yml"
+ECHELON_YML=".specify/extensions/echelon/echelon-config.yml"
 
 # ── Setup: polyrepo P with spec and two initialised sub-repos ─────────────────
 mkdir -p "$tmpdir/specs/024-test"

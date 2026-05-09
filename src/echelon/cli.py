@@ -309,7 +309,7 @@ def _cmd_harness_init(args: list[str]) -> None:
         print(f"✗ echelon harness init failed: {e}", file=sys.stderr)
         sys.exit(1)
 
-    config_file = Path(base_dir) / ".specify" / "extensions" / "echelon" / "echelon.yml"
+    config_file = Path(base_dir) / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     from harness.paths import harness_dir
     mirror_dir = harness_dir(Path(base_dir)) / "mirror.git"
 
@@ -381,7 +381,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.gitops import GitOpsManager
     from harness.skills.run_skill import run
 
-    # Orchestrator mode: spec targets take priority over local echelon.yml.
+    # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
     from harness.spec_frontmatter import find_spec_dir, read_frontmatter
@@ -396,8 +396,8 @@ def _cmd_harness_run(args: list[str]) -> None:
             targets = validate_targets(targets_rel, polyrepo_root)
             sys.exit(run_multi_target(spec_id, targets, args[1:]))
 
-    # Single-repo mode: require local echelon.yml (harness config).
-    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon.yml"
+    # Single-repo mode: require local echelon-config.yml (harness config).
+    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"

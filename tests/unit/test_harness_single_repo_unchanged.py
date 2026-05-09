@@ -1,7 +1,7 @@
 """Regression: single-repo harness run path is unchanged by polyrepo changes.
 
 Verifies that when a spec has no targets, the single-repo path is taken
-(requires local echelon.yml) regardless of whether one exists.
+(requires local echelon-config.yml) regardless of whether one exists.
 """
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ import pytest
 @pytest.mark.unit
 class TestSingleRepoPathUnchanged:
     def test_no_targets_in_spec_uses_single_repo_path(self, tmp_path: Path) -> None:
-        """Spec with no targets and local echelon.yml: run_multi_target never called."""
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon.yml"
+        """Spec with no targets and local echelon-config.yml: run_multi_target never called."""
+        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 
@@ -45,12 +45,12 @@ class TestSingleRepoPathUnchanged:
     def test_targets_in_spec_triggers_orchestrator_even_with_local_echelon_yml(
         self, tmp_path: Path
     ) -> None:
-        """Spec with targets triggers orchestrator mode even when local echelon.yml exists.
+        """Spec with targets triggers orchestrator mode even when local echelon-config.yml exists.
 
-        This is the kill-gate scenario: a polyrepo root that has its own echelon.yml
+        This is the kill-gate scenario: a polyrepo root that has its own echelon-config.yml
         (e.g. for deploy) must not silently run the harness against itself.
         """
-        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon.yml"
+        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
 

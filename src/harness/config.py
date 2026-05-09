@@ -5,7 +5,7 @@ Implements the spec-kit 4-level config cascade by delegating to
 ``specify_cli.extensions.ConfigManager`` when available:
 
   1. Defaults   — extension.yml ``config.defaults``                   (bundled)
-  2. Project    — ``.specify/extensions/echelon/echelon.yml``         (committed)
+  2. Project    — ``.specify/extensions/echelon/echelon-config.yml``         (committed)
   3. Local      — ``.specify/extensions/echelon/local-config.yml``    (gitignored)
   4. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                 (CI/secrets)
 
@@ -236,8 +236,8 @@ def _get_merged_config(project_root: Path) -> Dict[str, Any]:
     ext_dir = project_root / ".specify" / "extensions" / "echelon"
     config: Dict[str, Any] = {}
 
-    # Layer 2: project config — harness: section of echelon.yml
-    raw = _load_yaml_file(ext_dir / "echelon.yml")
+    # Layer 2: project config — harness: section of echelon-config.yml
+    raw = _load_yaml_file(ext_dir / "echelon-config.yml")
     config = _merge(config, raw.get("harness", raw))
 
     # Layer 3: local config (gitignored)

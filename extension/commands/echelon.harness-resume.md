@@ -24,7 +24,7 @@ Resume a loop that blocked waiting for human input. Incorporates the user's answ
 
 ## Step 1: Check Initialized
 
-If `.specify/extensions/echelon/echelon.yml` does not exist, report:
+If `.specify/extensions/echelon/echelon-config.yml` does not exist, report:
 
 **"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop.
 
