@@ -344,6 +344,37 @@ rm -rf .specify/squad/staging
 - `feedback/` — post-implementation outcome data
 - `agent-scores.yaml` — agent performance history
 
+### 12.10b Commit Spec Artifacts to Feature Branch — MANDATORY
+
+**This step is the handoff to the harness.** The harness creates git worktrees from the feature branch to run `echelon build`. If spec artifacts (`spec.md`, `tasks.md`, `plan.md`, etc.) are not committed, `harness.ensure_on_default_branch()` will stash them before switching branches — making them invisible to every subsequent worktree. The harness will then fail to find `spec.md` and `tasks.md`.
+
+Run this immediately after §12.10 archive, while still on the feature branch:
+
+```bash
+SPEC_DIR="${PROJECT_ROOT}/specs/${SPEC_ID}-${FEATURE_NAME}"
+
+# Stage all artifacts produced in the spec directory
+git -C "${PROJECT_ROOT}" add "${SPEC_DIR}/"
+
+# Also stage knowledge-base updates (calibration-profile, agent-scores, etc.)
+git -C "${PROJECT_ROOT}" add "${PROJECT_ROOT}/knowledge-base/" 2>/dev/null || true
+
+# Commit — [skip ci] avoids triggering a CI build on a spec-only commit
+git -C "${PROJECT_ROOT}" diff --cached --quiet || \
+  git -C "${PROJECT_ROOT}" commit -m \
+    "feat(spec): echelon run artifacts for ${SPEC_ID}-${FEATURE_NAME} [skip ci]
+
+Squad run complete. Spec, tasks, plan, architecture, and all specialist
+outputs committed to feature branch so harness.build can create clean
+worktrees.
+
+Run ID: ${RUN_ID}"
+
+echo "[FINALIZE] Spec artifacts committed to feature branch ✓"
+```
+
+If `git diff --cached --quiet` exits 0 (nothing staged), the commit is skipped — this handles re-runs where artifacts were already committed.
+
 ### 12.11 Return to Default Branch — MANDATORY
 
 > **NEVER end the run on the feature branch.** Leaving the repo checked out on `{NNN}-{feature}` causes a "branch already checked out" conflict the next time the harness creates a worktree.
