@@ -391,7 +391,16 @@ If merge fails (branch protection, conflicts), report the error and stop — do 
 
 Runs only when `auto_merge=true` and the merge in Step 9 succeeded.
 
-Invoke the `speckit-echelon-deploy` skill now. This will:
+Check whether deploy is enabled:
+
+```bash
+ECHELON_EXT="$(git rev-parse --show-toplevel)/.specify/extensions/echelon"
+_deploy_enabled=$(bash "${ECHELON_EXT}/scripts/bash/echelon-config-get.sh" deploy.enabled 2>/dev/null || echo "true")
+```
+
+If `_deploy_enabled = false`: print `deploy: skipped (deploy.enabled = false)` and proceed directly to Step 10.
+
+Otherwise, invoke the `speckit-echelon-deploy` skill now. This will:
 
 1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `speckit-echelon-cicd` first
 2. Run the blue/green (HTTP) or tag-pointer (CLI) deploy

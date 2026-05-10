@@ -16,6 +16,10 @@ Thumbs.db
 !/specs/002-build-qa-phase-split/
 /specs/002-build-qa-phase-split/*
 !/specs/002-build-qa-phase-split/contracts/
+!/specs/003-deploy-optional/
+/specs/003-deploy-optional/*
+!/specs/003-deploy-optional/spec.md
+!/specs/003-deploy-optional/plan.md
 .github/*
 !.github/workflows/
 .specify/squad/

@@ -15,6 +15,17 @@ _fail() {
   ERRORS=$((ERRORS + 1))
 }
 
+# ── Deploy enabled check ──────────────────────────────────────────────────────
+_DEPLOY_ENABLED="true"
+if _val="$(bash "${SCRIPTS_DIR}/echelon-config-get.sh" deploy.enabled 2>/dev/null)"; then
+  _DEPLOY_ENABLED="${_val}"
+fi
+
+if [ "${_DEPLOY_ENABLED}" = "false" ]; then
+  echo "deploy: validation skipped (deploy.enabled = false)"
+  exit 0
+fi
+
 echo "deploy: validating infrastructure before harness launch..."
 
 # ── 1. deploy-state.json exists and is valid ─────────────────────────────────

@@ -1070,6 +1070,11 @@ mempalace:
 # =============================================================================
 
 deploy:
+  # Set to false to skip all deploy infrastructure checks and post-merge deploy.
+  # Use when the project does not need echelon's local blue/green CD.
+  # Default: true
+  enabled: true
+
   # Deployment type. Controls which infrastructure is used.
   # [values: http | cli]  Default: http
   # - http: Traefik reverse proxy, two long-lived containers (blue/green), curl health check
