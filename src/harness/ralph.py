@@ -866,11 +866,35 @@ class RalphController:
     # === Git operations ===
 
     def _commit_and_push(self, worktree_path: str, outer_iter: int) -> None:
-        """Commit all changes and push to remote."""
+        """Commit all changes and push to remote.
+
+        Uses the actual current branch of the worktree rather than a hardcoded
+        harness/* pattern. In feature-branch mode (echelon flow) the worktree is
+        checked out on the echelon feature branch (e.g. '001-weather-dashboard'),
+        not on a harness/* branch — pushing the wrong name silently fails.
+        """
         try:
             message = f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}"
             self._gitops.commit(worktree_path, message)
-            branch = f"harness/{self._spec_id}/{self._strategy_id}/iter-{outer_iter}"
+
+            # Detect the actual branch rather than assuming a harness/* name.
+            # create_worktree() checks out the feature branch directly in
+            # feature-branch mode, so we must read HEAD to get the real branch.
+            from harness.gitops import _run_git  # local import to avoid circular
+            result = _run_git(
+                ["branch", "--show-current"],
+                cwd=worktree_path,
+                check=False,
+            )
+            branch = result.stdout.strip()
+            if not branch:
+                # Detached HEAD — fall back to legacy naming so we at least try
+                branch = f"harness/{self._spec_id}-{self._strategy_id}-iter-{outer_iter}"
+                logger.warning(
+                    "Worktree at %s is in detached HEAD state; pushing as %s",
+                    worktree_path, branch,
+                )
+
             self._gitops.push(worktree_path, branch)
         except Exception as e:
             logger.warning("Commit/push failed: %s", e)
