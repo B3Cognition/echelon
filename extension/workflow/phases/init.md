@@ -258,7 +258,13 @@ If `detected_mode` is `brownfield`:
    - `complete`: proceed — speckit-echelon-scout (SCOUT) will read artifact paths from `state.json.golddigger_artifacts`
    - `partial` or `failed`: log degraded-brownfield warning; proceed (speckit-echelon-scout (SCOUT) falls back to manual structural analysis)
 
-If `revenge extension` is not listed or `extensions` is empty: skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER.
+Before dispatching GOLDDIGGER, verify the revenge extension is installed:
+
+```bash
+specify extension info revenge
+```
+
+If this command exits non-zero (extension not installed): skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER. Do NOT check `extensions.yml`'s `installed:` field — that file tracks hooks, not installed extensions. The authoritative source is `specify extension info <id>`.
 
 **speckit-echelon-golddigger (GOLDDIGGER) Mode 2 Queue (Phase 1 agents):**
 
