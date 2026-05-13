@@ -63,7 +63,7 @@ specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
 echelon init    # bootstrap echelon-config.yml, set up Docker/Traefik or CLI wrapper, install git hook
-echelon harness init    # write harness: section into echelon.yml, mirror-clone target repo, detect language + image
+echelon harness init    # write harness: section into echelon-config.yml, mirror-clone target repo, detect language + image
 ```
 
 Both `echelon init` and `echelon harness init` are pure Python — no AI session required.
@@ -132,7 +132,7 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
 4. Invokes the LLM CLI subprocess (`claude -p <prompt> --dangerously-skip-permissions`, or the equivalent for Copilot/Opencode)
 
-This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon.yml`) selects the provider.
+This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon-config.yml`) selects the provider.
 
 The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
 
@@ -157,7 +157,7 @@ ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
 
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
 
-The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon.yml` (`harness.llm.cli`).
+The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon-config.yml` (`harness.llm.cli`).
 
 ## Harness
 
@@ -203,7 +203,7 @@ Both strategies follow the same outer loop: build → Docker verify → feedback
 
 ### Review Loop (Phase 3)
 
-After Phase 1 converges and a PR is open, the harness optionally enters a review loop. Enable in `echelon.yml` under `harness:`:
+After Phase 1 converges and a PR is open, the harness optionally enters a review loop. Enable in `echelon-config.yml` under `harness:`:
 
 ```yaml
 pr_host: github
@@ -620,12 +620,13 @@ cp config-template.yml echelon-config.yml
 | `convergence.quality_delta_threshold` | Stop when improvement below | `0.02` |
 | `guardian.mode` | GUARDIAN dispatch mode | `always_on` (default) |
 | `endocrine.enabled` | Hormone-modulated motivation | `false` (default) |
+| `deploy.enabled` | Enable local blue/green CD after merge | `true` (default); set `false` to skip deploy infra |
 
 See `config-template.yml` for full reference with guidance comments.
 
 ## Local CD
 
-Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, it calls `deploy.sh` directly.
+Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, it calls `deploy.sh` directly. Set `deploy.enabled: false` in `echelon-config.yml` to skip all deploy infrastructure checks and the post-merge deploy step — useful for projects that manage their own CD pipeline.
 
 **Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
 
