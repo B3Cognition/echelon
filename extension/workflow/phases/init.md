@@ -239,32 +239,42 @@ scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
 
 If `detected_mode` is `brownfield`:
 
-1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Survey) before DISCOVER:
-   - Use the Agent tool
-   - **prompt:**
+**NEVER do your own filesystem exploration before dispatching GOLDDIGGER.** Do not run `ls`, `find`, or any directory listing to understand the polyrepo structure before this dispatch — that is GOLDDIGGER's job. Dispatch immediately.
 
-     ```xml
-     <context>
-     [include state.json.golddigger_artifacts paths if available]
-     </context>
-
-     <instructions>
-     You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
-     Run **Mode 1 (Survey)** for target path `{target_path}`. Your context: run_id is `{run_id}`, mode is brownfield.
-     </instructions>
-     ```
-2. Block until speckit-echelon-golddigger (GOLDDIGGER) completes.
-3. Read `state.json.golddigger_status`:
-   - `complete`: proceed — speckit-echelon-scout (SCOUT) will read artifact paths from `state.json.golddigger_artifacts`
-   - `partial` or `failed`: log degraded-brownfield warning; proceed (speckit-echelon-scout (SCOUT) falls back to manual structural analysis)
-
-Before dispatching GOLDDIGGER, verify the revenge extension is installed:
+First, verify the revenge extension is installed:
 
 ```bash
 specify extension info revenge
 ```
 
 If this command exits non-zero (extension not installed): skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER. Do NOT check `extensions.yml`'s `installed:` field — that file tracks hooks, not installed extensions. The authoritative source is `specify extension info <id>`.
+
+If revenge is installed:
+
+1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Survey) before DISCOVER:
+   - Use the Agent tool
+   - `target_path` is `${PROJECT_ROOT}` (the absolute project root established in step 1.0 — the polyrepo root directory)
+   - `run_id` is `state.json.run_id`
+   - **prompt:**
+
+     ```xml
+     <context>
+     project_root: ${PROJECT_ROOT}
+     run_id: {run_id from state.json}
+     mode: brownfield
+     [include state.json.golddigger_artifacts paths if available]
+     </context>
+
+     <instructions>
+     You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
+     Run **Mode 1 (Survey)** for target path `${PROJECT_ROOT}`. Your context: run_id is `{run_id}`, mode is brownfield.
+     </instructions>
+     ```
+
+2. Block until speckit-echelon-golddigger (GOLDDIGGER) completes.
+3. Read `state.json.golddigger_status`:
+   - `complete`: proceed — speckit-echelon-scout (SCOUT) will read artifact paths from `state.json.golddigger_artifacts`
+   - `partial` or `failed`: log degraded-brownfield warning; proceed (speckit-echelon-scout (SCOUT) falls back to manual structural analysis)
 
 **speckit-echelon-golddigger (GOLDDIGGER) Mode 2 Queue (Phase 1 agents):**
 
