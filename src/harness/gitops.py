@@ -89,6 +89,14 @@ class GitOpsManager:
         """
         self._config = config
         self._base_dir = Path(base_dir) if base_dir else Path.cwd()
+
+        # REMOVE IN JUL 2026 — migrate .specify/harness/ to new extension-owned path
+        try:
+            from harness.init import _migrate_legacy_harness_dir
+            _migrate_legacy_harness_dir(self._base_dir)
+        except Exception as _mig_exc:
+            logger.debug("Legacy harness dir migration skipped: %s", _mig_exc)
+
         self._mirror_path = self._base_dir / MIRROR_REL_PATH
 
         # Validate git is available
