@@ -20,6 +20,10 @@ Thumbs.db
 /specs/003-deploy-optional/*
 !/specs/003-deploy-optional/spec.md
 !/specs/003-deploy-optional/plan.md
+!/specs/004-run-finalize-hardening/
+/specs/004-run-finalize-hardening/*
+!/specs/004-run-finalize-hardening/spec.md
+!/specs/004-run-finalize-hardening/plan.md
 .github/*
 !.github/workflows/
 .specify/squad/

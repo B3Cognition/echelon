@@ -344,67 +344,26 @@ rm -rf .specify/squad/staging
 - `feedback/` — post-implementation outcome data
 - `agent-scores.yaml` — agent performance history
 
-### 12.10b Commit Spec Artifacts to Feature Branch — MANDATORY
+### 12.10b Commit Spec Artifacts and Return to Default Branch — MANDATORY
 
-**This step is the handoff to the harness.** The harness creates git worktrees from the feature branch to run `echelon build`. If spec artifacts (`spec.md`, `tasks.md`, `plan.md`, etc.) are not committed, `harness.ensure_on_default_branch()` will stash them before switching branches — making them invisible to every subsequent worktree. The harness will then fail to find `spec.md` and `tasks.md`.
+**This step MUST be executed as a Bash tool call. Do NOT implement git operations inline or in prose.**
 
-Run this immediately after §12.10 archive, while still on the feature branch:
+This is the harness handoff: spec artifacts (including `constitution.md` copied from `.specify/memory/`) are committed to the feature branch, and the working directory is switched back to the default branch. If this step is skipped, the harness will stash uncommitted artifacts and worktrees will be missing files.
 
-```bash
-SPEC_DIR="${PROJECT_ROOT}/specs/${SPEC_ID}-${FEATURE_NAME}"
-
-# Stage all artifacts produced in the spec directory
-git -C "${PROJECT_ROOT}" add "${SPEC_DIR}/"
-
-# Also stage knowledge-base updates (calibration-profile, agent-scores, etc.)
-git -C "${PROJECT_ROOT}" add "${PROJECT_ROOT}/knowledge-base/" 2>/dev/null || true
-
-# Commit — [skip ci] avoids triggering a CI build on a spec-only commit
-git -C "${PROJECT_ROOT}" diff --cached --quiet || \
-  git -C "${PROJECT_ROOT}" commit -m \
-    "feat(spec): echelon run artifacts for ${SPEC_ID}-${FEATURE_NAME} [skip ci]
-
-Squad run complete. Spec, tasks, plan, architecture, and all specialist
-outputs committed to feature branch so harness.build can create clean
-worktrees.
-
-Run ID: ${RUN_ID}"
-
-echo "[FINALIZE] Spec artifacts committed to feature branch ✓"
-```
-
-If `git diff --cached --quiet` exits 0 (nothing staged), the commit is skipped — this handles re-runs where artifacts were already committed.
-
-### 12.11 Return to Default Branch — MANDATORY
-
-> **NEVER end the run on the feature branch.** Leaving the repo checked out on `{NNN}-{feature}` causes a "branch already checked out" conflict the next time the harness creates a worktree.
-
-After archiving, switch the working directory back to the default branch so
-harness.run can create clean worktrees without hitting a "branch already checked
-out" conflict:
+Read `RUN_ID` from state.json, then call `finalize-run.sh`:
 
 ```bash
-DEFAULT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
-# Resolve canonical default — prefer 'main', fall back to 'master', then HEAD
-for branch in main master; do
-  if git show-ref --quiet "refs/heads/$branch"; then
-    DEFAULT_BRANCH="$branch"
-    break
-  fi
-done
-CURRENT=$(git branch --show-current)
-if [ "$CURRENT" != "$DEFAULT_BRANCH" ]; then
-  git checkout "$DEFAULT_BRANCH"
-  echo "Switched from $CURRENT → $DEFAULT_BRANCH (harness handoff)"
-fi
+RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+bash "${ECHELON_EXT}/scripts/bash/finalize-run.sh" \
+  "${PROJECT_ROOT}" "${SPEC_ID}" "${FEATURE_NAME}" "${RUN_ID}"
 ```
 
-This is a non-destructive operation — all spec artifacts are committed on the
-feature branch, and the staging area was already archived in step 12.9. The
-feature branch remains intact; the working directory simply moves back to the
-default branch so the next harness invocation finds a clean starting state.
+If exit code is non-zero, report the error and stop. Do not proceed to §12.11.
 
-### 12.12 Branch Stacking (Next Spec)
+The script handles: copying constitution.md, staging, conditional commit (skipped if nothing changed), and `git checkout <default-branch>`.
+
+### 12.11 Branch Stacking (Next Spec)
 
 When the user starts a new squad run while implementation of the current spec is in progress:
 

@@ -35,7 +35,18 @@ if [ "$RESUME_MODE" -eq 0 ]; then
   for f in spec.md tasks.md constitution.md research.md; do
     [ ! -f "${FEATURE_DIR}/${f}" ] && MISSING="${MISSING} ${f}"
   done
-  if [ -n "$MISSING" ]; then
+
+  # constitution.md lives in .specify/memory/ — copy it into the spec dir if missing
+  if echo "${MISSING}" | grep -q "constitution\.md"; then
+    if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
+      cp "${PROJECT_ROOT}/.specify/memory/constitution.md" \
+         "${FEATURE_DIR}/constitution.md"
+      echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
+      MISSING=$(echo "${MISSING}" | sed 's/ constitution\.md//')
+    fi
+  fi
+
+  if [ -n "${MISSING}" ]; then
     echo "[ECHELON CODEGEN] ERROR: Missing Phase A artifacts:${MISSING}"
     echo "[ECHELON CODEGEN] Run speckit.echelon.run ${FEATURE_PATH} first."
     exit 1

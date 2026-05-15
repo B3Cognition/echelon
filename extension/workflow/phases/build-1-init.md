@@ -55,6 +55,18 @@ Read and verify these files exist in `specs/{NNN}-{feature}/`:
 - `estimates.md` — Effort estimates per task
 - `calibration-profile.yaml` — Historical accuracy data
 
+Before validating, resolve `constitution.md` from `.specify/memory/` if missing from the spec dir:
+
+```bash
+if [ ! -f "${SPEC_DIR}/constitution.md" ]; then
+  if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
+    cp "${PROJECT_ROOT}/.specify/memory/constitution.md" \
+       "${SPEC_DIR}/constitution.md"
+    echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
+  fi
+fi
+```
+
 If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `speckit.echelon.run` first."
 
 ### 1.2 Parse Tasks
