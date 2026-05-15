@@ -62,11 +62,41 @@ You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT e
 ### Step 1: Create Spec via Spec-Kit
 
 1. Summarize DISCOVER context (glossary, mental-model, boundaries, assumptions) into a feature description
-2. Call `speckit.specify` with that description using the **Skill** tool
-   - Spec-kit creates the branch: `{NNN}-{feature-name}`
-   - Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
-   - Spec-kit generates initial `spec.md` from its versioned template
-3. **Move ALL staging artifacts to the new spec directory — MANDATORY:**
+
+2. **Determine `SPECIFY_FEATURE_DIRECTORY` before calling `speckit.specify` — MANDATORY:**
+
+   `speckit.specify` independently scans `specs/` for the next free sequential number. That scan is unaware of remote branches, so when remote branches exist without a matching local spec dir the number it picks will be lower than the branch number the git hook assigns. To prevent the mismatch you MUST pin the directory before calling the skill.
+
+   a. Generate the short-name (2-4 words, action-noun format, same logic as the branch script) from the feature description.
+
+   b. Run the branch creation script in **dry-run mode** — read-only, no branch created:
+
+      ```bash
+      .specify/extensions/git/scripts/bash/create-new-feature.sh \
+        --json --dry-run --short-name "<short-name>" "<feature description>"
+      ```
+
+      Parse `BRANCH_NAME` and `FEATURE_NUM` from the JSON output (e.g. `{"BRANCH_NAME":"069-tf-resource-matching","FEATURE_NUM":"069"}`).
+
+   c. Set `SPECIFY_FEATURE_DIRECTORY=specs/<BRANCH_NAME>` (e.g. `specs/069-tf-resource-matching`).
+
+   **Why dry-run:** the `before_specify` hook inside `speckit.specify` calls the script again without `--dry-run` to create the actual branch. Running dry-run first is a side-effect-free read that establishes the correct number — no double branch creation.
+
+3. Call `speckit.specify` with `SPECIFY_FEATURE_DIRECTORY=<value>` included in the Skill arguments:
+
+   ```text
+   SPECIFY_FEATURE_DIRECTORY=specs/069-tf-resource-matching tf-resource-matching feature description
+   ```
+
+   `speckit.specify` treats an explicit `SPECIFY_FEATURE_DIRECTORY` as its highest-priority resolution path and will not scan `specs/`.
+
+   **NEVER call `speckit.specify` without first setting `SPECIFY_FEATURE_DIRECTORY`** from the dry-run result. Omitting it falls back to `speckit.specify`'s independent `specs/` scan, which produces a mismatched number whenever remote branches exist without local spec dirs.
+
+   Spec-kit creates the branch: `{NNN}-{feature-name}`
+   Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
+   Spec-kit generates initial `spec.md` from its versioned template
+
+4. **Move ALL staging artifacts to the new spec directory — MANDATORY:**
 
    ```bash
    mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
@@ -74,9 +104,9 @@ You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT e
 
    **NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
 
-4. **NEVER re-invoke `speckit.specify` if the spec directory is missing after the first call.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — spec_dir missing after speckit.specify succeeded` and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
+5. **NEVER re-invoke `speckit.specify` if the spec directory is missing after the first call.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — spec_dir missing after speckit.specify succeeded` and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
 
-5. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
+6. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
 
 ### Step 2: Enhance Spec with Squad Intelligence
 
