@@ -132,13 +132,14 @@ Before Step 1, you MUST invoke `speckit.specify` via the Skill tool. This invoca
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 
-- **On success:** verify the branch was actually created before proceeding:
+- **On success:** verify the branch was actually created and that its number aligns with the spec directory before proceeding:
 
   ```bash
-  git branch --show-current
+  CURRENT_BRANCH=$(git branch --show-current)
+  echo "CURRENT_BRANCH=${CURRENT_BRANCH}"
   ```
 
-  The output MUST match the branch name returned by `speckit.specify` (e.g. `042-user-auth`). If it does not match — the Skill returned success but the branch script failed silently — treat this as a branch creation failure and output:
+  **Check 1 — branch exists:** `CURRENT_BRANCH` must be non-empty and follow the `NNN-feature-name` pattern. If it does not — the Skill returned success but the branch script failed silently — treat this as a branch creation failure and output:
 
   ```
   speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — branch not created
@@ -148,6 +149,23 @@ Before Step 1, you MUST invoke `speckit.specify` via the Skill tool. This invoca
   ```
 
   Do NOT proceed to Steps 1-2 if the branch check fails.
+
+  **Check 2 — spec dir number matches branch number:** The `before_specify` hook (which creates the git branch) and `speckit.specify` (which creates the spec directory) number their outputs independently. The hook scans both `specs/` and `git branch -a`, so it may choose a higher number than `speckit.specify` chose by scanning `specs/` alone. Self-heal any mismatch immediately after the branch check passes:
+
+  ```bash
+  BRANCH_NUM=$(echo "$CURRENT_BRANCH" | grep -Eo '^[0-9]+')
+  # SPECIFY_FEATURE_DIRECTORY was set before calling speckit.specify (or is taken from its output)
+  SPEC_DIR_NUM=$(basename "$SPECIFY_FEATURE_DIRECTORY" | grep -Eo '^[0-9]+')
+
+  if [ -n "$BRANCH_NUM" ] && [ "$BRANCH_NUM" != "$SPEC_DIR_NUM" ]; then
+    CORRECT_SPEC_DIR="specs/${CURRENT_BRANCH}"
+    mv "$SPECIFY_FEATURE_DIRECTORY" "$CORRECT_SPEC_DIR"
+    SPECIFY_FEATURE_DIRECTORY="$CORRECT_SPEC_DIR"
+    echo "Aligned spec dir: renamed $(basename $SPECIFY_FEATURE_DIRECTORY) → $(basename $CORRECT_SPEC_DIR) to match branch prefix ${BRANCH_NUM}"
+  fi
+  ```
+
+  After this block `SPECIFY_FEATURE_DIRECTORY` is always consistent with `CURRENT_BRANCH`. Report the (possibly corrected) value as `spec_dir` in your output to speckit-echelon-commander (COMMANDER).
 
 - **On error (skill not found, error, timeout):**
   1. **STOP immediately.** Do not proceed to Steps 1-2. Do not create spec.md manually.
