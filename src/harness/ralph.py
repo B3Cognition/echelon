@@ -605,11 +605,15 @@ class RalphController:
         wt = Path(worktree_path)
 
         # Explicit override: verify_command in config takes priority over detection.
+        # Run from project root (base_dir) so test paths resolve against the actual
+        # source tree (e.g. echelon/ submodule), not the worktree which may only contain
+        # generated spec-repo artifacts.
         if self._config.verify_command:
             import subprocess as _sp
             cmd = self._config.verify_command.split()
+            verify_cwd = str(getattr(self._gitops, "base_dir", None) or worktree_path)
             try:
-                res = _sp.run(cmd, cwd=worktree_path, capture_output=True, text=True, timeout=300)
+                res = _sp.run(cmd, cwd=verify_cwd, capture_output=True, text=True, timeout=300)
                 if res.returncode != 0:
                     out = (res.stdout + res.stderr).strip()
                     failures.append(FailureEntry(
