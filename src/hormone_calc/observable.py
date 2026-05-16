@@ -15,6 +15,24 @@ from typing import Callable, Optional
 import yaml
 
 
+def normalize_agent_name(name: str) -> str:
+    """Normalize agent names from journal (speckit-echelon-foo-bar) to the
+    canonical codename form (FOO_BAR) that endocrine.sh expects.
+
+    Examples:
+      "speckit-echelon-commander" → "COMMANDER"
+      "speckit-echelon-spec-guard" → "SPEC_GUARD"
+      "COMMANDER" → "COMMANDER"  (idempotent)
+      "" → ""
+    """
+    if not name:
+        return name
+    if name.startswith("speckit-echelon-"):
+        suffix = name[len("speckit-echelon-"):]
+        return suffix.upper().replace("-", "_")
+    return name
+
+
 @dataclass(frozen=True)
 class ObservableState:
     # about the just-completed dispatch
@@ -118,7 +136,7 @@ def _read_journal_tail(path: Path, n: int) -> list[dict]:
 def _find_prior_verdict(journal: list[dict], agent: str) -> Optional[str]:
     """Walk journal backwards, find most recent entry where this agent had a verdict."""
     for entry in reversed(journal):
-        if entry.get("agent") == agent:
+        if normalize_agent_name(entry.get("agent", "")) == agent:
             data = entry.get("data", {})
             if isinstance(data, dict) and "verdict" in data:
                 return data["verdict"]

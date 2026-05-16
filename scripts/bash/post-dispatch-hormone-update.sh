@@ -96,35 +96,46 @@ while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   read -r verb arg1 arg2 arg3 <<< "$line"
 
-  # Translate trigger line to endocrine.sh call
+  # Translate trigger line to endocrine.sh call.
+  # Individual failures (e.g., agent not known to endocrine.sh) log a warning
+  # but don't abort the hook — applied_dispatches[] must still be written so
+  # idempotency holds on re-runs.
   case "$verb" in
     decay_hormones|on_gate_pass|on_gate_fail|on_rework|on_low_confidence|on_innovate_summon|on_quality_improvement|on_quality_regression)
-      bash "$ENDOCRINE_SH" "$verb" $arg1 >/dev/null 2>&1
+      if ! bash "$ENDOCRINE_SH" "$verb" $arg1 >/dev/null 2>&1; then
+        echo "post-dispatch-hormone-update: warning — $verb $arg1 failed (continuing)" >&2
+      fi
       source_event="$verb"
       target="$arg1"
       ;;
     on_peer_accept|on_peer_reject|propagate_downstream|propagate_cortisol_contagion)
-      bash "$ENDOCRINE_SH" "$verb" "$arg1" "$arg2" >/dev/null 2>&1
+      if ! bash "$ENDOCRINE_SH" "$verb" "$arg1" "$arg2" >/dev/null 2>&1; then
+        echo "post-dispatch-hormone-update: warning — $verb $arg1 $arg2 failed (continuing)" >&2
+      fi
       source_event="$verb"
       target="$arg2"
       ;;
     hormone_update)
       idx="${HORMONE_IDX[$arg2]:-}"
       if [[ -z "$idx" ]]; then
-        echo "post-dispatch-hormone-update: unknown hormone '$arg2'" >&2
+        echo "post-dispatch-hormone-update: unknown hormone '$arg2' (skipping)" >&2
         continue
       fi
-      bash "$ENDOCRINE_SH" update_hormone "$arg1" "$idx" "$arg3" >/dev/null 2>&1
+      if ! bash "$ENDOCRINE_SH" update_hormone "$arg1" "$idx" "$arg3" >/dev/null 2>&1; then
+        echo "post-dispatch-hormone-update: warning — update_hormone $arg1 $arg2 $arg3 failed (continuing)" >&2
+      fi
       source_event="hormone_update_$arg2"
       target="$arg1"
       ;;
     broadcast_adrenaline)
-      bash "$ENDOCRINE_SH" broadcast_adrenaline "$arg1" >/dev/null 2>&1
+      if ! bash "$ENDOCRINE_SH" broadcast_adrenaline "$arg1" >/dev/null 2>&1; then
+        echo "post-dispatch-hormone-update: warning — broadcast_adrenaline $arg1 failed (continuing)" >&2
+      fi
       source_event="broadcast_adrenaline"
       target="all"
       ;;
     *)
-      echo "post-dispatch-hormone-update: unknown trigger verb '$verb'" >&2
+      echo "post-dispatch-hormone-update: unknown trigger verb '$verb' (skipping)" >&2
       continue
       ;;
   esac

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hormone_calc.observable import ObservableState, build_from
+from hormone_calc.observable import ObservableState, build_from, normalize_agent_name
 
 
 @pytest.fixture
@@ -132,3 +132,18 @@ def test_build_from_journal_tail_limit_50(minimal_state, tmp_path, minimal_resul
     assert len(obs.recent_dispatches) == 50
     # Last 50 (RJ-050..RJ-099); last in list should be RJ-099
     assert obs.recent_dispatches[-1]["id"] == "RJ-099"
+
+
+def test_normalize_agent_name_speckit_form():
+    assert normalize_agent_name("speckit-echelon-commander") == "COMMANDER"
+    assert normalize_agent_name("speckit-echelon-spec-guard") == "SPEC_GUARD"
+    assert normalize_agent_name("speckit-echelon-test-guardian") == "TEST_GUARDIAN"
+
+
+def test_normalize_agent_name_canonical_form_idempotent():
+    assert normalize_agent_name("COMMANDER") == "COMMANDER"
+    assert normalize_agent_name("SAGE") == "SAGE"
+
+
+def test_normalize_agent_name_empty_string():
+    assert normalize_agent_name("") == ""

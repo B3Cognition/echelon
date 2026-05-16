@@ -84,3 +84,23 @@ def test_ignores_non_routing_decision_entries():
     ]
     obs = _obs(state={"phase": "phase1-why2"}, recent=recent)
     assert derive_upstream(obs) is None
+
+
+def test_upstream_normalizes_speckit_form_to_uppercase():
+    """Journal contains 'speckit-echelon-commander'; derive_upstream returns 'COMMANDER'."""
+    recent = [
+        {"id": "RJ-001", "type": "routing_decision", "agent": "speckit-echelon-commander",
+         "phase": "init", "data": {"verdict": "DONE"}},
+    ]
+    obs = _obs(recent=recent)
+    assert derive_upstream(obs) == "COMMANDER"
+
+
+def test_upstream_normalizes_multi_part_speckit_name():
+    """speckit-echelon-spec-guard → SPEC_GUARD."""
+    recent = [
+        {"id": "RJ-001", "type": "routing_decision", "agent": "speckit-echelon-spec-guard",
+         "phase": "build-3", "data": {"verdict": "PASS"}},
+    ]
+    obs = _obs(recent=recent)
+    assert derive_upstream(obs) == "SPEC_GUARD"

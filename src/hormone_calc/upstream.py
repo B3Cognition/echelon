@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from hormone_calc.observable import ObservableState
+from hormone_calc.observable import ObservableState, normalize_agent_name
 
 
 def derive_upstream(obs: ObservableState) -> Optional[str]:
@@ -31,7 +31,7 @@ def derive_upstream(obs: ObservableState) -> Optional[str]:
     for entry in reversed(obs.recent_dispatches):
         if entry.get("type") != "routing_decision":
             continue
-        prior_agent = entry.get("agent")
+        prior_agent = normalize_agent_name(entry.get("agent", ""))
         if prior_agent and prior_agent != obs.agent:
             return prior_agent
     return None
