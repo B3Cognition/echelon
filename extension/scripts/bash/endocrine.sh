@@ -424,6 +424,11 @@ cmd_get_adrenaline() {
   echo "$val"
 }
 
+cmd_get_archetype() {
+  local agent="${1:?Usage: endocrine.sh get_archetype <agent>}"
+  agent_to_archetype "$agent"
+}
+
 cmd_set_adrenaline() {
   local agent="${1:?Usage: endocrine.sh set_adrenaline <agent> <value>}"
   local value="${2:?Usage: endocrine.sh set_adrenaline <agent> <value>}"
@@ -1051,6 +1056,7 @@ usage() {
 usage:
   endocrine.sh init
   endocrine.sh get_adrenaline <agent>
+  endocrine.sh get_archetype <agent>
   endocrine.sh set_adrenaline <agent> <value>
   endocrine.sh update_adrenaline <agent> <delta>
   endocrine.sh decay_hormones <agent>
@@ -1091,6 +1097,7 @@ fi
 case "$cmd" in
   init)                          cmd_init ;;
   get_adrenaline)                cmd_get_adrenaline "$@" ;;
+  get_archetype)                 cmd_get_archetype "$@" ;;
   set_adrenaline)                cmd_set_adrenaline "$@" ;;
   update_adrenaline)             cmd_update_adrenaline "$@" ;;
   decay_hormones)                cmd_decay_hormones "$@" ;;
