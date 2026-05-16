@@ -606,6 +606,51 @@ endocrine:
         adrenaline_high: "Budget pressure has propagated to your own hormones. Resist reactive routing; check EVOI for each candidate dispatch before issuing."
         cortisol_high:   "You are catastrophizing. Re-read the user request verbatim. The squad is likely fine; you are interpreting noise as crisis."
 
+  # =============================================================================
+  # DYNAMICS — magnitudes for the deterministic hormone calculator (Phase 4+).
+  # Read by src/hormone_calc/ via DynamicsConfig.load(); falls back to
+  # DEFAULT_DYNAMICS (built into the calculator) if this block is absent.
+  # =============================================================================
+
+  dynamics:
+    budget_pressure:
+      # token_ratio = total_estimated / (token_budget_k * 1000)
+      # Each band [previous_upto, upto) adds the corresponding delta to the
+      # current agent's adrenaline. The 0.95+ band also broadcasts.
+      bands:
+        - { upto: 0.40, delta: 0.00 }
+        - { upto: 0.60, delta: 0.02 }
+        - { upto: 0.80, delta: 0.05 }
+        - { upto: 0.95, delta: 0.10 }
+        - { upto: 1.00, delta: 0.15 }
+      critical_broadcast: 0.05   # extra broadcast_adrenaline when token_ratio >= 0.95
+
+    iteration_pressure:
+      # ratio = state.iteration / max_squad_iterations (default 10)
+      bands:
+        - { upto: 0.50, delta: 0.00 }
+        - { upto: 0.75, delta: 0.03 }
+        - { upto: 1.00, delta: 0.08 }
+
+    task_complexity:
+      # delta = (complexity - 0.5) * multiplier
+      # complexity = archetype_base[archetype] + agent_bump.get(agent, 0), clamped [0, 1]
+      multiplier: 0.15
+      archetype_base:
+        exploration: 0.40
+        validation:  0.50
+        feasibility: 0.60
+        solution:    0.70
+        build:       0.80
+        innovation:  0.50
+        learning:    0.30
+        control:     0.40
+      agent_bump:
+        IMPLEMENTER: 0.10
+        DEBUGGER:    0.15
+        ARCHITECT:   0.10
+        GATEKEEPER:  0.10
+
   # Circuit breakers — slightly wider range for banzai mode
   circuit_breakers:
     max_change_per_cycle: 0.4     # Allow bigger swings (was 0.3)
