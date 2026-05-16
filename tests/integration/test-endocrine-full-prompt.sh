@@ -14,7 +14,7 @@ echo '{}' > "$TEST_SQUAD_DIR/state.json"
 
 export ENDOCRINE_SQUAD_DIR="$TEST_SQUAD_DIR"
 export ENDOCRINE_STATE_FILE="$TEST_SQUAD_DIR/state.json"
-export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/config-template.yml"
+export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/echelon-config.yml"
 
 pass=0
 fail=0

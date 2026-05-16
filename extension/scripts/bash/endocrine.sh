@@ -920,8 +920,13 @@ cmd_get_full_prompt_modifier() {
 
   # Load summary + overlays from echelon-config.yml interpretations block.
   # Use python3 since yaml_get only handles flat top-level keys.
+  # CFG_PATH precedence: env var override > extension source > deployed copy > bare.
+  # Honours ENDOCRINE_CONFIG_FILE so tests can substitute a custom interpretations
+  # block without modifying the project's echelon-config.yml.
   local CFG_PATH=""
-  if [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
+  if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]] && [[ -f "$ENDOCRINE_CONFIG_FILE" ]]; then
+    CFG_PATH="$ENDOCRINE_CONFIG_FILE"
+  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
     CFG_PATH="$REPO_ROOT/extension/echelon-config.yml"
   elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
     CFG_PATH="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
@@ -930,14 +935,15 @@ cmd_get_full_prompt_modifier() {
   fi
 
   local INTERP_RAW=""
-  if [[ -n "$CFG_PATH" ]] && command -v $PYTHON &>/dev/null; then
-    INTERP_RAW=$($PYTHON -c "
+  if [[ -n "$CFG_PATH" ]] && command -v "$PYTHON" &>/dev/null; then
+    INTERP_RAW=$("$PYTHON" - "$CFG_PATH" "$archetype" 2>/dev/null <<'PY'
 import yaml, sys
+cfg_path, archetype = sys.argv[1], sys.argv[2]
 try:
-    cfg = yaml.safe_load(open('$CFG_PATH')) or {}
+    cfg = yaml.safe_load(open(cfg_path)) or {}
 except Exception:
     sys.exit(0)
-arch = cfg.get('endocrine', {}).get('interpretations', {}).get('$archetype', {})
+arch = cfg.get('endocrine', {}).get('interpretations', {}).get(archetype, {})
 if not arch:
     sys.exit(0)
 summary = (arch.get('summary') or '').strip()
@@ -947,7 +953,8 @@ print(summary)
 print('---OVERLAYS---')
 for k, v in overlays.items():
     print(f'{k}::{v}')
-" 2>/dev/null)
+PY
+)
   fi
 
   # If no interpretation block found, fall back to legacy single-line modifier.
@@ -1004,14 +1011,15 @@ for k, v in overlays.items():
   # it would break the protocol. (Future refactor: deduplicate against
   # commander.md §175-190's own calibration injection — out of scope.)
   local SCORES_FILE="$REPO_ROOT/knowledge-base/agent-scores.yaml"
-  if [[ -f "$SCORES_FILE" ]] && command -v $PYTHON &>/dev/null; then
-    $PYTHON -c "
+  if [[ -f "$SCORES_FILE" ]] && command -v "$PYTHON" &>/dev/null; then
+    "$PYTHON" - "$SCORES_FILE" "$agent" 2>/dev/null <<'PY'
 import yaml, sys
+scores_path, agent = sys.argv[1], sys.argv[2]
 try:
-    with open('$SCORES_FILE') as f:
+    with open(scores_path) as f:
         data = yaml.safe_load(f) or {}
     agents = data.get('agents', {})
-    a = agents.get('$agent', {})
+    a = agents.get(agent, {})
     history = a.get('history', a.get('run_history', []))
     if not history:
         sys.exit(0)
@@ -1020,12 +1028,12 @@ try:
     modes = last.get('failure_modes', [])
     if modes:
         fm = modes[0]
-        print(f'[CALIBRATION] Prior score: {score}. Miss: {fm.get(\"type\",\"unknown\")} ({fm.get(\"count\",\"?\")}x). Example: {fm.get(\"example\",\"none\")}')
+        print(f'[CALIBRATION] Prior score: {score}. Miss: {fm.get("type","unknown")} ({fm.get("count","?")}x). Example: {fm.get("example","none")}')
     else:
         print(f'[CALIBRATION] Prior score: {score}. No failure modes recorded.')
 except Exception as e:
     print(f'[CALIBRATION] COLD START — error reading scores: {e}')
-" 2>/dev/null
+PY
   fi
 }
 
