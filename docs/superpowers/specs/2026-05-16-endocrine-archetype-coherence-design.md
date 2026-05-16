@@ -23,6 +23,10 @@ This design addresses Layers A, B, and C, and adds the consistency validator fro
 - A future BUG-3-shape regression (roster drift, archetype drift, missing-baseline drift) is caught by a single test run in CI.
 - No new config files. No new directories. No 41-file prose-authoring blast.
 
+### Acknowledged costs
+
+- **Prompt-token overhead.** Every dispatch now prepends a 5–15-line `[ENDOCRINE]` block to the agent's context pack. For a typical squad run (~30 dispatches) this adds ~6–15 K tokens of structured endocrine prose total. In banzai / unlimited-budget configurations this is negligible; in tight-budget configurations it can be material. Operators concerned about budget can disable endocrine entirely (`endocrine.enabled: false`) — the modifier then becomes a no-op exit-0 call and prepends nothing.
+
 ## Non-goals
 
 - Adding a `specialists` archetype as a 9th entry. Specialists split into existing archetypes — see Section 3.
@@ -68,9 +72,12 @@ COMMANDER dispatches agent X
         ↓
 endocrine.sh get_full_prompt_modifier X
         ↓
-  agent_to_archetype X → "validation"   ← (1) reads endocrine.sh case
-  read hormones for X from state.json
-  read echelon-config.yml endocrine.interpretations.validation  ← (2) reads config
+  step 1:  agent_to_archetype X → "validation"
+              (in-memory bash case, no I/O)
+  step 2:  read hormones for X from state.json
+              (one file read — existing behavior)
+  step 3:  read endocrine.interpretations.validation
+              from echelon-config.yml  ← NEW file read
         ↓
 emit multi-line block:
   [ENDOCRINE — validation archetype]
@@ -79,10 +86,12 @@ emit multi-line block:
     <summary>
     - <triggered overlays>
         ↓
-COMMANDER prepends block to dispatched prompt (unchanged behavior)
+COMMANDER prepends block to dispatched prompt
+  (unchanged caller behavior — same `get_full_prompt_modifier` contract,
+   just richer output)
 ```
 
-(1) and (2) are the two reads. The agent's `.md` file itself is unchanged at runtime; the new 1-line addition is purely for readers of the file and for the consistency test.
+The agent's `.md` file itself is **not** read at runtime — the 1-line marker added in Section 4 is purely for human readers and for the Section 5 consistency test. The only new I/O this design adds at dispatch time is step 3 (one YAML read per dispatch).
 
 ## Section 2 — Interpretation data shape
 
@@ -149,16 +158,18 @@ Interpretation (validation archetype):
 
 | Archetype | Members | Change from current |
 |---|---|---|
-| `exploration` (6) | SCOUT, SYNTHESIZER, CARTOGRAPHER, MODELER, GOLDDIGGER, ORACLE | +GOLDDIGGER (was control), +ORACLE (was control) |
-| `validation` (5) | SAGE, CHECKPOINT, VALIDATOR, GUARDIAN, MONITOR | +GUARDIAN (was control), +MONITOR (was control) |
+| `exploration` (5) | SCOUT, SYNTHESIZER, CARTOGRAPHER, MODELER, GOLDDIGGER | +GOLDDIGGER (was control) |
+| `validation` (4) | SAGE, CHECKPOINT, VALIDATOR, GUARDIAN | +GUARDIAN (was control) |
 | `feasibility` (1) | GATEKEEPER | unchanged |
-| `solution` (3) | ARCHITECT, ORCHESTRATOR, SENTINEL | unchanged |
-| `build` (11) | IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR, CHANGE_CONTROLLER, VISUAL_VALIDATOR, VERIFICATION, ENGINEERING_MANAGER, BENCHMARK | +BENCHMARK (was control) |
+| `solution` (5) | ARCHITECT, ORCHESTRATOR, SENTINEL, ORACLE, BENCHMARK | +ORACLE (was control — provides definitive expert input that ARCHITECT/CARTOGRAPHER consume), +BENCHMARK (was control — capacity models feeding ARCHITECT, not a builder) |
+| `build` (10) | IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR, CHANGE_CONTROLLER, VISUAL_VALIDATOR, VERIFICATION, ENGINEERING_MANAGER | unchanged from existing (no BENCHMARK — see solution above) |
 | `innovation` (3) | MAVERICK, INVESTIGATOR, ADVOCATE | +ADVOCATE (was control) |
-| `learning` (7) | MIRROR, ADAPTIVE, AUDITOR, INTERNALIZER, REALIST, VETERAN, CONSOLIDATOR | +VETERAN (was control) |
+| `learning` (8) | MIRROR, ADAPTIVE, AUDITOR, INTERNALIZER, REALIST, VETERAN, CONSOLIDATOR, MONITOR | +VETERAN (was control), +MONITOR (was control — lives in `extension/agents/learning/` on disk; metacognition is reflection) |
 | `control` (5) | COMMANDER, SCOREKEEPER, TRACKER, STRATEGIST, PROGRESS_TRACKER | -GOLDDIGGER, -ADVOCATE, -VETERAN, -GUARDIAN, -BENCHMARK, -ORACLE, -MONITOR (all reassigned) |
 
 41 total. Every disk agent placed.
+
+**Sanity-check:** the disk directory layout (`extension/agents/<layer>/<agent>.md`) groups agents by *operational layer* (control / exploration / feasibility / solution / specialists / build / learning). The endocrine archetypes here are tuned to *hormone profile that fits the agent's role*. They overlap heavily but not perfectly — for example, MONITOR lives in the `learning/` directory and gets the `learning` archetype baseline, while ORACLE/BENCHMARK live in `specialists/` and pick up the `solution` archetype because their *output* (expert input feeding designers) shares the solution profile. The specialists directory has no corresponding archetype on purpose — see "Non-goals".
 
 ### Interpretation drafts (8 archetypes)
 
@@ -198,12 +209,15 @@ interpretations:
 
   solution:
     summary: |
-      You design under high serotonin (calm confidence) and elevated dopamine
-      (creative). Your job is the simplest architecture that meets the spec —
-      not the most elegant one.
+      You operate under high serotonin (calm confidence) and elevated dopamine
+      (creative). Your job is the simplest correct contribution — the smallest
+      architecture (ARCHITECT/ORCHESTRATOR/SENTINEL), the tightest capacity
+      model (BENCHMARK), the most specific domain answer (ORACLE) — that meets
+      the spec. Avoid over-engineering; avoid elaborating beyond what your
+      consumers (ARCHITECT, CARTOGRAPHER) will use.
     overlays:
-      dopamine_high: "Creative drive may be over-tuning. Check: are you adding optionality the spec doesn't ask for? Cut anything not requirement-traced."
-      serotonin_low: "Rushed design risk. Stop generating ADRs; spend the next dispatch consolidating what's already decided and double-checking trace coverage."
+      dopamine_high: "Creative drive may be over-tuning. Check: are you adding optionality, capacity headroom, or domain detail the spec doesn't ask for? Cut anything not requirement-traced."
+      serotonin_low: "Rushed output risk. Stop generating new structure (ADRs / capacity rows / domain sections); spend the next dispatch consolidating what's already decided and double-checking trace coverage."
 
   build:
     summary: |
@@ -226,12 +240,14 @@ interpretations:
 
   learning:
     summary: |
-      You operate reflectively under high serotonin and high oxytocin.
-      Cross-agent and cross-run knowledge transfer is your job — never produce
-      a per-run-isolated artifact.
+      You operate reflectively under high serotonin and high oxytocin. Your
+      value is the signal individual dispatches miss — whether that's
+      real-time process drift (MONITOR's beat) or cross-run pattern
+      extraction (AUDITOR, MIRROR, ADAPTIVE, REALIST, VETERAN, CONSOLIDATOR,
+      INTERNALIZER). Step back from the per-task view.
     overlays:
-      cortisol_low: "Under-reflection. You are summarizing instead of synthesizing. Look for the cross-run pattern, not the per-run finding."
-      oxytocin_low: "Siloed thinking. Read at least one prior run's evolution-report before producing your output."
+      cortisol_low: "Under-reflection. You are summarizing instead of synthesizing. Look for the pattern (cross-run for post-hoc agents; cross-phase for MONITOR), not the local finding."
+      oxytocin_low: "Siloed thinking. Read at least one prior run's evolution-report (or, for MONITOR, scan the current run's reasoning-journal index) before producing your output."
 
   control:
     summary: |
@@ -279,12 +295,14 @@ Run in CI alongside the existing endocrine tests in `tests/unit/test-endocrine-*
 
 ## Migration / sequencing
 
-1. **`echelon-config.yml`** — add the `endocrine.interpretations:` block under the existing `endocrine:` block. Same file, single PR-friendly diff.
+1. **`echelon-config.yml`** — two edits in the same file:
+   - Add the `endocrine.interpretations:` block under the existing `endocrine:` block (Section 2).
+   - Update the per-archetype `# <ARCHETYPE> (members…)` comments above each entry of `endocrine.baselines:` to match the new memberships in Section 3. Stale comments would re-create the kind of drift Section 5 prevents in code but cannot detect in YAML comments.
 2. **`endocrine.sh`** — two edits:
-   - `agent_to_archetype()`: reassign GOLDDIGGER, ADVOCATE, VETERAN, GUARDIAN, BENCHMARK, ORACLE, MONITOR (7 agents).
-   - `cmd_get_prompt_modifier()` / `cmd_get_full_prompt_modifier()`: read `endocrine.interpretations.<archetype>` via existing `yaml_get`; emit multi-line block per Section 2.
-3. **`scripts/bash/agent-endocrine-rewire.sh`** — write and run once over all 41 agent files. Commit results.
-4. **`tests/unit/test-endocrine-archetype-consistency.sh`** — write.
+   - `agent_to_archetype()`: reassign 7 agents per the Section 3 table — GOLDDIGGER, ADVOCATE, VETERAN to their Layer-A archetypes; GUARDIAN, BENCHMARK, ORACLE, MONITOR to their Layer-B archetypes (note: ORACLE and BENCHMARK go to `solution`, MONITOR to `learning`).
+   - `cmd_get_prompt_modifier()` / `cmd_get_full_prompt_modifier()`: read `endocrine.interpretations.<archetype>` via existing `yaml_get`; emit multi-line block per Section 2. Preserve the existing single-line fall-back when interpretations are absent.
+3. **`scripts/bash/agent-endocrine-rewire.sh`** — write and run once over all 41 agent files. After the script runs, spot-check at least one file whose `## Role` body is immediately followed by another `## ` heading (e.g., `extension/agents/learning/monitor.md` has `## Role` → `## NEVER Rules`) to confirm the blockquote insertion produces acceptable visual flow. Commit results.
+4. **`tests/unit/test-endocrine-archetype-consistency.sh`** — write the six assertions per Section 5.
 5. **Deploy:** copy updated `endocrine.sh` and `echelon-config.yml` to `.specify/extensions/echelon/...` for the live extension; copy updated agent files similarly. Standard echelon deployment pattern (already used by BUG-1 and BUG-3 fixes).
 6. **Verify:** run the new test, run an `echelon run "self test"` and confirm a dispatched agent's prompt contains the new multi-line `[ENDOCRINE — <archetype> archetype]` block with at least the summary line.
 
@@ -292,9 +310,14 @@ The migration is incremental: steps 1+2 alone deliver Layer A+B fixes without an
 
 ## Rollback
 
-- **Layer A+B regression** (config + endocrine.sh changes cause unexpected behavior): revert the `agent_to_archetype` and `cmd_get_*_prompt_modifier` edits. `endocrine.interpretations:` becomes inert (backward-compat fall-through to the old single-line modifier kicks in). Agent files unaffected.
-- **Layer C regression** (the markdown marker bloats prompts unhelpfully): the rewire script supports a `--remove` flag to strip the marker idempotently. Run once; commit.
-- **Test regression** (assertion #6 fires spuriously): mark the new test optional in CI until rectified.
+Rollback is granular — three independently revertible changes, listed in increasing blast radius:
+
+- **Multi-line emit format regression** (the new `[ENDOCRINE — <archetype>]` block confuses agents or bloats prompts): revert only the `cmd_get_*_prompt_modifier` change. Output reverts to the existing `[ENDOCRINE: …] Normal operating conditions.` single-line. Archetype reassignments stay (so GOLDDIGGER still gets exploration baselines, etc.). `endocrine.interpretations:` block in config becomes unread but doesn't break anything.
+- **Archetype reassignment regression** (one of the 7 agents behaves worse with its new baselines): revert only the `agent_to_archetype` change for the affected agent(s); other agents keep their new archetypes. This is a targeted edit (single `case` branch in `endocrine.sh`).
+- **Layer C regression** (the markdown marker bloats agent files or causes confusion): `agent-endocrine-rewire.sh --remove` strips the marker idempotently. Run once; commit. Config and `endocrine.sh` changes unaffected — runtime behavior unchanged because the agent file marker isn't read at runtime.
+- **Test regression** (assertion #6 fires spuriously after a manual edit removed a marker): mark the new test optional in CI until rectified, or re-run the rewire script to restore the marker.
+
+Reverting "all of Section 1–5" in one shot is *not* supported as a single command; the migration was designed to be independently revertible per change, not atomic.
 
 ## Out of scope (future work)
 
