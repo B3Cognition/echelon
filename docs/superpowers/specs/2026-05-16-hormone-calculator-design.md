@@ -309,17 +309,17 @@ IMPLEMENTER returns `verdict: FAIL` on a rework attempt, with `token_ratio=0.7`,
 
 ```
 decay_hormones IMPLEMENTER                        # E
-hormone_update IMPLEMENTER adrenaline +0.05       # F1 budget moderate
-hormone_update IMPLEMENTER adrenaline +0.03       # F2 iteration mid
-hormone_update IMPLEMENTER norepinephrine +0.045  # F3 complexity
+hormone_update IMPLEMENTER adrenaline +0.05       # F1 budget moderate (token_ratio 0.7 ∈ [0.6,0.8))
+hormone_update IMPLEMENTER adrenaline +0.03       # F2 iteration mid (ratio 0.7 ∈ [0.50,0.75))
+hormone_update IMPLEMENTER norepinephrine +0.06   # F3 complexity: (0.80 build + 0.10 IMPLEMENTER − 0.5) × 0.15
 propagate_downstream SPEC_GUARD IMPLEMENTER       # C
-propagate_cortisol_contagion SPEC_GUARD IMPLEMENTER  # C (upstream > 0.8)
-on_gate_fail IMPLEMENTER                          # A: dopamine -0.20, cortisol +0.10
+propagate_cortisol_contagion SPEC_GUARD IMPLEMENTER  # C (upstream cortisol 0.9 > 0.8)
+on_gate_fail IMPLEMENTER                          # A: dopamine −0.20, cortisol +0.10
 on_rework IMPLEMENTER                             # A: cortisol +0.10
 on_low_confidence IMPLEMENTER                     # A: cortisol +0.20
 ```
 
-Net IMPLEMENTER shift: cortisol +0.45 (huge), dopamine -0.20 + upstream-carry, adrenaline +0.08, norepinephrine +0.045. Decay applied first. Next dispatch sees high-cortisol + elevated-adrenaline state → triggers the build archetype's `adrenaline_high` overlay in the multi-line modifier from the archetype-coherence work.
+Net IMPLEMENTER shift this dispatch: cortisol +0.45 (huge), dopamine −0.20 + upstream-carry (`(spec_guard.dopamine − 0.5) × 0.3`), adrenaline +0.08, norepinephrine +0.06. Decay applied first (no-op or small pull-toward-baseline). Next dispatch sees high-cortisol + elevated-adrenaline state → triggers the build archetype's `adrenaline_high` overlay in the multi-line modifier from the archetype-coherence work.
 
 ## Section 4 — Output format + dispatch-time data flow
 
@@ -366,8 +366,9 @@ Agent returns response with trailing ```echelon_result block
 Existing Post-Dispatch Protocol (commander.md §92-159):
    A. Parse echelon_result block
    B. Write journal entries
-   C. Apply state.json state_updates
-   D. Set last_dispatch.post_dispatch_complete: true
+   C. Apply state.json state_updates (incl. last_dispatch.post_dispatch_complete: true
+      — atomic single-Edit write per the MANDATORY atomic-write discipline)
+   D. Then and only then proceed (gate — no writes)
   ↓
 NEW STEP E: invoke hormone-update hook
    bash scripts/bash/post-dispatch-hormone-update.sh \
@@ -397,7 +398,7 @@ Replace the narrative pre/post-dispatch endocrine sections (commander.md §566-6
 hook.** Do NOT decide which hormone events fire from prose judgment — the
 hook is deterministic and authoritative.
 
-Immediately after the standard Post-Dispatch Protocol (steps A–D) writes
+Immediately after the standard Post-Dispatch Protocol (steps A–C) writes
 `last_dispatch.post_dispatch_complete: true`, COMMANDER MUST run:
 
   bash scripts/bash/post-dispatch-hormone-update.sh \
@@ -438,7 +439,7 @@ tests/unit/hormone_calc/
 └── test_observable.py                # 5 cases: state.json + journal + result-file parsing
 ```
 
-~75 unit tests. Each: construct `ObservableState` fixture → call `detect()` → assert `list[Trigger]` matches expected.
+~66 unit tests. Each: construct `ObservableState` fixture → call `detect()` → assert `list[Trigger]` matches expected.
 
 ### Integration tests
 
