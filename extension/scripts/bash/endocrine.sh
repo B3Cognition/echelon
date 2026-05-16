@@ -68,10 +68,20 @@ STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 # Falls back to direct YAML read when specify is unavailable (test/offline use).
 _ECHELON_RESOLVER_OK=false
 if command -v specify &>/dev/null; then
-  # shellcheck disable=SC2046
-  # eval is required: resolver emits KEY=VALUE lines for the current shell
-  eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)" 2>/dev/null \
-    && _ECHELON_RESOLVER_OK=true
+  # Capture resolver stdout, then only eval + mark OK when it actually emitted
+  # at least one ECHELON_CFG_* line. The naive `&& _ECHELON_RESOLVER_OK=true`
+  # pattern wrongly succeeds on a `specify` that exits non-zero but still prints
+  # to stdout (e.g. when `config resolve` is missing from the installed CLI),
+  # which silently defaults every agent's hormones to 0.5 because get_baseline
+  # then never reaches the CONFIG_FILE fallback.
+  if _resolver_out=$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_ 2>/dev/null); then
+    if [[ -n "$_resolver_out" ]] && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_'; then
+      # shellcheck disable=SC1090
+      eval "$_resolver_out"
+      _ECHELON_RESOLVER_OK=true
+    fi
+  fi
+  unset _resolver_out
 fi
 
 if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
