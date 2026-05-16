@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# post-dispatch-hormone-update.sh — Apply hormone-calc trigger output
+# via endocrine.sh. Called by COMMANDER's Post-Dispatch Protocol after
+# the standard A-C steps complete.
+#
+# Idempotent: skips re-application of dispatch_ids already in
+# state.json.endocrine_state.applied_dispatches[].
+#
+# Usage:
+#   bash post-dispatch-hormone-update.sh \
+#     --agent SAGE --dispatch-id D-007 \
+#     --result-file /tmp/echelon-result-D-007.yaml
+#
+# Exit codes:
+#   0 = success (or graceful skip when endocrine.enabled=false)
+#   1 = invalid arguments
+#   2 = state.json or endocrine.sh not found
+
+set -euo pipefail
+
+# --- arg parsing ---
+AGENT=""; DISPATCH_ID=""; RESULT_FILE=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agent)        AGENT="$2"; shift 2 ;;
+    --dispatch-id)  DISPATCH_ID="$2"; shift 2 ;;
+    --result-file)  RESULT_FILE="$2"; shift 2 ;;
+    -h|--help)      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "post-dispatch-hormone-update: unknown arg: $1" >&2; exit 1 ;;
+  esac
+done
+if [[ -z "$AGENT" || -z "$DISPATCH_ID" || -z "$RESULT_FILE" ]]; then
+  echo "Usage: post-dispatch-hormone-update.sh --agent X --dispatch-id Y --result-file Z" >&2
+  exit 1
+fi
+
+# --- locate paths ---
+ROOT="$(pwd)"
+while [ "$ROOT" != "/" ] && [ ! -d "$ROOT/.specify" ]; do
+  ROOT=$(dirname "$ROOT")
+done
+if [ "$ROOT" = "/" ]; then
+  echo "post-dispatch-hormone-update: no .specify/ in CWD or parents" >&2
+  exit 2
+fi
+cd "$ROOT"
+
+STATE_FILE="${ENDOCRINE_STATE_FILE:-$ROOT/.specify/squad/state.json}"
+ENDOCRINE_SH="$ROOT/extension/scripts/bash/endocrine.sh"
+if [[ ! -f "$ENDOCRINE_SH" ]]; then
+  echo "post-dispatch-hormone-update: endocrine.sh not found at $ENDOCRINE_SH" >&2
+  exit 2
+fi
+
+# --- graceful skip when endocrine disabled ---
+ENABLED=$(bash "$ROOT/extension/scripts/bash/echelon-config-get.sh" endocrine.enabled 2>/dev/null || echo "true")
+if [[ "$ENABLED" == "false" ]]; then
+  exit 0
+fi
+
+# --- idempotency check ---
+if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
+  ALREADY=$(jq -r ".endocrine_state.applied_dispatches // [] | index(\"$DISPATCH_ID\")" "$STATE_FILE" 2>/dev/null)
+  if [[ "$ALREADY" != "null" && -n "$ALREADY" ]]; then
+    # Already applied — exit 0
+    exit 0
+  fi
+fi
+
+# --- map hormone name → index for hormone_update lines ---
+declare -A HORMONE_IDX=(
+  [adrenaline]=0
+  [dopamine]=1
+  [cortisol]=2
+  [serotonin]=3
+  [oxytocin]=4
+  [norepinephrine]=5
+)
+
+# --- invoke hormone-calc compute, capture triggers ---
+TRIGGERS=$(python3 -m hormone_calc.cli compute \
+  --agent "$AGENT" --dispatch-id "$DISPATCH_ID" \
+  --result-file "$RESULT_FILE" \
+  --state "$STATE_FILE" \
+  --journal "$ROOT/.specify/squad/reasoning-journal.jsonl" 2>/dev/null) || {
+  echo "post-dispatch-hormone-update: hormone-calc failed" >&2
+  exit 1
+}
+
+JOURNAL="$ROOT/.specify/squad/reasoning-journal.jsonl"
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+PHASE=$(jq -r '.phase // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
+
+applied_count=0
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  read -r verb arg1 arg2 arg3 <<< "$line"
+
+  # Translate trigger line to endocrine.sh call
+  case "$verb" in
+    decay_hormones|on_gate_pass|on_gate_fail|on_rework|on_low_confidence|on_innovate_summon|on_quality_improvement|on_quality_regression)
+      bash "$ENDOCRINE_SH" "$verb" $arg1 >/dev/null 2>&1
+      source_event="$verb"
+      target="$arg1"
+      ;;
+    on_peer_accept|on_peer_reject|propagate_downstream|propagate_cortisol_contagion)
+      bash "$ENDOCRINE_SH" "$verb" "$arg1" "$arg2" >/dev/null 2>&1
+      source_event="$verb"
+      target="$arg2"
+      ;;
+    hormone_update)
+      idx="${HORMONE_IDX[$arg2]:-}"
+      if [[ -z "$idx" ]]; then
+        echo "post-dispatch-hormone-update: unknown hormone '$arg2'" >&2
+        continue
+      fi
+      bash "$ENDOCRINE_SH" update_hormone "$arg1" "$idx" "$arg3" >/dev/null 2>&1
+      source_event="hormone_update_$arg2"
+      target="$arg1"
+      ;;
+    broadcast_adrenaline)
+      bash "$ENDOCRINE_SH" broadcast_adrenaline "$arg1" >/dev/null 2>&1
+      source_event="broadcast_adrenaline"
+      target="all"
+      ;;
+    *)
+      echo "post-dispatch-hormone-update: unknown trigger verb '$verb'" >&2
+      continue
+      ;;
+  esac
+
+  # Append per-trigger journal entry
+  printf '{"id":"RJ-auto","type":"endocrine_event","agent":"COMMANDER","phase":"%s","timestamp":"%s","data":{"trigger":"%s","target":"%s","dispatch_id":"%s","source_event":"%s"}}\n' \
+    "$PHASE" "$NOW" "$verb" "$target" "$DISPATCH_ID" "$source_event" >> "$JOURNAL"
+  applied_count=$((applied_count + 1))
+done <<< "$TRIGGERS"
+
+# --- mark dispatch as applied (atomic state.json write) ---
+if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
+  TMP=$(mktemp)
+  jq --arg did "$DISPATCH_ID" \
+     '.endocrine_state.applied_dispatches = ((.endocrine_state.applied_dispatches // []) + [$did])' \
+     "$STATE_FILE" > "$TMP"
+  mv "$TMP" "$STATE_FILE"
+fi
+
+echo "post-dispatch-hormone-update: applied $applied_count triggers for $DISPATCH_ID ($AGENT)"
+exit 0
