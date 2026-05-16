@@ -36,12 +36,12 @@
 # Falls back to direct YAML read from .specify/extensions/echelon/echelon-config.yml when specify is unavailable.
 # State stored in .specify/squad/state.json under "endocrine_state".
 set -euo pipefail
-. "$(CDPATH='' cd "$(dirname -- "$0")" && pwd)/python-detect.sh"
+. "$(CDPATH='' cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/python-detect.sh"
 
 # Force C locale for consistent decimal formatting (avoid locale comma separators)
 export LC_ALL=C
 
-SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detect project root by walking up from pwd until .specify/ is found.
 # This works in both dev context (script at extension/scripts/bash/) and
