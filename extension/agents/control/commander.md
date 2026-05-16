@@ -628,34 +628,31 @@ If the file is absent, set `valid_types = null` and skip validation (fail-open).
 
 ### 0.1 Read Knowledge-Base Learning Outputs
 
-**This step is mandatory on every run. Files may not exist on the first run — attempt the read regardless, record absence explicitly.**
+**This step is mandatory on every run. File existence is determined deterministically by `scripts/bash/kb-read-init.sh` — speckit-echelon-commander (COMMANDER) does NOT decide which files are present.**
 
-Read the following files from `knowledge-base/`:
+The canonical KB set:
 
 1. `knowledge-base/calibration-profile.yaml` — per-domain accuracy corrections for speckit-echelon-gatekeeper (GATEKEEPER)
 2. `knowledge-base/patterns.yaml` — reusable patterns for context injection into agents
 3. `knowledge-base/pitfalls.yaml` — known failure modes for context injection into agents
 4. `knowledge-base/agent-scores.yaml` — historical agent performance for dispatch decisions
 
-For each file: attempt to read. If the file exists, extract relevant fields. If absent, add it to `files_absent[]`. Never skip the read attempt — the attempt is what differentiates "genuinely absent" from "never checked."
+**MANDATORY — emit the `init_knowledge_read` journal entry via the helper script.** Do NOT hand-author the journal entry. Do NOT decide `files_read[]` / `files_absent[]` from memory. The script is the single source of truth for file existence at init time:
 
-**MANDATORY — write `init_knowledge_read` journal entry immediately after the reads, even if ALL four files are absent:**
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "type": "init_knowledge_read",
-  "agent": "speckit-echelon-commander (COMMANDER)",
-  "timestamp": "<ISO 8601>",
-  "files_read": ["<list of files that existed and were read — empty array if none>"],
-  "files_absent": ["<list of files that did not exist>"],
-  "cold_start": true
-}
+```bash
+JSON=$(bash .specify/extensions/echelon/scripts/bash/kb-read-init.sh --id "RJ-<sequential>")
+echo "$JSON" >> .specify/squad/reasoning-journal.jsonl
 ```
+
+The script issues `[ -f "$f" ] && [ -r "$f" ]` on each KB file, derives `cold_start` from `knowledge-base/feedback/` directory contents, and counts `calibration_map_agents_loaded` by parsing `agent-scores.yaml`. It produces a one-line JSON document with the exact schema required by the journal — no transformation needed.
+
+**NEVER skip this script call. NEVER substitute a hand-built `echo '{...}' >> journal.jsonl` for it.** The squad-1778936191 incident (BUG-1) is the canonical reason: COMMANDER fabricated `files_absent: [patterns.yaml, pitfalls.yaml, agent-scores.yaml]` without ever issuing a single Read tool call or `[ -f ]` check — all three files existed. Hand-authoring this entry recreates that failure mode.
+
+Only AFTER the script has run and its output is appended to the journal may speckit-echelon-commander (COMMANDER) issue Read tool calls against any KB file whose path the script listed in `files_read[]` — for example, to parse `agent-scores.yaml` into the calibration_map (see below). Reading a file that the script did not list as `files_read[]` is a contract violation.
 
 Do not write `confidence-thresholds.yaml` (step 0.5) before this journal entry is written. The entry is the evidence that step 0.1 ran.
 
-**Cold-start detection:** If `knowledge-base/feedback/` does not exist OR contains fewer than 3 files, set `cold_start: true` and append a warning entry:
+**Cold-start detection** (already handled by the script — recorded as `cold_start: true|false` in its output): If `knowledge-base/feedback/` does not exist OR contains fewer than 3 files, COMMANDER additionally appends a warning entry:
 
 ```json
 {
@@ -763,6 +760,24 @@ domains:
 **Graceful skip:** If `calibration_map` is empty or `calibration-profile.yaml` is absent — log a warning to reasoning-journal.json and continue. Do NOT block or error.
 
 **Log entry:** Append `{"type": "confidence_thresholds_written", "path": "knowledge-base/confidence-thresholds.yaml", "domains_count": <N>}` to reasoning-journal.json.
+
+---
+
+### 0.6. Bootstrap Endocrine State (FR-ENDO-001) — MANDATORY when endocrine.enabled
+
+**Precondition:** `state.json` exists, freshly written by §1.3, with `endocrine_enabled: true`.
+
+**Action:** Run `bash .specify/extensions/echelon/scripts/bash/endocrine.sh init` exactly once per run. This populates `state.json.endocrine_state.agents.<agent>.hormones.<hormone>` for every known agent in `ALL_AGENTS` (41 agents as of the v1.6 roster), seeding each agent's six hormone values from its archetype baseline in `echelon-config.yml endocrine.baselines.<archetype>`.
+
+```bash
+bash .specify/extensions/echelon/scripts/bash/endocrine.sh init
+```
+
+**Why this is mandatory:** the Pre-Dispatch Protocol calls `endocrine.sh get_full_prompt_modifier <agent>` before every dispatch (see §198, §580). That call reads `state.json.endocrine_state.agents.<agent>.hormones.adrenaline` — if the agent's hormone struct hasn't been initialized, the read fails with `ERROR: agent <X> or hormone adrenaline not found in endocrine state` and the dispatch loses its calibration injection. The squad-1778937725 incident (BUG-2) is the canonical reason this step is now mandatory.
+
+**Graceful skip:** if `endocrine.enabled: false` in `echelon-config.yml`, `endocrine.sh init` is a no-op and exits 0. Safe to always invoke.
+
+**Log entry:** Append `{"type": "endocrine_initialized", "agents_seeded": <N>, "phase": <phase>}` to reasoning-journal.jsonl after the init call returns successfully. If the init exits non-zero, log a `dependency_failure` entry instead and continue (fail-open — endocrine is calibration, not correctness).
 
 ---
 

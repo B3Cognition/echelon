@@ -1,12 +1,14 @@
 """Understanding - Requirements understanding and cognitive load metrics.
 
-This package provides comprehensive requirements quality analysis with:
+This package provides comprehensive requirements quality analysis with
+34 metrics across 7 categories:
 - 6 Readability metrics (Flesch, Gunning Fog, etc.)
 - 5 Structure metrics (Atomicity, Completeness, etc.)
 - 7 Cognitive metrics (Sentence length, Complexity, etc.)
-- 6 Semantic metrics (Actor, Action, Object, Outcome, Trigger)
+- 6 Semantic metrics (Actor, Action, Object, Outcome, Trigger, SCC)
 - 3 Testability metrics (Hard constraints, Density, Negative space)
 - 4 Behavioral metrics (Scenarios, Transitions, Branches, Observability)
+- 3 Depth metrics (Volume, Coverage density, Cross-reference)
 
 Example:
     >>> from understanding import analyze_with_enhanced_metrics

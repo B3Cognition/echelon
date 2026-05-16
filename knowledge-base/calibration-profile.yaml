@@ -237,7 +237,7 @@ agent_profiles:
       - Correctly identifies contradictions and gaps at the category level
       - Produces complete artifact set (glossary, mental-model, boundaries, assumptions, unknowns)
     failure_modes:
-      - RESEARCH-GAP-001: Does not verify agent names against agents.yaml (or equivalent canonical agent registry) before using them in staging artifacts. Reads functional-alias labels from skill files (e.g., echelon.run.md Role Separation table) as if they are codenames. Consequence: all staging files receive phantom agent names that are internally consistent but factually wrong relative to the actual registry. Triggered BLOCK verdict in squad-1775288588. Mitigation: SCOUT must consult agents.yaml as the first read action whenever the domain involves a multi-agent system with a formal agent taxonomy.
+      - "RESEARCH-GAP-001: Does not verify agent names against agents.yaml (or equivalent canonical agent registry) before using them in staging artifacts. Reads functional-alias labels from skill files (e.g., echelon.run.md Role Separation table) as if they are codenames. Consequence: all staging files receive phantom agent names that are internally consistent but factually wrong relative to the actual registry. Triggered BLOCK verdict in squad-1775288588. Mitigation: SCOUT must consult agents.yaml as the first read action whenever the domain involves a multi-agent system with a formal agent taxonomy."
     notes: "Spec 023 — phantom name root cause traced to SCOUT reading echelon.run.md Role Separation functional labels instead of agents.yaml codenames. This single research gap contaminated all 6 staging files and required INVESTIGATOR dispatch + full SYNTHESIZER correction pass before WHY1 could proceed."
 
   SYNTHESIZER:
@@ -252,8 +252,8 @@ agent_profiles:
       - Gap inventory is thorough and categorized
       - Synthesis internally consistent within the files it produces
     failure_modes:
-      - CORRECTION-GAP-001: In multi-file correction passes, misses files with the lowest structural coupling to the primary error. In squad-1775288588, mental-model.md and risks.md were in correction scope but not updated; both retained phantom agent names. Pattern: files that reference phantom names in narrative prose (rather than in structured tables or definitions) are more likely to be skipped.
-      - REGISTRY-VERIFY-001: Does not verify agent names against agents.yaml before synthesizing; inherits phantom names from SCOUT inputs. See SCOUT RESEARCH-GAP-001. Mitigation: add agents.yaml cross-check as a mandatory first step whenever synthesizing staging files for a multi-agent domain.
+      - "CORRECTION-GAP-001: In multi-file correction passes, misses files with the lowest structural coupling to the primary error. In squad-1775288588, mental-model.md and risks.md were in correction scope but not updated; both retained phantom agent names. Pattern: files that reference phantom names in narrative prose (rather than in structured tables or definitions) are more likely to be skipped."
+      - "REGISTRY-VERIFY-001: Does not verify agent names against agents.yaml before synthesizing; inherits phantom names from SCOUT inputs. See SCOUT RESEARCH-GAP-001. Mitigation: add agents.yaml cross-check as a mandatory first step whenever synthesizing staging files for a multi-agent domain."
       - NO-READBACK-001: No post-correction read-back step in protocol. After writing corrected files, SYNTHESIZER does not re-read each file to confirm the edit was applied. SAGE WHY1 served as the catch mechanism, at the cost of two new conditions (8 and 9).
     notes: "Spec 023 — two missed corrections (mental-model.md, risks.md) required SAGE WHY1 to issue Conditions 8 and 9 as pre-HOW gates. Recommend: add file-by-file correction checklist to SYNTHESIZER correction-pass protocol. Recommend: explicit post-correction read-back of each file in scope."
 

@@ -100,7 +100,7 @@ Provide a brief summary:
 
 ## Notes
 
-- The 31 metrics are deterministic — same input always produces same output
+- The 34 metrics are deterministic — same input always produces same output
 - NLP and entity extraction are enabled by default (off with `--basic`)
 - Use `--per-req` for per-requirement breakdown
 - Use `--json` for machine-readable output

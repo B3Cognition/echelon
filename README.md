@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 1.5.0** — 42-agent, 7-layer architecture with MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 1.5.0** — 41-agent, 7-layer architecture with MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
 
 ## Quick Start
 
@@ -309,7 +309,7 @@ autonomy:
 
 ## Agents
 
-42 cognitive functions organized into 7 layers.
+41 cognitive functions organized into 7 layers.
 
 ### Naming Convention
 
@@ -364,7 +364,7 @@ File: agents/exploration/scout.md
 | **ORACLE** | DOMAIN-EXPERT | Domain-specific knowledge |
 | **MAVERICK** | INNOVATE | Stagnation, need alternatives (uses AutoTRIZ) |
 
-#### Learning Layer (9 agents, cross-cutting)
+#### Learning Layer (8 agents, cross-cutting)
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **AUDITOR** | CALIBRATE | Tracks accuracy, adjusts confidence |
@@ -851,7 +851,7 @@ extension/
 │   ├── harness.run.md          # Build → verify → PR loop
 │   ├── harness.status.md       # Loop status
 │   ├── harness.resume.md       # Resume blocked loop
-│   ├── understanding.scan.md   # 31-metric spec quality scan
+│   ├── understanding.scan.md   # 34-metric spec quality scan
 │   ├── understanding.validate.md
 │   ├── understanding.energy.md
 │   ├── understanding.diagram.md
@@ -916,7 +916,7 @@ A single prompt can't:
 - Detect brownfield structure before understanding (GOLDDIGGER → SCOUT)
 - Modulate urgency based on budget pressure (endocrine system)
 
-These require separation of concerns. That's why there are 42 functions, not 1.
+These require separation of concerns. That's why there are 41 functions, not 1.
 
 ## Agent Colors
 

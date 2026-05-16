@@ -46,7 +46,7 @@ Load prior run from `.specify/squad/prior-runs/`. Compare:
 #### Step 2: Quality Trajectory
 
 Compare quality scores between runs:
-- Understanding metric scores (31 metrics from WHY)
+- Understanding metric scores (34 metrics from WHY)
 - ASSESS feasibility scores
 - GROUND reality-check scores
 - Overall pass/fail counts
