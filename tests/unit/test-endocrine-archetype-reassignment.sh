@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Unit test — verify agent_to_archetype assignments match spec section 3.
 # Fails until Task 2 reassigns the 7 agents below.
+# Uses subprocess pattern to call endocrine.sh get_archetype (avoiding source-time hazards).
 
 set -uo pipefail
 
@@ -12,30 +13,8 @@ if [[ ! -f "$ENDOCRINE" ]]; then
   exit 1
 fi
 
-# Extract just the agent_to_archetype function to avoid sourcing the whole file
-# and its python-detect.sh dependency
-agent_to_archetype() {
-  local agent="$1"
-  case "$agent" in
-    SCOUT|SYNTHESIZER|CARTOGRAPHER|MODELER)
-      echo "exploration" ;;
-    SAGE|VALIDATOR|CHECKPOINT)
-      echo "validation" ;;
-    GATEKEEPER)
-      echo "feasibility" ;;
-    ARCHITECT|ORCHESTRATOR|SENTINEL)
-      echo "solution" ;;
-    IMPLEMENTER|SPEC_GUARD|CODE_REVIEWER|TEST_GUARDIAN|DEBUGGER|INTEGRATOR|CHANGE_CONTROLLER|VISUAL_VALIDATOR|VERIFICATION|ENGINEERING_MANAGER)
-      echo "build" ;;
-    MAVERICK|INVESTIGATOR)
-      echo "innovation" ;;
-    MIRROR|ADAPTIVE|AUDITOR|INTERNALIZER|REALIST|CONSOLIDATOR)
-      echo "learning" ;;
-    COMMANDER|SCOREKEEPER|TRACKER|STRATEGIST|PROGRESS_TRACKER|VETERAN|GUARDIAN|ORACLE|BENCHMARK|ADVOCATE|GOLDDIGGER|MONITOR)
-      echo "control" ;;
-    *)
-      echo "control" ;;  # default fallback
-  esac
+archetype_of() {
+  bash "$ENDOCRINE" get_archetype "$1" 2>/dev/null
 }
 
 pass=0
@@ -52,25 +31,25 @@ report() {
 }
 
 echo "Reassigned agents (Layer A — design Section 3):"
-report "$(agent_to_archetype GOLDDIGGER)" "exploration" "GOLDDIGGER"
-report "$(agent_to_archetype ADVOCATE)"   "innovation"  "ADVOCATE"
-report "$(agent_to_archetype VETERAN)"    "learning"    "VETERAN"
+report "$(archetype_of GOLDDIGGER)" "exploration" "GOLDDIGGER"
+report "$(archetype_of ADVOCATE)"   "innovation"  "ADVOCATE"
+report "$(archetype_of VETERAN)"    "learning"    "VETERAN"
 
 echo "Reassigned agents (Layer B — design Section 3):"
-report "$(agent_to_archetype GUARDIAN)"   "validation"  "GUARDIAN"
-report "$(agent_to_archetype BENCHMARK)"  "solution"    "BENCHMARK"
-report "$(agent_to_archetype ORACLE)"     "solution"    "ORACLE"
-report "$(agent_to_archetype MONITOR)"    "learning"    "MONITOR"
+report "$(archetype_of GUARDIAN)"   "validation"  "GUARDIAN"
+report "$(archetype_of BENCHMARK)"  "solution"    "BENCHMARK"
+report "$(archetype_of ORACLE)"     "solution"    "ORACLE"
+report "$(archetype_of MONITOR)"    "learning"    "MONITOR"
 
 echo "Sanity (must NOT change):"
-report "$(agent_to_archetype SCOUT)"       "exploration" "SCOUT"
-report "$(agent_to_archetype SAGE)"        "validation"  "SAGE"
-report "$(agent_to_archetype GATEKEEPER)"  "feasibility" "GATEKEEPER"
-report "$(agent_to_archetype ARCHITECT)"   "solution"    "ARCHITECT"
-report "$(agent_to_archetype IMPLEMENTER)" "build"       "IMPLEMENTER"
-report "$(agent_to_archetype MAVERICK)"    "innovation"  "MAVERICK"
-report "$(agent_to_archetype AUDITOR)"     "learning"    "AUDITOR"
-report "$(agent_to_archetype COMMANDER)"   "control"     "COMMANDER"
+report "$(archetype_of SCOUT)"       "exploration" "SCOUT"
+report "$(archetype_of SAGE)"        "validation"  "SAGE"
+report "$(archetype_of GATEKEEPER)"  "feasibility" "GATEKEEPER"
+report "$(archetype_of ARCHITECT)"   "solution"    "ARCHITECT"
+report "$(archetype_of IMPLEMENTER)" "build"       "IMPLEMENTER"
+report "$(archetype_of MAVERICK)"    "innovation"  "MAVERICK"
+report "$(archetype_of AUDITOR)"     "learning"    "AUDITOR"
+report "$(archetype_of COMMANDER)"   "control"     "COMMANDER"
 
 echo
 echo "Pass: $pass  Fail: $fail"
