@@ -77,6 +77,13 @@ if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
   fi
 fi
 
+# --- capture BEFORE hormone snapshot for B-3 hormone_history trajectory tracking ---
+BEFORE_HORMONES="{}"
+if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
+  BEFORE_HORMONES=$(jq -c ".endocrine_state.agents[\"$AGENT\"].hormones // {}" "$STATE_FILE" 2>/dev/null)
+  [[ -z "$BEFORE_HORMONES" || "$BEFORE_HORMONES" == "null" ]] && BEFORE_HORMONES="{}"
+fi
+
 # --- map hormone name → index for hormone_update lines ---
 declare -A HORMONE_IDX=(
   [adrenaline]=0
@@ -102,6 +109,7 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PHASE=$(jq -r '.phase // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
 
 applied_count=0
+FIRED_VERBS=()
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   read -r verb arg1 arg2 arg3 <<< "$line"
@@ -156,7 +164,36 @@ while IFS= read -r line; do
   printf '{"id":"%s","type":"endocrine_event","agent":"COMMANDER","phase":"%s","timestamp":"%s","data":{"trigger":"%s","target":"%s","dispatch_id":"%s","source_event":"%s"}}\n' \
     "$rj_id" "$PHASE" "$NOW" "$verb" "$target" "$DISPATCH_ID" "$source_event" >> "$JOURNAL"
   applied_count=$((applied_count + 1))
+  FIRED_VERBS+=("$verb")
 done <<< "$TRIGGERS"
+
+# --- B-3: append hormone_history summary row for this dispatch ---
+if [[ -f "$STATE_FILE" ]] && [[ "$applied_count" -gt 0 ]] && command -v jq >/dev/null 2>&1; then
+  AFTER_HORMONES=$(jq -c ".endocrine_state.agents[\"$AGENT\"].hormones // {}" "$STATE_FILE" 2>/dev/null)
+  [[ -z "$AFTER_HORMONES" || "$AFTER_HORMONES" == "null" ]] && AFTER_HORMONES="{}"
+
+  # Build triggers JSON array
+  TRIGGERS_JSON="["
+  first=true
+  for v in "${FIRED_VERBS[@]}"; do
+    [[ "$first" == "true" ]] && first=false || TRIGGERS_JSON+=","
+    TRIGGERS_JSON+="\"$v\""
+  done
+  TRIGGERS_JSON+="]"
+
+  TMP=$(mktemp)
+  jq --arg agent "$AGENT" \
+     --arg did "$DISPATCH_ID" \
+     --arg ts "$NOW" \
+     --argjson before "$BEFORE_HORMONES" \
+     --argjson after "$AFTER_HORMONES" \
+     --argjson triggers "$TRIGGERS_JSON" \
+     '.endocrine_state.hormone_history = ((.endocrine_state.hormone_history // []) + [
+        {agent: $agent, dispatch_id: $did, timestamp: $ts, before: $before, after: $after, triggers: $triggers}
+      ] | (if length > 200 then .[length-200:] else . end))' \
+     "$STATE_FILE" > "$TMP"
+  mv "$TMP" "$STATE_FILE"
+fi
 
 # --- update journal index with the new last_entry_id (only if we emitted entries) ---
 if [[ -f "$JOURNAL_INDEX" ]] && [[ "$applied_count" -gt 0 ]] && command -v jq >/dev/null 2>&1; then
