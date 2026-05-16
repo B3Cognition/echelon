@@ -890,82 +890,122 @@ cmd_get_full_prompt_modifier() {
 
   # Read all 6 hormone values
   local adr dop cor ser oxy nor
-  adr=$(read_hormone_value "$agent" "adrenaline") || return 1
-  dop=$(read_hormone_value "$agent" "dopamine") || return 1
-  cor=$(read_hormone_value "$agent" "cortisol") || return 1
-  ser=$(read_hormone_value "$agent" "serotonin") || return 1
-  oxy=$(read_hormone_value "$agent" "oxytocin") || return 1
+  adr=$(read_hormone_value "$agent" "adrenaline")     || return 1
+  dop=$(read_hormone_value "$agent" "dopamine")       || return 1
+  cor=$(read_hormone_value "$agent" "cortisol")       || return 1
+  ser=$(read_hormone_value "$agent" "serotonin")      || return 1
+  oxy=$(read_hormone_value "$agent" "oxytocin")       || return 1
   nor=$(read_hormone_value "$agent" "norepinephrine") || return 1
 
-  # Classify each hormone: Low [0.0, 0.35), Medium [0.35, 0.75), High [0.75, 1.0]
+  # Classify each hormone: LOW <= 0.25, MEDIUM (0.25, 0.75), HIGH >= 0.75
+  # (Spec section 2 levels.)
   classify() {
     awk -v v="$1" 'BEGIN {
-      if (v < 0.35) print "low"
-      else if (v < 0.75) print "medium"
-      else print "high"
+      if (v <= 0.25) print "low"
+      else if (v >= 0.75) print "high"
+      else print "medium"
     }'
   }
 
-  local adr_level dop_level cor_level ser_level oxy_level nor_level
-  adr_level=$(classify "$adr")
-  dop_level=$(classify "$dop")
-  cor_level=$(classify "$cor")
-  ser_level=$(classify "$ser")
-  oxy_level=$(classify "$oxy")
-  nor_level=$(classify "$nor")
+  local adr_lvl dop_lvl cor_lvl ser_lvl oxy_lvl nor_lvl
+  adr_lvl=$(classify "$adr")
+  dop_lvl=$(classify "$dop")
+  cor_lvl=$(classify "$cor")
+  ser_lvl=$(classify "$ser")
+  oxy_lvl=$(classify "$oxy")
+  nor_lvl=$(classify "$nor")
 
-  # Build composite prompt modifier
-  local output=""
+  local archetype
+  archetype=$(agent_to_archetype "$agent")
 
-  # Adrenaline
-  case "$adr_level" in
-    low) output+="[ADRENALINE=LOW] Be thorough. Review all severity levels. Take your time.\n" ;;
-    medium) ;; # default — no modifier
-    high) output+="[ADRENALINE=HIGH] Focus only on CRITICAL and HIGH severity. Skip optional analysis. Prioritize speed.\n" ;;
-  esac
+  # Load summary + overlays from echelon-config.yml interpretations block.
+  # Use python3 since yaml_get only handles flat top-level keys.
+  local CFG_PATH=""
+  if [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/extension/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/echelon-config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/echelon-config.yml"
+  fi
 
-  # Dopamine
-  case "$dop_level" in
-    low) output+="[DOPAMINE=LOW] Your previous approach was rejected. Try a fundamentally different strategy.\n" ;;
-    medium) ;; # default
-    high) output+="[DOPAMINE=HIGH] Your approach is working well. Build on your current strategy.\n" ;;
-  esac
+  local INTERP_RAW=""
+  if [[ -n "$CFG_PATH" ]] && command -v $PYTHON &>/dev/null; then
+    INTERP_RAW=$($PYTHON -c "
+import yaml, sys
+try:
+    cfg = yaml.safe_load(open('$CFG_PATH')) or {}
+except Exception:
+    sys.exit(0)
+arch = cfg.get('endocrine', {}).get('interpretations', {}).get('$archetype', {})
+if not arch:
+    sys.exit(0)
+summary = (arch.get('summary') or '').strip()
+overlays = arch.get('overlays', {}) or {}
+print('---SUMMARY---')
+print(summary)
+print('---OVERLAYS---')
+for k, v in overlays.items():
+    print(f'{k}::{v}')
+" 2>/dev/null)
+  fi
 
-  # Cortisol
-  case "$cor_level" in
-    low) output+="[CORTISOL=LOW] You are in familiar territory. Make autonomous decisions confidently.\n" ;;
-    medium) ;; # default
-    high) output+="[CORTISOL=HIGH] You are in unfamiliar territory. Be conservative. Escalate uncertainties. Add caveats to your output.\n" ;;
-  esac
+  # If no interpretation block found, fall back to legacy single-line modifier.
+  if [[ -z "$INTERP_RAW" ]]; then
+    echo "[ENDOCRINE: all hormones MEDIUM] Normal operating conditions."
+    return 0
+  fi
 
-  # Serotonin
-  case "$ser_level" in
-    low) output+="[SEROTONIN=LOW] Quality has been declining. Extra diligence required.\n" ;;
-    medium) ;; # default
-    high) output+="[SEROTONIN=HIGH] Quality trajectory is strong. Maintain your current standard.\n" ;;
-  esac
+  local SUMMARY OVERLAYS_BLOB
+  SUMMARY=$(echo "$INTERP_RAW" | sed -n '/^---SUMMARY---$/,/^---OVERLAYS---$/p' | sed '1d;$d')
+  OVERLAYS_BLOB=$(echo "$INTERP_RAW" | sed -n '/^---OVERLAYS---$/,$p' | tail -n +2)
 
-  # Oxytocin
-  case "$oxy_level" in
-    low) output+="[OXYTOCIN=LOW] Verify upstream agent's output thoroughly. Do not assume correctness.\n" ;;
-    medium) ;; # default
-    high) output+="[OXYTOCIN=HIGH] Upstream agent has a strong track record. Focus your effort on new analysis rather than re-verifying their work.\n" ;;
-  esac
+  # Emit the multi-line block.
+  fmt() { printf "%.2f" "$1" 2>/dev/null || echo "$1"; }
+  local adr_u dop_u cor_u ser_u oxy_u nor_u
+  adr_u=$(echo "$adr_lvl" | tr '[:lower:]' '[:upper:]')
+  dop_u=$(echo "$dop_lvl" | tr '[:lower:]' '[:upper:]')
+  cor_u=$(echo "$cor_lvl" | tr '[:lower:]' '[:upper:]')
+  ser_u=$(echo "$ser_lvl" | tr '[:lower:]' '[:upper:]')
+  oxy_u=$(echo "$oxy_lvl" | tr '[:lower:]' '[:upper:]')
+  nor_u=$(echo "$nor_lvl" | tr '[:lower:]' '[:upper:]')
 
-  # Norepinephrine
-  case "$nor_level" in
-    low) output+="[NOREPINEPHRINE=LOW] Explore broadly. Consider unconventional connections. Think laterally.\n" ;;
-    medium) ;; # default
-    high) output+="[NOREPINEPHRINE=HIGH] Stay focused on the specific task. Do not explore tangents.\n" ;;
-  esac
+  printf '[ENDOCRINE — %s archetype]\n' "$archetype"
+  printf '  adrenaline: %s (%s)   dopamine: %s (%s)\n' "$(fmt "$adr")" "$adr_u" "$(fmt "$dop")" "$dop_u"
+  printf '  cortisol:   %s (%s)   serotonin: %s (%s)\n' "$(fmt "$cor")" "$cor_u" "$(fmt "$ser")" "$ser_u"
+  printf '  oxytocin:   %s (%s)   norepinephrine: %s (%s)\n' "$(fmt "$oxy")" "$oxy_u" "$(fmt "$nor")" "$nor_u"
+  printf '\n'
+  printf 'Interpretation (%s archetype):\n' "$archetype"
+  echo "$SUMMARY" | sed 's/^/  /'
 
-  # Calibration injection (FR-002, Spec 010)
-  # Read agent's prior score and failure modes from agent-scores.yaml
-  local SCORES_FILE
-  SCORES_FILE="$REPO_ROOT/knowledge-base/agent-scores.yaml"
+  # Emit overlays for any hormone at HIGH/LOW that has a matching overlay.
+  emit_overlay() {
+    local hormone="$1" level="$2"
+    local key="${hormone}_${level}"
+    local val
+    val=$(echo "$OVERLAYS_BLOB" | sed -n "s|^${key}::||p")
+    if [[ -n "$val" ]]; then
+      local level_uc
+      level_uc=$(echo "$level" | tr '[:lower:]' '[:upper:]')
+      printf '  - %s %s: %s\n' "$level_uc" "$hormone" "$val"
+    fi
+  }
+
+  for pair in "adrenaline:$adr_lvl" "dopamine:$dop_lvl" "cortisol:$cor_lvl" \
+              "serotonin:$ser_lvl" "oxytocin:$oxy_lvl" "norepinephrine:$nor_lvl"; do
+    hormone="${pair%%:*}"
+    level="${pair##*:}"
+    [[ "$level" == "medium" ]] && continue
+    emit_overlay "$hormone" "$level"
+  done
+
+  # Preserve the existing [CALIBRATION] suffix — commander.md §198 reads it
+  # from this function's output and appends it to the agent's prompt. Removing
+  # it would break the protocol. (Future refactor: deduplicate against
+  # commander.md §175-190's own calibration injection — out of scope.)
+  local SCORES_FILE="$REPO_ROOT/knowledge-base/agent-scores.yaml"
   if [[ -f "$SCORES_FILE" ]] && command -v $PYTHON &>/dev/null; then
-    local cal_block
-    cal_block=$($PYTHON -c "
+    $PYTHON -c "
 import yaml, sys
 try:
     with open('$SCORES_FILE') as f:
@@ -974,7 +1014,7 @@ try:
     a = agents.get('$agent', {})
     history = a.get('history', a.get('run_history', []))
     if not history:
-        sys.exit(0)  # no prior data — nothing to inject
+        sys.exit(0)
     last = history[-1] if isinstance(history, list) else {}
     score = last.get('quality_score', last.get('score', '?'))
     modes = last.get('failure_modes', [])
@@ -985,18 +1025,7 @@ try:
         print(f'[CALIBRATION] Prior score: {score}. No failure modes recorded.')
 except Exception as e:
     print(f'[CALIBRATION] COLD START — error reading scores: {e}')
-" 2>/dev/null)
-    if [[ -n "$cal_block" ]]; then
-      output+="${cal_block}\n"
-    fi
-  else
-    output+="[CALIBRATION] COLD START — no agent-scores.yaml or $PYTHON unavailable.\n"
-  fi
-
-  if [[ -z "$output" ]]; then
-    echo "[ENDOCRINE: all hormones MEDIUM] Normal operating conditions."
-  else
-    printf '%b' "$output"
+" 2>/dev/null
   fi
 }
 
