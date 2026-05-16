@@ -2,7 +2,7 @@
 # Unit test — verify cmd_get_full_prompt_modifier emits the multi-line
 # [ENDOCRINE — <archetype> archetype] format per spec section 2.
 #
-# Currently RED — T5 will rewrite cmd_get_full_prompt_modifier and make this pass.
+# Verifies T5's multi-line emit format end-to-end (was TDD-red prior to T5).
 
 set -uo pipefail
 
@@ -15,7 +15,7 @@ TMP_STATE=$(mktemp -t endocrine-multiline-state.XXXXXX.json)
 trap 'rm -f "$TMP_STATE"' EXIT
 echo "{}" > "$TMP_STATE"
 export ENDOCRINE_STATE_FILE="$TMP_STATE"
-export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/config-template.yml"
+export ENDOCRINE_CONFIG_FILE="$REPO_ROOT/extension/echelon-config.yml"
 
 # Seed all 41 agents' hormones from baselines.
 bash "$ENDOCRINE" init >/dev/null 2>&1 || { echo "FAIL: endocrine.sh init failed"; exit 1; }
