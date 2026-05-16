@@ -57,6 +57,34 @@ class ObservableState:
     current_hormones: dict[str, float]
 
 
+def _strip_echelon_result_fence(text: str) -> str:
+    """Strip markdown fence markers from an echelon_result block.
+
+    Tolerates three input formats:
+      1. Raw YAML body — returned as-is.
+      2. ```echelon_result\\n<body>\\n```  — strips both fences.
+      3. ```yaml\\n<body>\\n``` or bare ```\\n<body>\\n``` — also stripped.
+
+    The agent's response includes the fenced form (per commander.md §100
+    Post-Dispatch Protocol Step A). The hook saves the agent's text to
+    --result-file as-is, so the fence is present when COMMANDER's
+    Post-Dispatch Protocol passes the file to hormone-calc.
+    """
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+    # Drop the opening fence line (```echelon_result, ```yaml, or just ```)
+    lines = text.split("\n", 1)
+    if len(lines) < 2:
+        return text
+    body = lines[1]
+    # Drop trailing ``` if present
+    body = body.rstrip()
+    if body.endswith("```"):
+        body = body[:-3].rstrip()
+    return body
+
+
 def build_from(
     *,
     agent: str,
@@ -75,7 +103,9 @@ def build_from(
                     can derive it later (cli.py wires this).
     """
     state = json.loads(state_path.read_text())
-    result = yaml.safe_load(result_path.read_text()) or {}
+    result_text = result_path.read_text()
+    result_text = _strip_echelon_result_fence(result_text)
+    result = yaml.safe_load(result_text) or {}
     journal = _read_journal_tail(journal_path, n=50)
 
     archetype = (archetype_fn or _default_archetype_fn)(agent)

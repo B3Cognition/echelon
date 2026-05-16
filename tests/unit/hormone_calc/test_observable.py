@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hormone_calc.observable import ObservableState, build_from, normalize_agent_name
+from hormone_calc.observable import ObservableState, build_from, normalize_agent_name, _strip_echelon_result_fence
 
 
 @pytest.fixture
@@ -147,3 +147,50 @@ def test_normalize_agent_name_canonical_form_idempotent():
 
 def test_normalize_agent_name_empty_string():
     assert normalize_agent_name("") == ""
+
+
+def test_strip_fence_raw_yaml_unchanged():
+    body = "verdict: COMPLETE\nagent: GOLDDIGGER\n"
+    assert _strip_echelon_result_fence(body).strip() == body.strip()
+
+
+def test_strip_fence_echelon_result_block():
+    text = "```echelon_result\nverdict: COMPLETE\nagent: GOLDDIGGER\n```"
+    out = _strip_echelon_result_fence(text)
+    assert out.strip() == "verdict: COMPLETE\nagent: GOLDDIGGER"
+
+
+def test_strip_fence_yaml_block():
+    text = "```yaml\nverdict: COMPLETE\n```"
+    out = _strip_echelon_result_fence(text)
+    assert out.strip() == "verdict: COMPLETE"
+
+
+def test_strip_fence_bare_backticks():
+    text = "```\nverdict: PASS\n```"
+    out = _strip_echelon_result_fence(text)
+    assert out.strip() == "verdict: PASS"
+
+
+def test_build_from_parses_fenced_result(tmp_path, minimal_state, minimal_journal):
+    """The B-1 regression: build_from must handle the fenced form."""
+    result_path = tmp_path / "result.yaml"
+    result_path.write_text(
+        "```echelon_result\n"
+        "verdict: COMPLETE\n"
+        "agent: GOLDDIGGER\n"
+        "data:\n"
+        "  confidence: 0.9\n"
+        "```"
+    )
+    obs = build_from(
+        agent="GOLDDIGGER",
+        dispatch_id="D-001",
+        result_path=result_path,
+        state_path=minimal_state,
+        journal_path=minimal_journal,
+        archetype_fn=_fake_archetype_fn,
+    )
+    assert obs.result.get("verdict") == "COMPLETE"
+    assert obs.result.get("agent") == "GOLDDIGGER"
+    assert obs.result.get("data", {}).get("confidence") == 0.9

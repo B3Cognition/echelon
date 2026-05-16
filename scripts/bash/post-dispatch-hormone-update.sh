@@ -52,6 +52,16 @@ if [[ ! -f "$ENDOCRINE_SH" ]]; then
   exit 2
 fi
 
+# --- read current last_entry_id from journal index for sequential RJ-NNN ids ---
+JOURNAL_INDEX="$ROOT/.specify/squad/reasoning-journal-index.json"
+NEXT_RJ_NUM=1
+if [[ -f "$JOURNAL_INDEX" ]] && command -v jq >/dev/null 2>&1; then
+  last_id=$(jq -r '.last_entry_id // ""' "$JOURNAL_INDEX" 2>/dev/null)
+  if [[ "$last_id" =~ ^RJ-([0-9]+)$ ]]; then
+    NEXT_RJ_NUM=$((10#${BASH_REMATCH[1]} + 1))
+  fi
+fi
+
 # --- graceful skip when endocrine disabled ---
 ENABLED=$(bash "$ROOT/extension/scripts/bash/echelon-config-get.sh" endocrine.enabled 2>/dev/null || echo "true")
 if [[ "$ENABLED" == "false" ]]; then
@@ -141,10 +151,20 @@ while IFS= read -r line; do
   esac
 
   # Append per-trigger journal entry
-  printf '{"id":"RJ-auto","type":"endocrine_event","agent":"COMMANDER","phase":"%s","timestamp":"%s","data":{"trigger":"%s","target":"%s","dispatch_id":"%s","source_event":"%s"}}\n' \
-    "$PHASE" "$NOW" "$verb" "$target" "$DISPATCH_ID" "$source_event" >> "$JOURNAL"
+  rj_id=$(printf "RJ-%03d" "$NEXT_RJ_NUM")
+  NEXT_RJ_NUM=$((NEXT_RJ_NUM + 1))
+  printf '{"id":"%s","type":"endocrine_event","agent":"COMMANDER","phase":"%s","timestamp":"%s","data":{"trigger":"%s","target":"%s","dispatch_id":"%s","source_event":"%s"}}\n' \
+    "$rj_id" "$PHASE" "$NOW" "$verb" "$target" "$DISPATCH_ID" "$source_event" >> "$JOURNAL"
   applied_count=$((applied_count + 1))
 done <<< "$TRIGGERS"
+
+# --- update journal index with the new last_entry_id (only if we emitted entries) ---
+if [[ -f "$JOURNAL_INDEX" ]] && [[ "$applied_count" -gt 0 ]] && command -v jq >/dev/null 2>&1; then
+  last_rj=$(printf "RJ-%03d" "$((NEXT_RJ_NUM - 1))")
+  TMP=$(mktemp)
+  jq --arg lid "$last_rj" '.last_entry_id = $lid' "$JOURNAL_INDEX" > "$TMP"
+  mv "$TMP" "$JOURNAL_INDEX"
+fi
 
 # --- mark dispatch as applied (atomic state.json write) ---
 if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
