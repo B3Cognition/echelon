@@ -3,8 +3,8 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "1.5.0"
-  description: "Multi-agent cognitive system with adversarial critic, kill gate, role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 34-metric requirements quality analysis, expert persona prompts, and brownfield support via revenge extension integration. Designed for high-stakes, complex projects where quality, alignment, and risk management are paramount."
+  version: "2.1.0"
+  description: "Multi-agent cognitive system with adversarial critic, kill gate, role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 34-metric requirements quality analysis, expert persona prompts, and native brownfield extraction (re-* commands). Designed for high-stakes, complex projects where quality, alignment, and risk management are paramount."
   author: "B3Cognition"
   repository: "https://github.com/B3Cognition/echelon"
   license: "MIT"
@@ -52,10 +52,6 @@ requires:
       required_for: "echelon.codegen — SOAR build pipeline"
       hard_stop: true
       note: "Bundled — installed via scripts/install.sh into ~/.echelon/venv/."
-    - name: "revenge"
-      version: ">=3.0.0"
-      required: false
-      # Integration: invoked via GOLDDIGGER agent (Skill tool), not as a CLI binary.
     - name: "docker"
       required: true
       required_for: "speckit.echelon.harness-run — DockerWorktreeProvider sandbox isolation for build/test/verify"
@@ -215,7 +211,7 @@ provides:
         color: green
     - name: "speckit.echelon.golddigger"
       file: "agents/exploration/golddigger.md"
-      description: "GOLDDIGGER — brownfield extraction driver via revenge extension"
+      description: "GOLDDIGGER — brownfield extraction driver via native re-extract pipeline"
       behavior:
         execution: agent
         capability: strong
@@ -596,6 +592,129 @@ provides:
         tools: full
         color: blue
 
+    # ── Brownfield (re-) commands ──────────────────────────────────────────────────────────
+    - name: "speckit.echelon.re-extract"
+      file: "commands/echelon.re-extract.md"
+      description: "Phase 1 - Extract specs and strategic artifacts from existing codebase"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-retarget"
+      file: "commands/echelon.re-retarget.md"
+      description: "Phase 2 - Guided prompts to fill target stack and strategic decisions"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-plan-all"
+      file: "commands/echelon.re-plan-all.md"
+      description: "Phase 3 - Generate per-domain plans and tasks"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-analyze"
+      file: "commands/echelon.re-analyze.md"
+      description: "Extract structured data from codebase into analysis.json"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+      scripts:
+        sh: "scripts/bash/re/run-analysis.sh"
+
+    - name: "speckit.echelon.re-specify"
+      file: "commands/echelon.re-specify.md"
+      description: "Generate specs with coverage tracking and iterative refinement"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-verify"
+      file: "commands/echelon.re-verify.md"
+      description: "Verify spec coverage against codebase and identify gaps"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-expand"
+      file: "commands/echelon.re-expand.md"
+      description: "Expand spec coverage by filling gaps with orphan file clusters"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-validate"
+      file: "commands/echelon.re-validate.md"
+      description: "Validate specs for quality, auto-resolve ambiguities from code"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-checklist"
+      file: "commands/echelon.re-checklist.md"
+      description: "Generate quality checklists for specs (per-domain + summary)"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-constitute"
+      file: "commands/echelon.re-constitute.md"
+      description: "Generate strategic artifacts (constitution, strategy, risks, gaps, ADRs)"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-plan"
+      file: "commands/echelon.re-plan.md"
+      description: "Generate per-domain plan.md files"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
+    - name: "speckit.echelon.re-tasks"
+      file: "commands/echelon.re-tasks.md"
+      description: "Generate per-domain tasks.md files"
+      behavior:
+        execution: isolated
+        invocation: automatic
+        capability: strong
+        effort: high
+        tools: full
+
   config:
     - name: "echelon-config.yml"
       template: "config-template.yml"
@@ -672,3 +791,53 @@ config:
         timeout_ms: 300000
         screenshot_dir: "playwright-report"
         max_iterations: 3
+    re:
+      analysis:
+        include_patterns: [ "**/*" ]
+        exclude_patterns:
+          - "node_modules/**"
+          - "dist/**"
+          - ".git/**"
+          - "vendor/**"
+          - "__pycache__/**"
+          - "*.pyc"
+        max_file_size_kb: 500
+      sources:
+        code: true
+        tests: true
+        docs: true
+        git_history: true
+        git_history_limit: 100
+        ci_cd: true
+        deployment: true
+        integrations: true
+      depth:
+        level: signatures
+        max_lines_per_file: 500
+        context_management: progressive
+        priority_patterns:
+          - "**/main.*"
+          - "**/index.*"
+          - "**/app.*"
+          - "**/*Service.*"
+          - "**/*Controller.*"
+          - "**/*Handler.*"
+        language_patterns: default
+      output:
+        directory: ".specify/echelon/re"
+        generate_spec: true
+        generate_plan: true
+        generate_tasks: true
+        keep_analysis_artifacts: true
+      workflow:
+        pause_between_phases: false
+        require_confirmation: false
+        coverage_threshold: 80
+        resolution_threshold: 80
+        max_validate_iterations: 3
+      polyrepo:
+        enabled: auto
+        discovery: flat
+        exclude: []
+        include: []
+        repos: {}

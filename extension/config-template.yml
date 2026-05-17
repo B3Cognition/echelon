@@ -947,9 +947,6 @@ knowledge_base:
 
 tools:
   understanding_cli: "understanding"
-  # revenge extension is a Claude Code skill (not a CLI).
-  # Invoke via: Skill tool → speckit.revenge.extract / speckit.revenge.analyze
-  # No CLI path needed.
 
 # =============================================================================
 # BANZAI MODE (Full Autonomous)
@@ -1214,3 +1211,534 @@ harness:
     timeout_ms: 300000
     screenshot_dir: "playwright-report"
     max_iterations: 3
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Brownfield extraction (re-* commands)
+# ─────────────────────────────────────────────────────────────────────────────
+
+re:
+
+  # ── Analysis ──────────────────────────────────────────────────────────────
+  # Analysis scope - what to include/exclude
+  analysis:
+    # Glob patterns for files to include
+    include_patterns:
+      - "**/*"
+
+    # Glob patterns for files to exclude
+    exclude_patterns:
+      - "node_modules/**"
+      - "dist/**"
+      - "build/**"
+      - ".git/**"
+      - "vendor/**"
+      - "__pycache__/**"
+      - "*.pyc"
+      - "*.min.js"
+      - "*.min.css"
+      - "*.map"
+
+    # Skip files larger than this (KB)
+    max_file_size_kb: 500
+
+  # Source file extensions by language
+  # Used by verify, expand, and other commands to enumerate source files
+  # Commands will build glob patterns like **/*.{ext} for each extension
+  source_extensions:
+    typescript: [ts, tsx]
+    javascript: [js, jsx, mjs, cjs]
+    python: [py, pyw]
+    go: [go]
+    rust: [rs]
+    java: [java]
+    kotlin: [kt, kts]
+    csharp: [cs]
+    vb: [vb, bas, frm, cls]  # Covers both VB6 and VB.NET (shared .vb extension)
+    ruby: [rb, rake]
+    php: [php]
+    swift: [swift]
+    c: [c, h]
+    cpp: [cpp, hpp, cc, hh, cxx, hxx]
+    perl: [pl, pm]
+    delphi: [pas, dpr, dfm]
+    plsql: [sql, pls, pkb, pks]
+    groovy: [groovy, gvy]
+    terraform: [tf, tfvars]
+    opentofu: [tf, tfvars]
+
+  # Which sources to analyze
+  sources:
+    # Source code files
+    code: true
+
+    # Test files
+    tests: true
+
+    # Documentation (README, docs/, comments)
+    docs: true
+
+    # Git commit history
+    git_history: true
+
+    # Number of commits to analyze
+    git_history_limit: 100
+
+    # CI/CD configs (GitHub Actions, GitLab CI, etc.)
+    ci_cd: true
+
+    # Deployment configs (Docker, k8s, terraform)
+    deployment: true
+
+    # External integrations (databases, APIs, queues)
+    integrations: true
+
+  # Analysis depth - how deeply to read source code
+  # Controls the richness of extracted specifications
+  depth:
+    # Level: metadata, signatures, logic, full
+    #
+    # metadata (fastest, least context):
+    #   - File structure and counts
+    #   - Package dependencies
+    #   - Git history and hotspots
+    #   - No source code reading
+    #
+    # signatures (moderate):
+    #   - Everything in metadata, plus:
+    #   - Function/method signatures and parameters
+    #   - Class/interface definitions
+    #   - Public API surface
+    #   - Type definitions and enums
+    #
+    # logic (recommended for migrations):
+    #   - Everything in signatures, plus:
+    #   - Function bodies for business logic
+    #   - Validation rules and constraints
+    #   - Error handling patterns
+    #   - Data transformation flows
+    #
+    # full (slowest, most context):
+    #   - Everything in logic, plus:
+    #   - Complete source file reading
+    #   - Deep data flow analysis
+    #   - All edge cases from code paths
+    #   - Test assertion extraction
+    #
+    level: signatures
+
+    # Maximum lines to read per file
+    # With progressive context management, this can be higher (1000-2000)
+    # Without it, keep lower (300-500) to avoid overflow
+    max_lines_per_file: 500
+
+    # Context management strategy (critical for large codebases)
+    #
+    # progressive (recommended):
+    #   - Process one domain at a time
+    #   - Extract structured data immediately after reading
+    #   - Discard raw source before moving to next domain
+    #   - Allows higher max_lines_per_file (1000-2000)
+    #
+    # hold_all:
+    #   - Keep all source in context during extraction
+    #   - Faster for small codebases
+    #   - Requires lower max_lines_per_file (300-500)
+    #
+    context_management: progressive
+
+    # Priority files to always read deeply (glob patterns)
+    # These are read first within each domain
+    priority_patterns:
+      - "**/main.*"
+      - "**/index.*"
+      - "**/app.*"
+      - "**/*Service.*"
+      - "**/*Controller.*"
+      - "**/*Handler.*"
+
+  # Language-specific extraction patterns
+  # Maps code patterns to semantic meaning for richer spec extraction
+  # Format: "pattern" → "semantic meaning"
+  language_patterns:
+    java:
+      annotations:
+        "@Entity": "JPA/Hibernate persistence entity"
+        "@Table": "Database table mapping"
+        "@Service": "Spring service component"
+        "@Repository": "Spring data access component"
+        "@Controller": "Spring MVC controller"
+        "@RestController": "Spring REST API endpoint"
+        "@Transactional": "Transaction boundary"
+        "@Autowired": "Dependency injection point"
+        "@Valid": "Input validation required"
+        "@NotNull": "Required field constraint"
+        "@RequestMapping": "API route definition"
+        "@Scheduled": "Scheduled task/cron job"
+      patterns:
+        "extends JpaRepository": "Spring Data repository"
+        "implements Serializable": "Serializable entity"
+        "throw new.*Exception": "Error scenario"
+
+    typescript:
+      decorators:
+        "@Injectable": "NestJS/Angular service"
+        "@Controller": "NestJS controller"
+        "@Module": "NestJS module boundary"
+        "@Entity": "TypeORM entity"
+        "@Column": "Database column"
+        "@Get|@Post|@Put|@Delete": "REST endpoint"
+        "@Body|@Param|@Query": "Request parameter"
+        "@UseGuards": "Authentication/authorization"
+      patterns:
+        "z.object": "Zod validation schema"
+        "z.string|z.number|z.boolean": "Zod type validation"
+        "export interface": "Type definition"
+        "export type": "Type alias"
+        "async function": "Async operation"
+        "throw new": "Error scenario"
+
+    javascript:
+      patterns:
+        "module.exports": "Module export"
+        "require\\(": "Module import"
+        "express\\.Router": "Express route"
+        "app\\.get|app\\.post": "Express endpoint"
+        "mongoose\\.Schema": "MongoDB schema"
+        "sequelize\\.define": "Sequelize model"
+        "throw new Error": "Error scenario"
+        "Promise\\.": "Async operation"
+
+    python:
+      decorators:
+        "@app\\.route|@router\\.": "Flask/FastAPI route"
+        "@pytest\\.": "Pytest decorator"
+        "@classmethod": "Class method"
+        "@staticmethod": "Static method"
+        "@property": "Property accessor"
+        "@dataclass": "Data class"
+        "@abstractmethod": "Abstract method"
+      patterns:
+        "def __init__": "Constructor"
+        "class.*:": "Class definition"
+        "async def": "Async function"
+        "raise.*Error|raise.*Exception": "Error scenario"
+        "try:.*except": "Exception handling"
+        "with.*as": "Context manager"
+        "import.*from|from.*import": "Module import"
+        "SQLAlchemy|Base\\.metadata": "SQLAlchemy ORM"
+        "pydantic\\.BaseModel": "Pydantic model"
+
+    go:
+      patterns:
+        "func.*\\(.*\\).*\\{": "Function definition"
+        "type.*struct": "Struct definition"
+        "type.*interface": "Interface definition"
+        "func.*ServeHTTP": "HTTP handler"
+        "http\\.HandleFunc|mux\\.": "HTTP route"
+        "go func": "Goroutine"
+        "chan\\s": "Channel definition"
+        "select\\s*\\{": "Channel select"
+        "defer": "Deferred execution"
+        "panic|recover": "Error handling"
+        "sql\\.Open|gorm\\.": "Database access"
+
+    rust:
+      attributes:
+        "#\\[derive\\(": "Derive macro"
+        "#\\[test\\]": "Test function"
+        "#\\[async_trait\\]": "Async trait"
+        "#\\[tokio::main\\]": "Async main"
+        "#\\[serde\\(": "Serialization config"
+      patterns:
+        "fn.*->": "Function definition"
+        "impl.*for": "Trait implementation"
+        "pub struct": "Public struct"
+        "pub enum": "Public enum"
+        "async fn": "Async function"
+        "Result<|Option<": "Result/Option type"
+        "unwrap\\(|expect\\(": "Error unwrap"
+        "match.*\\{": "Pattern matching"
+        "tokio::|async_std::": "Async runtime"
+
+    kotlin:
+      annotations:
+        "@Entity": "JPA entity"
+        "@Service|@Component": "Spring component"
+        "@RestController|@Controller": "Spring controller"
+        "@GetMapping|@PostMapping": "REST endpoint"
+        "@Transactional": "Transaction boundary"
+        "@Inject|@Autowired": "Dependency injection"
+      patterns:
+        "fun.*:": "Function definition"
+        "class.*:": "Class definition"
+        "data class": "Data class"
+        "sealed class": "Sealed class"
+        "suspend fun": "Coroutine function"
+        "object.*:": "Singleton object"
+        "companion object": "Companion object"
+        "throw.*Exception": "Error scenario"
+
+    swift:
+      attributes:
+        "@objc": "Objective-C interop"
+        "@IBOutlet|@IBAction": "Interface Builder"
+        "@Published": "SwiftUI observable"
+        "@State|@Binding": "SwiftUI state"
+        "@MainActor": "Main thread"
+      patterns:
+        "func.*->": "Function definition"
+        "class.*:": "Class definition"
+        "struct.*:": "Struct definition"
+        "protocol.*:": "Protocol definition"
+        "enum.*:": "Enum definition"
+        "async.*throws": "Async throwing function"
+        "try.*catch|do.*catch": "Error handling"
+        "guard.*else": "Guard statement"
+        "Task\\s*\\{": "Async task"
+
+    c:
+      patterns:
+        "int main\\(": "Entry point"
+        "void.*\\(": "Void function"
+        "struct.*\\{": "Struct definition"
+        "typedef.*struct": "Type definition"
+        "enum.*\\{": "Enum definition"
+        "#include": "Header include"
+        "#define": "Macro definition"
+        "malloc|calloc|realloc": "Memory allocation"
+        "free\\(": "Memory deallocation"
+        "FILE\\s*\\*": "File I/O"
+        "pthread_": "Thread operation"
+
+    csharp:
+      attributes:
+        "[HttpGet]|[HttpPost]|[HttpPut]|[HttpDelete]": "ASP.NET API endpoint"
+        "[Route]": "API route definition"
+        "[Authorize]": "Authorization required"
+        "[Required]": "Required field validation"
+        "[Table]": "Entity Framework table mapping"
+        "[Key]": "Primary key"
+        "[ForeignKey]": "Foreign key relationship"
+        "[DbContext]": "EF database context"
+        "[Inject]": "Dependency injection"
+      patterns:
+        "public class.*Controller": "MVC/API controller"
+        "public interface I.*": "Interface definition"
+        "Task<": "Async operation"
+        "throw new.*Exception": "Error scenario"
+
+    vb:  # Visual Basic 6 / VBA / VB.NET (shared .vb extension)
+      attributes:
+        "<HttpGet>|<HttpPost>": "ASP.NET endpoint (VB.NET)"
+        "<Required>": "Validation attribute (VB.NET)"
+        "<Authorize>": "Authorization (VB.NET)"
+      patterns:
+        # VB6/VBA patterns
+        "Public Sub": "Public procedure"
+        "Public Function": "Public function"
+        "Private Sub": "Private procedure"
+        "Dim.*As": "Variable declaration"
+        "Set.*= New": "Object instantiation"
+        "On Error": "Error handling"
+        "DoCmd\\.": "Access command"
+        "Recordset": "Database access"
+        "Connection": "Database connection"
+        # VB.NET patterns
+        "Public Class": "Class definition"
+        "Public Interface": "Interface definition"
+        "Inherits": "Inheritance"
+        "Implements": "Interface implementation"
+        "Async Function": "Async operation"
+        "Throw New": "Error scenario"
+
+    php:
+      annotations:
+        "#\\[Route\\]": "PHP 8 route attribute"
+        "@Route": "Symfony route annotation"
+        "@ORM\\\\Entity": "Doctrine entity"
+        "@ORM\\\\Column": "Doctrine column"
+        "@Assert\\\\": "Symfony validation"
+        "@Inject": "Dependency injection"
+      patterns:
+        "class.*Controller": "Controller class"
+        "class.*Service": "Service class"
+        "class.*Repository": "Repository class"
+        "public function": "Public method"
+        "throw new": "Error scenario"
+        "->validate": "Validation call"
+
+    perl:
+      patterns:
+        "package": "Module definition"
+        "sub": "Subroutine definition"
+        "use strict": "Strict mode"
+        "use warnings": "Warnings enabled"
+        "use.*qw": "Module import"
+        "my \\$": "Variable declaration"
+        "DBI->connect": "Database connection"
+        "prepare.*execute": "SQL execution"
+        "die|croak": "Error scenario"
+        "eval \\{": "Exception handling"
+
+    delphi:
+      patterns:
+        "TForm": "UI Form class"
+        "TDataModule": "Data module"
+        "TFrame": "UI Frame component"
+        "procedure.*\\(": "Procedure definition"
+        "function.*:": "Function definition"
+        "property.*read.*write": "Property definition"
+        "TADOQuery|TQuery": "Database query"
+        "TADOConnection": "Database connection"
+        "raise": "Exception raise"
+        "try.*except": "Exception handling"
+        "published": "Published property (UI binding)"
+
+    plsql:
+      patterns:
+        "CREATE PROCEDURE": "Stored procedure"
+        "CREATE FUNCTION": "Stored function"
+        "CREATE PACKAGE": "Package definition"
+        "CREATE TRIGGER": "Database trigger"
+        "CREATE TABLE": "Table definition"
+        "CURSOR": "Cursor definition"
+        "EXCEPTION": "Exception handler"
+        "RAISE_APPLICATION_ERROR": "Custom error"
+        "COMMIT|ROLLBACK": "Transaction control"
+        "SELECT.*INTO": "Query into variable"
+
+    terraform:
+      patterns:
+        "resource": "Infrastructure resource"
+        "data": "Data source lookup"
+        "variable": "Input variable"
+        "output": "Output value"
+        "module": "Module reference"
+        "provider": "Provider configuration"
+        "locals": "Local values"
+        "depends_on": "Explicit dependency"
+
+    opentofu:
+      # Same patterns as Terraform (fork)
+      patterns:
+        "resource": "Infrastructure resource"
+        "data": "Data source lookup"
+        "variable": "Input variable"
+        "output": "Output value"
+        "module": "Module reference"
+        "provider": "Provider configuration"
+
+    cpp:
+      patterns:
+        "class.*public": "Class definition"
+        "virtual": "Virtual method (polymorphism)"
+        "override": "Method override"
+        "template<": "Template definition"
+        "namespace": "Namespace definition"
+        "#include": "Header include"
+        "throw": "Exception throw"
+        "try.*catch": "Exception handling"
+        "std::": "Standard library usage"
+        "unique_ptr|shared_ptr": "Smart pointer"
+
+    groovy:
+      annotations:
+        "@Grab": "Dependency grab"
+        "@Service": "Spring service"
+        "@Controller": "Spring controller"
+        "@Transactional": "Transaction boundary"
+      patterns:
+        "def": "Dynamic variable/method"
+        "class.*extends": "Class inheritance"
+        "class.*implements": "Interface implementation"
+        "pipeline \\{": "Jenkins pipeline"
+        "stage\\(": "Pipeline stage"
+        "steps \\{": "Pipeline steps"
+        "throw new": "Error scenario"
+
+    ruby:
+      patterns:
+        "class.*<": "Class inheritance"
+        "module": "Module definition"
+        "def": "Method definition"
+        "attr_accessor|attr_reader": "Attribute accessor"
+        "has_many|belongs_to|has_one": "ActiveRecord association"
+        "validates": "ActiveRecord validation"
+        "before_action|after_action": "Controller callback"
+        "scope :": "ActiveRecord scope"
+        "raise": "Exception raise"
+        "rescue": "Exception handling"
+        "render": "View rendering"
+
+  # Output settings
+  output:
+    # Directory for generated artifacts (relative to project root)
+    # Specs use NNN-re-{domain} naming (e.g., 000-re-overview, 003-re-core-framework)
+    # which makes them identifiable without a separate subdirectory
+    directory: ".specify/echelon/re"
+
+    # Generate spec.md
+    generate_spec: true
+
+    # Generate plan.md
+    generate_plan: true
+
+    # Generate tasks.md
+    generate_tasks: true
+
+    # Keep intermediate analysis artifacts
+    keep_analysis_artifacts: true
+
+  # Workflow settings
+  workflow:
+    # Pause between phases for review
+    pause_between_phases: false
+
+    # Require confirmation before each phase
+    require_confirmation: false
+
+    # Coverage threshold for verify/expand loop (0-100)
+    # Loop repeats until this coverage percentage is reached
+    coverage_threshold: 80
+
+    # Resolution threshold for validate loop (0-100)
+    # Loop repeats until this percentage of findings are auto-resolved
+    resolution_threshold: 80
+
+    # Max iterations for validate loop
+    # Stops after this many iterations even if threshold not met
+    max_validate_iterations: 3
+
+  # Polyrepo settings - for analyzing multiple repos under a top-level directory
+  polyrepo:
+    # Auto-detection: 'auto' detects based on directory structure,
+    # 'true' forces polyrepo mode, 'false' forces single-repo
+    enabled: auto
+
+    # Discovery scope: immediate children only
+    discovery: flat
+
+    # Exclude directories from auto-discovery
+    exclude: []
+    #  - docs
+    #  - scripts
+
+    # Override: only include these directories (disables auto-discovery)
+    include: []
+    #  - repo-a
+    #  - repo-b
+
+    # Per-repo overrides (key = directory name)
+    # Each repo can override depth and analysis settings
+    repos: {}
+    #  heavy-cpp-repo:
+    #    depth:
+    #      level: signatures
+    #    analysis:
+    #      exclude_patterns:
+    #        - "test-fixtures/**"
+
+  # Environment variable overrides (for re-* commands):
+  # ECHELON_CFG_RE_ANALYSIS_MAX_FILE_SIZE_KB
+  # ECHELON_CFG_RE_SOURCES_GIT_HISTORY_LIMIT
+  # ECHELON_CFG_RE_OUTPUT_DIRECTORY
