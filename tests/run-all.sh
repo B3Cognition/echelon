@@ -248,6 +248,7 @@ printf "Time: %s\n" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 # Bash suites
 run_suite "Unit Tests" "$SCRIPT_DIR/unit"
 run_suite "Integration Tests" "$SCRIPT_DIR/integration"
+run_suite "Integration/RE Tests" "$SCRIPT_DIR/integration/re"
 run_suite "E2E Tests" "$SCRIPT_DIR/e2e"
 
 # Root-level standalone bash tests
