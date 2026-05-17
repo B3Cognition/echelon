@@ -37,3 +37,4 @@ tests/benchmarks/reports/
 # `specify extension update --dev`.
 .claude/agents/
 .claude/skills/
+.worktrees/
