@@ -38,6 +38,29 @@ A requirement that has no automated test coverage is not done. BUILD_DONE is for
 7. **NEVER announce a phase transition before the Post-Dispatch Protocol completes.** Order is rigid: write journal entries → update `state.json` with `last_dispatch.post_dispatch_complete: true` → only then announce or dispatch the next phase. Announcing first leaves an interrupted state behind on resume.
 8. **NEVER skip the pre-dispatch gate on rework iterations.** The pre-dispatch gate runs on every dispatch — first iteration, second, third, and beyond. There is no `iteration > 1` exemption.
 9. **NEVER call `Write` on an existing file without reading it first.** Use `Edit` for any file that may exist on disk. `Write` is reserved for first-time creation.
+10. **NEVER write a `routing_decision` journal entry without `from_phase`, `to_phase`, `reason`, and `evoi_score`.** All four fields are mandatory in `data`. `evoi_score` may be numeric or the string `"not_computed"` (with justification in `reason`).
+11. **NEVER write `quality_scores[]` entries for WHY1 phase (`phase1-why1`).** WHY1 is an assumption-challenge phase that does not invoke the Understanding tool and produces no quality scores.
+
+---
+
+### Routing Decision Field Mandate
+
+Every `routing_decision` journal entry MUST include ALL of the following fields in its `data` object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `from_phase` | string | The phase node ID being departed |
+| `to_phase` | string | The phase node ID being entered |
+| `reason` | string | Prose justification for the transition |
+| `evoi_score` | number or `"not_computed"` | Expected Value of Information score. Use `"not_computed"` only with justification in `reason`. |
+
+### Quality Scores Provenance Mandate
+
+Every NEW `quality_scores[]` entry written to `state.json` MUST include:
+
+1. **`source`** — one of: `tool:understanding.validate`, `agent_self_assessment`, `commander_estimate`
+2. **`tool_output_ref`** — when `source` starts with `tool:`, cite the `RJ-NNN` journal entry ID of the corresponding `quality_check` entry
+3. **`pass_counter`** — use this field name (not `pass`) for the iteration counter in all new writes
 
 ---
 
@@ -125,13 +148,16 @@ For **each** entry in `journal_entries[]`:
      }
      ```
 
-4. **Append** the entry as a single JSON line to `.specify/squad/reasoning-journal.jsonl` using the **Bash tool with shell redirection** — NEVER the Write or Edit tool:
+4. **Append** the entry via `journal-append.sh` — NEVER the Write or Edit tool, NEVER raw `echo >>`:
 
    ```bash
-   echo '<single-line JSON>' >> "${PROJECT_ROOT}/.specify/squad/reasoning-journal.jsonl"
+   SCRIPTS="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
+   bash "${SCRIPTS}/journal-append.sh" --entry '<single-line JSON>' --journal-path "${PROJECT_ROOT}/.specify/squad/reasoning-journal.jsonl"
    ```
 
-   **NEVER use `Write` on `reasoning-journal.jsonl`.** `Write` overwrites the file, destroying all prior entries. `Edit` is also prohibited — the file is append-only and has no string to match for replacement. The `>>` redirect is the only valid operation.
+   The helper validates the entry against `journal-entry-types.json` before appending. On validation FAIL it appends the entry anyway (DR-001 warn-then-allow) plus a `schema_warning` sibling entry. On PASS or WARN it appends only the entry.
+
+   **NEVER use `Write` on `reasoning-journal.jsonl`.** `Write` overwrites the file, destroying all prior entries. `Edit` is also prohibited — the file is append-only and has no string to match for replacement. **NEVER use raw `echo >> journal` — always route through `journal-append.sh`.**
 
 5. Update `reasoning-journal-index.json` dimensions:
    - `by_phase`, `by_type`, `by_agent`, `by_iteration` — always
@@ -261,7 +287,7 @@ speckit-echelon-commander (COMMANDER) is the **only** writer of `reasoning-journ
 
 1. Read current `last_entry_id` from index (e.g., `RJ-047`). Increment to get new id (`RJ-048`).
 2. Set `entry.id = "RJ-048"` and `entry.timestamp = <current UTC ISO-8601>`.
-3. Append the entry as a single JSON line to `reasoning-journal.jsonl`.
+3. Append the entry via `journal-append.sh` (never raw `echo >>`):
 4. Update index dimensions:
    - `by_phase[entry.phase]` — append entry id
    - `by_type[entry.type]` — append entry id
@@ -627,8 +653,9 @@ The canonical KB set:
 **MANDATORY — emit the `init_knowledge_read` journal entry via the helper script.** Do NOT hand-author the journal entry. Do NOT decide `files_read[]` / `files_absent[]` from memory. The script is the single source of truth for file existence at init time:
 
 ```bash
-JSON=$(bash .specify/extensions/echelon/scripts/bash/kb-read-init.sh --id "RJ-<sequential>")
-echo "$JSON" >> .specify/squad/reasoning-journal.jsonl
+SCRIPTS=".specify/extensions/echelon/scripts/bash"
+JSON=$(bash "${SCRIPTS}/kb-read-init.sh" --id "RJ-<sequential>")
+bash "${SCRIPTS}/journal-append.sh" --entry "$JSON" --journal-path ".specify/squad/reasoning-journal.jsonl"
 ```
 
 The script issues `[ -f "$f" ] && [ -r "$f" ]` on each KB file, derives `cold_start` from `knowledge-base/feedback/` directory contents, and counts `calibration_map_agents_loaded` by parsing `agent-scores.yaml`. It produces a one-line JSON document with the exact schema required by the journal — no transformation needed.

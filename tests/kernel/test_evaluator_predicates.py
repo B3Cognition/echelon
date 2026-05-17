@@ -157,10 +157,11 @@ class TestPredicateQualityGatesFail:
 class TestPredicateConvergenceDetected:
     def test_convergence_when_delta_tiny(self):
         # Two passes with tiny delta should converge
+        # Per spec 027 FR-008: only grounded entries (non-legacy_unknown) contribute
         state = _state({"quality_scores": [
-            {"overall": 0.71},
-            {"overall": 0.715},
-            {"overall": 0.717},
+            {"overall": 0.71, "source": "agent_self_assessment"},
+            {"overall": 0.715, "source": "agent_self_assessment"},
+            {"overall": 0.717, "source": "agent_self_assessment"},
         ]})
         config = _config({"convergence": {
             "max_iterations": 5,

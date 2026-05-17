@@ -298,6 +298,13 @@ types:
     agents: [speckit-echelon-realist]
     required_data_fields: [artifact, finding, grounded_value]
 
+  # --- Validation ---
+  schema_warning:
+    description: "Emitted by journal-append helper when the validator detects a schema violation (DR-001 warn-then-allow)"
+    agents: [speckit-echelon-commander]
+    required_data_fields: [violating_entry_id, violation_type, details]
+    # violation_type enum: missing_required_field, type_not_registered
+
   # --- Unknown fallback ---
   unknown:
     description: "Entry with an unregistered type — written by speckit-echelon-commander (COMMANDER) with warning"

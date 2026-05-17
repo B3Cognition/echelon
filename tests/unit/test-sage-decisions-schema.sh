@@ -9,8 +9,11 @@ FILE="$REPO_ROOT/knowledge-base/sage-decisions.yaml"
 PASS=0
 FAIL=0
 
-pass() { ((PASS++)); echo "  PASS: $1"; }
-fail() { ((FAIL++)); echo "  FAIL: $1"; }
+# NOTE: `((PASS++))` returns the OLD value (0 initially), which is falsy
+# arithmetic and trips `set -e`, causing this whole script to exit silently
+# after the first PASS. Use pre-increment OR `|| true` OR plain arithmetic.
+pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
 echo "=== sage-decisions.yaml schema validation ==="
 echo ""

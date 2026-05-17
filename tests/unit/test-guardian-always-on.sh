@@ -30,7 +30,9 @@ echo ""
 assert_grep "$COMMANDER" "guardian.mode" "commander.md references guardian.mode config"
 assert_grep "$COMMANDER" "always_on" "commander.md defines always_on mode"
 assert_grep "$COMMANDER" "on_demand" "commander.md defines on_demand mode"
-assert_grep "$COMMANDER" "Dispatch GUARDIAN" "commander.md has GUARDIAN dispatch section"
+# Accept either ordering: "Dispatch GUARDIAN" (pre-restructure) or
+# "GUARDIAN... Dispatch Mode" (post-restructure with name-first heading).
+assert_grep "$COMMANDER" "GUARDIAN.*Dispatch Mode\|Dispatch GUARDIAN" "commander.md has GUARDIAN dispatch section"
 assert_grep "$COMMANDER" "Minimum Security Checklist" "commander.md references Minimum Security Checklist"
 assert_grep "$COMMANDER" "guardian_dispatch_mode" "commander.md logs guardian_dispatch_mode in state.json"
 

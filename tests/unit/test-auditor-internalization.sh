@@ -1,17 +1,24 @@
 #!/usr/bin/env bash
-# T-32: Unit test — verify auditor.md contains per-agent internalization scoring
-#        with all 4 categories (Absorption, Accuracy, Calibration, Transfer)
+# T-32: Unit test — verify internalization scoring is documented with all 4
+#        categories (Absorption, Accuracy, Calibration, Transfer).
+#
+# Post-split history (see tests/unit/test-auditor-internalizer-split.sh): the
+# internalization computation was extracted from auditor.md into
+# internalizer.md when INTERNALIZER became its own agent. The "Per-Agent
+# Internalization Scoring" section, category definitions, composite/trend
+# rules, storage format, and null/cap rules all moved with it. This test
+# verifies the documentation still exists; the target file just moved.
 
 set -euo pipefail
 
-AUDITOR_MD="$(dirname "$0")/../../extension/agents/learning/auditor.md"
+TARGET_MD="$(dirname "$0")/../../extension/agents/learning/internalizer.md"
 PASS=0
 FAIL=0
 
 assert_contains() {
   local label="$1"
   local pattern="$2"
-  if grep -qiE "$pattern" "$AUDITOR_MD"; then
+  if grep -qiE "$pattern" "$TARGET_MD"; then
     echo "  PASS: $label"
     PASS=$((PASS + 1))
   else

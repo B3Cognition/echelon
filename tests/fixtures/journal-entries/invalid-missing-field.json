@@ -1,0 +1,12 @@
+{
+  "id": "RJ-044",
+  "type": "routing_decision",
+  "phase": "phase2-how",
+  "agent": "speckit-echelon-commander",
+  "timestamp": "2025-01-15T10:31:00Z",
+  "data": {
+    "from_phase": "phase1-why1",
+    "to_phase": "phase2-how",
+    "reason": "Moving to architecture phase"
+  }
+}

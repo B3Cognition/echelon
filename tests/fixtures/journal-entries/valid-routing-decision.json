@@ -1,0 +1,13 @@
+{
+  "id": "RJ-042",
+  "type": "routing_decision",
+  "phase": "phase2-how",
+  "agent": "speckit-echelon-commander",
+  "timestamp": "2025-01-15T10:30:00Z",
+  "data": {
+    "from_phase": "phase1-why1",
+    "to_phase": "phase2-how",
+    "reason": "WHY1 challenge phase complete — assumptions validated, moving to architecture",
+    "evoi_score": 0.85
+  }
+}

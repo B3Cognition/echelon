@@ -37,6 +37,7 @@ from kernel.accessors import (
     get_last_quality_scores,
     get_mode,
     get_quality_scores_window,
+    is_grounded,
 )
 
 
@@ -150,8 +151,18 @@ def _eval_convergence_detected(
     if not window or len(window) < 2:
         return False, fields_read, observed
 
+    # Filter out ungrounded (legacy_unknown) entries from convergence baseline (FR-008)
+    grounded_window = [
+        entry for entry in window
+        if isinstance(entry, dict) and is_grounded(entry)
+    ]
+    observed["grounded_count"] = len(grounded_window)
+
+    if len(grounded_window) < 2:
+        return False, fields_read, observed
+
     # Check if last consec_passes deltas are all < delta_threshold
-    overalls = [entry.get("overall", 0.0) for entry in window if isinstance(entry, dict)]
+    overalls = [entry.get("overall", 0.0) for entry in grounded_window]
     if len(overalls) < 2:
         return False, fields_read, observed
 
