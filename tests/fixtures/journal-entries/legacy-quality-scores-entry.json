@@ -1,0 +1,13 @@
+{
+  "phase": "phase2-why2",
+  "pass": 2,
+  "overall": 0.78,
+  "scores": {
+    "structure": 0.8,
+    "completeness": 0.75,
+    "clarity": 0.82,
+    "testability": 0.7,
+    "consistency": 0.83
+  },
+  "timestamp": "2025-01-14T15:00:00Z"
+}

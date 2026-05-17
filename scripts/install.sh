@@ -113,6 +113,19 @@ else
   echo "  ✓ echelon tools on PATH"
 fi
 
+# ── 2b. Pre-convert journal-entry-types.yaml to JSON ─────────────────────────
+echo "▶ Converting journal-entry-types.yaml to JSON..."
+JETYPES_YAML="$ECHELON_DIR/extension/workflow/journal-entry-types.yaml"
+JETYPES_JSON="$ECHELON_DIR/extension/workflow/journal-entry-types.json"
+"$VENV_DIR/bin/python" -c "
+import yaml, json, sys
+with open(sys.argv[1]) as f:
+    data = yaml.safe_load(f)
+with open(sys.argv[2], 'w') as f:
+    json.dump(data, f, indent=2)
+" "$JETYPES_YAML" "$JETYPES_JSON"
+echo "  ✓ journal-entry-types.json generated"
+
 # ── 3. Memory directory ──────────────────────────────────────────────────────
 echo "▶ Setting up memory directory..."
 mkdir -p "$MEMORY_DIR"

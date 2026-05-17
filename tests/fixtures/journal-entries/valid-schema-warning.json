@@ -1,0 +1,12 @@
+{
+  "id": "RJ-043",
+  "type": "schema_warning",
+  "phase": "phase2-how",
+  "agent": "speckit-echelon-commander",
+  "timestamp": "2025-01-15T10:30:01Z",
+  "data": {
+    "violating_entry_id": "RJ-041",
+    "violation_type": "missing_required_field",
+    "details": "routing_decision missing: evoi_score"
+  }
+}

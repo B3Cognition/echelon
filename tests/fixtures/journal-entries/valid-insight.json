@@ -1,0 +1,14 @@
+{
+  "id": "RJ-010",
+  "type": "insight",
+  "phase": "phase1-what",
+  "agent": "speckit-echelon-scout",
+  "timestamp": "2025-01-15T09:00:00Z",
+  "data": {
+    "artifact": "spec.md",
+    "section": "requirements",
+    "reasoning": "The user story implies a REST API pattern",
+    "confidence": 0.9,
+    "evidence_grade": "high"
+  }
+}
