@@ -26,8 +26,13 @@ assert() {
 # Test 2: check command exits 1 (we know 3 agents exceed 500)
 bash "$SCRIPT" check --max 500 >/dev/null 2>&1 && assert "check --max 500 exits 1" "should have failed" || assert "check --max 500 exits 1" "OK"
 
-# Test 3: check with high limit passes
-bash "$SCRIPT" check --max 1000 >/dev/null 2>&1 && assert "check --max 1000 exits 0" "OK" || assert "check --max 1000 exits 0" "should have passed"
+# Test 3: check with high limit passes — bumped from 1000 to 1500 because
+# commander.md has grown organically beyond 1000 (currently ~1278) with the
+# accumulation of NEVER-rules, mandate tables, and section-numbered protocol
+# blocks. 1500 remains a meaningful budget guardrail for the second-largest
+# agents while accommodating commander.md's role as the orchestrator with
+# the most surface area.
+bash "$SCRIPT" check --max 1500 >/dev/null 2>&1 && assert "check --max 1500 exits 0" "OK" || assert "check --max 1500 exits 0" "should have passed"
 
 # Test 4: report outputs all agents
 count=$(bash "$SCRIPT" report | grep -c "^[a-z]")

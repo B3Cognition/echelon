@@ -11,8 +11,11 @@ FIXTURE_FILE="$FIXTURE_DIR/sage-decisions.yaml"
 PASS=0
 FAIL=0
 
-pass() { ((PASS++)); echo "  PASS: $1"; }
-fail() { ((FAIL++)); echo "  FAIL: $1"; }
+# NOTE: `((PASS++))` returns the OLD value (0 initially), which is falsy
+# arithmetic and trips `set -e`, causing the script to exit silently after
+# the first PASS. Use plain arithmetic assignment instead.
+pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
+fail() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 
 cleanup() { rm -rf "$FIXTURE_DIR"; }
 trap cleanup EXIT
