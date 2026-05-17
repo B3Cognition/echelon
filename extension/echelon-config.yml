@@ -682,7 +682,11 @@ mempalace:
 # =============================================================================
 
 deploy:
+  enabled: false         # echelon meta-repo is a Python library + CLI + spec-kit extension,
+                         # not an HTTP application — no blue/green CD applies. Setting this to
+                         # false makes validate-deploy.sh skip the gate that otherwise blocks
+                         # codegen/build for non-deployable repos.
   type: http             # http (default) | cli — see config-template.yml for full reference
-  blue_port: 3000        # blue slot (health-check port, unique per app)
-  green_port: 3001       # green slot (health-check port, unique per app)
+  blue_port: 3000        # blue slot (health-check port, unique per app, dormant when enabled=false)
+  green_port: 3001       # green slot (health-check port, unique per app, dormant when enabled=false)
   # Live URL: http://localhost/{app-name}/  (all apps share Traefik at :80)
