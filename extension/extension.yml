@@ -552,6 +552,80 @@ provides:
         visibility: user
         color: green
 
+    # ── Re-extraction layer ──────────────────────────────────────────────────
+    - name: "speckit.echelon.re-analyzer"
+      file: "agents/re/analyzer.md"
+      description: "RE-ANALYZER — extracts structured codebase data via analysis scripts"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: full
+        color: orange
+    - name: "speckit.echelon.re-specifier"
+      file: "agents/re/specifier.md"
+      description: "RE-SPECIFIER — synthesises domain specifications from analysis artifacts"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-verifier"
+      file: "agents/re/verifier.md"
+      description: "RE-VERIFIER — computes spec coverage and clusters orphan files"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-expander"
+      file: "agents/re/expander.md"
+      description: "RE-EXPANDER — fills coverage gaps from orphan file clusters"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-validator"
+      file: "agents/re/validator.md"
+      description: "RE-VALIDATOR — quality-checks specs and auto-resolves ambiguities from code"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-checklister"
+      file: "agents/re/checklister.md"
+      description: "RE-CHECKLISTER — generates per-domain and summary quality checklists"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-constituter"
+      file: "agents/re/constituter.md"
+      description: "RE-CONSTITUTER — generates strategic artifacts (constitution, strategy, risks, gaps, ADRs)"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-planner"
+      file: "agents/re/planner.md"
+      description: "RE-PLANNER — generates per-domain plan.md informed by constitution"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+    - name: "speckit.echelon.re-tasker"
+      file: "agents/re/tasker.md"
+      description: "RE-TASKER — generates per-domain tasks.md files"
+      behavior:
+        execution: agent
+        capability: strong
+        tools: write
+        color: orange
+
     - name: "speckit.echelon.harness-init"
       file: "commands/echelon.harness-init.md"
       description: "Initialize harness for a target repository — clone, config, Docker image build"
@@ -595,125 +669,53 @@ provides:
     # ── Brownfield (re-) commands ──────────────────────────────────────────────────────────
     - name: "speckit.echelon.re-extract"
       file: "commands/echelon.re-extract.md"
-      description: "Phase 1 - Extract specs and strategic artifacts from existing codebase"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
+      description: "Phase 1 brownfield extraction — analyze codebase and generate domain specs + strategic artifacts"
 
     - name: "speckit.echelon.re-retarget"
       file: "commands/echelon.re-retarget.md"
-      description: "Phase 2 - Guided prompts to fill target stack and strategic decisions"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
+      description: "Phase 2 brownfield — guided prompts to fill target stack and strategic decisions"
 
     - name: "speckit.echelon.re-plan-all"
       file: "commands/echelon.re-plan-all.md"
-      description: "Phase 3 - Generate per-domain plans and tasks"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
+      description: "Phase 3 brownfield — generate per-domain plans and tasks after strategic decisions are filled"
 
     - name: "speckit.echelon.re-analyze"
       file: "commands/echelon.re-analyze.md"
       description: "Extract structured data from codebase into analysis.json"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
       scripts:
         sh: "scripts/bash/re/run-analysis.sh"
 
     - name: "speckit.echelon.re-specify"
       file: "commands/echelon.re-specify.md"
-      description: "Generate specs with coverage tracking and iterative refinement"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
+      description: "Generate domain specifications from analysis artifacts"
 
     - name: "speckit.echelon.re-verify"
       file: "commands/echelon.re-verify.md"
-      description: "Verify spec coverage against codebase and identify gaps"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
+      description: "Verify spec coverage against codebase and identify orphan files"
 
     - name: "speckit.echelon.re-expand"
       file: "commands/echelon.re-expand.md"
-      description: "Expand spec coverage by filling gaps with orphan file clusters"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
+      description: "Expand spec coverage by filling gaps from orphan file clusters"
 
     - name: "speckit.echelon.re-validate"
       file: "commands/echelon.re-validate.md"
       description: "Validate specs for quality, auto-resolve ambiguities from code"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
 
     - name: "speckit.echelon.re-checklist"
       file: "commands/echelon.re-checklist.md"
       description: "Generate quality checklists for specs (per-domain + summary)"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
 
     - name: "speckit.echelon.re-constitute"
       file: "commands/echelon.re-constitute.md"
       description: "Generate strategic artifacts (constitution, strategy, risks, gaps, ADRs)"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
 
     - name: "speckit.echelon.re-plan"
       file: "commands/echelon.re-plan.md"
       description: "Generate per-domain plan.md files"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
 
     - name: "speckit.echelon.re-tasks"
       file: "commands/echelon.re-tasks.md"
       description: "Generate per-domain tasks.md files"
-      behavior:
-        execution: isolated
-        invocation: automatic
-        capability: strong
-        effort: high
-        tools: full
 
   config:
     - name: "echelon-config.yml"
