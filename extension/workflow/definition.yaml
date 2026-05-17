@@ -1436,3 +1436,78 @@ re_extraction:
       transitions:
         - to: DONE
           condition: always
+
+# =============================================================================
+# RE-RETARGET — read by speckit.echelon.re-retarget COMMANDER
+# =============================================================================
+re_retarget:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-retarget-0-preflight
+      label: "Retarget Preflight"
+      spec_file: workflow/phases/re-retarget-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-retarget-1-input
+          condition: always
+
+    - id: re-retarget-1-input
+      label: "Human Decision Input"
+      spec_file: workflow/phases/re-retarget-1-input.md
+      type: commander_internal    # interactive — COMMANDER prompts user directly, no agent dispatch
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-PLANNING — read by speckit.echelon.re-plan-all COMMANDER
+# =============================================================================
+re_planning:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-planning-0-preflight
+      label: "Planning Preflight"
+      spec_file: workflow/phases/re-planning-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-planning-1-plan
+          condition: always
+
+    - id: re-planning-1-plan
+      label: "Per-Domain Plans (RE-PLANNER)"
+      spec_file: workflow/phases/re-planning-1-plan.md
+      type: agent
+      agent: speckit-echelon-re-planner
+      tier: re_planning
+      context_pack:
+        - specs/NNN-re-{domain}/spec.md
+        - constitution.md
+        - migration-strategy.md
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/NNN-re-{domain}/plan.md
+      transitions:
+        - to: re-planning-2-tasks
+          condition: verdict = DONE
+
+    - id: re-planning-2-tasks
+      label: "Per-Domain Tasks (RE-TASKER)"
+      spec_file: workflow/phases/re-planning-2-tasks.md
+      type: agent
+      agent: speckit-echelon-re-tasker
+      tier: re_planning
+      context_pack:
+        - specs/NNN-re-{domain}/plan.md
+        - specs/NNN-re-{domain}/spec.md
+        - constitution.md
+      outputs:
+        - specs/NNN-re-{domain}/tasks.md
+      transitions:
+        - to: DONE
+          condition: always
