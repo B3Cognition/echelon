@@ -59,9 +59,9 @@ Read the artifacts directly — no intermediate normalization layer.
 
 **Polyrepo mode** (if `golddigger_artifacts.manifest` exists):
 
-1. Read `.specify/revenge/repos-manifest.json` for repo list
-2. Read `.specify/revenge/cross-repo.json` for dependency links and shared tech
-3. For each repo: read `.specify/revenge/{repo}/analysis.json` for structure, dependencies, git history, hotspots
+1. Read `.specify/echelon/re/repos-manifest.json` for repo list
+2. Read `.specify/echelon/re/cross-repo.json` for dependency links and shared tech
+3. For each repo: read `.specify/echelon/re/{repo}/analysis.json` for structure, dependencies, git history, hotspots
 4. If domain specs exist (from auto-promoted full-depth repos): read `specs/NNN-re-{repo}-{domain}/spec.md`
 
 Use the data to seed your output artifacts:
@@ -72,7 +72,7 @@ Use the data to seed your output artifacts:
 
 **Single-repo mode** (if `golddigger_artifacts.analysis` exists):
 
-1. Read `.specify/revenge/analysis.json` for structure, dependencies, git history, hotspots
+1. Read `.specify/echelon/re/analysis.json` for structure, dependencies, git history, hotspots
 2. If domain specs exist: read `specs/NNN-re-{domain}/spec.md`
 
 Use the data to seed your output artifacts:

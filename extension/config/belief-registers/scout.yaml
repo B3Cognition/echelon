@@ -26,7 +26,7 @@ beliefs:
     severity: medium
 
   - id: SCT-004
-    claim: "GOLDDIGGER revenge extension artifacts (via state.json.golddigger_artifacts) are a trustworthy head-start that does not need full re-validation"
+    claim: "GOLDDIGGER brownfield (re-) artifacts (via state.json.golddigger_artifacts) are a trustworthy head-start that does not need full re-validation"
     verified: "2026-03-28"
     expires: "2026-09-28"
     anchor: "Architectural contract with GOLDDIGGER"
