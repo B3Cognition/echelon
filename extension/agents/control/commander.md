@@ -826,7 +826,7 @@ spec-kit dependency validation happens at install time via `specify extension ad
 - Append journal entry: `{type: dependency_failure, dependency: speckit.<skill-name>, phase: <current-phase>, fallback_mode: true}`
 - Continue the run in degraded mode — produce artifacts manually as markdown, flag as UNVALIDATED
 
-**If the `revenge` extension is needed** (brownfield mode): speckit-echelon-golddigger (GOLDDIGGER) attempts to invoke `speckit.revenge.extract` and handles unavailability directly — no preflight required. See the invoking command's state machine for brownfield detection and speckit-echelon-golddigger (GOLDDIGGER) dispatch sequencing.
+**If brownfield extraction is needed**: speckit-echelon-golddigger (GOLDDIGGER) attempts to invoke `speckit.echelon.re-extract` and handles unavailability directly — no preflight required. See the invoking command's state machine for brownfield detection and speckit-echelon-golddigger (GOLDDIGGER) dispatch sequencing.
 
 ---
 
@@ -1176,7 +1176,7 @@ When the same issue appears again, increment `occurrences` rather than creating 
 | Tool | Failure | Fallback |
 |------|---------|----------|
 | Understanding extension | `speckit.echelon.understanding-validate` skill invocation fails | **HARD STOP for WHY2/WHY3.** speckit-echelon-sage (SAGE) invokes `speckit.echelon.understanding-validate` via the Skill tool (not as a CLI binary). If unavailable, speckit-echelon-sage (SAGE) does NOT fall back to heuristic review — proven 15-29% overconfident (PAT-006), corrupts calibration data. speckit-echelon-commander (COMMANDER) sets state to "blocked" and escalates to human. WHY1 (assumption-challenge mode) does not require Understanding and is unaffected. |
-| spec-kit-revenge | `speckit.revenge.extract` skill invocation fails | speckit-echelon-golddigger (GOLDDIGGER) reports failure; speckit-echelon-scout (SCOUT) proceeds without speckit-echelon-golddigger (GOLDDIGGER) artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
+| Brownfield re-extraction | `speckit.echelon.re-extract` skill invocation fails | speckit-echelon-golddigger (GOLDDIGGER) reports failure; speckit-echelon-scout (SCOUT) proceeds without speckit-echelon-golddigger (GOLDDIGGER) artifacts using manual structural analysis. Run flagged as degraded-brownfield in state.json. |
 | spec-kit skills | Skill invocation fails at runtime | speckit-echelon-architect (ARCHITECT) and speckit-echelon-orchestrator (ORCHESTRATOR) produce artifacts manually as markdown. No spec-kit validation. Flag as UNVALIDATED. spec-kit skills (e.g. `speckit.specify`, `speckit.constitution`) are AI coding assistant skills, not CLI tools — validated at install time via `specify extension add echelon`. |
 
 ### Subagent Failures
