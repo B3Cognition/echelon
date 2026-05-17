@@ -279,13 +279,13 @@ You will receive the domain name and optionally a repo name from speckit-echelon
 
 ```bash
 # Check if already completed (defensive check)
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# NOTE: sys.stdout.write used here (not print()) — output goes to agent shell, not state.json
 python3 -c "
-import json
+import json, sys
 with open('.specify/squad/state.json', 'r') as f:
     s = json.load(f)
 domains = s.get('golddigger_completed_domains', [])
-print(json.dumps(domains))
+sys.stdout.write(json.dumps(domains) + '\n')
 "
 ```
 
