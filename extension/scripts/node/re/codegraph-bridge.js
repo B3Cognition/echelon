@@ -56,7 +56,7 @@ const adapter = __importStar(require("./codegraph-adapter"));
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-exports.DEFAULT_OUTPUT_RELATIVE = '.specify/revenge/codegraph-analysis.json';
+exports.DEFAULT_OUTPUT_RELATIVE = '.specify/echelon/re/codegraph-analysis.json';
 exports.DEFAULT_DEPTH = 3;
 exports.DEFAULT_MAX_SYMBOLS = 10000;
 exports.MIN_DEPTH = 1;

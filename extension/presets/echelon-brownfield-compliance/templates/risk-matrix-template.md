@@ -2,7 +2,7 @@
 
 **Generated**: {DATE}
 **Related**: [constitution.md](constitution.md)
-**Preset**: revenge-compliance
+**Preset**: echelon-brownfield-compliance
 **Applicable Regulations**: {GDPR / HIPAA / SOC 2 / PCI-DSS}
 
 ---

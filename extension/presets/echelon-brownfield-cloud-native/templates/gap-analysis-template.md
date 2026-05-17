@@ -2,7 +2,7 @@
 
 **Generated**: {DATE}
 **Related**: [constitution.md](constitution.md)
-**Preset**: revenge-cloud-native
+**Preset**: echelon-brownfield-cloud-native
 
 ---
 

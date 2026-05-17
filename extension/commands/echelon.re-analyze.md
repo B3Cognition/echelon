@@ -80,6 +80,7 @@ In either case, pass the manifest to `run-analysis.sh` which handles both scenar
 Resolve layered config and export script-friendly env vars, then run extraction:
 
 ```bash
+# Previously: eval "$(specify extension config resolve revenge --format env --prefix REVENGE_CFG_)" && ...
 eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)" && "$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" "$OUTPUT_DIR" "$OUTPUT_DIR/repos-manifest.json"
 ```
 
@@ -151,7 +152,7 @@ After analysis completes, run:
 
 ## Structural Intelligence (CodeGraph)
 
-`run-analysis.sh` automatically runs the CodeGraph bridge when Node.js and `scripts/node/codegraph-bridge.js` are available. If successful, it produces `.specify/echelon/re/codegraph-analysis.json` alongside `analysis.json`.
+`run-analysis.sh` automatically runs the CodeGraph bridge when Node.js and `scripts/node/re/codegraph-bridge.js` are available. If successful, it produces `.specify/echelon/re/codegraph-analysis.json` alongside `analysis.json`.
 
 **If `.specify/echelon/re/codegraph-analysis.json` was produced**, mention it in the output summary:
 - Total symbols extracted: `.index_stats.total_symbols`
