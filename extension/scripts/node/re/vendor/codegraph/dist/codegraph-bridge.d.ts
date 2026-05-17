@@ -10,7 +10,7 @@
  */
 import type { AnalysisOutput } from './integration-types';
 import * as adapter from './codegraph-adapter';
-export declare const DEFAULT_OUTPUT_RELATIVE = ".specify/revenge/codegraph-analysis.json";
+export declare const DEFAULT_OUTPUT_RELATIVE = ".specify/echelon/re/codegraph-analysis.json";
 export declare const DEFAULT_DEPTH = 3;
 export declare const DEFAULT_MAX_SYMBOLS = 10000;
 export declare const MIN_DEPTH = 1;
