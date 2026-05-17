@@ -20,27 +20,75 @@ Config = dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Quality score normalization (FR-007, FR-008, FR-013)
+# ---------------------------------------------------------------------------
+
+
+def _normalize_quality_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a quality_scores entry for backward compatibility.
+
+    - If entry has `pass` but no `pass_counter`: copy `pass` to `pass_counter`.
+    - If entry has both: `pass_counter` takes precedence (FR-013).
+    - If entry has no `source`: set `source` to `"legacy_unknown"` (FR-008).
+
+    Returns a shallow copy — original dict is not mutated.
+    """
+    normalized = dict(entry)
+
+    # pass_counter normalization (FR-007, FR-013)
+    if "pass_counter" not in normalized and "pass" in normalized:
+        normalized["pass_counter"] = normalized["pass"]
+    # When both present, pass_counter already takes precedence (no action needed)
+
+    # source grandfathering (FR-008)
+    if "source" not in normalized:
+        normalized["source"] = "legacy_unknown"
+
+    return normalized
+
+
+def is_grounded(entry: dict[str, Any]) -> bool:
+    """Return True if the quality_scores entry has a valid (non-legacy) source.
+
+    Entries without source or with source == "legacy_unknown" are ungrounded
+    and should be excluded from convergence baselines (FR-008).
+    """
+    source = entry.get("source")
+    if source is None or source == "legacy_unknown":
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Quality score accessors
 # ---------------------------------------------------------------------------
 
 
 def get_last_quality_scores(state: State) -> Optional[dict[str, Any]]:
-    """Return the last entry in state.quality_scores, or None if absent/empty."""
+    """Return the last entry in state.quality_scores, or None if absent/empty.
+
+    The returned entry is normalized: pass -> pass_counter, missing source ->
+    legacy_unknown (FR-007, FR-008, FR-013).
+    """
     scores = state.get("quality_scores")
     if not isinstance(scores, list) or len(scores) == 0:
         return None
     last = scores[-1]
     if not isinstance(last, dict):
         return None
-    return last
+    return _normalize_quality_entry(last)
 
 
 def get_quality_scores_window(state: State, window: int = 2) -> Optional[list[dict[str, Any]]]:
-    """Return the last `window` entries from state.quality_scores for convergence checks."""
+    """Return the last `window` entries from state.quality_scores for convergence checks.
+
+    Each entry is normalized: pass -> pass_counter, missing source ->
+    legacy_unknown (FR-007, FR-008, FR-013).
+    """
     scores = state.get("quality_scores")
     if not isinstance(scores, list) or len(scores) == 0:
         return None
-    return scores[-window:]
+    return [_normalize_quality_entry(e) for e in scores[-window:] if isinstance(e, dict)]
 
 
 def get_qualitative_scores(state: State) -> Optional[dict[str, Any]]:

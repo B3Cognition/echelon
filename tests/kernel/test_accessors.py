@@ -99,7 +99,8 @@ EMPTY_CONFIG: dict = {}
 class TestGetLastQualityScores:
     def test_positive(self):
         result = get_last_quality_scores(FULL_STATE)
-        assert result == {"overall": 0.71, "structure": 0.65}
+        # Per spec 027 FR-008: entries without `source` are grandfathered to "legacy_unknown"
+        assert result == {"overall": 0.71, "structure": 0.65, "source": "legacy_unknown"}
 
     def test_missing_field(self):
         assert get_last_quality_scores(EMPTY_STATE) is None
