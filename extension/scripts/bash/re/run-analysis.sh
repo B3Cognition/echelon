@@ -196,8 +196,8 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
 
     # Structural Code Intelligence (conditional — fail-open, non-blocking)
     # Runs once at root level covering all repos via aggregate analysis
-    BRIDGE_SCRIPT="$(dirname "$SCRIPT_DIR")/node/re/codegraph-bridge.js"
-    NODE_MODULES_DIR="$(dirname "$SCRIPT_DIR")/node/re/node_modules"
+    BRIDGE_SCRIPT="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/codegraph-bridge.js"
+    NODE_MODULES_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/node_modules"
     if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
         if [[ ! -d "$NODE_MODULES_DIR" ]]; then
             echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
@@ -286,8 +286,8 @@ jq -n \
     }' > "$OUTPUT_DIR/analysis.json"
 
 # Structural Code Intelligence (conditional — fail-open, non-blocking)
-BRIDGE_SCRIPT="$(dirname "$SCRIPT_DIR")/node/re/codegraph-bridge.js"
-NODE_MODULES_DIR="$(dirname "$SCRIPT_DIR")/node/re/node_modules"
+BRIDGE_SCRIPT="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/codegraph-bridge.js"
+NODE_MODULES_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/node_modules"
 if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
     if [[ ! -d "$NODE_MODULES_DIR" ]]; then
         echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
