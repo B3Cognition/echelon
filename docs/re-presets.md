@@ -25,7 +25,7 @@ hooks:
     command: "speckit.analyze"
     optional: true
     prompt: "Run consistency analysis on generated artifacts?"
-Create /speckit.revenge.validate (new command)
+Create /speckit.echelon.re-validate (new command)
 
 A revenge specific validation that applies analyze-style checks but resolves ambiguities by going back to code:
 
@@ -42,7 +42,7 @@ Clarify is inherently interactive. Instead, revenge should:
 
 Auto-resolve what it can from code
 Mark genuinely unresolvable items with [REQUIRES INPUT]
-Let /speckit.revenge.retarget handle the human-input phase
+Let /speckit.echelon.re-retarget handle the human-input phase
 Proposed Workflow Enhancement:
 
 Current:
@@ -97,7 +97,7 @@ presets/revenge-cloud-native/
 Summary Table
 Enhancement Value Effort Recommendation
 Hook into /speckit.analyze after retasks High - catches consistency issues Low - just add hook Do it
-Create /speckit.revenge.validate High - auto-resolves ambiguities Medium - new command Consider for v1.1
+Create /speckit.echelon.re-validate High - auto-resolves ambiguities Medium - new command Consider for v1.1
 Add cloud-native preset High - common use case Medium Start here
 Add compliance preset High - differentiator Medium Second priority
 Add microservices preset Medium - specialized Medium Third priority

@@ -395,11 +395,11 @@ File: agents/exploration/scout.md
 
 When analyzing an existing codebase, the squad uses a two-phase extraction pipeline:
 
-1. **GOLDDIGGER Mode 1 (Survey)** runs revenge extension at signature level → writes artifact paths to `state.json.golddigger_artifacts`
-2. If `speckit.revenge.extract` skill invocation succeeds:
+1. **GOLDDIGGER Mode 1 (Survey)** runs `speckit.echelon.re-analyze` at signature level → writes artifact paths to `state.json.golddigger_artifacts`
+2. If `speckit.echelon.re-extract` skill invocation succeeds:
    - **SCOUT** reads artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping
    - **GOLDDIGGER Mode 2 (Deep Dive)** runs on-demand when Phase 1 agents need deeper analysis of specific domains
-3. If revenge extension is not available, SCOUT proceeds with manual structural analysis
+3. If brownfield extraction is not available, SCOUT proceeds with manual structural analysis
 
 Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives by writing to `state.json.golddigger_requests`. COMMANDER processes the queue between agent dispatches.
 
@@ -958,3 +958,45 @@ echelon_result:
 ## License
 
 MIT
+
+---
+
+## Brownfield extraction (re-* commands)
+
+Echelon includes native brownfield extraction for reverse-engineering existing codebases into spec-kit format artifacts. This replaces the standalone `revenge` extension.
+
+### Three-phase workflow
+
+**Phase 1 — Extract** (`/speckit.echelon.re-extract`): Full pipeline from codebase → specs + strategic artifacts. Runs analysis, generates domain specs with iterative coverage/validation loops, produces `constitution.md`, `migration-strategy.md`, `risk-matrix.md`, `gap-analysis.md`, and ADRs.
+
+**Phase 2 — Retarget** (`/speckit.echelon.re-retarget`): Guided prompts to fill `[REQUIRES INPUT]` placeholders in strategic artifacts — target stack decisions, migration strategy choices.
+
+**Phase 3 — Plan All** (`/speckit.echelon.re-plan-all`): Generates per-domain `plan.md` and `tasks.md` files ready for echelon's build pipeline.
+
+### Individual commands
+
+| Command | Purpose |
+|---------|---------|
+| `speckit.echelon.re-analyze` | Extract structured data from codebase → `.specify/echelon/re/analysis.json` |
+| `speckit.echelon.re-specify` | Generate domain specs with coverage tracking |
+| `speckit.echelon.re-verify` | Verify spec coverage; identify orphan files |
+| `speckit.echelon.re-expand` | Fill coverage gaps from orphan file clusters |
+| `speckit.echelon.re-validate` | Quality-check specs; auto-resolve ambiguities |
+| `speckit.echelon.re-checklist` | Generate per-domain quality checklists |
+| `speckit.echelon.re-constitute` | Generate strategic artifacts with `[REQUIRES INPUT]` placeholders |
+| `speckit.echelon.re-plan` | Generate per-domain `plan.md` files |
+| `speckit.echelon.re-tasks` | Generate per-domain `tasks.md` files |
+
+### Polyrepo support
+
+Auto-detects multi-repo workspaces via `discover-repos.sh`. Runs per-repo extraction and produces `cross-repo.json` for shared-tech and dependency mapping.
+
+### Presets
+
+- `echelon-brownfield-microservices` — DDD decomposition, service boundary ADRs
+- `echelon-brownfield-cloud-native` — 12-factor, 7R migration strategy, container ADRs
+- `echelon-brownfield-compliance` — GDPR/HIPAA/SOC2 checklists and risk templates
+
+Install via: `specify preset add echelon-brownfield-microservices`
+
+For full documentation, see [`docs/re-overview.md`](docs/re-overview.md).
