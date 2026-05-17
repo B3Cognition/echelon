@@ -12,6 +12,8 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER) du
 
 **Core principle:** Improvement must be measured, not assumed. If quality is flat or declining, say so.
 
+> **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
+
 ## Inputs
 
 - Current run artifacts (`.specify/specs/{feature}/`)
@@ -46,7 +48,7 @@ Load prior run from `.specify/squad/prior-runs/`. Compare:
 #### Step 2: Quality Trajectory
 
 Compare quality scores between runs:
-- Understanding metric scores (31 metrics from WHY)
+- Understanding metric scores (34 metrics from WHY)
 - ASSESS feasibility scores
 - GROUND reality-check scores
 - Overall pass/fail counts

@@ -88,13 +88,13 @@ Energy metrics produce 5 scores (all 0-1, higher = clearer):
 
 **Hotspot tokens** show the specific words/phrases the model found most surprising. These are candidates for rewriting.
 
-### 5. Relationship to 31 Metrics
+### 5. Relationship to 34 Metrics
 
-The 31 metrics are a rule-based inspector. Energy is a second pair of eyes.
+The 34 metrics are a rule-based inspector. Energy is a second pair of eyes.
 
-A requirement can score 0.90 on the 31 metrics (good structure, readable, testable) but the energy model spots a phrase that's oddly worded or domain-novel. The 31 metrics tell you *what* is wrong. Energy tells you *where* the ambiguity hides.
+A requirement can score 0.90 on the 34 metrics (good structure, readable, testable) but the energy model spots a phrase that's oddly worded or domain-novel. The 34 metrics tell you *what* is wrong. Energy tells you *where* the ambiguity hides.
 
-Energy scores are NOT part of the 31-metric score or quality gates. They are a separate, experimental overlay.
+Energy scores are NOT part of the 34-metric score or quality gates. They are a separate, experimental overlay.
 
 ## Notes
 

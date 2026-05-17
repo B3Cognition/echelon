@@ -13,6 +13,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
+from freezegun import freeze_time
 
 # Add scripts/ directory to path so we can import the module directly
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
@@ -225,6 +226,15 @@ class TestStatusClassification:
         b = self._make_belief()
         assert belief_parser.classify_status(b) == "fresh"
 
+    # The two tests below cross-check status classification against fixed-date
+    # fixtures at scripts/belief-parser-fixtures/. The fixtures use real calendar
+    # dates that were "approaching expiry" when authored (April 2026); without
+    # freezing time, those dates rot into "expired" as the test runs forward in
+    # real time, producing false CI failures unrelated to parser correctness.
+    # We pin today to 2026-05-01 so the fixture's expires=2026-05-15 (line 36
+    # of sample-config.yml) sits at +14 days, satisfying the
+    # "within 30 days" approaching_expiry contract.
+    @freeze_time("2026-05-01")
     def test_sample_config_statuses(self):
         """Cross-check status classification on all sample-config.yml beliefs."""
         beliefs = belief_parser.parse_config_file(FIXTURES / "sample-config.yml")
@@ -235,6 +245,7 @@ class TestStatusClassification:
         assert statuses["limits.max_tokens"] == "low_confidence"
         assert statuses["analysis.convergence_delta"] == "fresh"
 
+    @freeze_time("2026-05-01")
     def test_sample_agent_statuses(self):
         """Cross-check status classification on all sample-agent.md beliefs."""
         beliefs = belief_parser.parse_agent_file(FIXTURES / "sample-agent.md")

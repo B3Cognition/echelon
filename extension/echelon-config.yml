@@ -487,7 +487,7 @@ endocrine:
     # High dopamine (curiosity), high serotonin (patience), low cortisol (not stressed)
     exploration: [0.3, 0.7, 0.3, 0.6, 0.5, 0.4]
 
-    # VALIDATION (SAGE, CHECKPOINT, VALIDATOR)
+    # VALIDATION (SAGE, CHECKPOINT, VALIDATOR, GUARDIAN)
     # High cortisol (vigilant), high norepinephrine (focused), low dopamine (critical not creative)
     validation: [0.4, 0.3, 0.8, 0.4, 0.4, 0.7]
 
@@ -495,11 +495,12 @@ endocrine:
     # Balanced but elevated cortisol (cautious), elevated serotonin (steady judgment)
     feasibility: [0.4, 0.5, 0.7, 0.6, 0.5, 0.5]
 
-    # SOLUTION (ARCHITECT, ORCHESTRATOR, SENTINEL)
+    # SOLUTION (ARCHITECT, ORCHESTRATOR, SENTINEL, ORACLE, BENCHMARK)
     # High serotonin (calm confidence), high dopamine (creative), moderate everything else
     solution: [0.4, 0.6, 0.4, 0.7, 0.5, 0.5]
 
-    # BUILD (IMPLEMENTER, CODE-REVIEWER, TEST-GUARDIAN, DEBUGGER, etc.)
+    # BUILD (IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN, DEBUGGER, INTEGRATOR,
+    #        CHANGE_CONTROLLER, VISUAL_VALIDATOR, VERIFICATION, ENGINEERING_MANAGER)
     # High norepinephrine (laser focus), high adrenaline (execution mode), high oxytocin (collaboration)
     build: [0.7, 0.5, 0.5, 0.4, 0.7, 0.9]
 
@@ -507,13 +508,148 @@ endocrine:
     # High dopamine (creative drive), low cortisol (no fear), low adrenaline (relaxed exploration)
     innovation: [0.2, 0.8, 0.2, 0.6, 0.5, 0.3]
 
-    # LEARNING (MIRROR, ADAPTIVE, AUDITOR, REALIST, VETERAN, CONSOLIDATOR)
+    # LEARNING (MIRROR, ADAPTIVE, AUDITOR, INTERNALIZER, REALIST, CONSOLIDATOR, VETERAN, MONITOR)
     # High serotonin (reflective calm), high oxytocin (knowledge sharing), moderate dopamine
     learning: [0.2, 0.6, 0.4, 0.8, 0.7, 0.3]
 
-    # CONTROL (COMMANDER, SCOREKEEPER, TRACKER, STRATEGIST)
+    # CONTROL (COMMANDER, SCOREKEEPER, TRACKER, STRATEGIST, PROGRESS_TRACKER)
     # Balanced — orchestra conductor needs equanimity across all dimensions
     control: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+
+  # =============================================================================
+  # INTERPRETATIONS — per-archetype guidance prepended to each dispatch.
+  # Read at runtime by endocrine.sh cmd_get_full_prompt_modifier.
+  # If a key is absent here, endocrine.sh falls back to the legacy single-line
+  # modifier ("[ENDOCRINE: all hormones MEDIUM] Normal operating conditions.").
+  # Authors: omit any overlays that don't change behaviour for the archetype.
+  # =============================================================================
+
+  interpretations:
+
+    exploration:
+      summary: |
+        You operate under high dopamine (curiosity) and low cortisol (no fear of
+        ambiguity). Open threads, keep questions live. Your value is in the
+        surface area you map, not the conclusions you reach.
+      overlays:
+        adrenaline_high: "Budget pressure rising. Stop opening new threads. Consolidate findings and close the loop before iterating further."
+        dopamine_low:    "Curiosity slipping — you're going through the motions. Re-read the user request and the unknowns list before producing more output."
+        cortisol_high:   "Something is going wrong (rare for your archetype). Escalate to COMMANDER rather than producing more analysis."
+
+    validation:
+      summary: |
+        You operate vigilantly under high cortisol and high norepinephrine. HIGH
+        cortisol does NOT mean back off — it means tighten gate criteria. Your
+        value is in what you reject, not what you approve.
+      overlays:
+        cortisol_high:      "Maximum vigilance. Reject anything you would normally let slide. Document each rejection — false positives are reversible, false negatives ship to prod."
+        cortisol_low:       "Under-vigilance. You are at risk of rubber-stamping. Re-read the most recent passed artifact and challenge it adversarially before continuing."
+        norepinephrine_low: "Focus slipping. Stop scanning, pick the next single requirement, complete its check, log it. Single-task until focus recovers."
+
+    feasibility:
+      summary: |
+        Your judgment is conservative but steady (high cortisol, elevated
+        serotonin). KILL, DEFER, and PASS verdicts have permanent consequences —
+        you are the kill gate.
+      overlays:
+        cortisol_high: "Bias your verdict toward DEFER or KILL. Better to reject a viable plan than approve a dangerous one. State your residual concerns explicitly."
+        serotonin_low: "Judgment instability. Refuse to issue a verdict until you've re-read the spec and feasibility constraints in full. Avoid PASS under destabilized judgment."
+
+    solution:
+      summary: |
+        You operate under high serotonin (calm confidence) and elevated dopamine
+        (creative). Your job is the simplest correct contribution — the smallest
+        architecture (ARCHITECT/ORCHESTRATOR/SENTINEL), the tightest capacity
+        model (BENCHMARK), the most specific domain answer (ORACLE) — that meets
+        the spec. Avoid over-engineering; avoid elaborating beyond what your
+        consumers (ARCHITECT, CARTOGRAPHER) will use.
+      overlays:
+        dopamine_high: "Creative drive may be over-tuning. Check: are you adding optionality, capacity headroom, or domain detail the spec doesn't ask for? Cut anything not requirement-traced."
+        serotonin_low: "Rushed output risk. Stop generating new structure (ADRs / capacity rows / domain sections); spend the next dispatch consolidating what's already decided and double-checking trace coverage."
+
+    build:
+      summary: |
+        You ship under high adrenaline, high oxytocin (peer collaboration), and
+        high norepinephrine (detail focus). HIGH adrenaline = ship and iterate;
+        do not skip review gates.
+      overlays:
+        adrenaline_high:    "Execution pressure is on. Ship the smallest correct increment. Do NOT skip the spec-guard / code-review / test-guard gates — that's where speed kills."
+        norepinephrine_low: "Detail focus slipping. You will miss off-by-one errors and edge cases. Stop, write a checklist for this task, mark each item before claiming DONE."
+        oxytocin_low:       "You're working in isolation when you shouldn't be. Re-read the upstream agent's output (IMPLEMENTER → SPEC_GUARD, etc.) before drafting your verdict."
+
+    innovation:
+      summary: |
+        You explore alternatives under high dopamine and low cortisol. Your worst
+        output is the safe one — propose options the squad would otherwise miss,
+        even weak ones.
+      overlays:
+        dopamine_low:  "Creativity has dried up. Stop generating options; re-read three pitfalls.yaml entries from prior runs to seed fresh angles."
+        cortisol_high: "Fear is throttling exploration. Lower the bar: list five options regardless of viability. Filtering is downstream."
+
+    learning:
+      summary: |
+        You operate reflectively under high serotonin and high oxytocin. Your
+        value is the signal individual dispatches miss — whether that's
+        real-time process drift (MONITOR's beat) or cross-run pattern
+        extraction (AUDITOR, MIRROR, ADAPTIVE, REALIST, VETERAN, CONSOLIDATOR,
+        INTERNALIZER). Step back from the per-task view.
+      overlays:
+        cortisol_low: "Under-reflection. You are summarizing instead of synthesizing. Look for the pattern (cross-run for post-hoc agents; cross-phase for MONITOR), not the local finding."
+        oxytocin_low: "Siloed thinking. Read at least one prior run's evolution-report (or, for MONITOR, scan the current run's reasoning-journal index) before producing your output."
+
+    control:
+      summary: |
+        You orchestrate from a balanced baseline. Any hormone extreme on your own
+        profile is a sign the squad is off-track — re-anchor on the constitution
+        and user intent.
+      overlays:
+        adrenaline_high: "Budget pressure has propagated to your own hormones. Resist reactive routing; check EVOI for each candidate dispatch before issuing."
+        cortisol_high:   "You are catastrophizing. Re-read the user request verbatim. The squad is likely fine; you are interpreting noise as crisis."
+
+  # =============================================================================
+  # DYNAMICS — magnitudes for the deterministic hormone calculator (Phase 4+).
+  # Read by src/hormone_calc/ via DynamicsConfig.load(); falls back to
+  # DEFAULT_DYNAMICS (built into the calculator) if this block is absent.
+  # =============================================================================
+
+  dynamics:
+    budget_pressure:
+      # token_ratio = total_estimated / (token_budget_k * 1000)
+      # Each band [previous_upto, upto) adds the corresponding delta to the
+      # current agent's adrenaline. The 0.95+ band also broadcasts.
+      bands:
+        - { upto: 0.40, delta: 0.00 }
+        - { upto: 0.60, delta: 0.02 }
+        - { upto: 0.80, delta: 0.05 }
+        - { upto: 0.95, delta: 0.10 }
+        - { upto: 1.00, delta: 0.15 }
+      critical_broadcast: 0.05   # extra broadcast_adrenaline when token_ratio >= 0.95
+
+    iteration_pressure:
+      # ratio = state.iteration / max_squad_iterations (default 10)
+      bands:
+        - { upto: 0.50, delta: 0.00 }
+        - { upto: 0.75, delta: 0.03 }
+        - { upto: 1.00, delta: 0.08 }
+
+    task_complexity:
+      # delta = (complexity - 0.5) * multiplier
+      # complexity = archetype_base[archetype] + agent_bump.get(agent, 0), clamped [0, 1]
+      multiplier: 0.15
+      archetype_base:
+        exploration: 0.40
+        validation:  0.50
+        feasibility: 0.60
+        solution:    0.70
+        build:       0.80
+        innovation:  0.50
+        learning:    0.30
+        control:     0.40
+      agent_bump:
+        IMPLEMENTER: 0.10
+        DEBUGGER:    0.15
+        ARCHITECT:   0.10
+        GATEKEEPER:  0.10
 
   # Circuit breakers — slightly wider range for banzai mode
   circuit_breakers:
@@ -546,7 +682,11 @@ mempalace:
 # =============================================================================
 
 deploy:
+  enabled: false         # echelon meta-repo is a Python library + CLI + spec-kit extension,
+                         # not an HTTP application — no blue/green CD applies. Setting this to
+                         # false makes validate-deploy.sh skip the gate that otherwise blocks
+                         # codegen/build for non-deployable repos.
   type: http             # http (default) | cli — see config-template.yml for full reference
-  blue_port: 3000        # blue slot (health-check port, unique per app)
-  green_port: 3001       # green slot (health-check port, unique per app)
+  blue_port: 3000        # blue slot (health-check port, unique per app, dormant when enabled=false)
+  green_port: 3001       # green slot (health-check port, unique per app, dormant when enabled=false)
   # Live URL: http://localhost/{app-name}/  (all apps share Traefik at :80)

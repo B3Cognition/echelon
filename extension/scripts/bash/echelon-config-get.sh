@@ -76,17 +76,33 @@ if command -v specify &>/dev/null; then
 fi
 
 _get_json() {
+  # Try the specify resolver first, but only trust its output if it actually
+  # returned a JSON object. The naive `if [[ -n "$_SPECIFY_BIN" ]]; then specify…`
+  # pattern wrongly accepted empty output on installs where
+  # `specify extension config resolve` exits non-zero (subcommand missing) —
+  # exactly the same failure mode commit df99b73 fixed in endocrine.sh's
+  # bootstrap. When the resolver fails, fall through to the YAML fallback.
   if [[ -n "$_SPECIFY_BIN" ]]; then
-    (cd "$REPO_ROOT" && "$_SPECIFY_BIN" extension config resolve echelon 2>/dev/null)
-  else
-    # Fallback: read project config file directly (no layer merging)
-    local cfg="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
-    if [[ ! -f "$cfg" ]]; then
-      echo "echelon-config-get: specify not available and $cfg not found" >&2
-      exit 1
+    local _out
+    _out="$(cd "$REPO_ROOT" && "$_SPECIFY_BIN" extension config resolve echelon 2>/dev/null)" || true
+    if [[ -n "$_out" && "$_out" =~ ^[[:space:]]*\{ ]]; then
+      echo "$_out"
+      return 0
     fi
-    python3 -c "import sys, yaml, json; print(json.dumps(yaml.safe_load(open('$cfg')) or {}))"
   fi
+  # Fallback: read project config file directly (no layer merging).
+  # Prefer the deployed config, then fall through to the source config so
+  # CI checkouts (where .specify/extensions/ is gitignored) still work.
+  local cfg=""
+  if [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
+    cfg="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
+    cfg="$REPO_ROOT/extension/echelon-config.yml"
+  else
+    echo "echelon-config-get: specify resolver failed and no config file found" >&2
+    return 1
+  fi
+  python3 -c "import sys, yaml, json; print(json.dumps(yaml.safe_load(open('$cfg')) or {}))"
 }
 
 # ─── key navigation and output ───────────────────────────────────────────────
@@ -140,6 +156,10 @@ if isinstance(node, (dict, list)):
     print(json.dumps(node, separators=(",", ":")))
 elif node is None:
     print("")
+elif isinstance(node, bool):
+    # YAML/shell convention: lowercase "true"/"false" — not Python repr ("True"/"False").
+    # Consumers like validate-deploy.sh compare against the lowercase form.
+    print("true" if node else "false")
 else:
     print(node)
 '

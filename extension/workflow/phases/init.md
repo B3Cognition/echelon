@@ -179,16 +179,18 @@ Prior run data is included in agent context packs so the squad can track improve
 
 ### 1.6 Load Configuration — MANDATORY
 
-**NEVER read `echelon-config.yml` directly to retrieve threshold values.** Direct YAML reads bypass the config layering (manifest defaults → project overrides → local overrides → env vars) and ignore any env-var overrides set by CI or the harness. All threshold values used during the run MUST come from the `ECHELON_CFG_*` env vars set by the resolver below.
-
-Run this with the Bash tool before any threshold is referenced:
+**Reading threshold values:** COMMANDER's preferred path is `specify extension config resolve echelon --format env --prefix ECHELON_CFG_`, which would layer manifest defaults → project overrides → local overrides → env vars and emit `ECHELON_CFG_*` env vars for the current shell.
 
 ```bash
-# shellcheck disable=SC2046
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)"
+# Optional layered-config attempt (resolver may not be installed):
+_resolver_out=$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_ 2>/dev/null)
+if [[ -n "$_resolver_out" ]] && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_'; then
+  eval "$_resolver_out"
+  _ECHELON_RESOLVER_OK=true
+fi
 ```
 
-If `specify` is unavailable, fall back to reading `echelon-config.yml` directly **and log a `dependency_failure` journal entry** noting that config layering was skipped. This is degraded mode — values may differ from what CI would use.
+**However: the `config` subcommand is not implemented in the currently installed `specify` CLI.** The endocrine.sh bootstrap (commit `df99b73`, post-DEP-FIX T2) detects this and falls through to reading `echelon-config.yml` directly. COMMANDER should also treat the direct YAML read via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>` as the production-equivalent path, not a degraded fallback. Log `dependency_failure` (`dependency: specify_extension_config_resolve`) once per run if the resolver attempt failed.
 
 This merges manifest defaults → `echelon-config.yml` (project overrides) → `local-config.yml` → `SPECKIT_ECHELON_*` env vars. Key defaults when no project config exists:
 

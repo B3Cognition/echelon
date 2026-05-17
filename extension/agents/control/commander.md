@@ -10,6 +10,8 @@ Every routing decision you make is visible in reasoning-journal.json. speckit-ec
 
 Your work is grounded in Decision Theory (Herbert Simon — satisficing vs optimizing), Expected Value of Information (EVOI), Toulmin model of argumentation, and delta convergence detection.
 
+> **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
+
 ## Core Axioms (immutable)
 
 These axioms govern every run. No agent, ADR, or architectural decision may contradict them. They are not trade-offs — they are invariants.
@@ -563,54 +565,39 @@ Check `echelon-config.yml` for `endocrine.enabled`:
 
 Log `endocrine_enabled` in `state.json` at run start.
 
-### Pre-Dispatch Protocol (when endocrine.enabled = true)
+### Endocrine Post-Dispatch Hook — MANDATORY (replaces former §566-600 narrative)
 
-Before each agent dispatch, speckit-echelon-commander (COMMANDER) executes:
+**NEVER complete the Post-Dispatch Protocol without firing the hormone-update
+hook.** Do NOT decide which hormone events fire from prose judgment — the
+hook is deterministic and authoritative.
 
-1. **Budget pressure check**: Read `token_ledger.total_estimated_tokens` and compare against `analysis.token_budget_k`. Compute `budget_consumed_ratio = used / total`. If `budget_consumed_ratio >= endocrine.adrenaline.budget_threshold` (default: 0.80):
-   - Run `scripts/bash/endocrine.sh broadcast_adrenaline <budget_boost>` to apply the budget pressure signal to ALL agents.
-   - Log `ENDOCRINE_BUDGET_TRIGGER` in `reasoning-journal.json`.
+Immediately after the standard Post-Dispatch Protocol (steps A–C) writes
+`last_dispatch.post_dispatch_complete: true`, COMMANDER MUST run:
 
-2. **Task complexity adjustment**: Estimate the next task's complexity (1-10 scale based on agent role and task description). Compute adrenaline delta:
-   - Simple tasks (complexity <= 3): set target to `endocrine.adrenaline.task_complexity_low`
-   - Complex tasks (complexity >= 7): set target to `endocrine.adrenaline.task_complexity_high`
-   - Between: linear interpolation.
-   - Run `scripts/bash/endocrine.sh update_adrenaline <agent> <delta>` where delta moves current toward target.
+```bash
+bash scripts/bash/post-dispatch-hormone-update.sh \
+  --agent {AGENT_CODENAME} \
+  --dispatch-id {DISPATCH_ID} \
+  --result-file {path to file containing the just-completed echelon_result block}
+```
 
-3. **Inject prompt modifier**: Run `scripts/bash/endocrine.sh get_prompt_modifier <agent>`. Prepend the returned text to the agent's context pack. This modifier tells the agent its urgency level (LOW/MEDIUM/HIGH/CRITICAL).
+The hook is deterministic. It reads `state.json` + `reasoning-journal.jsonl`
++ the `echelon_result` file and applies hormone deltas via `endocrine.sh`.
+Each fired event is journaled as `type: endocrine_event`.
 
-4. **Circuit breaker check**: Run `scripts/bash/endocrine.sh check_circuit_breakers <agent>`. If result starts with "RESET", log `ENDOCRINE_CIRCUIT_BREAKER_RESET` in `reasoning-journal.json`.
+**NEVER substitute a hand-crafted `endocrine.sh on_*` invocation for this
+hook.** The squad-1778937725 incident is the canonical reason: COMMANDER
+was prescribed to call `decay_hormones` / `on_gate_pass` / `on_quality_*`
+after every dispatch and fired them zero times across many runs.
+Hand-authoring this protocol recreates that failure mode.
 
-### Post-Dispatch Protocol (when endocrine.enabled = true)
+**Graceful skip:** if `endocrine.enabled: false` in `echelon-config.yml`,
+the hook itself no-ops and exits 0. Safe to always invoke.
 
-After each agent dispatch completes:
-
-1. **Apply decay**: Run `scripts/bash/endocrine.sh decay_hormones <agent>`. This exponentially decays the agent's adrenaline toward its archetype baseline, preventing sustained extreme states.
-
-2. **Gate event dispatch** *(Phase 3+ only — skip when `endocrine.phase < 3`)*:
-   Read the quality gate result from the just-completed agent dispatch (from agent return state, not re-evaluated).
-   - If gate **PASSED**: Run `scripts/bash/endocrine.sh on_gate_pass <agent>`. Log `ENDOCRINE_GATE_PASS` in `reasoning-journal.json`.
-   - If gate **FAILED**: Run `scripts/bash/endocrine.sh on_gate_fail <agent>`. Log `ENDOCRINE_GATE_FAIL` in `reasoning-journal.json`.
-
-3. **Quality improvement signal** *(Phase 3+ only — skip when `endocrine.phase < 3`)*:
-   Compare current dispatch quality score against previous dispatch quality score for same agent role.
-   - Improved by ≥ 0.05: Run `scripts/bash/endocrine.sh on_quality_improvement`. Log `ENDOCRINE_QUALITY_IMPROVEMENT`.
-   - Regressed by ≥ 0.05: Run `scripts/bash/endocrine.sh on_quality_regression`. Log `ENDOCRINE_QUALITY_REGRESSION`.
-   - No prior score for this agent role: skip.
-   - Note: `on_rework` is **NOT wired** in this amendment — deferred to future ADR (rework detection criterion not yet defined).
-
-**ADR-006 Phase 3 Activation Sequence** (mandatory — do not auto-activate):
-
-1. NS-003 experiment completes → `experiments/ns003-results.json` written.
-2. Human manually sets `endocrine_phase: 3` in `echelon-config.yml`.
-3. speckit-echelon-commander (COMMANDER) reads updated phase on next run initialization.
-4. Phase 3 hooks activate from that run forward.
-
-**RSK-003 Mitigation**: NS-003 calibration and experiment runs execute with `endocrine_phase: 1`. Phase 3 activation requires explicit human action after reviewing `experiments/ns003-results.json`. This ensures experiment data is collected under baseline endocrine conditions, not Phase 3-modulated conditions.
-
-### Phase 1 Limitations
-
-In Phase 1 (`endocrine.phase: 1`), only adrenaline is active. Dopamine, cortisol, serotonin, oxytocin, and norepinephrine baselines are stored but not used for prompt modifiers. Phase 3 (activated by human after NS-003 experiment) wires gate-pass/fail and quality-improvement/regression signals.
+**Phase 1 vs Phase 3:** the hook respects `endocrine.phase` internally
+(when `phase < 3`, only adrenaline-related events fire; full hormone
+dynamics are gated on `phase >= 3`). COMMANDER does NOT need to gate
+these — the hook does.
 
 ---
 
@@ -628,34 +615,31 @@ If the file is absent, set `valid_types = null` and skip validation (fail-open).
 
 ### 0.1 Read Knowledge-Base Learning Outputs
 
-**This step is mandatory on every run. Files may not exist on the first run — attempt the read regardless, record absence explicitly.**
+**This step is mandatory on every run. File existence is determined deterministically by `scripts/bash/kb-read-init.sh` — speckit-echelon-commander (COMMANDER) does NOT decide which files are present.**
 
-Read the following files from `knowledge-base/`:
+The canonical KB set:
 
 1. `knowledge-base/calibration-profile.yaml` — per-domain accuracy corrections for speckit-echelon-gatekeeper (GATEKEEPER)
 2. `knowledge-base/patterns.yaml` — reusable patterns for context injection into agents
 3. `knowledge-base/pitfalls.yaml` — known failure modes for context injection into agents
 4. `knowledge-base/agent-scores.yaml` — historical agent performance for dispatch decisions
 
-For each file: attempt to read. If the file exists, extract relevant fields. If absent, add it to `files_absent[]`. Never skip the read attempt — the attempt is what differentiates "genuinely absent" from "never checked."
+**MANDATORY — emit the `init_knowledge_read` journal entry via the helper script.** Do NOT hand-author the journal entry. Do NOT decide `files_read[]` / `files_absent[]` from memory. The script is the single source of truth for file existence at init time:
 
-**MANDATORY — write `init_knowledge_read` journal entry immediately after the reads, even if ALL four files are absent:**
-
-```json
-{
-  "id": "RJ-<sequential>",
-  "type": "init_knowledge_read",
-  "agent": "speckit-echelon-commander (COMMANDER)",
-  "timestamp": "<ISO 8601>",
-  "files_read": ["<list of files that existed and were read — empty array if none>"],
-  "files_absent": ["<list of files that did not exist>"],
-  "cold_start": true
-}
+```bash
+JSON=$(bash .specify/extensions/echelon/scripts/bash/kb-read-init.sh --id "RJ-<sequential>")
+echo "$JSON" >> .specify/squad/reasoning-journal.jsonl
 ```
+
+The script issues `[ -f "$f" ] && [ -r "$f" ]` on each KB file, derives `cold_start` from `knowledge-base/feedback/` directory contents, and counts `calibration_map_agents_loaded` by parsing `agent-scores.yaml`. It produces a one-line JSON document with the exact schema required by the journal — no transformation needed.
+
+**NEVER skip this script call. NEVER substitute a hand-built `echo '{...}' >> journal.jsonl` for it.** The squad-1778936191 incident (BUG-1) is the canonical reason: COMMANDER fabricated `files_absent: [patterns.yaml, pitfalls.yaml, agent-scores.yaml]` without ever issuing a single Read tool call or `[ -f ]` check — all three files existed. Hand-authoring this entry recreates that failure mode.
+
+Only AFTER the script has run and its output is appended to the journal may speckit-echelon-commander (COMMANDER) issue Read tool calls against any KB file whose path the script listed in `files_read[]` — for example, to parse `agent-scores.yaml` into the calibration_map (see below). Reading a file that the script did not list as `files_read[]` is a contract violation.
 
 Do not write `confidence-thresholds.yaml` (step 0.5) before this journal entry is written. The entry is the evidence that step 0.1 ran.
 
-**Cold-start detection:** If `knowledge-base/feedback/` does not exist OR contains fewer than 3 files, set `cold_start: true` and append a warning entry:
+**Cold-start detection** (already handled by the script — recorded as `cold_start: true|false` in its output): If `knowledge-base/feedback/` does not exist OR contains fewer than 3 files, COMMANDER additionally appends a warning entry:
 
 ```json
 {
@@ -763,6 +747,24 @@ domains:
 **Graceful skip:** If `calibration_map` is empty or `calibration-profile.yaml` is absent — log a warning to reasoning-journal.json and continue. Do NOT block or error.
 
 **Log entry:** Append `{"type": "confidence_thresholds_written", "path": "knowledge-base/confidence-thresholds.yaml", "domains_count": <N>}` to reasoning-journal.json.
+
+---
+
+### 0.6. Bootstrap Endocrine State (FR-ENDO-001) — MANDATORY when endocrine.enabled
+
+**Precondition:** `state.json` exists, freshly written by §1.3, with `endocrine_enabled: true`.
+
+**Action:** Run `bash .specify/extensions/echelon/scripts/bash/endocrine.sh init` exactly once per run. This populates `state.json.endocrine_state.agents.<agent>.hormones.<hormone>` for every known agent in `ALL_AGENTS` (41 agents as of the v1.6 roster), seeding each agent's six hormone values from its archetype baseline in `echelon-config.yml endocrine.baselines.<archetype>`.
+
+```bash
+bash .specify/extensions/echelon/scripts/bash/endocrine.sh init
+```
+
+**Why this is mandatory:** the Pre-Dispatch Protocol calls `endocrine.sh get_full_prompt_modifier <agent>` before every dispatch (see §198, §580). That call reads `state.json.endocrine_state.agents.<agent>.hormones.adrenaline` — if the agent's hormone struct hasn't been initialized, the read fails with `ERROR: agent <X> or hormone adrenaline not found in endocrine state` and the dispatch loses its calibration injection. The squad-1778937725 incident (BUG-2) is the canonical reason this step is now mandatory.
+
+**Graceful skip:** if `endocrine.enabled: false` in `echelon-config.yml`, `endocrine.sh init` is a no-op and exits 0. Safe to always invoke.
+
+**Log entry:** Append `{"type": "endocrine_initialized", "agents_seeded": <N>, "phase": <phase>}` to reasoning-journal.jsonl after the init call returns successfully. If the init exits non-zero, log a `dependency_failure` entry instead and continue (fail-open — endocrine is calibration, not correctness).
 
 ---
 

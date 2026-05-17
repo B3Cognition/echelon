@@ -31,3 +31,9 @@ config-belief-graph.json
 .specify/
 .pytest_cache/
 tests/benchmarks/reports/
+
+# Claude Code's auto-deployed agent + skill definitions (derivatives of
+# extension/agents/*.md and extension/commands/*.md). Regenerated on every
+# `specify extension update --dev`.
+.claude/agents/
+.claude/skills/

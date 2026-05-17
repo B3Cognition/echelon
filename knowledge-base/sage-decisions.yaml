@@ -1,4 +1,32 @@
 schema_version: 2
 append_only: true
 max_entries: 100
-entries: []
+entries:
+  - run_id: squad-1778941103
+    artifact: .specify/squad/staging/assumptions.md
+    challenge_type: missing_evidence
+    challenge_summary: "A-001 (load-bearing interpretation: 'self test' = installation/readiness validation) is UNVALIDATED. Four architecturally incompatible interpretations exist. All downstream artifacts inherit this assumption. User confirmation mandatory before WHAT phase."
+    outcome: blocked
+    resolution: "WHY1 confirmed the blocker is real. CHECKPOINT must escalate to user for interpretation confirmation before progression."
+    was_correct: true
+  - run_id: squad-1778962292
+    artifact: /tmp/dep-fail-1.md
+    challenge_type: logical_inconsistency
+    challenge_summary: "Bug report hypothesis (env-diff between claude -p and interactive shell) is contradicted by code on disk. Real root cause: COMMANDER runs deployed copy of endocrine.sh which lacks the df99b73 fix. The `specify extension config resolve` command does not exist in the installed CLI. Both environments fail identically."
+    outcome: blocked
+    resolution: "WHY1 identified the true root cause. WHAT must reframe the spec around source-vs-deployed divergence, not env-diff investigation. INVESTIGATOR dispatch for env analysis is contraindicated."
+    was_correct: true
+  - run_id: squad-1778962292
+    artifact: specs/025-endocrine-deploy-sync/spec.md
+    challenge_type: quality_threshold
+    challenge_summary: "WHY2 quality gates FAIL: Overall 0.70 < 0.75, Structure 0.5897 < 0.75. Root cause reframing (ISS-CRIT-002) is correctly resolved in spec content; no residual env-diff framing. 3 HIGH issues: structure atomicity, overall gate, and 3 requirements with behavioral=0.0. Zero CRITICALs. Spec content is substantively correct but needs structural decomposition of compound requirements."
+    outcome: blocked
+    resolution: "CARTOGRAPHER must decompose compound requirements (SC-002, FR-003, FR-005, SC-004) and add observable outcomes to FR-008, FR-010, SC-003. Re-validation expected to pass after structural improvements."
+    was_correct: true
+  - run_id: squad-1778962292
+    artifact: specs/025-endocrine-deploy-sync/spec.md
+    challenge_type: quality_threshold
+    challenge_summary: "WHY2-iter-1 quality gates FAIL: Overall 0.7274 < 0.75, Structure 0.5430 < 0.75. CARTOGRAPHER's atomicity splits improved behavioral (+0.065) and depth (+0.15) but REGRESSED structure (-0.047). Root cause: inline path literals and parenthetical dependency annotations increase structural complexity per Understanding's parser. 5 of 9 prior issues resolved. Spec content remains substantively correct."
+    outcome: blocked
+    resolution: "CARTOGRAPHER must extract path literals to Key Entities references, move dependency annotations to a traceability table, and simplify subordinate clauses. Structure is the sole blocking dimension."
+    was_correct: true

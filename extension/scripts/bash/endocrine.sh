@@ -36,12 +36,12 @@
 # Falls back to direct YAML read from .specify/extensions/echelon/echelon-config.yml when specify is unavailable.
 # State stored in .specify/squad/state.json under "endocrine_state".
 set -euo pipefail
-. "$(CDPATH='' cd "$(dirname -- "$0")" && pwd)/python-detect.sh"
+. "$(CDPATH='' cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/python-detect.sh"
 
 # Force C locale for consistent decimal formatting (avoid locale comma separators)
 export LC_ALL=C
 
-SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(CDPATH='' cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Detect project root by walking up from pwd until .specify/ is found.
 # This works in both dev context (script at extension/scripts/bash/) and
@@ -68,18 +68,33 @@ STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 # Falls back to direct YAML read when specify is unavailable (test/offline use).
 _ECHELON_RESOLVER_OK=false
 if command -v specify &>/dev/null; then
-  # shellcheck disable=SC2046
-  # eval is required: resolver emits KEY=VALUE lines for the current shell
-  eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_)" 2>/dev/null \
-    && _ECHELON_RESOLVER_OK=true
+  # Capture resolver stdout, then only eval + mark OK when it actually emitted
+  # at least one ECHELON_CFG_* line. The naive `&& _ECHELON_RESOLVER_OK=true`
+  # pattern wrongly succeeds on a `specify` that exits non-zero but still prints
+  # to stdout (e.g. when `config resolve` is missing from the installed CLI),
+  # which silently defaults every agent's hormones to 0.5 because get_baseline
+  # then never reaches the CONFIG_FILE fallback.
+  if _resolver_out=$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_ 2>/dev/null); then
+    if [[ -n "$_resolver_out" ]] && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_'; then
+      # shellcheck disable=SC1090
+      eval "$_resolver_out"
+      _ECHELON_RESOLVER_OK=true
+    fi
+  fi
+  unset _resolver_out
 fi
 
 if [[ "$_ECHELON_RESOLVER_OK" != "true" ]]; then
-  # Fallback: read from project config (resolver's source) or bundled defaults
+  # Fallback: read from project config (resolver's source) or bundled defaults.
+  # The source config is included in the chain BEFORE config-template.yml so
+  # CI checkouts (where .specify/extensions/ is gitignored) still resolve
+  # correct archetype baselines. Same fix shape as commit df99b73 / 5c2f653.
   if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]]; then
     CONFIG_FILE="$ENDOCRINE_CONFIG_FILE"
   elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
     CONFIG_FILE="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
+    CONFIG_FILE="$REPO_ROOT/extension/echelon-config.yml"
   else
     CONFIG_FILE="$SCRIPT_DIR/../../config-template.yml"
   fi
@@ -250,21 +265,21 @@ get_hormone_baseline() {
 agent_to_archetype() {
   local agent="$1"
   case "$agent" in
-    SCOUT|SYNTHESIZER|CARTOGRAPHER|MODELER)
+    SCOUT|SYNTHESIZER|CARTOGRAPHER|MODELER|GOLDDIGGER)
       echo "exploration" ;;
-    SAGE|VALIDATOR|CHECKPOINT)
+    SAGE|VALIDATOR|CHECKPOINT|GUARDIAN)
       echo "validation" ;;
     GATEKEEPER)
       echo "feasibility" ;;
-    ARCHITECT|ORCHESTRATOR|SENTINEL)
+    ARCHITECT|ORCHESTRATOR|SENTINEL|ORACLE|BENCHMARK)
       echo "solution" ;;
-    IMPLEMENTER|SPEC_GUARD|CODE_REVIEWER|TEST_GUARDIAN|DEBUGGER|INTEGRATOR|CHANGE_CONTROLLER)
+    IMPLEMENTER|SPEC_GUARD|CODE_REVIEWER|TEST_GUARDIAN|DEBUGGER|INTEGRATOR|CHANGE_CONTROLLER|VISUAL_VALIDATOR|VERIFICATION|ENGINEERING_MANAGER)
       echo "build" ;;
-    MAVERICK|INVESTIGATOR)
+    MAVERICK|INVESTIGATOR|ADVOCATE)
       echo "innovation" ;;
-    MIRROR|ADAPTIVE|AUDITOR|INTERNALIZER|REALIST)
+    MIRROR|ADAPTIVE|AUDITOR|INTERNALIZER|REALIST|CONSOLIDATOR|VETERAN|MONITOR)
       echo "learning" ;;
-    COMMANDER|SCOREKEEPER|TRACKER|STRATEGIST|PROGRESS_TRACKER|PROSPECTOR|VETERAN|GLOBAL_MEMORY|GUARDIAN|ORACLE|BENCHMARK|ADVOCATE|GOLDDIGGER|MONITOR)
+    COMMANDER|SCOREKEEPER|TRACKER|STRATEGIST|PROGRESS_TRACKER)
       echo "control" ;;
     *)
       echo "control" ;;  # default fallback
@@ -277,9 +292,10 @@ ALL_AGENTS=(
   VALIDATOR CHECKPOINT GATEKEEPER
   ARCHITECT ORCHESTRATOR SENTINEL
   IMPLEMENTER SPEC_GUARD CODE_REVIEWER TEST_GUARDIAN DEBUGGER INTEGRATOR CHANGE_CONTROLLER
+  VISUAL_VALIDATOR VERIFICATION ENGINEERING_MANAGER
   MAVERICK INVESTIGATOR
-  MIRROR ADAPTIVE AUDITOR INTERNALIZER REALIST
-  SCOREKEEPER TRACKER STRATEGIST PROGRESS_TRACKER PROSPECTOR VETERAN GLOBAL_MEMORY
+  MIRROR ADAPTIVE AUDITOR INTERNALIZER REALIST CONSOLIDATOR
+  SCOREKEEPER TRACKER STRATEGIST PROGRESS_TRACKER VETERAN
   GUARDIAN ORACLE BENCHMARK ADVOCATE GOLDDIGGER MONITOR
 )
 
@@ -421,6 +437,11 @@ cmd_get_adrenaline() {
     return 1
   fi
   echo "$val"
+}
+
+cmd_get_archetype() {
+  local agent="${1:?Usage: endocrine.sh get_archetype <agent>}"
+  agent_to_archetype "$agent"
 }
 
 cmd_set_adrenaline() {
@@ -884,113 +905,150 @@ cmd_get_full_prompt_modifier() {
 
   # Read all 6 hormone values
   local adr dop cor ser oxy nor
-  adr=$(read_hormone_value "$agent" "adrenaline") || return 1
-  dop=$(read_hormone_value "$agent" "dopamine") || return 1
-  cor=$(read_hormone_value "$agent" "cortisol") || return 1
-  ser=$(read_hormone_value "$agent" "serotonin") || return 1
-  oxy=$(read_hormone_value "$agent" "oxytocin") || return 1
+  adr=$(read_hormone_value "$agent" "adrenaline")     || return 1
+  dop=$(read_hormone_value "$agent" "dopamine")       || return 1
+  cor=$(read_hormone_value "$agent" "cortisol")       || return 1
+  ser=$(read_hormone_value "$agent" "serotonin")      || return 1
+  oxy=$(read_hormone_value "$agent" "oxytocin")       || return 1
   nor=$(read_hormone_value "$agent" "norepinephrine") || return 1
 
-  # Classify each hormone: Low [0.0, 0.35), Medium [0.35, 0.75), High [0.75, 1.0]
+  # Classify each hormone: LOW <= 0.25, MEDIUM (0.25, 0.75), HIGH >= 0.75
+  # (Spec section 2 levels.)
   classify() {
     awk -v v="$1" 'BEGIN {
-      if (v < 0.35) print "low"
-      else if (v < 0.75) print "medium"
-      else print "high"
+      if (v <= 0.25) print "low"
+      else if (v >= 0.75) print "high"
+      else print "medium"
     }'
   }
 
-  local adr_level dop_level cor_level ser_level oxy_level nor_level
-  adr_level=$(classify "$adr")
-  dop_level=$(classify "$dop")
-  cor_level=$(classify "$cor")
-  ser_level=$(classify "$ser")
-  oxy_level=$(classify "$oxy")
-  nor_level=$(classify "$nor")
+  local adr_lvl dop_lvl cor_lvl ser_lvl oxy_lvl nor_lvl
+  adr_lvl=$(classify "$adr")
+  dop_lvl=$(classify "$dop")
+  cor_lvl=$(classify "$cor")
+  ser_lvl=$(classify "$ser")
+  oxy_lvl=$(classify "$oxy")
+  nor_lvl=$(classify "$nor")
 
-  # Build composite prompt modifier
-  local output=""
+  local archetype
+  archetype=$(agent_to_archetype "$agent")
 
-  # Adrenaline
-  case "$adr_level" in
-    low) output+="[ADRENALINE=LOW] Be thorough. Review all severity levels. Take your time.\n" ;;
-    medium) ;; # default — no modifier
-    high) output+="[ADRENALINE=HIGH] Focus only on CRITICAL and HIGH severity. Skip optional analysis. Prioritize speed.\n" ;;
-  esac
+  # Load summary + overlays from echelon-config.yml interpretations block.
+  # Use python3 since yaml_get only handles flat top-level keys.
+  # CFG_PATH precedence: env var override > extension source > deployed copy > bare.
+  # Honours ENDOCRINE_CONFIG_FILE so tests can substitute a custom interpretations
+  # block without modifying the project's echelon-config.yml.
+  local CFG_PATH=""
+  if [[ -n "${ENDOCRINE_CONFIG_FILE:-}" ]] && [[ -f "$ENDOCRINE_CONFIG_FILE" ]]; then
+    CFG_PATH="$ENDOCRINE_CONFIG_FILE"
+  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/extension/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
+  elif [[ -f "$REPO_ROOT/echelon-config.yml" ]]; then
+    CFG_PATH="$REPO_ROOT/echelon-config.yml"
+  fi
 
-  # Dopamine
-  case "$dop_level" in
-    low) output+="[DOPAMINE=LOW] Your previous approach was rejected. Try a fundamentally different strategy.\n" ;;
-    medium) ;; # default
-    high) output+="[DOPAMINE=HIGH] Your approach is working well. Build on your current strategy.\n" ;;
-  esac
-
-  # Cortisol
-  case "$cor_level" in
-    low) output+="[CORTISOL=LOW] You are in familiar territory. Make autonomous decisions confidently.\n" ;;
-    medium) ;; # default
-    high) output+="[CORTISOL=HIGH] You are in unfamiliar territory. Be conservative. Escalate uncertainties. Add caveats to your output.\n" ;;
-  esac
-
-  # Serotonin
-  case "$ser_level" in
-    low) output+="[SEROTONIN=LOW] Quality has been declining. Extra diligence required.\n" ;;
-    medium) ;; # default
-    high) output+="[SEROTONIN=HIGH] Quality trajectory is strong. Maintain your current standard.\n" ;;
-  esac
-
-  # Oxytocin
-  case "$oxy_level" in
-    low) output+="[OXYTOCIN=LOW] Verify upstream agent's output thoroughly. Do not assume correctness.\n" ;;
-    medium) ;; # default
-    high) output+="[OXYTOCIN=HIGH] Upstream agent has a strong track record. Focus your effort on new analysis rather than re-verifying their work.\n" ;;
-  esac
-
-  # Norepinephrine
-  case "$nor_level" in
-    low) output+="[NOREPINEPHRINE=LOW] Explore broadly. Consider unconventional connections. Think laterally.\n" ;;
-    medium) ;; # default
-    high) output+="[NOREPINEPHRINE=HIGH] Stay focused on the specific task. Do not explore tangents.\n" ;;
-  esac
-
-  # Calibration injection (FR-002, Spec 010)
-  # Read agent's prior score and failure modes from agent-scores.yaml
-  local SCORES_FILE
-  SCORES_FILE="$REPO_ROOT/knowledge-base/agent-scores.yaml"
-  if [[ -f "$SCORES_FILE" ]] && command -v $PYTHON &>/dev/null; then
-    local cal_block
-    cal_block=$($PYTHON -c "
+  local INTERP_RAW=""
+  if [[ -n "$CFG_PATH" ]] && command -v "$PYTHON" &>/dev/null; then
+    INTERP_RAW=$("$PYTHON" - "$CFG_PATH" "$archetype" 2>/dev/null <<'PY'
 import yaml, sys
+cfg_path, archetype = sys.argv[1], sys.argv[2]
 try:
-    with open('$SCORES_FILE') as f:
+    cfg = yaml.safe_load(open(cfg_path)) or {}
+except Exception:
+    sys.exit(0)
+arch = cfg.get('endocrine', {}).get('interpretations', {}).get(archetype, {})
+if not arch:
+    sys.exit(0)
+summary = (arch.get('summary') or '').strip()
+overlays = arch.get('overlays', {}) or {}
+print('---SUMMARY---')
+print(summary)
+print('---OVERLAYS---')
+for k, v in overlays.items():
+    print(f'{k}::{v}')
+PY
+)
+  fi
+
+  # If no interpretation block found, fall back to legacy single-line modifier.
+  if [[ -z "$INTERP_RAW" ]]; then
+    echo "[ENDOCRINE: all hormones MEDIUM] Normal operating conditions."
+    return 0
+  fi
+
+  local SUMMARY OVERLAYS_BLOB
+  SUMMARY=$(echo "$INTERP_RAW" | sed -n '/^---SUMMARY---$/,/^---OVERLAYS---$/p' | sed '1d;$d')
+  OVERLAYS_BLOB=$(echo "$INTERP_RAW" | sed -n '/^---OVERLAYS---$/,$p' | tail -n +2)
+
+  # Emit the multi-line block.
+  fmt() { printf "%.2f" "$1" 2>/dev/null || echo "$1"; }
+  local adr_u dop_u cor_u ser_u oxy_u nor_u
+  adr_u=$(echo "$adr_lvl" | tr '[:lower:]' '[:upper:]')
+  dop_u=$(echo "$dop_lvl" | tr '[:lower:]' '[:upper:]')
+  cor_u=$(echo "$cor_lvl" | tr '[:lower:]' '[:upper:]')
+  ser_u=$(echo "$ser_lvl" | tr '[:lower:]' '[:upper:]')
+  oxy_u=$(echo "$oxy_lvl" | tr '[:lower:]' '[:upper:]')
+  nor_u=$(echo "$nor_lvl" | tr '[:lower:]' '[:upper:]')
+
+  printf '[ENDOCRINE — %s archetype]\n' "$archetype"
+  printf '  adrenaline: %s (%s)   dopamine: %s (%s)\n' "$(fmt "$adr")" "$adr_u" "$(fmt "$dop")" "$dop_u"
+  printf '  cortisol:   %s (%s)   serotonin: %s (%s)\n' "$(fmt "$cor")" "$cor_u" "$(fmt "$ser")" "$ser_u"
+  printf '  oxytocin:   %s (%s)   norepinephrine: %s (%s)\n' "$(fmt "$oxy")" "$oxy_u" "$(fmt "$nor")" "$nor_u"
+  printf '\n'
+  printf 'Interpretation (%s archetype):\n' "$archetype"
+  echo "$SUMMARY" | sed 's/^/  /'
+
+  # Emit overlays for any hormone at HIGH/LOW that has a matching overlay.
+  emit_overlay() {
+    local hormone="$1" level="$2"
+    local key="${hormone}_${level}"
+    local val
+    val=$(echo "$OVERLAYS_BLOB" | sed -n "s|^${key}::||p")
+    if [[ -n "$val" ]]; then
+      local level_uc
+      level_uc=$(echo "$level" | tr '[:lower:]' '[:upper:]')
+      printf '  - %s %s: %s\n' "$level_uc" "$hormone" "$val"
+    fi
+  }
+
+  for pair in "adrenaline:$adr_lvl" "dopamine:$dop_lvl" "cortisol:$cor_lvl" \
+              "serotonin:$ser_lvl" "oxytocin:$oxy_lvl" "norepinephrine:$nor_lvl"; do
+    hormone="${pair%%:*}"
+    level="${pair##*:}"
+    [[ "$level" == "medium" ]] && continue
+    emit_overlay "$hormone" "$level"
+  done
+
+  # Preserve the existing [CALIBRATION] suffix — commander.md §198 reads it
+  # from this function's output and appends it to the agent's prompt. Removing
+  # it would break the protocol. (Future refactor: deduplicate against
+  # commander.md §175-190's own calibration injection — out of scope.)
+  local SCORES_FILE="$REPO_ROOT/knowledge-base/agent-scores.yaml"
+  if [[ -f "$SCORES_FILE" ]] && command -v "$PYTHON" &>/dev/null; then
+    "$PYTHON" - "$SCORES_FILE" "$agent" 2>/dev/null <<'PY'
+import yaml, sys
+scores_path, agent = sys.argv[1], sys.argv[2]
+try:
+    with open(scores_path) as f:
         data = yaml.safe_load(f) or {}
     agents = data.get('agents', {})
-    a = agents.get('$agent', {})
+    a = agents.get(agent, {})
     history = a.get('history', a.get('run_history', []))
     if not history:
-        sys.exit(0)  # no prior data — nothing to inject
+        sys.exit(0)
     last = history[-1] if isinstance(history, list) else {}
     score = last.get('quality_score', last.get('score', '?'))
     modes = last.get('failure_modes', [])
     if modes:
         fm = modes[0]
-        print(f'[CALIBRATION] Prior score: {score}. Miss: {fm.get(\"type\",\"unknown\")} ({fm.get(\"count\",\"?\")}x). Example: {fm.get(\"example\",\"none\")}')
+        print(f'[CALIBRATION] Prior score: {score}. Miss: {fm.get("type","unknown")} ({fm.get("count","?")}x). Example: {fm.get("example","none")}')
     else:
         print(f'[CALIBRATION] Prior score: {score}. No failure modes recorded.')
 except Exception as e:
     print(f'[CALIBRATION] COLD START — error reading scores: {e}')
-" 2>/dev/null)
-    if [[ -n "$cal_block" ]]; then
-      output+="${cal_block}\n"
-    fi
-  else
-    output+="[CALIBRATION] COLD START — no agent-scores.yaml or $PYTHON unavailable.\n"
-  fi
-
-  if [[ -z "$output" ]]; then
-    echo "[ENDOCRINE: all hormones MEDIUM] Normal operating conditions."
-  else
-    printf '%b' "$output"
+PY
   fi
 }
 
@@ -1050,6 +1108,7 @@ usage() {
 usage:
   endocrine.sh init
   endocrine.sh get_adrenaline <agent>
+  endocrine.sh get_archetype <agent>
   endocrine.sh set_adrenaline <agent> <value>
   endocrine.sh update_adrenaline <agent> <delta>
   endocrine.sh decay_hormones <agent>
@@ -1090,6 +1149,7 @@ fi
 case "$cmd" in
   init)                          cmd_init ;;
   get_adrenaline)                cmd_get_adrenaline "$@" ;;
+  get_archetype)                 cmd_get_archetype "$@" ;;
   set_adrenaline)                cmd_set_adrenaline "$@" ;;
   update_adrenaline)             cmd_update_adrenaline "$@" ;;
   decay_hormones)                cmd_decay_hormones "$@" ;;
