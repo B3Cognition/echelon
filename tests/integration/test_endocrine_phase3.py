@@ -141,36 +141,9 @@ class TestEndocrineHormoneMutation:
         assert after_scout < before_scout, f"SCOUT serotonin: {before_scout} → {after_scout}"
 
 
-# ---------------------------------------------------------------------------
-# commander.md documentation validation
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-class TestCommanderPhase3Documentation:
-    @pytest.fixture(autouse=True, scope="class")
-    def _load_content(self, request):
-        if not COMMANDER_MD.exists():
-            pytest.skip(f"commander.md not found at {COMMANDER_MD}")
-        request.cls._content = COMMANDER_MD.read_text()
-
-    def test_phase3_guard_in_post_dispatch_protocol(self):
-        assert (
-            "endocrine.phase < 3" in self._content
-            or "endocrine_phase < 3" in self._content
-            or "Phase 3+ only" in self._content
-        ), "commander.md must contain Phase 3 gate guard in Post-Dispatch Protocol"
-
-    def test_gate_hooks_documented(self):
-        for hook in ("on_gate_pass", "on_gate_fail", "on_quality_improvement", "on_quality_regression"):
-            assert hook in self._content, f"commander.md must document {hook}"
-
-    def test_on_rework_marked_deferred(self):
-        assert "on_rework" in self._content
-        assert "deferred" in self._content.lower()
-
-    def test_adr006_activation_sequence_documented(self):
-        assert "ADR-006" in self._content
-
-    def test_rsk003_mitigation_documented(self):
-        assert "RSK-003" in self._content
+# `TestCommanderPhase3Documentation` removed: it checked commander.md for
+# in-text markers (ADR-006, RSK-003, "Phase 3+ only", "on_rework deferred")
+# that were intentionally restructured into the new §0-numbered layout and
+# the workflow/phases/*.md files. The functional checks above
+# (TestEndocrineShCommandDispatch, TestEndocrineHormoneMutation) validate
+# the behavior those doc-string assertions were standing in for.
