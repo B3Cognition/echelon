@@ -4,7 +4,7 @@
 # Default output: .specify/echelon/re/repos-manifest.json
 set -euo pipefail
 
-OUTPUT_FILE="${1:-${ECHELON_CFG_RE_OUTPUT_DIRECTORY:-${REVENGE_CFG_OUTPUT_DIRECTORY:-.specify/echelon/re}}/repos-manifest.json}"
+OUTPUT_FILE="${1:-${ECHELON_CFG_RE_OUTPUT_DIRECTORY:-.specify/echelon/re}/repos-manifest.json}"
 
 # ---------- prerequisites ----------
 

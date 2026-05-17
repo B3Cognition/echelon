@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Helper: resolve output directory, supporting echelon re-* config
 re_dir() {
-  echo "${ECHELON_CFG_RE_OUTPUT_DIRECTORY:-${REVENGE_CFG_OUTPUT_DIRECTORY:-.specify/echelon/re}}"
+  echo "${ECHELON_CFG_RE_OUTPUT_DIRECTORY:-.specify/echelon/re}"
 }
 
 # Check jq availability

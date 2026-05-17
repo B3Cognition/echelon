@@ -77,8 +77,8 @@ class TestProbeRegistry:
     def test_understanding_registered(self):
         assert "understanding" in _PROBE_REGISTRY
 
-    def test_revenge_registered(self):
-        assert "revenge" in _PROBE_REGISTRY
+    def test_brownfield_registered(self):
+        assert "brownfield" in _PROBE_REGISTRY
 
     def test_skill_golddigger_registered(self):
         assert "skill:GOLDDIGGER" in _PROBE_REGISTRY
@@ -95,7 +95,7 @@ class TestProbeRegistry:
 class TestDependencyStatusCombinations:
     """Each of 4 dependencies × 3 statuses = 12 tests."""
 
-    @pytest.mark.parametrize("dependency", ["understanding", "revenge", "skill:GOLDDIGGER", "kb_schema"])
+    @pytest.mark.parametrize("dependency", ["understanding", "brownfield", "skill:GOLDDIGGER", "kb_schema"])
     def test_available_status(self, dependency):
         node = _make_node(dependency)
         with patch.dict(_PROBE_REGISTRY, {dependency: _mock_probe("AVAILABLE")}):
@@ -103,7 +103,7 @@ class TestDependencyStatusCombinations:
         assert result["status"] == "AVAILABLE"
         assert result["next_node"] == "next"
 
-    @pytest.mark.parametrize("dependency", ["understanding", "revenge", "skill:GOLDDIGGER", "kb_schema"])
+    @pytest.mark.parametrize("dependency", ["understanding", "brownfield", "skill:GOLDDIGGER", "kb_schema"])
     def test_degraded_status(self, dependency):
         node = _make_node(dependency)
         with patch.dict(_PROBE_REGISTRY, {dependency: _mock_probe("DEGRADED", reason="script_error")}):
@@ -111,7 +111,7 @@ class TestDependencyStatusCombinations:
         assert result["status"] == "DEGRADED"
         assert result["next_node"] == "degraded"
 
-    @pytest.mark.parametrize("dependency", ["understanding", "revenge", "skill:GOLDDIGGER", "kb_schema"])
+    @pytest.mark.parametrize("dependency", ["understanding", "brownfield", "skill:GOLDDIGGER", "kb_schema"])
     def test_unavailable_status(self, dependency):
         node = _make_node(dependency)
         with patch.dict(_PROBE_REGISTRY, {dependency: _mock_probe("UNAVAILABLE", reason="missing_install")}):

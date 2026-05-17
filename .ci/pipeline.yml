@@ -147,7 +147,7 @@ stages:
           sys.path.insert(0, str(Path('.specify/extensions/echelon').resolve()))
           from kernel.preflight import _PROBE_REGISTRY
           assert 'understanding' in _PROBE_REGISTRY
-          assert 'revenge' in _PROBE_REGISTRY
+          assert 'brownfield' in _PROBE_REGISTRY
           assert 'skill:GOLDDIGGER' in _PROBE_REGISTRY
           assert 'kb_schema' in _PROBE_REGISTRY
           print('All 4 probes registered: OK')

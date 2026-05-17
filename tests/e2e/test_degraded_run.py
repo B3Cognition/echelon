@@ -188,10 +188,10 @@ class TestDegradedStatePersistence:
     def test_multiple_degraded_deps_stack_without_loss(self):
         state = _make_state()
         state["degraded_mode_stack"].append("understanding_unavailable")
-        state["degraded_mode_stack"].append("revenge_unavailable")
+        state["degraded_mode_stack"].append("brownfield_unavailable")
         assert len(state["degraded_mode_stack"]) == 2
         assert "understanding_unavailable" in state["degraded_mode_stack"]
-        assert "revenge_unavailable" in state["degraded_mode_stack"]
+        assert "brownfield_unavailable" in state["degraded_mode_stack"]
 
     def test_available_dep_not_added_to_degraded_stack(self):
         node = _make_preflight_node()
@@ -240,7 +240,7 @@ class TestEvaluatorInDegradedMode:
 
     def test_evaluator_verdict_pass_still_routes_in_degraded_mode(self):
         """PASS verdict routing should work regardless of degraded_mode_stack."""
-        state = _make_state(degraded_mode_stack=["revenge_unavailable"])
+        state = _make_state(degraded_mode_stack=["brownfield_unavailable"])
         config = _make_config()
         last_outputs = {"verdict": "PASS"}
         transitions = [
@@ -316,7 +316,7 @@ citation: state.json
 
 class TestMultiplePreflightProbes:
     def test_two_degraded_probes_produce_independent_results(self):
-        for dep in ["understanding", "revenge"]:
+        for dep in ["understanding", "brownfield"]:
             node = _make_preflight_node(dependency=dep)
             with patch.dict(_PROBE_REGISTRY, {dep: _mock_probe("DEGRADED")}):
                 result = run_preflight(node, _make_state(), _make_config())
@@ -325,10 +325,10 @@ class TestMultiplePreflightProbes:
 
     def test_one_available_one_degraded_do_not_interfere(self):
         node_u = _make_preflight_node(dependency="understanding")
-        node_r = _make_preflight_node(dependency="revenge")
+        node_r = _make_preflight_node(dependency="brownfield")
 
         with patch.dict(_PROBE_REGISTRY, {"understanding": _mock_probe("AVAILABLE"),
-                                          "revenge": _mock_probe("DEGRADED")}):
+                                          "brownfield": _mock_probe("DEGRADED")}):
             r_u = run_preflight(node_u, _make_state(), _make_config())
             r_r = run_preflight(node_r, _make_state(), _make_config())
 

@@ -4,7 +4,7 @@
 # What it does:
 #   1. Creates a temp workspace (or uses --dir if provided)
 #   2. Inits speckit in that workspace
-#   3. Installs echelon (dev) + optional extensions (understanding, revenge, gauntlet)
+#   3. Installs echelon (dev) + optional extensions (understanding, gauntlet)
 #   4. Validates what got deployed to .claude/agents/ and .claude/skills/
 #   5. Runs echelon dry-run validation against the installed extension
 #   6. Reports pass/fail summary
@@ -17,7 +17,6 @@
 #   --keep             Keep the temp directory after the run (for inspection)
 #   --gauntlet PATH    Path to local gauntlet repo (skip if not provided)
 #   --understanding    Install understanding extension (requires understanding CLI in PATH)
-#   --revenge PATH     Path to local revenge repo
 #   --ai AGENT         AI assistant to init for (default: claude)
 #   --verbose          Show full output of each step
 #
@@ -35,7 +34,6 @@ ECHELON_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 WORK_DIR=""
 KEEP=false
 GAUNTLET_PATH=""
-REVENGE_PATH=""
 AI_AGENT="claude"
 VERBOSE=false
 INSTALL_UNDERSTANDING=false
@@ -47,7 +45,7 @@ while [[ $# -gt 0 ]]; do
     --keep)      KEEP=true; shift ;;
     --gauntlet)  GAUNTLET_PATH="$2"; shift 2 ;;
     --understanding) INSTALL_UNDERSTANDING=true; shift ;;
-    --revenge)   REVENGE_PATH="$2"; shift 2 ;;
+    --revenge)   echo "WARNING: --revenge is deprecated; brownfield extraction is now built into echelon." >&2; shift 2 ;;
     --ai)        AI_AGENT="$2"; shift 2 ;;
     --verbose)   VERBOSE=true; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -154,16 +152,7 @@ else
   skip "Gauntlet path not provided (--gauntlet PATH to include)"
 fi
 
-if [[ -n "$REVENGE_PATH" ]]; then
-  if [[ -f "$REVENGE_PATH/extension.yml" ]]; then
-    green "Revenge found at $REVENGE_PATH"
-  else
-    red "Revenge extension.yml not found at $REVENGE_PATH"
-    REVENGE_PATH=""
-  fi
-else
-  skip "Revenge path not provided (--revenge PATH to include)"
-fi
+skip "Brownfield re-* commands are built into echelon (no separate install needed)"
 
 if [[ "$INSTALL_UNDERSTANDING" == true ]]; then
   if command -v understanding &>/dev/null 2>&1; then
@@ -199,11 +188,6 @@ header "3. EXTENSION INSTALL"
 # Always install echelon first (gauntlet depends on it)
 run_step "specify extension add --dev echelon (v$ECHELON_VER)" \
   "$SPECIFY_CMD" extension add --dev "$ECHELON_ROOT"
-
-if [[ -n "$REVENGE_PATH" ]]; then
-  run_step "specify extension add --dev revenge" \
-    "$SPECIFY_CMD" extension add --dev "$REVENGE_PATH"
-fi
 
 if [[ -n "$GAUNTLET_PATH" ]]; then
   run_step "specify extension add --dev gauntlet (v$GAUNTLET_VER)" \

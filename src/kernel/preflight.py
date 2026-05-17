@@ -4,7 +4,7 @@ Implements run_preflight() per contracts/preflight-contract.md (ADR-002).
 
 Supported dependencies:
     understanding    — probe run-understanding.sh
-    revenge          — probe GOLDDIGGER entry script
+    brownfield       — probe echelon re-* extraction availability
     skill:GOLDDIGGER — probe subagent skill availability
     kb_schema        — verify all 5 KB files present and schema-valid
 
@@ -160,24 +160,24 @@ def _probe_understanding(
 
 
 # ---------------------------------------------------------------------------
-# Probe: revenge (GOLDDIGGER)
+# Probe: brownfield (echelon re-* commands)
 # ---------------------------------------------------------------------------
 
 
-def _probe_revenge(
+def _probe_brownfield(
     state: dict, config: dict, ext_dir: Path
 ) -> tuple[str, str, Optional[int], str, str]:
-    """Probe speckit-revenge / GOLDDIGGER availability."""
-    # Check for revenge extension entry point
+    """Probe echelon's native brownfield re-* extraction availability."""
+    # re-* commands are bundled with echelon; check for the re-analyze script
     candidate_paths = [
-        ext_dir.parent / "speckit-revenge" / "golddigger.sh",
-        ext_dir.parent / "speckit-revenge" / "run.sh",
+        ext_dir / "scripts" / "bash" / "re" / "run-analysis.sh",
+        ext_dir.parent / "speckit-echelon-re-analyze",
     ]
 
     for path in candidate_paths:
         if path.exists():
             if os.access(str(path), os.X_OK):
-                return ("AVAILABLE", "n/a", None, "", "revenge entry script found and executable")
+                return ("AVAILABLE", "n/a", None, "", "re-* extraction script found and executable")
             else:
                 return ("DEGRADED", "permission_denied", None,
                         f"{path} not executable", "needs chmod +x")
@@ -186,8 +186,8 @@ def _probe_revenge(
         "UNAVAILABLE",
         "missing_install",
         None,
-        "speckit-revenge entry script not found",
-        "speckit-revenge extension not installed",
+        "echelon re-* extraction scripts not found",
+        "echelon extension not installed or scripts missing",
     )
 
 
@@ -207,7 +207,7 @@ def _probe_skill_golddigger(
     # Check skill manifest
     skill_paths = [
         ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-echelon-run",
-        ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-revenge-extract",
+        ext_dir.parent.parent.parent / ".claude" / "skills" / "speckit-echelon-re-extract",
     ]
 
     for path in skill_paths:
@@ -294,7 +294,7 @@ def _probe_kb_schema(
 # ---------------------------------------------------------------------------
 
 register_probe("understanding", _probe_understanding)
-register_probe("revenge", _probe_revenge)
+register_probe("brownfield", _probe_brownfield)
 register_probe("skill:GOLDDIGGER", _probe_skill_golddigger)
 register_probe("kb_schema", _probe_kb_schema)
 

@@ -1,9 +1,9 @@
 /**
- * Integration Types: CodeGraph-Revenge Bridge
+ * Integration Types: CodeGraph Bridge
  *
  * TypeScript interfaces for codegraph-analysis.json output schema v1.0.0.
- * These types represent the JSON output of the bridge consumed by revenge's
- * LLM command templates. Each field maps field-for-field to contracts/analysis-schema.json.
+ * These types represent the JSON output of the bridge consumed by echelon's
+ * re-* LLM command templates. Each field maps field-for-field to contracts/analysis-schema.json.
  */
 /**
  * Symbol kind — maps to NodeKind enum in CodeGraph's internal type system.
@@ -165,7 +165,7 @@ export type LanguageSupportStatus = 'supported' | 'unsupported';
 export type LanguageCoverageMap = Record<string, LanguageSupportStatus>;
 /**
  * The primary integration artifact: codegraph-analysis.json.
- * Produced by the bridge during reanalyze, consumed by revenge LLM command templates.
+ * Produced by the bridge during re-analyze, consumed by echelon re-* LLM command templates.
  */
 export interface AnalysisOutput {
     /** Schema version (semver, e.g., "1.0.0") */

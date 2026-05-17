@@ -141,7 +141,7 @@ After `speckit.constitution` completes:
 
 For brownfield projects where constitution doesn't exist:
 
-1. **Option A:** If speckit-echelon-golddigger (GOLDDIGGER) ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the revenge extension artifacts.
+1. **Option A:** If speckit-echelon-golddigger (GOLDDIGGER) ran and extraction artifacts are present (check `state.json.golddigger_artifacts`), derive principles from the domain inventory and hotspot analysis in the brownfield extraction artifacts.
 2. **Option B:** speckit-echelon-scout (SCOUT)'s discovery outputs may include implicit patterns — use these as constitution input
 3. Either way, `speckit.constitution` is called with the derived context
 

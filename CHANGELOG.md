@@ -4,6 +4,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-05-17
+
+### Added
+
+- **Native brownfield extraction (re-* commands)** — absorbed the standalone `revenge` extension into echelon; no separate install required.
+  - 12 new commands: `speckit.echelon.re-extract`, `re-retarget`, `re-plan-all`, `re-analyze`, `re-specify`, `re-verify`, `re-expand`, `re-validate`, `re-checklist`, `re-constitute`, `re-plan`, `re-tasks`
+  - 8 bash extraction scripts in `extension/scripts/bash/re/` (structure, deps, git, configs, chunks, cross-repo, polyrepo discovery)
+  - Node CodeGraph bridge at `extension/scripts/node/re/` for structural code intelligence
+  - 3 presets: `echelon-brownfield-microservices`, `echelon-brownfield-cloud-native`, `echelon-brownfield-compliance`
+  - Polyrepo support via `discover-repos.sh` auto-detection
+  - Config under `re:` top-level key in `echelon-config.yml`
+  - Test suite: 48 assertions across 3 brownfield integration test scripts
+
+### Changed
+
+- `extension.yml` version bumped `2.0.0` → `2.1.0`
+- `GOLDDIGGER` agent now invokes `speckit.echelon.re-extract` (was `speckit.revenge.extract`)
+- Config layer-2 overrides now written to `.specify/extensions/echelon/local-config.yml` under `re:` key
+- Preflight probe renamed from `"revenge"` to `"brownfield"` — update any `degraded_mode_stack` strings accordingly
+- `integration-smoke-test.sh`: `--revenge PATH` flag deprecated (brownfield is now built-in); accepted as no-op with warning
+
+### Removed
+
+- `revenge` optional tool dependency from `extension.yml` `requires.tools`
+- Standalone `revenge/` extension directory (absorbed; the `revenge` spec-kit extension is now obsolete)
+
 ## [1.5.0] - 2026-04-27
 
 ### Added

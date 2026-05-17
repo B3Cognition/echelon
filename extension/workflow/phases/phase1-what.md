@@ -19,7 +19,7 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 
 ### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
 
-speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) — just like speckit-echelon-golddigger (GOLDDIGGER) calls revenge extension and speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
+speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) — just like speckit-echelon-golddigger (GOLDDIGGER) calls `speckit.echelon.re-extract` and speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
 
 Use the Agent tool to dispatch a subagent with:
 

@@ -68,7 +68,7 @@ FULL_STATE = {
     },
     "dependency_checks": {
         "understanding": {"status": "available", "checked_at": "2026-04-11T00:00:00Z"},
-        "revenge": {"status": "unavailable"},
+        "brownfield": {"status": "unavailable"},
     },
 }
 
@@ -306,7 +306,7 @@ class TestGetDependencyCheckStatus:
         assert get_dependency_check_status(FULL_STATE, "understanding") == "available"
 
     def test_unavailable(self):
-        assert get_dependency_check_status(FULL_STATE, "revenge") == "unavailable"
+        assert get_dependency_check_status(FULL_STATE, "brownfield") == "unavailable"
 
     def test_missing(self):
         assert get_dependency_check_status(EMPTY_STATE, "understanding") is None

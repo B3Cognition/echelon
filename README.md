@@ -335,7 +335,7 @@ File: agents/exploration/scout.md
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
-| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives revenge extension for brownfield codebases (Mode 1: survey, Mode 2: deep dive) |
+| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives native brownfield re-* extraction (Mode 1: survey, Mode 2: deep dive) |
 | **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge base |
 | **CARTOGRAPHER** | WHAT | Writes testable requirements via spec-kit |
 | **SAGE** | WHY | Adversarial critic, quality gates via Understanding CLI |
@@ -824,7 +824,7 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 - **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
 - **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)
 - **harness** (bundled — installed by `scripts/install.sh`; provides `harness` CLI for sandbox build/verify/PR)
-- **revenge** >= 3.0.0 (optional — brownfield extraction via GOLDDIGGER)
+- **brownfield re-* commands** (bundled — native extraction, no separate install needed)
 
 ## Directory Structure
 

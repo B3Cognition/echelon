@@ -9,7 +9,7 @@ if ! command -v jq &> /dev/null; then
 fi
 
 OUTPUT_FILE="${1:-/tmp/git-history.json}"
-LIMIT="${ECHELON_CFG_RE_SOURCES_GIT_HISTORY_LIMIT:-${REVENGE_CFG_SOURCES_GIT_HISTORY_LIMIT:-${SPECKIT_REVERSE_ENG_SOURCES_GIT_HISTORY_LIMIT:-100}}}"
+LIMIT="${ECHELON_CFG_RE_SOURCES_GIT_HISTORY_LIMIT:-100}"
 
 echo "Extracting git history (last $LIMIT commits)..." >&2
 

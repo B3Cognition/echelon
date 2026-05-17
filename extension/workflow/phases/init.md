@@ -243,15 +243,15 @@ If `detected_mode` is `brownfield`:
 
 **NEVER do your own filesystem exploration before dispatching GOLDDIGGER.** Do not run `ls`, `find`, or any directory listing to understand the polyrepo structure before this dispatch — that is GOLDDIGGER's job. Dispatch immediately.
 
-First, verify the revenge extension is installed:
+First, verify the echelon re-* commands are available (they are bundled with echelon):
 
 ```bash
-specify extension info revenge
+specify extension info echelon
 ```
 
 If this command exits non-zero (extension not installed): skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER. Do NOT check `extensions.yml`'s `installed:` field — that file tracks hooks, not installed extensions. The authoritative source is `specify extension info <id>`.
 
-If revenge is installed:
+If echelon (with re-* commands) is installed:
 
 1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Survey) before DISCOVER:
    - Use the Agent tool
