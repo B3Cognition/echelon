@@ -822,7 +822,6 @@ config:
           - "**/*Service.*"
           - "**/*Controller.*"
           - "**/*Handler.*"
-        language_patterns: default
       output:
         directory: ".specify/echelon/re"
         generate_spec: true
