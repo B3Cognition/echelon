@@ -1,0 +1,7 @@
+{
+  "name": "@company/frontend-libs",
+  "version": "1.0.0",
+  "dependencies": {
+    "@company/shared-utils": "^2.0.0"
+  }
+}

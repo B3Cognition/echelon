@@ -1,0 +1,2 @@
+// Render pipeline
+void pipeline() {}

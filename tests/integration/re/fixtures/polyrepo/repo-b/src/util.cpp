@@ -1,0 +1,2 @@
+// Utility functions
+void init() {}

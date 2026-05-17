@@ -1,0 +1,2 @@
+// Config parser
+void parse() {}

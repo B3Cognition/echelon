@@ -1,0 +1,13 @@
+{
+  "name": "revenge-codegraph-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CodeGraph bridge for revenge pipeline — vendored until @colbymchenry/codegraph has a public release",
+  "dependencies": {
+    "commander": "^14.0.2",
+    "node-sqlite3-wasm": "^0.8.30",
+    "picomatch": "^4.0.3",
+    "tree-sitter-wasms": "^0.1.11",
+    "web-tree-sitter": "^0.25.3"
+  }
+}
