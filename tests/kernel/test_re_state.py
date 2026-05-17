@@ -54,6 +54,12 @@ class TestInitReState:
         assert s["resolution_threshold"] == 80
         assert s["max_validate_iterations"] == 3
 
+    def test_custom_output_dir_reflected_in_artifacts(self):
+        s = init_re_state(output_dir="/custom/path")
+        assert s["output_dir"] == "/custom/path"
+        assert s["artifacts"]["analysis_json"] == "/custom/path/analysis.json"
+        assert s["artifacts"]["repos_manifest"] == "/custom/path/repos-manifest.json"
+
 
 class TestWriteLastDispatch:
     def test_sets_phase_id_and_agent(self):
@@ -123,6 +129,11 @@ class TestCompleteDispatch:
         original = s["last_dispatch"]["post_dispatch_complete"]
         complete_dispatch(s, {"verdict": "DONE", "phase_id": "x", "state_updates": {}})
         assert s["last_dispatch"]["post_dispatch_complete"] == original
+
+    def test_raises_key_error_when_last_dispatch_absent(self):
+        s = {"status": "in_progress", "phase": "re-extract-1-analyze"}
+        with pytest.raises(KeyError, match="last_dispatch sentinel"):
+            complete_dispatch(s, {"verdict": "DONE", "phase_id": "x", "state_updates": {}})
 
 
 class TestShouldRedispatch:

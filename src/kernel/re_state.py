@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
-from typing import Any
-
 
 def init_re_state(
     output_dir: str = ".specify/echelon/re",
@@ -72,6 +70,11 @@ def complete_dispatch(state: dict, echelon_result: dict) -> dict:
     Call after reading the agent's echelon_result: block.
     """
     s = copy.deepcopy(state)
+    if "last_dispatch" not in s:
+        raise KeyError(
+            "complete_dispatch called on state with no last_dispatch sentinel "
+            "— was write_last_dispatch called first?"
+        )
     s["last_dispatch"]["post_dispatch_complete"] = True
     for key, value in echelon_result.get("state_updates", {}).items():
         s[key] = value
@@ -79,7 +82,10 @@ def complete_dispatch(state: dict, echelon_result: dict) -> dict:
 
 
 def should_redispatch(state: dict) -> bool:
-    """Return True if the last dispatch did not complete (compaction-safe resumption guard)."""
+    """Return True if the last dispatch did not complete (compaction-safe resumption guard).
+
+    If `post_dispatch_complete` is absent from `last_dispatch`, it is treated as True (complete — no redispatch).
+    """
     ld = state.get("last_dispatch", {})
     if ld.get("phase_id") is None:
         return False
