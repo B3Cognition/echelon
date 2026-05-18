@@ -1290,3 +1290,224 @@ escalation:
     template: templates/escalation-request.md
     state: blocked
     resume_command: speckit.echelon.resume <answer>
+
+# =============================================================================
+# RE-EXTRACTION — read by speckit.echelon.re-extract COMMANDER
+# COMMANDER contract: read this section at init, read state_file for current
+# phase, execute each phase node, write results to state_file.
+# =============================================================================
+re_extraction:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-extract-0-preflight
+      label: "Brownfield Extraction Preflight"
+      spec_file: workflow/phases/re-extract-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-extract-1-analyze
+          condition: always
+
+    - id: re-extract-1-analyze
+      label: "Codebase Analysis (RE-ANALYZER)"
+      spec_file: workflow/phases/re-extract-1-analyze.md
+      type: agent
+      agent: speckit-echelon-re-analyzer
+      tier: re_extraction
+      context_pack:
+        - .specify/echelon/re/state.json
+        - echelon-config.yml (re: section)
+      outputs:
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/repos-manifest.json   # polyrepo only
+        - .specify/echelon/re/cross-repo.json        # polyrepo only
+      transitions:
+        - to: re-extract-2-specify
+          condition: verdict = DONE
+
+    - id: re-extract-2-specify
+      label: "Domain Specification (RE-SPECIFIER)"
+      spec_file: workflow/phases/re-extract-2-specify.md
+      type: agent
+      agent: speckit-echelon-re-specifier
+      tier: re_extraction
+      context_pack:
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+        - .specify/echelon/re/repos-manifest.json    # if exists
+      outputs:
+        - specs/000-re-overview/overview.md
+        - specs/NNN-re-{domain}/spec.md               # one per domain
+      transitions:
+        - to: re-extract-3-verify
+          condition: verdict = DONE
+
+    - id: re-extract-3-verify
+      label: "Coverage Verification (RE-VERIFIER)"
+      spec_file: workflow/phases/re-extract-3-verify.md
+      type: agent
+      agent: speckit-echelon-re-verifier
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/000-re-overview/coverage-report.md
+        - state.json[coverage_pct, verify_expand_iterations]
+      transitions:
+        - to: re-extract-4-expand
+          condition: "coverage_pct < coverage_threshold AND verify_expand_iterations < max_verify_expand_iterations"
+        - to: re-extract-5-validate
+          condition: "coverage_pct >= coverage_threshold OR verify_expand_iterations >= max_verify_expand_iterations"
+
+    - id: re-extract-4-expand
+      label: "Coverage Expansion (RE-EXPANDER)"
+      spec_file: workflow/phases/re-extract-4-expand.md
+      type: agent
+      agent: speckit-echelon-re-expander
+      tier: re_extraction
+      context_pack:
+        - specs/000-re-overview/coverage-report.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/NNN-re-{domain}/spec.md    # new or expanded domains
+        - state.json[verify_expand_iterations]
+      transitions:
+        - to: re-extract-3-verify
+          condition: always                  # loop back until coverage met
+
+    - id: re-extract-5-validate
+      label: "Quality Validation (RE-VALIDATOR)"
+      spec_file: workflow/phases/re-extract-5-validate.md
+      type: agent
+      agent: speckit-echelon-re-validator
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/000-re-overview/validation-report.md
+        - state.json[resolution_pct, validate_iterations]
+      transitions:
+        - to: re-extract-5-validate
+          condition: "resolution_pct < resolution_threshold AND validate_iterations < max_validate_iterations"
+        - to: re-extract-6-checklist
+          condition: "resolution_pct >= resolution_threshold OR validate_iterations >= max_validate_iterations"
+
+    - id: re-extract-6-checklist
+      label: "Quality Checklists (RE-CHECKLISTER)"
+      spec_file: workflow/phases/re-extract-6-checklist.md
+      type: agent
+      agent: speckit-echelon-re-checklister
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - specs/000-re-overview/coverage-report.md
+        - specs/000-re-overview/validation-report.md
+      outputs:
+        - specs/NNN-re-{domain}/checklist.md
+        - specs/000-re-overview/checklist.md
+      transitions:
+        - to: re-extract-7-constitute
+          condition: always
+
+    - id: re-extract-7-constitute
+      label: "Strategic Artifacts (RE-CONSTITUTER)"
+      spec_file: workflow/phases/re-extract-7-constitute.md
+      type: agent
+      agent: speckit-echelon-re-constituter
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - specs/000-re-overview/checklist.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - constitution.md
+        - migration-strategy.md
+        - risk-matrix.md
+        - gap-analysis.md
+        - adrs/ADR-*.md
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-RETARGET — read by speckit.echelon.re-retarget COMMANDER
+# =============================================================================
+re_retarget:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-retarget-0-preflight
+      label: "Retarget Preflight"
+      spec_file: workflow/phases/re-retarget-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-retarget-1-input
+          condition: always
+
+    - id: re-retarget-1-input
+      label: "Human Decision Input"
+      spec_file: workflow/phases/re-retarget-1-input.md
+      type: commander_internal    # interactive — COMMANDER prompts user directly, no agent dispatch
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-PLANNING — read by speckit.echelon.re-plan-all COMMANDER
+# =============================================================================
+re_planning:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-planning-0-preflight
+      label: "Planning Preflight"
+      spec_file: workflow/phases/re-planning-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-planning-1-plan
+          condition: always
+
+    - id: re-planning-1-plan
+      label: "Per-Domain Plans (RE-PLANNER)"
+      spec_file: workflow/phases/re-planning-1-plan.md
+      type: agent
+      agent: speckit-echelon-re-planner
+      tier: re_planning
+      context_pack:
+        - specs/NNN-re-{domain}/spec.md
+        - constitution.md
+        - migration-strategy.md
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/NNN-re-{domain}/plan.md
+      transitions:
+        - to: re-planning-2-tasks
+          condition: verdict = DONE
+
+    - id: re-planning-2-tasks
+      label: "Per-Domain Tasks (RE-TASKER)"
+      spec_file: workflow/phases/re-planning-2-tasks.md
+      type: agent
+      agent: speckit-echelon-re-tasker
+      tier: re_planning
+      context_pack:
+        - specs/NNN-re-{domain}/plan.md
+        - specs/NNN-re-{domain}/spec.md
+        - constitution.md
+      outputs:
+        - specs/NNN-re-{domain}/tasks.md
+      transitions:
+        - to: DONE
+          condition: always
