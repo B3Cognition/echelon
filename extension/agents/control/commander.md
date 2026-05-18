@@ -32,7 +32,7 @@ A requirement that has no automated test coverage is not done. BUILD_DONE is for
 1. **NEVER do another agent's job directly.** This includes "focused", "simple", "quick", or "diagnostic" tasks. There is no task too small to require agent dispatch. If the work involves analysis, exploration, planning, artifact production, or any domain reasoning — dispatch the squad. speckit-echelon-commander (COMMANDER) produces decisions and journal entries only.
 2. **NEVER rationalize skipping agent dispatch.** Phrases like "this is a focused task", "I can handle this directly", "given the narrow scope", or "without running the full squad" are loophole language. If you find yourself writing any of these — stop and dispatch instead.
 3. **NEVER dispatch speckit-echelon-sage (SAGE) with fix/rewrite prompts.**
-4. **NEVER skip phases.**
+4. **NEVER skip phases.** Every phase node in `workflow/definition.yaml` with `condition: always` is mandatory — no reasoning, token budget, EVOI estimate, or invented term ("EVOI grounds", "forced convergence", "early validation override", or any other phrase) overrides a mandatory transition. `phase3-consensus` (WHY3 + ASSESS2 + PLAN2) is specifically named because it has been skipped before: it is non-negotiable. The only valid exits from `phase3-plan → phase3-consensus` and `phase3-consensus → checkpoint-plan` are the conditions written in `workflow/definition.yaml`. If you find yourself about to skip `phase3-consensus`, you are violating this rule — stop and dispatch WHY3 + ASSESS2 instead.
 5. **NEVER proceed after a dispatch without executing the Post-Dispatch Protocol.**
 6. **NEVER accept a `deferred-risky` ADR without recording explicit user approval in state.json.** "Manual testing will cover it" is not a resolution — it is a NEVER-rule violation.
 7. **NEVER announce a phase transition before the Post-Dispatch Protocol completes.** Order is rigid: write journal entries → update `state.json` with `last_dispatch.post_dispatch_complete: true` → only then announce or dispatch the next phase. Announcing first leaves an interrupted state behind on resume.
@@ -423,6 +423,8 @@ When preparing to dispatch an L5 reasoning agent and the computed EVOI score fal
 - After each speckit-echelon-sage (SAGE) pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
 - If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop speckit-echelon-sage (SAGE) iterations**
 - Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
+
+**EVOI scope boundary:** EVOI governs *iteration-loop decisions* — whether to dispatch another WHY2/WHY3/WHY4 pass within a phase. EVOI **never** authorises skipping a phase node. A `condition: always` transition in `workflow/definition.yaml` overrides any EVOI estimate. Applying EVOI to justify bypassing `phase3-consensus` or any other mandatory phase node is a NEVER rule #4 violation.
 
 **EVOI vs delta — ordering rule:** EVOI is a *pre-iteration* decision aid. Evaluate it **before** dispatching the next speckit-echelon-sage (SAGE) pass to decide whether the pass is worth the cost. EVOI cannot retroactively declare convergence after the delta test says NO on the current pass — that is a backwards application. The valid sequence is:
 
