@@ -656,8 +656,24 @@ def main() -> None:
         return
 
     if command == "run":
-        ext_dir = Path.cwd() / ".specify" / "extensions" / "echelon"
-        _cmd_run(args[1:], project_root=Path.cwd(), ext_dir=ext_dir)
+        project_root = Path.cwd()
+        ext_dir = project_root / ".specify" / "extensions" / "echelon"
+        if not ext_dir.exists():
+            print(
+                f"✗ Echelon extension not installed: {ext_dir}\n"
+                "  Run: specify extension add echelon",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        cfg_file = ext_dir / "echelon-config.yml"
+        if not cfg_file.exists():
+            print(
+                f"✗ Project not initialized — config not found: {cfg_file}\n"
+                "  Run: echelon init",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _cmd_run(args[1:], project_root=project_root, ext_dir=ext_dir)
         return
 
     if command not in SKILL_MAP:
