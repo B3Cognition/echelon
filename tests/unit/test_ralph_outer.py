@@ -296,10 +296,10 @@ class TestSignalHandling:
 class TestLlmProviderDispatch:
     def test_exec_build_uses_llm_provider_when_set(self, tmp_path: Path) -> None:
         """When llm_provider is set, _exec_build delegates to it."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         llm.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=100,
@@ -334,11 +334,11 @@ class TestLlmProviderDispatch:
 
     def test_exec_feedback_uses_llm_provider_when_set(self, tmp_path):
         """When llm_provider is set, _exec_feedback delegates to it."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
         from harness.verify_result import VerifyResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         llm.exec_feedback.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=100,
@@ -362,10 +362,10 @@ class TestLlmProviderDispatch:
 
     def test_exec_build_falls_back_when_prompt_empty(self, tmp_path: Path) -> None:
         """When prompt is empty, _exec_build falls back to sandbox even if provider set."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         controller, provider, _, _ = _make_controller(tmp_path, llm_provider=llm)
 
         result = controller._exec_build(
@@ -420,10 +420,10 @@ class TestSignalDuringBuild:
 
     def test_sigint_during_build_yields_interrupted_status(self, tmp_path: Path) -> None:
         """_interrupted set inside exec_build → status=interrupted, final_verify=None."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         controller, provider, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
 
         def build_sets_interrupted(worktree_path: str, prompt: str) -> BuildResult:
@@ -468,10 +468,10 @@ class TestVerifyLocallyUnknownProjectType:
 
     def test_unknown_project_type_does_not_converge(self, tmp_path: Path) -> None:
         """Build succeeds + unknown project type → status=failed, not converged."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
 
         worktree = tmp_path / "worktree"

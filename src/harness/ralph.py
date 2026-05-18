@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from harness.config import HarnessConfig
-from harness.llm_provider import ClaudeCliProvider
+from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
@@ -54,7 +54,7 @@ class RalphController:
         spec_id: str,
         strategy_id: str,
         config: HarnessConfig,
-        llm_provider: Optional[ClaudeCliProvider] = None,
+        llm_provider: Optional[AICodingCliProvider] = None,
     ) -> None:
         self._provider = provider
         self._gitops = gitops

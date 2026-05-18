@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 from harness.budget import slice_budget
 from harness.paths import harness_dir
 from harness.config import HarnessConfig
-from harness.llm_provider import ClaudeCliProvider
+from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
@@ -245,7 +245,7 @@ class StrategyCoordinator:
                 arguments += f"\n\n{spec.context}"
 
             llm_provider = (
-                ClaudeCliProvider(self._config)
+                AICodingCliProvider(self._config)
                 if self._config.llm.enabled
                 else None
             )
