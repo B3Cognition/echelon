@@ -38,3 +38,4 @@ tests/benchmarks/reports/
 .claude/agents/
 .claude/skills/
 .worktrees/
+docs/echelon-*run-*.md
