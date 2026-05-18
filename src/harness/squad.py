@@ -161,7 +161,40 @@ class SquadController:
         )
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
-        return self._provider.exec_agent(str(self._project_root), context)
+        judgment = self._provider.exec_agent(str(self._project_root), context)
+        # COMMANDER writes most journal entries directly via journal-append.sh
+        # during LLM execution.  This catches any entries it returns in
+        # echelon_result.journal_entries[] that it didn't write itself.
+        self._write_journal_entries(judgment, node.id)
+        return judgment
+
+    def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
+        """Mirror of PhaseExecutor._write_journal_entries for SquadController use."""
+        import json as _json
+        from datetime import datetime, timezone
+
+        entries = (result.echelon_result or {}).get("journal_entries", [])
+        if not entries:
+            return
+
+        journal_path = self._project_root / ".specify/squad/reasoning-journal.jsonl"
+        journal_path.parent.mkdir(parents=True, exist_ok=True)
+
+        next_id = 1
+        if journal_path.exists():
+            lines = [ln for ln in journal_path.read_text().splitlines() if ln.strip()]
+            next_id = len(lines) + 1
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with journal_path.open("a") as fh:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                entry.setdefault("id", next_id)
+                entry.setdefault("timestamp", ts)
+                entry.setdefault("phase", phase_id)
+                fh.write(_json.dumps(entry) + "\n")
+                next_id += 1
 
     def _budget_exhausted(self) -> bool:
         if self._token_budget <= 0:

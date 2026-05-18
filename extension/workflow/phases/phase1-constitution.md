@@ -106,14 +106,20 @@ After `speckit.constitution` completes:
    ```
 
 3. Read and store constitution principles in context.
-4. Write journal entry:
+4. Write journal entry via `journal-append.sh` (never direct `>>`):
 
    ```bash
-   # append to reasoning-journal.jsonl
-   printf '{"type":"constitution_created","phase":"phase1-constitution","method":"speckit.constitution","placeholders_fixed":%s,"timestamp":"%s"}\n' \
-     "$(grep -qE '\[CONSTITUTION_VERSION\]' .specify/memory/constitution.md && echo true || echo false)" \
-     "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-     >> .specify/squad/reasoning-journal.jsonl
+   SCRIPTS="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
+   JOURNAL="${PROJECT_ROOT}/.specify/squad/reasoning-journal.jsonl"
+   NEXT_ID=$(( $(wc -l < "$JOURNAL" 2>/dev/null || echo 0) + 1 ))
+   TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+   PF=$(grep -qE '\[CONSTITUTION_VERSION\]' .specify/memory/constitution.md && echo true || echo false)
+   ENTRY=$(jq -n \
+     --argjson id "$NEXT_ID" \
+     --arg ts "$TS" \
+     --arg pf "$PF" \
+     '{type:"constitution_created",id:$id,phase:"phase1-constitution",method:"speckit.constitution",placeholders_fixed:($pf=="true"),timestamp:$ts}')
+   bash "${SCRIPTS}/journal-append.sh" --entry "$ENTRY" --journal-path "$JOURNAL"
    ```
 
 5. Update `state.json.constitution_status` to `"exists"`.

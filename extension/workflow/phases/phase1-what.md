@@ -121,8 +121,16 @@ sed -i '' \
   -e "s/\[RATIFICATION_DATE\]/$TODAY/g" \
   -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
   .specify/memory/constitution.md
-printf '{"type":"constitution_placeholder_fix","phase":"phase1-what","method":"sed_fallback","version":"1.0.0","date":"%s"}\n' \
-  "$TODAY" >> .specify/squad/reasoning-journal.jsonl
+SCRIPTS="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
+JOURNAL="${PROJECT_ROOT}/.specify/squad/reasoning-journal.jsonl"
+NEXT_ID=$(( $(wc -l < "$JOURNAL" 2>/dev/null || echo 0) + 1 ))
+TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+ENTRY=$(jq -n \
+  --argjson id "$NEXT_ID" \
+  --arg ts "$TS" \
+  --arg date "$TODAY" \
+  '{type:"constitution_placeholder_fix",id:$id,phase:"phase1-what",method:"sed_fallback",version:"1.0.0",date:$date,timestamp:$ts}')
+bash "${SCRIPTS}/journal-append.sh" --entry "$ENTRY" --journal-path "$JOURNAL"
 echo "[CONSTITUTION] Placeholder fix applied at §4.3 catch — constitution.md was not created via speckit.constitution"
 ```
 
