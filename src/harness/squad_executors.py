@@ -32,6 +32,41 @@ class PhaseExecutor(ABC):
     ) -> "SquadAgentResult":
         ...
 
+    def _write_journal_entries(
+        self, result: "SquadAgentResult", phase_id: str
+    ) -> None:
+        """Append journal_entries[] from an agent result to the reasoning journal.
+
+        Serialized write: every caller holds the GIL or calls this after
+        thread-join, so appends are never concurrent.
+        """
+        import json
+        from datetime import datetime, timezone
+
+        entries = (result.echelon_result or {}).get("journal_entries", [])
+        if not entries:
+            return
+
+        journal_path = self._project_root / ".specify/squad/reasoning-journal.jsonl"
+        journal_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Derive next id from current line count (monotonic within a session)
+        next_id = 1
+        if journal_path.exists():
+            lines = [ln for ln in journal_path.read_text().splitlines() if ln.strip()]
+            next_id = len(lines) + 1
+
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with journal_path.open("a") as fh:
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                entry.setdefault("id", next_id)
+                entry.setdefault("timestamp", ts)
+                entry.setdefault("phase", phase_id)
+                fh.write(json.dumps(entry) + "\n")
+                next_id += 1
+
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         parts: list[str] = []
 
@@ -87,6 +122,7 @@ class PhaseExecutor(ABC):
                     result = self._provider.exec_agent(
                         str(self._project_root), pre_path.read_text()
                     )
+                    self._write_journal_entries(result, node.id)
                     for k, v in result.state_updates.items():
                         s = state_store.load()
                         s[k] = v
@@ -103,7 +139,9 @@ class AgentExecutor(PhaseExecutor):
         self._run_pre_dispatch(node, state, state_store)
         state = state_store.load()  # re-load after pre_dispatch
         prompt = self._assemble_prompt(node, state)
-        return self._provider.exec_agent(str(self._project_root), prompt)
+        result = self._provider.exec_agent(str(self._project_root), prompt)
+        self._write_journal_entries(result, node.id)
+        return result
 
 
 class CommanderInternalExecutor(PhaseExecutor):
@@ -125,13 +163,15 @@ class CommanderInternalExecutor(PhaseExecutor):
                 raw = result.stdout + result.stderr
                 print(raw, flush=True)
                 parsed = _extract_echelon_result(raw)
-                return SquadAgentResult(
+                agent_result = SquadAgentResult(
                     exit_code=result.returncode,
                     echelon_result=parsed or {"verdict": "DONE", "state_updates": {}},
                     raw_output=raw,
                     duration_ms=0,
                     timed_out=False,
                 )
+                self._write_journal_entries(agent_result, node.id)
+                return agent_result
         from harness.squad_provider import SquadAgentResult
         return SquadAgentResult(
             exit_code=0,
@@ -186,8 +226,9 @@ class StagedParallelExecutor(PhaseExecutor):
                 label = futures[future]
                 stage1_results[label] = future.result()
 
-        # Write stage-1 verdicts to state
+        # Write stage-1 verdicts and journal entries to state (serial — after join)
         for label, result in stage1_results.items():
+            self._write_journal_entries(result, node.id)
             state = state_store.load()
             state[f"{label.lower().replace(' ', '_')}_verdict"] = result.verdict
             for k, v in result.state_updates.items():
@@ -217,6 +258,7 @@ class StagedParallelExecutor(PhaseExecutor):
             if impl_report_path:
                 prompt += f"\n\n---\n# implementability-report.md\n{impl_report_path.read_text()}"
             stage2_result = self._provider.exec_agent(str(self._project_root), prompt)
+            self._write_journal_entries(stage2_result, node.id)
             state = state_store.load()
             for k, v in stage2_result.state_updates.items():
                 state[k] = v
@@ -262,6 +304,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                     result = self._provider.exec_agent(
                         str(self._project_root), path.read_text()
                     )
+                    self._write_journal_entries(result, node.id)
                     state = state_store.load()
                     for k, v in result.state_updates.items():
                         state[k] = v

@@ -103,7 +103,12 @@ The harness reads `workflow/definition.yaml` for phase routing and transition ev
 
 ## Index Writer Protocol
 
-COMMANDER writes all journal entries produced during its judgment-context sub-dispatches. Always append via `journal-append.sh` — never raw `echo >>`, never `Write`/`Edit` on the journal file. Increment `last_entry_id` from the index, set `id` and `timestamp` (UTC ISO-8601), update all index dimensions (`by_phase`, `by_type`, `by_agent`, `by_task`, `by_severity`, `by_iteration`, `by_verdict`, `timeline`), then use `Edit` on the index (not `Write`, except first creation). If index is absent mid-run, rebuild by scanning `reasoning-journal.jsonl` and log `index_rebuilt`.
+The journal is a single-writer file — concurrent appends corrupt `.jsonl` line boundaries. Two serialized writers exist, each covering a disjoint set of dispatches:
+
+- **Harness** (`squad_executors.py`) writes entries from agents it dispatches directly (phase agents, pre-dispatch agents, parallel stage-1 after thread-join). No LLM is involved; writes are serial.
+- **COMMANDER** writes entries from specialist agents it sub-dispatches during judgment calls (INVESTIGATOR, MAVERICK, GUARDIAN). Always append via `journal-append.sh` — never raw `echo >>`, never `Write`/`Edit` on the journal file. Increment `last_entry_id` from the index, set `id` and `timestamp` (UTC ISO-8601), update all index dimensions (`by_phase`, `by_type`, `by_agent`, `by_task`, `by_severity`, `by_iteration`, `by_verdict`, `timeline`), then use `Edit` on the index (not `Write`, except first creation). If index is absent mid-run, rebuild by scanning `reasoning-journal.jsonl` and log `index_rebuilt`.
+
+Neither writer is ever active concurrently with the other — the harness dispatches COMMANDER as a blocking call, so harness writes complete before COMMANDER starts and vice versa.
 
 ---
 
