@@ -429,6 +429,57 @@ def _cmd_harness_run(args: list[str]) -> None:
     run(user_message, provider, gitops)
 
 
+def _cmd_run(
+    args: list[str],
+    project_root: Path,
+    ext_dir: Path,
+) -> None:
+    """Drive the pre-code squad run via deterministic Python harness."""
+    from harness.config import load_config
+    from harness.phase_graph import PhaseGraph
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadCliProvider
+    from harness.squad_state import SquadStateStore
+
+    # Parse optional flags
+    mode = "semi"
+    message_parts: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--mode" and i + 1 < len(args):
+            mode = args[i + 1]
+            i += 2
+        elif args[i] == "--message" and i + 1 < len(args):
+            message_parts.append(args[i + 1])
+            i += 2
+        else:
+            message_parts.append(args[i])
+            i += 1
+    message = " ".join(message_parts)
+
+    config = load_config(project_root)
+    provider = SquadCliProvider(config)
+    state_store = SquadStateStore(project_root / ".specify/squad/state.json")
+    graph = PhaseGraph(
+        ext_dir / "workflow/definition.yaml",
+        ext_dir / "extension.yml",
+    )
+    token_budget = 0
+    if hasattr(config, "budget") and hasattr(config.budget, "token_budget_k"):
+        token_budget = config.budget.token_budget_k * 1000
+
+    controller = SquadController(
+        provider=provider,
+        state_store=state_store,
+        phase_graph=graph,
+        ext_dir=ext_dir,
+        project_root=project_root,
+        token_budget=token_budget,
+    )
+    result = controller.run(user_message=message, mode=mode)
+    print(f"\n[squad] {result.status} — phase: {result.phase}")
+
+
 # ── Skill resolution ──────────────────────────────────────────────────────
 
 from harness.skill_loader import (
@@ -602,6 +653,11 @@ def main() -> None:
 
     if command == "land":
         _cmd_land(args[1:])
+        return
+
+    if command == "run":
+        ext_dir = Path.cwd() / ".specify" / "extensions" / "echelon"
+        _cmd_run(args[1:], project_root=Path.cwd(), ext_dir=ext_dir)
         return
 
     if command not in SKILL_MAP:
