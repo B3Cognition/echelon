@@ -383,59 +383,21 @@ See `workflow/definition.yaml evidence_hierarchy:` for the authoritative 5-rank 
 
 ### Satisficing vs Optimizing
 
-Apply Herbert Simon's satisficing principle: find a solution that meets all quality thresholds rather than searching for the optimal solution. Optimization is only justified when EVOI analysis shows the expected improvement exceeds the cost of additional iteration.
-
-**EVOI check:** Before dispatching another iteration, estimate:
-- What is the probability that re-running the agent will improve the output?
-- How much improvement is expected (delta)?
-- What is the token cost of that iteration?
-- Is the expected improvement worth the cost?
-
-If EVOI is negative, stop iterating and accept the current output.
+Find a solution that meets all quality thresholds. Iteration stop conditions are defined in each phase's `spec_file` — read the current phase's spec file to determine when to stop iterating. Do not apply convergence reasoning outside of what is written there.
 
 ---
 
 ## Convergence Rules
 
-See `echelon-config.yml convergence:` for convergence thresholds.
+Iteration stop conditions live in the phase spec files (e.g., `workflow/phases/phase1-why2.md` § "WHY2 iteration stop conditions"). COMMANDER reads the phase spec file, evaluates the ordered stop-condition table against `state.json`, and transitions accordingly. No convergence reasoning is applied outside of what is written in the phase spec file.
 
-When forcing convergence, always produce a quality report documenting what was not completed and why.
-
-### FEP-RLIF Routing Augmentation
-
-When preparing to dispatch an L5 reasoning agent and the computed EVOI score falls in the **marginal range** (see `echelon-config.yml convergence.evoi_marginal_range`):
-
-1. **Read** `confidence-thresholds.yaml` for the relevant domain.
-
-2. **Staleness check:** If `generated_at` predates the current session boundary — log a staleness warning to reasoning-journal.json and fall back to default fixed-budget EVOI rules. Do NOT use a stale artifact for routing.
-
-3. **Absence fallback:** If `confidence-thresholds.yaml` is absent — proceed with default EVOI rules. No error. The artifact's presence augments but does not gate routing.
-
-4. **Confidence-floor bias rule:** If `confidence_floor` is below `convergence.evoi_confidence_floor` (see `workflow/definition.yaml`) for the relevant domain — bias toward dispatch. Treat the marginal EVOI as a dispatch trigger (dispatch the agent).
-
-5. **EVOI conflict precedence:** When both `confidence_sa` entropy signal and `confidence_ecc` signal provide conflicting routing recommendations:
-   - If domain `confidence_brier` accuracy is more than `convergence.evoi_brier_gap_threshold` below `convergence.evoi_brier_policy_baseline` (see `workflow/definition.yaml`): the domain `confidence_floor` governs the routing decision.
-   - Otherwise: `confidence_sa` entropy governs.
-   - `confidence_ecc` is supplementary only — it never gates or replaces the primary routing signal.
+Global limits checked before every dispatch (these apply regardless of phase):
+- Max iterations: `echelon-config.yml convergence.max_squad_iterations`
+- Token budget: `echelon-config.yml budget.token_budget_k`
 
 ### Rule 1: Understanding Delta Convergence
 
-- After each speckit-echelon-sage (SAGE) pass (WHY2, WHY3), record quality scores in `state.json.quality_scores[]`
-- If the delta between the last two passes is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes → **stop speckit-echelon-sage (SAGE) iterations**
-- Proceed to next phase even if gates are not fully met — flag as "best-effort convergence"
-
-**EVOI scope boundary:** EVOI governs *iteration-loop decisions* — whether to dispatch another WHY2/WHY3/WHY4 pass within a phase. EVOI **never** authorises skipping a phase node. A `condition: always` transition in `workflow/definition.yaml` overrides any EVOI estimate. Applying EVOI to justify bypassing `phase3-consensus` or any other mandatory phase node is a NEVER rule #4 violation.
-
-**EVOI vs delta — ordering rule:** EVOI is a *pre-iteration* decision aid. Evaluate it **before** dispatching the next speckit-echelon-sage (SAGE) pass to decide whether the pass is worth the cost. EVOI cannot retroactively declare convergence after the delta test says NO on the current pass — that is a backwards application. The valid sequence is:
-
-1. Delta test says NO → consider whether to dispatch another speckit-echelon-sage (SAGE) pass.
-2. Compute EVOI for the next candidate pass.
-3. If EVOI < 0 → skip the pass, force best-effort convergence.
-4. If EVOI ≥ 0 → dispatch.
-
-Forcing convergence based solely on a negative EVOI score on a *single* pass (without the delta test or iteration-limit being met) is only permitted when `iteration >= max_iterations` or token budget is exhausted. Write the reason in the journal as either `evoi_budget_exhausted` or `evoi_max_iterations_reached`.
-
-**Hard plateau rule (overrides EVOI):** If, after 4 or more WHY2/WHY3 iterations, the cumulative improvement in `overall` score from iteration 1 to the current pass is less than 0.05, immediately force `best_effort` convergence — regardless of EVOI estimates. A large iteration count with tiny total gain indicates a systemic issue (parsing errors, threshold misalignment, spec format violation) that additional speckit-echelon-cartographer (CARTOGRAPHER) amendments cannot fix. EVOI estimates in this situation are unreliable because they are built on a sequence of scores with low variance. Note the stall reason in the journal and surface the gap to the user.
+Governed by the phase spec file's stop-condition table. After each speckit-echelon-sage (SAGE) pass, record quality scores in `state.json.quality_scores[]` (mandatory — missing scores break convergence evaluation). Then read the phase spec file's stop-condition table to determine the next transition.
 
 ### Rule 2: Circular Issue Detection
 
@@ -472,8 +434,8 @@ Forcing convergence based solely on a negative EVOI score on a *single* pass (wi
 speckit-echelon-commander (COMMANDER) reads `confidence_ecc` from speckit-echelon-auditor (AUDITOR) journal entries as a **supplementary** routing input.
 
 **Rules:**
-- `confidence_ecc` does NOT gate or replace the EVOI signal. EVOI-only routing proceeds without error when `confidence_ecc` is absent.
-- When present, `confidence_ecc` may be used to break ties in the marginal EVOI range (`convergence.evoi_marginal_range`), subject to the FR-FEP-007 precedence rule above.
+- `confidence_ecc` is supplementary only — it never gates dispatch or blocks transitions.
+- When present, `confidence_ecc` may bias the iteration decision (dispatch vs. stop) in ambiguous cases where the phase spec file's stop-condition table does not produce a clear match.
 - speckit-echelon-commander (COMMANDER) never blocks dispatch or waits for `confidence_ecc` to be produced. The signal is read opportunistically from the reasoning journal.
 
 ---
@@ -511,7 +473,7 @@ Before every routing decision, ask:
 1. **Am I going in circles?** Has the same issue been raised before? If so, how many times? (3x = escalate)
 2. **Is one agent dominating?** Is a single agent consuming disproportionate budget? Why?
 3. **Are we converging or diverging?** Are quality scores improving or oscillating? Are artifact changes getting smaller or larger?
-4. **Is additional iteration justified?** Apply EVOI — will the next pass improve output enough to justify the cost?
+4. **Is additional iteration justified?** Read the phase spec file's stop-condition table — does the current state match a stop condition?
 5. **Are there blockers I am ignoring?** Unresolved speckit-echelon-investigator (INVESTIGATOR) questions, missing specialist input, human escalation needed?
 
 ---
