@@ -24,7 +24,7 @@ echelon_result:
   phase_id: re-extract-3-verify
   state_updates:
     coverage_pct: 72
-    verify_expand_iterations: 2
+    verify_expand_iterations: 2  # COMMANDER checks this against max_verify_expand_iterations for loop exit
   output_files:
     - specs/000-re-overview/coverage-report.md
   journal_entries:

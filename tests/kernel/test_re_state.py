@@ -60,6 +60,14 @@ class TestInitReState:
         assert s["artifacts"]["analysis_json"] == "/custom/path/analysis.json"
         assert s["artifacts"]["repos_manifest"] == "/custom/path/repos-manifest.json"
 
+    def test_max_verify_expand_iterations_default(self):
+        s = init_re_state()
+        assert s["max_verify_expand_iterations"] == 5
+
+    def test_max_verify_expand_iterations_custom(self):
+        s = init_re_state(max_verify_expand_iterations=3)
+        assert s["max_verify_expand_iterations"] == 3
+
 
 class TestWriteLastDispatch:
     def test_sets_phase_id_and_agent(self):
@@ -134,6 +142,20 @@ class TestCompleteDispatch:
         s = {"status": "in_progress", "phase": "re-extract-1-analyze"}
         with pytest.raises(KeyError, match="last_dispatch sentinel"):
             complete_dispatch(s, {"verdict": "DONE", "phase_id": "x", "state_updates": {}})
+
+    def test_rejects_unknown_state_update_key(self):
+        s = _base_state()
+        s = write_last_dispatch(s, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+        with pytest.raises(ValueError, match="not allowed"):
+            complete_dispatch(s, {"verdict": "DONE", "phase_id": "x",
+                                   "state_updates": {"last_dispatch": {"post_dispatch_complete": False}}})
+
+    def test_rejects_status_override(self):
+        s = _base_state()
+        s = write_last_dispatch(s, "re-extract-1-analyze", "speckit-echelon-re-analyzer")
+        with pytest.raises(ValueError, match="not allowed"):
+            complete_dispatch(s, {"verdict": "DONE", "phase_id": "x",
+                                   "state_updates": {"status": "blocked"}})
 
 
 class TestShouldRedispatch:

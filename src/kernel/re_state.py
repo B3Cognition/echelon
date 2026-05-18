@@ -14,6 +14,7 @@ def init_re_state(
     coverage_threshold: int = 80,
     resolution_threshold: int = 80,
     max_validate_iterations: int = 3,
+    max_verify_expand_iterations: int = 5,
 ) -> dict:
     """Return a fresh re/state.json dict."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -33,6 +34,7 @@ def init_re_state(
         "coverage_pct": 0,
         "coverage_threshold": coverage_threshold,
         "verify_expand_iterations": 0,
+        "max_verify_expand_iterations": max_verify_expand_iterations,
         "resolution_pct": 0,
         "resolution_threshold": resolution_threshold,
         "validate_iterations": 0,
@@ -64,19 +66,38 @@ def write_last_dispatch(state: dict, phase_id: str, agent: str) -> dict:
     return s
 
 
+# Keys agents may write via state_updates. last_dispatch and status are
+# COMMANDER-owned and must not be overwritten by agent result blocks.
+_ALLOWED_STATE_UPDATE_KEYS = frozenset({
+    "coverage_pct", "resolution_pct", "domains", "mode",
+    "validate_iterations", "verify_expand_iterations",
+    "max_validate_iterations", "max_verify_expand_iterations",
+    "artifacts", "issues_log",
+})
+
+
 def complete_dispatch(state: dict, echelon_result: dict) -> dict:
     """Return a copy of state with post_dispatch_complete=True and state_updates applied.
 
     Call after reading the agent's echelon_result: block.
+
+    Only keys in _ALLOWED_STATE_UPDATE_KEYS may appear in state_updates.
+    Raises ValueError on unknown keys to protect COMMANDER-owned fields
+    (last_dispatch, status) from agent result blocks.
     """
-    s = copy.deepcopy(state)
-    if "last_dispatch" not in s:
+    if "last_dispatch" not in state:
         raise KeyError(
             "complete_dispatch called on state with no last_dispatch sentinel "
             "— was write_last_dispatch called first?"
         )
+    s = copy.deepcopy(state)
     s["last_dispatch"]["post_dispatch_complete"] = True
     for key, value in echelon_result.get("state_updates", {}).items():
+        if key not in _ALLOWED_STATE_UPDATE_KEYS:
+            raise ValueError(
+                f"state_updates key {key!r} is not allowed — "
+                f"only {sorted(_ALLOWED_STATE_UPDATE_KEYS)} may be written by agents"
+            )
         s[key] = value
     return s
 

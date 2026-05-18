@@ -22,7 +22,8 @@ write all state to `.specify/echelon/re/state.json`.
 ## Resumption
 
 If `.specify/echelon/re/state.json` exists with `status: in_progress` and
-`last_dispatch.phase_id` in `re_retarget:`, resume from there.
+`last_dispatch.phase_id` in `re_retarget:`, resume from `last_dispatch.phase_id`.
+If `post_dispatch_complete: false`, re-run that phase before advancing.
 
 ---
 

@@ -31,6 +31,7 @@ If count < 5: warn "Fewer than 5 source files found — analysis may be sparse" 
 COVERAGE_THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.coverage_threshold 2>/dev/null || echo "80")
 RESOLUTION_THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.resolution_threshold 2>/dev/null || echo "80")
 MAX_VALIDATE=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.max_validate_iterations 2>/dev/null || echo "3")
+MAX_VERIFY_EXPAND=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.max_verify_expand_iterations 2>/dev/null || echo "5")
 OUTPUT_DIR=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.output.directory 2>/dev/null || echo ".specify/echelon/re")
 ```
 
@@ -56,6 +57,7 @@ if not state_path.exists():
         'resolution_threshold': int(os.environ.get('RESOLUTION_THRESHOLD', 80)),
         'validate_iterations': 0,
         'max_validate_iterations': int(os.environ.get('MAX_VALIDATE', 3)),
+        'max_verify_expand_iterations': int(os.environ.get('MAX_VERIFY_EXPAND', 5)),
         'artifacts': {'analysis_json': '.specify/echelon/re/analysis.json',
                       'repos_manifest': '.specify/echelon/re/repos-manifest.json', 'cross_repo': None},
         'issues_log': []

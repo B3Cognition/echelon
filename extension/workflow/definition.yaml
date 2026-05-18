@@ -1359,9 +1359,9 @@ re_extraction:
         - state.json[coverage_pct, verify_expand_iterations]
       transitions:
         - to: re-extract-4-expand
-          condition: "coverage_pct < coverage_threshold"
+          condition: "coverage_pct < coverage_threshold AND verify_expand_iterations < max_verify_expand_iterations"
         - to: re-extract-5-validate
-          condition: "coverage_pct >= coverage_threshold"
+          condition: "coverage_pct >= coverage_threshold OR verify_expand_iterations >= max_verify_expand_iterations"
 
     - id: re-extract-4-expand
       label: "Coverage Expansion (RE-EXPANDER)"
