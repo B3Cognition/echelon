@@ -44,7 +44,11 @@ SKILL_MAP = {
     "codegen": "echelon.codegen",
 }
 
-USAGE = """\
+CLI_VERSION = "2.2.0"
+
+USAGE = f"""\
+echelon {CLI_VERSION}
+
 Usage: echelon <command> [args...]
 
 Commands:
@@ -638,6 +642,10 @@ def main() -> None:
 
     if not args or args[0] in ("-h", "--help"):
         print(USAGE)
+        sys.exit(0)
+
+    if args[0] in ("-v", "--version", "version"):
+        print(f"echelon {CLI_VERSION}")
         sys.exit(0)
 
     command = args[0]
