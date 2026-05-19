@@ -367,17 +367,32 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
 # Public API
 # ---------------------------------------------------------------------------
 
-def _parse_config(data: Dict[str, Any]) -> HarnessConfig:
+def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConfig:
     """Validate and construct a HarnessConfig from an already-merged dict.
 
-    Useful for testing validation logic without touching the filesystem.
+    Args:
+        data: Merged config dict.
+        squad_only: When True, skip validation of build-harness-only required
+            fields (target_repo, target_default_branch, provider). The squad
+            run (Phase A) never uses these fields — they are only needed for
+            the build harness (Phase B / echelon harness run).
 
     Raises:
-        ValidationError: If required fields are missing or values are invalid.
+        ValidationError: If required fields are missing or invalid after merging.
     """
-    target_repo = _validate_required(data, "target_repo")
-    target_default_branch = _validate_required(data, "target_default_branch")
-    provider = _validate_provider(_validate_required(data, "provider"))
+    if squad_only:
+        target_repo = data.get("target_repo", "")
+        target_default_branch = data.get("target_default_branch", "main")
+        provider = data.get("provider", "github")
+        if provider:
+            try:
+                provider = _validate_provider(provider)
+            except ValidationError:
+                provider = "github"
+    else:
+        target_repo = _validate_required(data, "target_repo")
+        target_default_branch = _validate_required(data, "target_default_branch")
+        provider = _validate_provider(_validate_required(data, "provider"))
 
     echelon_version_range = data.get("echelon_version_range")
     if echelon_version_range is not None:
@@ -415,7 +430,10 @@ def _parse_config(data: Dict[str, Any]) -> HarnessConfig:
     )
 
 
-def load_config(project_root: Optional[Path] = None) -> HarnessConfig:
+def load_config(
+    project_root: Optional[Path] = None,
+    squad_only: bool = False,
+) -> HarnessConfig:
     """Load and validate harness configuration using the spec-kit 4-level cascade.
 
     Delegates to ``specify_cli.extensions.ConfigManager`` when available;
@@ -423,6 +441,9 @@ def load_config(project_root: Optional[Path] = None) -> HarnessConfig:
 
     Args:
         project_root: Root of the spec-kit project. Defaults to ``Path.cwd()``.
+        squad_only: When True, skip validation of build-harness-only required
+            fields. Pass True from the squad run (echelon run / Phase A) which
+            only needs llm + budget config and never touches target_repo etc.
 
     Returns:
         Validated ``HarnessConfig`` dataclass.
@@ -434,4 +455,4 @@ def load_config(project_root: Optional[Path] = None) -> HarnessConfig:
         project_root = Path.cwd()
 
     data = _get_merged_config(project_root)
-    return _parse_config(data)
+    return _parse_config(data, squad_only=squad_only)

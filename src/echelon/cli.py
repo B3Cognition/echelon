@@ -464,7 +464,7 @@ def _cmd_run(
             i += 1
     message = " ".join(message_parts)
 
-    config = load_config(project_root)
+    config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
     state_store = SquadStateStore(project_root / ".specify/squad/state.json")
     graph = PhaseGraph(
