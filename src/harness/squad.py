@@ -84,7 +84,19 @@ class SquadController:
         _os.environ["ECHELON_SQUAD_ACTIVE"] = "1"
 
         existing = self._state_store.load()
-        if not existing or existing.get("status") not in ("running", "in_progress"):
+        existing_status = existing.get("status") if existing else None
+        existing_message = existing.get("user_message", "") if existing else ""
+
+        # A new run is started when:
+        #   - no prior state exists, OR
+        #   - the prior run reached a terminal state (done/blocked), OR
+        #   - the caller provides a non-empty message that differs from the
+        #     previous run (user is explicitly asking for something different;
+        #     resume would silently ignore the new message).
+        new_message_provided = bool(user_message and user_message != existing_message)
+        resumable = existing_status in ("running", "in_progress")
+
+        if not existing or not resumable or new_message_provided:
             run_id = f"squad-{int(time.time())}"
             self._state_store.initialize(
                 run_id=run_id,
@@ -93,9 +105,16 @@ class SquadController:
                 token_budget=self._token_budget,
                 entry_phase=self._graph.entry_phase(),
             )
+            if resumable and new_message_provided:
+                print(
+                    f"[squad] new task — starting fresh (previous run abandoned: "
+                    f"{existing_message!r:.60})",
+                    flush=True,
+                )
         else:
             # Resuming an in-progress run — clear any cancel_requested flag left
             # by a previous SIGINT so this invocation doesn't exit immediately.
+            print(f"[squad] resuming from phase: {self._state_store.current_phase()}", flush=True)
             state = self._state_store.load()
             if state.get("cancel_requested"):
                 state["cancel_requested"] = False

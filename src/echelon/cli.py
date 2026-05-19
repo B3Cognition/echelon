@@ -53,7 +53,11 @@ Usage: echelon <command> [args...]
 
 Commands:
   init                                      One-time project setup (no LLM)
-  run     <description>                     Run echelon for a new feature
+  run     <description> [--mode semi|banzai|guided] [--reset]
+                                            Run echelon squad. Resumes if a run is in
+                                            progress with the same task; starts fresh if
+                                            task differs or run is complete. --reset forces
+                                            a fresh start regardless.
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
   build   <spec_id>                         Build implementation for a spec
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
@@ -450,6 +454,7 @@ def _cmd_run(
 
     # Parse optional flags
     mode = "semi"
+    reset = False
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -459,10 +464,19 @@ def _cmd_run(
         elif args[i] == "--message" and i + 1 < len(args):
             message_parts.append(args[i + 1])
             i += 2
+        elif args[i] == "--reset":
+            reset = True
+            i += 1
         else:
             message_parts.append(args[i])
             i += 1
     message = " ".join(message_parts)
+
+    if reset:
+        state_path = project_root / ".specify/squad/state.json"
+        if state_path.exists():
+            state_path.unlink()
+            print("[squad] state reset — starting fresh", flush=True)
 
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
