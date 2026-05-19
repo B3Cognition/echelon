@@ -112,11 +112,15 @@ class SquadController:
                     flush=True,
                 )
             else:
+                config_path = self._project_root / ".specify/extensions/echelon/echelon-config.yml"
                 print(
                     f"\n[squad] ✗ Token budget still exhausted "
                     f"(usage={existing.get('token_usage', 0):,}, "
                     f"budget={self._token_budget:,}).\n"
-                    f"  Increase harness.budget.token_budget_k in echelon-config.yml\n"
+                    f"  Edit {config_path}:\n"
+                    f"    harness:\n"
+                    f"      budget:\n"
+                    f"        token_budget_k: <increase this value>\n"
                     f"  then re-run:  echelon run\n"
                     f"  Or discard:   echelon run --reset\n",
                     flush=True,
@@ -132,10 +136,11 @@ class SquadController:
             valid_phases = self._graph.all_phase_ids()
             if next_phase_override:
                 if next_phase_override not in valid_phases:
+                    phases_fmt = "\n".join(f"    {p}" for p in valid_phases)
                     print(
                         f"\n[squad] ✗ --next-phase {next_phase_override!r} is not a "
                         f"valid phase ID.\n"
-                        f"  Valid phases: {valid_phases}\n",
+                        f"  Valid phase IDs:\n{phases_fmt}\n",
                         flush=True,
                     )
                     return SquadResult(
@@ -155,10 +160,11 @@ class SquadController:
                     flush=True,
                 )
             else:
+                phases_fmt = "\n".join(f"    {p}" for p in valid_phases)
                 print(
                     f"\n[squad] ✗ Blocked: {blocked_reason}\n"
                     f"  Recover:  echelon run --next-phase <phase-id>\n"
-                    f"  Valid phases: {valid_phases}\n"
+                    f"  Valid phase IDs:\n{phases_fmt}\n"
                     f"  Discard:  echelon run --reset\n",
                     flush=True,
                 )
