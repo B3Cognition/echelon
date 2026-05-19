@@ -145,34 +145,24 @@ class AgentExecutor(PhaseExecutor):
 
 
 class CommanderInternalExecutor(PhaseExecutor):
-    """Handles type: commander_internal — run spec_file instructions via Bash."""
+    """Handles type: commander_internal phases in the harness path.
+
+    These spec files are markdown instructions for COMMANDER (the LLM) — not
+    bash scripts. Running them as bash causes a stdin hang: markdown fenced
+    code blocks contain triple-backticks which bash interprets as command
+    substitutions that spawn child bash processes reading from the terminal.
+
+    In the harness path these phases are no-ops: the harness already performed
+    the equivalent init work (SquadStateStore.initialize, cli.py config checks),
+    and any LLM-specific steps (KB reads, speckit.constitution) only run in the
+    interactive COMMANDER path.
+    """
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
     ) -> "SquadAgentResult":
-        from harness.squad_provider import SquadAgentResult, _extract_echelon_result
-        if node.spec_file:
-            spec_path = self._ext_dir / node.spec_file
-            if spec_path.exists():
-                result = subprocess.run(
-                    ["bash", "-c", spec_path.read_text()],
-                    cwd=str(self._project_root),
-                    capture_output=True,
-                    text=True,
-                )
-                raw = result.stdout + result.stderr
-                print(raw, flush=True)
-                parsed = _extract_echelon_result(raw)
-                agent_result = SquadAgentResult(
-                    exit_code=result.returncode,
-                    echelon_result=parsed or {"verdict": "DONE", "state_updates": {}},
-                    raw_output=raw,
-                    duration_ms=0,
-                    timed_out=False,
-                )
-                self._write_journal_entries(agent_result, node.id)
-                return agent_result
         from harness.squad_provider import SquadAgentResult
+        print(f"[squad]   (commander_internal — harness no-op)", flush=True)
         return SquadAgentResult(
             exit_code=0,
             echelon_result={"verdict": "DONE", "state_updates": {}},
