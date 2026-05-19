@@ -112,6 +112,9 @@ class SquadController:
                 )
 
             node = self._graph.get(phase)
+            label = node.label or node.id
+            print(f"\n[squad] ▶ {node.id}  {label}", flush=True)
+
             executor = self._executors.get(node.type)
             if executor is None:
                 result = self._judgment_dispatch(
@@ -123,6 +126,7 @@ class SquadController:
 
             next_phase = self._evaluate_transitions(node, result)
             self._state_store.advance(phase, next_phase, result)
+            print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
 
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult

@@ -51,6 +51,8 @@ echo "✓ Config: ${ECHELON_CONFIG}"
 
 ## Step 3: Launch
 
+Run this command **synchronously in the foreground** using the Bash tool — do NOT use `run_in_background`. The harness streams phase progress and agent output directly to the terminal; running in background silences all of that and sends output to a temp file instead.
+
 ```bash
 cd "${PROJECT_ROOT}" && echelon run "$@"
 ```
