@@ -54,10 +54,12 @@ Usage: echelon <command> [args...]
 Commands:
   init                                      One-time project setup (no LLM)
   run     <description> [--mode semi|banzai|guided] [--reset]
+                        [--next-phase <phase-id>]
                                             Run echelon squad. Resumes if a run is in
                                             progress with the same task; starts fresh if
-                                            task differs or run is complete. --reset forces
-                                            a fresh start regardless.
+                                            task differs or run is complete.
+                                            --reset            force fresh start
+                                            --next-phase <id>  recover from invalid-phase block
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
   build   <spec_id>                         Build implementation for a spec
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
@@ -455,6 +457,7 @@ def _cmd_run(
     # Parse optional flags
     mode = "semi"
     reset = False
+    next_phase = ""
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -467,6 +470,9 @@ def _cmd_run(
         elif args[i] == "--reset":
             reset = True
             i += 1
+        elif args[i] == "--next-phase" and i + 1 < len(args):
+            next_phase = args[i + 1]
+            i += 2
         else:
             message_parts.append(args[i])
             i += 1
@@ -497,7 +503,7 @@ def _cmd_run(
         project_root=project_root,
         token_budget=token_budget,
     )
-    result = controller.run(user_message=message, mode=mode)
+    result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
     print(f"\n[squad] {result.status} — phase: {result.phase}")
 
 

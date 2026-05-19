@@ -78,7 +78,12 @@ class SquadController:
         self._cancelled = False
         signal.signal(signal.SIGINT, self._handle_sigint)
 
-    def run(self, user_message: str = "", mode: str = "semi") -> SquadResult:
+    def run(
+        self,
+        user_message: str = "",
+        mode: str = "semi",
+        next_phase_override: str = "",
+    ) -> SquadResult:
         """Run the squad from current state or initialize fresh."""
         import os as _os
         _os.environ["ECHELON_SQUAD_ACTIVE"] = "1"
@@ -86,17 +91,90 @@ class SquadController:
         existing = self._state_store.load()
         existing_status = existing.get("status") if existing else None
         existing_message = existing.get("user_message", "") if existing else ""
+        blocked_reason = (existing.get("blocked_reason") or "") if existing else ""
+        force_resume = False  # set True by recovery paths to bypass message check
 
-        # Escalation block — human answer required before anything else.
-        # Do NOT start fresh: that would silently discard all previous work.
-        # The user must answer via `echelon resume "<answer>"`.
-        if existing_status == "blocked" and existing.get("escalation_question"):
+        # ── Recovery: token budget bumped ─────────────────────────────────
+        if existing_status == "blocked" and blocked_reason == "token_budget_exhausted":
+            stored_usage = existing.get("token_usage", 0)
+            if self._token_budget == 0 or self._token_budget > stored_usage:
+                state = self._state_store.load()
+                state["status"] = "running"
+                state["blocked_reason"] = None
+                state["token_budget"] = self._token_budget
+                self._state_store.save(state)
+                existing_status = "running"
+                force_resume = True
+                budget_display = f"{self._token_budget:,}" if self._token_budget else "∞"
+                print(
+                    f"[squad] budget bumped → resuming "
+                    f"(usage={stored_usage:,}, new budget={budget_display})",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\n[squad] ✗ Token budget still exhausted "
+                    f"(usage={existing.get('token_usage', 0):,}, "
+                    f"budget={self._token_budget:,}).\n"
+                    f"  Increase harness.budget.token_budget_k in echelon-config.yml\n"
+                    f"  then re-run:  echelon run\n"
+                    f"  Or discard:   echelon run --reset\n",
+                    flush=True,
+                )
+                return SquadResult(
+                    status="blocked",
+                    phase=existing.get("phase", "unknown"),
+                    run_id=existing.get("run_id", ""),
+                )
+
+        # ── Recovery: invalid judgment phase (--next-phase manual override) ─
+        elif existing_status == "blocked" and "invalid next_phase" in blocked_reason:
+            valid_phases = self._graph.all_phase_ids()
+            if next_phase_override:
+                if next_phase_override not in valid_phases:
+                    print(
+                        f"\n[squad] ✗ --next-phase {next_phase_override!r} is not a "
+                        f"valid phase ID.\n"
+                        f"  Valid phases: {valid_phases}\n",
+                        flush=True,
+                    )
+                    return SquadResult(
+                        status="blocked",
+                        phase=existing.get("phase", "unknown"),
+                        run_id=existing.get("run_id", ""),
+                    )
+                state = self._state_store.load()
+                state["status"] = "running"
+                state["blocked_reason"] = None
+                state["phase"] = next_phase_override
+                self._state_store.save(state)
+                existing_status = "running"
+                force_resume = True
+                print(
+                    f"[squad] manual recovery → advancing to {next_phase_override!r}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"\n[squad] ✗ Blocked: {blocked_reason}\n"
+                    f"  Recover:  echelon run --next-phase <phase-id>\n"
+                    f"  Valid phases: {valid_phases}\n"
+                    f"  Discard:  echelon run --reset\n",
+                    flush=True,
+                )
+                return SquadResult(
+                    status="blocked",
+                    phase=existing.get("phase", "unknown"),
+                    run_id=existing.get("run_id", ""),
+                )
+
+        # ── Escalation block — human answer required ───────────────────────
+        elif existing_status == "blocked" and existing.get("escalation_question"):
             q = existing.get("escalation_question", "")
-            reason = existing.get("blocked_reason", "")
             print(
                 f"\n[squad] ✗ Run is blocked — human input required.\n"
                 f"  Phase:    {existing.get('phase', '?')}\n"
-                f"  Reason:   {reason}\n"
+                f"  Reason:   {blocked_reason}\n"
                 f"  Question: {q}\n\n"
                 f"  Answer with:  echelon resume \"<your answer>\"\n"
                 f"  Discard with: echelon run --reset \"<new task>\"\n",
@@ -111,10 +189,12 @@ class SquadController:
         # A new run is started when:
         #   - no prior state exists, OR
         #   - the prior run reached a terminal state (done/blocked), OR
-        #   - the caller provides a non-empty message that differs from the
-        #     previous run (user is explicitly asking for something different;
-        #     resume would silently ignore the new message).
-        new_message_provided = bool(user_message and user_message != existing_message)
+        #   - caller provides a different non-empty message (new task).
+        # force_resume=True (set by recovery paths) bypasses the message check.
+        new_message_provided = (
+            bool(user_message and user_message != existing_message)
+            and not force_resume
+        )
         resumable = existing_status in ("running", "in_progress")
 
         if not existing or not resumable or new_message_provided:
