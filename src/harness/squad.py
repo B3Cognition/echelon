@@ -153,7 +153,23 @@ class SquadController:
                     node,
                     result,
                 )
-                next_phase = judgment.state_updates.get("next_phase")
+                # Accept either "next_phase" or "phase" as the routing key.
+                # COMMANDER may use either; be lenient rather than route to DONE.
+                next_phase = (
+                    judgment.state_updates.get("next_phase")
+                    or judgment.state_updates.get("phase")
+                )
+                # Apply judgment state_updates (e.g. iteration increment) now —
+                # advance() only applies the executor result's state_updates.
+                routing_keys = {"next_phase", "phase"}
+                extra = {
+                    k: v for k, v in judgment.state_updates.items()
+                    if k not in routing_keys
+                }
+                if extra:
+                    s = self._state_store.load()
+                    s.update(extra)
+                    self._state_store.save(s)
                 if next_phase:
                     return next_phase
         return "DONE"
