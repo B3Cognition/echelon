@@ -60,6 +60,7 @@ class SquadController:
         ext_dir: Path,
         project_root: Path,
         token_budget: int = 0,
+        max_iterations: int = 5,
     ) -> None:
         self._provider = provider
         self._state_store = state_store
@@ -67,6 +68,7 @@ class SquadController:
         self._ext_dir = ext_dir
         self._project_root = project_root
         self._token_budget = token_budget
+        self._max_iterations = max_iterations
         self._evaluator = ConditionEvaluator()
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(provider, phase_graph, ext_dir, project_root),
@@ -210,6 +212,7 @@ class SquadController:
                 user_message=user_message,
                 token_budget=self._token_budget,
                 entry_phase=self._graph.entry_phase(),
+                max_iterations=self._max_iterations,
             )
             if resumable and new_message_provided:
                 print(

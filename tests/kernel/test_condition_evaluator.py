@@ -139,3 +139,54 @@ class TestConditionEvaluator:
 
     def test_missing_field_comparison_false(self):
         assert self.ev.evaluate("coverage_pct >= coverage_threshold", {}) is False
+
+    # ── quality_gates.* derived from quality_scores ──────────────────────
+
+    def test_quality_gates_pass_from_quality_scores(self):
+        state = {"quality_scores": [{"pass": True}]}
+        assert self.ev.evaluate("quality_gates.pass", state) is True
+
+    def test_quality_gates_fail_from_quality_scores(self):
+        state = {"quality_scores": [{"pass": False}]}
+        assert self.ev.evaluate("quality_gates.fail", state) is True
+
+    def test_quality_gates_pass_false_when_scores_fail(self):
+        state = {"quality_scores": [{"pass": False}]}
+        assert self.ev.evaluate("quality_gates.pass", state) is False
+
+    def test_quality_gates_falls_back_to_direct_field(self):
+        # No quality_scores — fall back to state["quality_gates"]["pass"]
+        state = {"quality_gates": {"pass": True}}
+        assert self.ev.evaluate("quality_gates.pass", state) is True
+
+    def test_quality_gates_uses_latest_score(self):
+        state = {"quality_scores": [{"pass": True}, {"pass": False}]}
+        assert self.ev.evaluate("quality_gates.fail", state) is True
+
+    # ── CRITICAL_issues / no_CRITICAL_issues ─────────────────────────────
+
+    def test_critical_issues_from_quality_scores_fail(self):
+        state = {"quality_scores": [{"pass": False}], "issues_log": []}
+        assert self.ev.evaluate("CRITICAL_issues", state) is True
+
+    def test_no_critical_issues_from_quality_scores_pass(self):
+        state = {"quality_scores": [{"pass": True}], "issues_log": []}
+        assert self.ev.evaluate("no_CRITICAL_issues", state) is True
+
+    def test_critical_issues_from_issues_log(self):
+        state = {"issues_log": [{"severity": "CRITICAL", "id": "ISS-001"}],
+                 "quality_scores": [{"pass": True}]}  # log takes priority
+        assert self.ev.evaluate("CRITICAL_issues", state) is True
+
+    def test_why1_fail_routes_to_discover(self):
+        """Regression: WHY1 FAIL + iteration=0 must route to phase1-discover."""
+        state = {
+            "quality_scores": [{"pass": False}],
+            "iteration": 0,
+            "max_iterations": 5,
+            "issues_log": [],
+            "convergence_detected": False,
+        }
+        assert self.ev.evaluate("quality_gates.fail AND iteration < max_iterations", state) is True
+        assert self.ev.evaluate("quality_gates.pass OR convergence_detected", state) is False
+        assert self.ev.evaluate("iteration >= max_iterations", state) is False

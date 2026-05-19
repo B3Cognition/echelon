@@ -92,7 +92,53 @@ class ConditionEvaluator:
         return None  # unrecognised → COMMANDER judgment
 
     def _get(self, state: dict, field: str, default=None):
-        """Read a dotted-path field from state dict."""
+        """Read a dotted-path field from state dict.
+
+        Special derived fields:
+          quality_gates.pass  — latest quality_scores entry's pass flag
+          quality_gates.fail  — negation of quality_gates.pass
+          CRITICAL_issues     — True when quality_scores[-1].pass is False
+          no_CRITICAL_issues  — negation of CRITICAL_issues
+        """
+        # Derived: quality_gates.pass / quality_gates.fail
+        # Prefer quality_scores[-1].pass when available (agents write here).
+        # Fall back to direct state["quality_gates"]["pass"] traversal so
+        # tests and interactive COMMANDER writes remain compatible.
+        if field == "quality_gates.pass":
+            scores = state.get("quality_scores") or []
+            if scores:
+                return bool(scores[-1].get("pass"))
+            # fall through to normal dotted-path
+
+        if field == "quality_gates.fail":
+            scores = state.get("quality_scores") or []
+            if scores:
+                return not bool(scores[-1].get("pass"))
+            # fall through to normal dotted-path
+
+        # Derived: CRITICAL_issues / no_CRITICAL_issues
+        # Agents write issues to journal entries (not state_updates), so derive
+        # from quality_scores[-1].pass: fail → CRITICAL issues present.
+        if field == "CRITICAL_issues":
+            # Explicit issues_log takes priority when populated
+            issues = state.get("issues_log") or []
+            if issues:
+                return any(
+                    (i.get("severity") or "").upper() == "CRITICAL"
+                    for i in issues
+                )
+            scores = state.get("quality_scores") or []
+            if scores:
+                return not bool(scores[-1].get("pass"))
+            return default
+
+        if field == "no_CRITICAL_issues":
+            critical = self._get(state, "CRITICAL_issues")
+            if critical is None:
+                return default
+            return not critical
+
+        # Normal dotted-path traversal
         parts = field.split(".")
         val: object = state
         for p in parts:

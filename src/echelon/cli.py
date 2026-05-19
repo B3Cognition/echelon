@@ -496,10 +496,13 @@ def _cmd_run(
     # echelon-config.yml → local-config.yml → env vars) is respected.
     from harness.config import get_full_resolved_config
     token_budget = 0
+    max_iterations = 5  # matches analysis.max_iterations default in config-template.yml
     try:
         _full = get_full_resolved_config(project_root)
-        _k = int((_full.get("analysis") or {}).get("token_budget_k") or 0)
+        _analysis = _full.get("analysis") or {}
+        _k = int(_analysis.get("token_budget_k") or 0)
         token_budget = _k * 1000 if _k else 0
+        max_iterations = int(_analysis.get("max_iterations") or 5)
     except Exception:
         pass
 
@@ -510,6 +513,7 @@ def _cmd_run(
         ext_dir=ext_dir,
         project_root=project_root,
         token_budget=token_budget,
+        max_iterations=max_iterations,
     )
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
     print(f"\n[squad] {result.status} — phase: {result.phase}")

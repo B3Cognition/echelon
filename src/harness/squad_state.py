@@ -32,6 +32,7 @@ class SquadStateStore:
         user_message: str,
         token_budget: int,
         entry_phase: str,
+        max_iterations: int = 5,
     ) -> None:
         ts = datetime.now(timezone.utc).isoformat()
         self.save({
@@ -40,6 +41,7 @@ class SquadStateStore:
             "phase": entry_phase,
             "mode": mode,
             "iteration": 0,
+            "max_iterations": max_iterations,
             "token_usage": 0,
             "token_budget": token_budget,
             "user_message": user_message,
