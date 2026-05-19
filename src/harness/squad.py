@@ -80,6 +80,9 @@ class SquadController:
 
     def run(self, user_message: str = "", mode: str = "semi") -> SquadResult:
         """Run the squad from current state or initialize fresh."""
+        import os as _os
+        _os.environ["ECHELON_SQUAD_ACTIVE"] = "1"
+
         existing = self._state_store.load()
         if not existing or existing.get("status") not in ("running", "in_progress"):
             run_id = f"squad-{int(time.time())}"

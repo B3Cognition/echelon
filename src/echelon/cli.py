@@ -31,9 +31,12 @@ except ImportError:
         def check_wing_collision(*a, **k):  # type: ignore[assignment]
             return []
 
-# Maps CLI command → spec-kit skill base name (used to derive file paths)
+# Maps CLI command → spec-kit skill base name (used to derive file paths).
+# NOTE: "run" is intentionally absent — it is handled by the Python harness
+# (_cmd_run) and must never fall through to the skill-based LLM path.
+# Keeping "run" here would cause infinite recursion: skill → claude -p →
+# echelon.run.md → "echelon run" → skill → ... (155 nested processes).
 SKILL_MAP = {
-    "run":     "echelon.run",
     "bugfix":  "echelon.bugfix",
     "build":   "echelon.build",
     "review":  "echelon.review",
@@ -656,6 +659,15 @@ def main() -> None:
         return
 
     if command == "run":
+        if os.environ.get("ECHELON_SQUAD_ACTIVE"):
+            print(
+                "✗ echelon run: refusing nested invocation — already inside a squad "
+                "agent dispatch (ECHELON_SQUAD_ACTIVE is set).\n"
+                "  Squad agents must not call 'echelon run'. "
+                "Return echelon_result: from your agent instead.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         project_root = Path.cwd()
         ext_dir = project_root / ".specify" / "extensions" / "echelon"
         if not ext_dir.exists():
