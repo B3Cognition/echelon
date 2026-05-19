@@ -87,6 +87,27 @@ class SquadController:
         existing_status = existing.get("status") if existing else None
         existing_message = existing.get("user_message", "") if existing else ""
 
+        # Escalation block — human answer required before anything else.
+        # Do NOT start fresh: that would silently discard all previous work.
+        # The user must answer via `echelon resume "<answer>"`.
+        if existing_status == "blocked" and existing.get("escalation_question"):
+            q = existing.get("escalation_question", "")
+            reason = existing.get("blocked_reason", "")
+            print(
+                f"\n[squad] ✗ Run is blocked — human input required.\n"
+                f"  Phase:    {existing.get('phase', '?')}\n"
+                f"  Reason:   {reason}\n"
+                f"  Question: {q}\n\n"
+                f"  Answer with:  echelon resume \"<your answer>\"\n"
+                f"  Discard with: echelon run --reset \"<new task>\"\n",
+                flush=True,
+            )
+            return SquadResult(
+                status="blocked",
+                phase=existing.get("phase", "unknown"),
+                run_id=existing.get("run_id", ""),
+            )
+
         # A new run is started when:
         #   - no prior state exists, OR
         #   - the prior run reached a terminal state (done/blocked), OR
