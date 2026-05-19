@@ -491,13 +491,14 @@ def _cmd_run(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",
     )
-    # token_budget_k lives under analysis: in echelon-config.yml, not in
-    # HarnessConfig (which only covers the build harness).
-    import yaml as _yaml
+    # token_budget_k lives under analysis: in echelon-config.yml.
+    # Use get_full_resolved_config so the 4-level cascade (ConfigManager →
+    # echelon-config.yml → local-config.yml → env vars) is respected.
+    from harness.config import get_full_resolved_config
     token_budget = 0
     try:
-        _raw = _yaml.safe_load((ext_dir / "echelon-config.yml").read_text()) or {}
-        _k = int((_raw.get("analysis") or {}).get("token_budget_k") or 0)
+        _full = get_full_resolved_config(project_root)
+        _k = int((_full.get("analysis") or {}).get("token_budget_k") or 0)
         token_budget = _k * 1000 if _k else 0
     except Exception:
         pass

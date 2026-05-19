@@ -456,3 +456,25 @@ def load_config(
 
     data = _get_merged_config(project_root)
     return _parse_config(data, squad_only=squad_only)
+
+
+def get_full_resolved_config(project_root: Optional[Path] = None) -> Dict[str, Any]:
+    """Return the full resolved config dict for all sections (not just harness:).
+
+    Use this when you need access to non-harness sections such as ``analysis:``
+    or ``endocrine:``.  Goes through the same 4-level cascade as ``load_config``:
+    ConfigManager (spec-kit) when available, otherwise inline file merge.
+    """
+    if project_root is None:
+        project_root = Path.cwd()
+
+    if _SpecKitConfigManager is not None:
+        mgr = _SpecKitConfigManager(project_root=project_root, extension_id="echelon")
+        return mgr.get_config()
+
+    # Inline fallback: merge echelon-config.yml + local-config.yml (full dicts).
+    ext_dir = project_root / ".specify" / "extensions" / "echelon"
+    full: Dict[str, Any] = {}
+    full = _merge(full, _load_yaml_file(ext_dir / "echelon-config.yml"))
+    full = _merge(full, _load_yaml_file(ext_dir / "local-config.yml"))
+    return full
