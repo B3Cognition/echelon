@@ -154,11 +154,24 @@ class SquadController:
                     result,
                 )
                 # Accept either "next_phase" or "phase" as the routing key.
-                # COMMANDER may use either; be lenient rather than route to DONE.
                 next_phase = (
                     judgment.state_updates.get("next_phase")
                     or judgment.state_updates.get("phase")
                 )
+                # Hard-validate: next_phase must exist in the phase graph.
+                # Reject hallucinated phase names rather than silently routing
+                # to a non-existent phase or falling through to DONE.
+                valid_phases = self._graph.all_phase_ids()
+                if next_phase and next_phase not in valid_phases:
+                    print(
+                        f"[squad] ✗ judgment returned invalid phase {next_phase!r} "
+                        f"— not in phase graph. Blocking.",
+                        flush=True,
+                    )
+                    self._state_store.set_blocked(
+                        f"judgment returned invalid next_phase {next_phase!r}"
+                    )
+                    return "terminal-blocked"
                 # Apply judgment state_updates (e.g. iteration increment) now —
                 # advance() only applies the executor result's state_updates.
                 routing_keys = {"next_phase", "phase"}
@@ -183,10 +196,18 @@ class SquadController:
         """Dispatch slimmed COMMANDER for judgment calls."""
         commander_path = self._ext_dir / "agents/control/commander.md"
         state = self._state_store.load()
+        valid_phases = self._graph.all_phase_ids()
+        transitions_text = "\n".join(
+            f"  - to: {t.get('to')}  (condition: {t.get('condition', 'always')})"
+            for t in node.transitions
+        ) or "  (none defined)"
         context = (
             f"# COMMANDER JUDGMENT REQUEST\n\n"
             f"**Reason:** {reason}\n\n"
             f"**Current phase:** {node.id} (type: {node.type})\n\n"
+            f"**Transitions defined for this phase:**\n{transitions_text}\n\n"
+            f"**VALID phase IDs** (only these may appear in next_phase):\n"
+            f"{json.dumps(valid_phases, indent=2)}\n\n"
             f"**State:**\n```json\n{json.dumps(state, indent=2)}\n```\n\n"
         )
         if commander_path.exists():
