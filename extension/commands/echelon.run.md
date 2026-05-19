@@ -28,7 +28,18 @@ if ! command -v echelon >/dev/null 2>&1; then
   echo "✗ echelon not on PATH. Run: bash ~/.echelon/install.sh" >&2
   exit 1
 fi
-echo "✓ echelon CLI: $(command -v echelon)"
+
+# echelon CLI version — must be >= 2.2.0 (Python harness, ECHELON_SQUAD_ACTIVE guard)
+# Older builds have no --version flag and route 'echelon run' through the skill path,
+# causing infinite recursion (echelon.run.md → echelon run → echelon.run.md → ...).
+ECHELON_VER=$(echelon --version 2>/dev/null | awk '{print $2}')
+if [ -z "$ECHELON_VER" ]; then
+  echo "✗ echelon CLI is outdated (pre-2.2.0 — no --version support)." >&2
+  echo "  An old build will recurse infinitely when 'echelon run' is invoked." >&2
+  echo "  Run: bash ~/.echelon/install.sh" >&2
+  exit 1
+fi
+echo "✓ echelon CLI: $(command -v echelon) (${ECHELON_VER})"
 
 # Extension installed
 if [ ! -d "${ECHELON_EXT}" ]; then
