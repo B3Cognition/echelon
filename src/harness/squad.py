@@ -93,6 +93,13 @@ class SquadController:
                 token_budget=self._token_budget,
                 entry_phase=self._graph.entry_phase(),
             )
+        else:
+            # Resuming an in-progress run — clear any cancel_requested flag left
+            # by a previous SIGINT so this invocation doesn't exit immediately.
+            state = self._state_store.load()
+            if state.get("cancel_requested"):
+                state["cancel_requested"] = False
+                self._state_store.save(state)
 
         while True:
             phase = self._state_store.current_phase()
@@ -103,7 +110,7 @@ class SquadController:
                 self._state_store.save(state)
                 return SquadResult.from_state(self._state_store.load())
 
-            if self._cancelled or self._state_store.is_cancel_requested():
+            if self._cancelled:
                 return SquadResult.interrupted()
 
             if self._budget_exhausted():

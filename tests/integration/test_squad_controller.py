@@ -104,11 +104,22 @@ class TestSquadControllerBasics:
         assert result.status == "done"
 
     def test_cancel_stops_loop(self, tmp_path):
+        """SIGINT (self._cancelled flag) stops the loop mid-run."""
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "init")
-        store.set_cancel_requested()
+        ctrl._cancelled = True   # simulate SIGINT received mid-run
         result = ctrl.run("msg", "banzai")
         assert result.status == "interrupted"
+
+    def test_stale_cancel_requested_cleared_on_resume(self, tmp_path):
+        """cancel_requested left in state.json by a previous Ctrl+C does not
+        prevent a fresh echelon run invocation from proceeding."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "init")
+        store.set_cancel_requested()   # simulate previous run's Ctrl+C
+        # run() must clear it and proceed normally (not exit immediately)
+        result = ctrl.run("msg", "banzai")
+        assert result.status != "interrupted"
 
     def test_budget_zero_never_exhausts(self, tmp_path):
         """token_budget=0 means disabled — should not trigger budget_exhausted."""
