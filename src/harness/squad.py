@@ -118,9 +118,8 @@ class SquadController:
                     f"(usage={existing.get('token_usage', 0):,}, "
                     f"budget={self._token_budget:,}).\n"
                     f"  Edit {config_path}:\n"
-                    f"    harness:\n"
-                    f"      budget:\n"
-                    f"        token_budget_k: <increase this value>\n"
+                    f"    analysis:\n"
+                    f"      token_budget_k: <increase this value>\n"
                     f"  then re-run:  echelon run\n"
                     f"  Or discard:   echelon run --reset\n",
                     flush=True,

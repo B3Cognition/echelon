@@ -491,9 +491,16 @@ def _cmd_run(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",
     )
+    # token_budget_k lives under analysis: in echelon-config.yml, not in
+    # HarnessConfig (which only covers the build harness).
+    import yaml as _yaml
     token_budget = 0
-    if hasattr(config, "budget") and hasattr(config.budget, "token_budget_k"):
-        token_budget = config.budget.token_budget_k * 1000
+    try:
+        _raw = _yaml.safe_load((ext_dir / "echelon-config.yml").read_text()) or {}
+        _k = int((_raw.get("analysis") or {}).get("token_budget_k") or 0)
+        token_budget = _k * 1000 if _k else 0
+    except Exception:
+        pass
 
     controller = SquadController(
         provider=provider,
