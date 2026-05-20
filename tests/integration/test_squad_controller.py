@@ -35,9 +35,13 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
     return provider
 
 
-def _controller(tmp_path: Path, provider=None, mode: str = "banzai"):
+def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: Path = None):
+    if squad_dir is None:
+        squad_dir = tmp_path / "squad" / "run-test"
+        squad_dir.mkdir(parents=True, exist_ok=True)
+        (squad_dir / "staging").mkdir(exist_ok=True)
     graph = PhaseGraph(DEFINITION, EXT_YML)
-    store = SquadStateStore(tmp_path / ".specify/squad")
+    store = SquadStateStore(squad_dir)
     if provider is None:
         provider = _mock_provider()
     ctrl = SquadController(
@@ -46,7 +50,8 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai"):
         phase_graph=graph,
         ext_dir=EXT_ROOT / "extension",
         project_root=tmp_path,
-        token_budget=0,  # disabled
+        token_budget=0,
+        squad_dir=squad_dir,
     )
     return ctrl, store
 
@@ -198,3 +203,21 @@ class TestHumanGate:
         )
         result = executor.execute(node, store)
         assert result.verdict == "APPROVED"
+
+
+def test_journal_written_to_squad_dir_not_specify(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    ctrl, store = _controller(tmp_path, squad_dir=squad_dir)
+    store.initialize("r", "banzai", "msg", 0, "init")
+    from harness.squad_provider import SquadAgentResult
+    ctrl._provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {},
+                        "journal_entries": [{"type": "insight"}]},
+        raw_output="", duration_ms=0, timed_out=False,
+    )
+    ctrl.run("msg", "banzai")
+    assert (squad_dir / "reasoning-journal.jsonl").exists()
+    assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()

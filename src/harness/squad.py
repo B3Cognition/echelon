@@ -61,6 +61,7 @@ class SquadController:
         project_root: Path,
         token_budget: int = 0,
         max_iterations: int = 5,
+        squad_dir: Optional[Path] = None,
     ) -> None:
         self._provider = provider
         self._state_store = state_store
@@ -69,13 +70,14 @@ class SquadController:
         self._project_root = project_root
         self._token_budget = token_budget
         self._max_iterations = max_iterations
+        self._squad_dir = squad_dir or state_store.squad_dir
         self._evaluator = ConditionEvaluator()
         self._executors: dict[str, PhaseExecutor] = {
-            "agent": AgentExecutor(provider, phase_graph, ext_dir, project_root),
-            "commander_internal": CommanderInternalExecutor(provider, phase_graph, ext_dir, project_root),
-            "staged_parallel": StagedParallelExecutor(provider, phase_graph, ext_dir, project_root),
-            "conditional_sequential": ConditionalSequentialExecutor(provider, phase_graph, ext_dir, project_root),
-            "human_gate": HumanGateExecutor(provider, phase_graph, ext_dir, project_root),
+            "agent": AgentExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "commander_internal": CommanderInternalExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "staged_parallel": StagedParallelExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "conditional_sequential": ConditionalSequentialExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "human_gate": HumanGateExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
         }
         self._cancelled = False
         signal.signal(signal.SIGINT, self._handle_sigint)
@@ -92,7 +94,6 @@ class SquadController:
 
         existing = self._state_store.load()
         existing_status = existing.get("status") if existing else None
-        existing_message = existing.get("user_message", "") if existing else ""
         blocked_reason = (existing.get("blocked_reason") or "") if existing else ""
         force_resume = False  # set True by recovery paths to bypass message check
 
@@ -193,18 +194,11 @@ class SquadController:
                 run_id=existing.get("run_id", ""),
             )
 
-        # A new run is started when:
-        #   - no prior state exists, OR
-        #   - the prior run reached a terminal state (done/blocked), OR
-        #   - caller provides a different non-empty message (new task).
-        # force_resume=True (set by recovery paths) bypasses the message check.
-        new_message_provided = (
-            bool(user_message and user_message != existing_message)
-            and not force_resume
-        )
-        resumable = existing_status in ("running", "in_progress")
+        # (keep all recovery blocks exactly as-is above this point)
 
-        if not existing or not resumable or new_message_provided:
+        # Fresh start if no state or not resumable
+        # The correct squad dir was already selected by _cmd_run before creating this controller.
+        if not existing or existing_status not in ("running", "in_progress"):
             run_id = f"squad-{int(time.time())}"
             self._state_store.initialize(
                 run_id=run_id,
@@ -214,15 +208,7 @@ class SquadController:
                 entry_phase=self._graph.entry_phase(),
                 max_iterations=self._max_iterations,
             )
-            if resumable and new_message_provided:
-                print(
-                    f"[squad] new task — starting fresh (previous run abandoned: "
-                    f"{existing_message!r:.60})",
-                    flush=True,
-                )
         else:
-            # Resuming an in-progress run — clear any cancel_requested flag left
-            # by a previous SIGINT so this invocation doesn't exit immediately.
             print(f"[squad] resuming from phase: {self._state_store.current_phase()}", flush=True)
             state = self._state_store.load()
             if state.get("cancel_requested"):
@@ -356,7 +342,7 @@ class SquadController:
         if not entries:
             return
 
-        journal_path = self._project_root / ".specify/squad/reasoning-journal.jsonl"
+        journal_path = self._squad_dir / "reasoning-journal.jsonl"
         journal_path.parent.mkdir(parents=True, exist_ok=True)
 
         next_id = 1
