@@ -63,7 +63,7 @@ def _read_journal(tmp_path: Path, squad_dir: Path = None) -> list[dict]:
 def test_no_entries_writes_nothing(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(_result(entries=[]), "phase1-test")
-    assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
+    assert not (tmp_path / "squad" / "run-test" / "reasoning-journal.jsonl").exists()
 
 
 def test_single_entry_written(tmp_path):
@@ -159,7 +159,9 @@ def _squad_controller(tmp_path: Path):
     provider = MagicMock()
     graph = MagicMock(spec=PhaseGraph)
     graph.all_phase_ids.return_value = ["init", "phase1-discover", "DONE"]
-    store = SquadStateStore(tmp_path / ".specify/squad")
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True, exist_ok=True)
+    store = SquadStateStore(squad_dir)
     store.initialize(
         run_id="test-run",
         mode="semi",
@@ -174,6 +176,7 @@ def _squad_controller(tmp_path: Path):
         ext_dir=tmp_path / "ext",
         project_root=tmp_path,
         token_budget=0,
+        squad_dir=squad_dir,
     )
     return ctrl, provider
 
@@ -198,7 +201,7 @@ def test_judgment_dispatch_writes_returned_journal_entries(tmp_path):
         timed_out=False,
     )
     ctrl._judgment_dispatch("test reason", _node("phase1-discover"))
-    entries = _read_journal(tmp_path, squad_dir=tmp_path / ".specify/squad")
+    entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert len(entries) == 1
     assert entries[0]["type"] == "escalation"
     assert entries[0]["phase"] == "phase1-discover"
@@ -215,13 +218,13 @@ def test_judgment_dispatch_empty_entries_writes_nothing(tmp_path):
         timed_out=False,
     )
     ctrl._judgment_dispatch("test reason", _node())
-    assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
+    assert not (tmp_path / "squad" / "run-test" / "reasoning-journal.jsonl").exists()
 
 
 def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path):
     """IDs from judgment dispatch continue after phase executor writes."""
-    # Use the same squad dir that SquadController uses (.specify/squad)
-    shared_squad_dir = tmp_path / ".specify/squad"
+    # Use the same squad dir that SquadController uses (squad/run-test)
+    shared_squad_dir = tmp_path / "squad" / "run-test"
     shared_squad_dir.mkdir(parents=True, exist_ok=True)
     ex = _executor(tmp_path, squad_dir=shared_squad_dir)
     ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")

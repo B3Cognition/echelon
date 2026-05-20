@@ -136,7 +136,7 @@ class TestSquadControllerBasics:
     def test_budget_exhausted_when_exceeded(self, tmp_path):
         provider = _mock_provider()
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / ".specify/squad")
+        store = SquadStateStore(tmp_path / "squad" / "run-test")
         ctrl = SquadController(
             provider=provider,
             state_store=store,
@@ -172,7 +172,7 @@ class TestHumanGate:
     def test_banzai_auto_approves(self, tmp_path):
         from harness.squad_executors import HumanGateExecutor
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / ".specify/squad")
+        store = SquadStateStore(tmp_path / "squad" / "run-test")
         store.initialize("r", "banzai", "msg", 0, "init")
 
         executor = HumanGateExecutor(
@@ -190,7 +190,7 @@ class TestHumanGate:
     def test_semi_auto_approves(self, tmp_path):
         from harness.squad_executors import HumanGateExecutor
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / ".specify/squad")
+        store = SquadStateStore(tmp_path / "squad" / "run-test")
         store.initialize("r", "semi", "msg", 0, "init")
 
         executor = HumanGateExecutor(

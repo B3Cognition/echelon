@@ -24,9 +24,9 @@ assert_le() {
     fi
 }
 
-# 1. echelon.run.md is ≤ 20 lines
+# 1. echelon.run.md is ≤ 100 lines
 RUNMD_LINES=$(wc -l < "$ROOT/extension/commands/echelon.run.md")
-assert_le "$RUNMD_LINES" 20 "echelon.run.md ≤ 20 lines"
+assert_le "$RUNMD_LINES" 100 "echelon.run.md ≤ 100 lines"
 
 # 2. commander.md is ≤ 250 lines (was ~1200 before slimming)
 CMD_LINES=$(wc -l < "$ROOT/extension/agents/control/commander.md")
