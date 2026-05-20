@@ -23,6 +23,7 @@ from harness.squad_state import SquadStateStore
 
 
 TERMINAL_PHASES = {"DONE", "done", "terminal-blocked"}
+WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 
 
 @dataclass
@@ -220,8 +221,11 @@ class SquadController:
 
             if phase in TERMINAL_PHASES:
                 state = self._state_store.load()
-                state["status"] = "done"
-                self._state_store.save(state)
+                # Preserve "blocked" status set by guards (e.g. consecutive-fail).
+                # Only write "done" when not already in a terminal-blocked state.
+                if state.get("status") != "blocked":
+                    state["status"] = "done"
+                    self._state_store.save(state)
                 return SquadResult.from_state(self._state_store.load())
 
             if self._cancelled:
@@ -256,6 +260,37 @@ class SquadController:
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
         state = self._state_store.load()
+
+        # ── WHY fail tracking + consecutive-fail safety net ──────────────────
+        if node.id in WHY_PHASES:
+            # Merge result.state_updates into a local copy so quality_gates.fail
+            # can see the freshly-written quality_scores before advance() runs.
+            eval_state = {**state, **result.state_updates}
+            is_fail = self._evaluator.evaluate("quality_gates.fail", eval_state, result) is True
+            if is_fail:
+                fail_count = self._state_store.increment_why_fail_count()
+                if fail_count >= 2 and not state.get("escalation_question"):
+                    last_ts = (state.get("last_dispatch") or {}).get("completed_at")
+                    if not self._staging_changed_since(last_ts):
+                        print(
+                            f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} FAILs "
+                            f"with no staging progress — forcing escalation",
+                            flush=True,
+                        )
+                        s = self._state_store.load()
+                        s["escalation_question"] = (
+                            f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
+                            f"with no staging progress. User input or banzai COMMANDER "
+                            f"judgment required before continuing."
+                        )
+                        s["blocked_reason"] = "consecutive_why_fails"
+                        s["status"] = "blocked"
+                        self._state_store.save(s)
+                        return "terminal-blocked"
+            else:
+                self._state_store.reset_why_fail_count()
+        # ── end WHY tracking ─────────────────────────────────────────────────
+
         for transition in node.transitions:
             condition = transition.get("condition", "always")
             evaluation = self._evaluator.evaluate(condition, state, result)
@@ -360,6 +395,27 @@ class SquadController:
                 entry.setdefault("phase", phase_id)
                 fh.write(_json.dumps(entry) + "\n")
                 next_id += 1
+
+    def _staging_changed_since(self, iso_timestamp: Optional[str]) -> bool:
+        """Return True if any staging .md file is newer than iso_timestamp.
+
+        Returns True (progress detected) when timestamp is None or when
+        any .md in staging_dir has mtime newer than the given UTC timestamp.
+        """
+        if iso_timestamp is None:
+            return True
+        try:
+            from datetime import datetime, timezone
+            cutoff = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
+            state = self._state_store.load()
+            staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
+            for f in staging_dir.glob("*.md"):
+                mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
+                if mtime > cutoff:
+                    return True
+            return False
+        except Exception:
+            return True  # conservative: treat parse failure as progress
 
     def _budget_exhausted(self) -> bool:
         if self._token_budget <= 0:

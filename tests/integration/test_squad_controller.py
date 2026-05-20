@@ -167,6 +167,71 @@ class TestSquadControllerBasics:
         # Provider must have been called (COMMANDER judgment)
         assert provider.exec_agent.called
 
+    def test_why_fail_increments_on_fail(self, tmp_path):
+        """why_fail_count increments when a WHY phase returns quality_gates.fail."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {"quality_scores": [{"pass": False}]},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        ctrl.run("msg", "banzai")
+        # why_fail_count should have been incremented (≥1)
+        assert store.load().get("why_fail_count", 0) >= 1
+
+    def test_why_fail_resets_on_pass(self, tmp_path):
+        """why_fail_count resets when a WHY phase passes."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {"quality_scores": [{"pass": True}]},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        store.increment_why_fail_count()
+        store.increment_why_fail_count()
+        ctrl.run("msg", "banzai")
+        assert store.load().get("why_fail_count", 0) == 0
+
+    def test_consecutive_fails_force_escalation(self, tmp_path):
+        """≥2 consecutive WHY fails with no staging progress → auto-escalation."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {"quality_scores": [{"pass": False}]},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "semi", "msg", 0, "phase1-why1", max_iterations=5)
+        # Pre-set why_fail_count=1 so next fail triggers guard
+        store.increment_why_fail_count()
+        # Set last_dispatch.completed_at to a past timestamp so
+        # _staging_changed_since does not return True (no staging .md files)
+        state = store.load()
+        state["last_dispatch"] = {"completed_at": "2020-01-01T00:00:00Z"}
+        store.save(state)
+        result = ctrl.run("msg", "semi")
+        # Should be blocked by consecutive-fail guard
+        assert result.status == "blocked"
+        state = store.load()
+        assert state.get("escalation_question") is not None
+        assert "consecutive" in state.get("escalation_question", "").lower()
+
 
 class TestHumanGate:
     def test_banzai_auto_approves(self, tmp_path):
