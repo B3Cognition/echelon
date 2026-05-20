@@ -56,3 +56,31 @@ Read WHY1 outputs:
 - If **PASS** (no critical issues, all major assumptions validated or flagged) → proceed to WHAT.
 
 **Transition:** `phases[phase1-constitution]` — see `workflow/definition.yaml`
+
+### User-gated CRITICAL issues
+
+When CRITICAL issues are **user-gated** — they require information only the user holds
+(legal rights, product positioning decisions, audience policy, cost envelope) and cannot
+be resolved by any squad agent — include in `echelon_result.state_updates`:
+
+```yaml
+escalation_question: |
+  Q1: <compact blocking question — one line, state the stakes>
+  Q2: <compact blocking question>
+blocked_reason: "WHY1: CRITICAL user-gated issues — squad-internal iteration cannot substitute for user input"
+```
+
+**Criteria — ALL must be true to set escalation_question:**
+
+1. Cannot be resolved by any squad agent (DISCOVER, SYNTHESIZER, MODELER, TRACKER, INVESTIGATOR)
+2. Requires information only the user holds (legal rights, positioning decisions, audience policy)
+3. Proceeding without it requires an arbitrary coin-flip that binds all downstream phases
+
+**Do NOT set escalation_question for squad-solvable CRITICAL issues** (missing boundaries,
+glossary gaps, unread manual pages, contradictions resolvable by ORACLE/INVESTIGATOR).
+Those keep routing to DISCOVER as normal.
+
+The harness reads `escalation_question` and either:
+
+- **banzai mode** → dispatches COMMANDER for best-judgment answers, run continues
+- **semi/guided mode** → stops the run; user answers via `echelon resume "<answers>"`
