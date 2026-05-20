@@ -15,19 +15,25 @@ EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.phase_graph import PhaseGraph
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 
 
-def _executor(tmp_path: Path) -> AgentExecutor:
+def _executor(tmp_path: Path, squad_dir: Path = None) -> AgentExecutor:
+    if squad_dir is None:
+        squad_dir = tmp_path / "squad" / "run-test"
+        squad_dir.mkdir(parents=True, exist_ok=True)
     provider = MagicMock()
-    graph = MagicMock()
+    graph = MagicMock(spec=PhaseGraph)
     graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = ["init", "phase1-discover", "DONE"]
     return AgentExecutor(
         provider=provider,
         phase_graph=graph,
         ext_dir=tmp_path / "ext",
         project_root=tmp_path,
+        squad_dir=squad_dir,
     )
 
 
@@ -45,8 +51,10 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
     )
 
 
-def _read_journal(tmp_path: Path) -> list[dict]:
-    p = tmp_path / ".specify/squad/reasoning-journal.jsonl"
+def _read_journal(tmp_path: Path, squad_dir: Path = None) -> list[dict]:
+    if squad_dir is None:
+        squad_dir = tmp_path / "squad" / "run-test"
+    p = squad_dir / "reasoning-journal.jsonl"
     if not p.exists():
         return []
     return [json.loads(ln) for ln in p.read_text().splitlines() if ln.strip()]
@@ -190,7 +198,7 @@ def test_judgment_dispatch_writes_returned_journal_entries(tmp_path):
         timed_out=False,
     )
     ctrl._judgment_dispatch("test reason", _node("phase1-discover"))
-    entries = _read_journal(tmp_path)
+    entries = _read_journal(tmp_path, squad_dir=tmp_path / ".specify/squad")
     assert len(entries) == 1
     assert entries[0]["type"] == "escalation"
     assert entries[0]["phase"] == "phase1-discover"
@@ -212,7 +220,10 @@ def test_judgment_dispatch_empty_entries_writes_nothing(tmp_path):
 
 def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path):
     """IDs from judgment dispatch continue after phase executor writes."""
-    ex = _executor(tmp_path)
+    # Use the same squad dir that SquadController uses (.specify/squad)
+    shared_squad_dir = tmp_path / ".specify/squad"
+    shared_squad_dir.mkdir(parents=True, exist_ok=True)
+    ex = _executor(tmp_path, squad_dir=shared_squad_dir)
     ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
 
     ctrl, provider = _squad_controller(tmp_path)
@@ -228,7 +239,7 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
         timed_out=False,
     )
     ctrl._judgment_dispatch("reason", _node("phase1-b"))
-    entries = _read_journal(tmp_path)
+    entries = _read_journal(tmp_path, squad_dir=shared_squad_dir)
     assert len(entries) == 2
     assert entries[0]["id"] == 1
     assert entries[1]["id"] == 2
@@ -255,3 +266,53 @@ def test_no_direct_journal_appends_in_phase_specs():
         "Direct >> reasoning-journal.jsonl appends found in phase specs "
         "(use journal-append.sh instead):\n" + "\n".join(violations)
     )
+
+
+def test_journal_written_to_squad_dir(tmp_path):
+    """Journal entries go to squad_dir/reasoning-journal.jsonl, not .specify/squad."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
+    journal = squad_dir / "reasoning-journal.jsonl"
+    assert journal.exists()
+    assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
+
+
+def test_assemble_prompt_injects_squad_context(tmp_path):
+    """_assemble_prompt prepends SQUAD_DIR and STAGING_DIR to the prompt."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(id="init", type="agent")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+    assert str(squad_dir) in prompt
+    assert "STAGING_DIR" in prompt
+
+
+def test_assemble_prompt_translates_legacy_paths(tmp_path):
+    """Legacy .specify/squad/staging/ references in spec content are replaced."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    ext_dir = tmp_path / "ext"
+    ext_dir.mkdir()
+    spec_dir = ext_dir / "workflow" / "phases"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "test.md").write_text("Write outputs to .specify/squad/staging/")
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(id="test", type="agent", spec_file="workflow/phases/test.md")
+    from harness.squad_executors import AgentExecutor
+    from unittest.mock import MagicMock
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+    assert ".specify/squad/staging/" not in prompt
+    assert str(squad_dir / "staging") in prompt

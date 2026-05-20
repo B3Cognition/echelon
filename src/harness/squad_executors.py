@@ -20,11 +20,13 @@ class PhaseExecutor(ABC):
         phase_graph: "PhaseGraph",
         ext_dir: Path,
         project_root: Path,
+        squad_dir: Optional[Path] = None,
     ) -> None:
         self._provider = provider
         self._graph = phase_graph
         self._ext_dir = ext_dir
         self._project_root = project_root
+        self._squad_dir = squad_dir or (project_root / ".specify/squad")
 
     @abstractmethod
     def execute(
@@ -47,7 +49,7 @@ class PhaseExecutor(ABC):
         if not entries:
             return
 
-        journal_path = self._project_root / ".specify/squad/reasoning-journal.jsonl"
+        journal_path = self._squad_dir / "reasoning-journal.jsonl"
         journal_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Derive next id from current line count (monotonic within a session)
@@ -100,7 +102,25 @@ class PhaseExecutor(ABC):
             import json
             parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
 
-        return "\n\n".join(parts)
+        prompt = "\n\n".join(parts)
+
+        # Inject squad run context so agents know where to write
+        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
+        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        context_preamble = (
+            f"# Squad Run Context\n"
+            f"SQUAD_DIR={squad_dir_str}\n"
+            f"STAGING_DIR={staging_dir_str}\n"
+            f"PROJECT_ROOT={self._project_root}\n\n"
+        )
+
+        # Translate legacy .specify/squad paths so phase spec files need no edits
+        prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
+        prompt = prompt.replace(".specify/squad/staging", staging_dir_str)
+        prompt = prompt.replace(".specify/squad/", f"{squad_dir_str}/")
+        prompt = prompt.replace(".specify/squad", squad_dir_str)
+
+        return context_preamble + prompt
 
     def _run_pre_dispatch(
         self, node: "PhaseNode", state: dict, state_store: "SquadStateStore"
