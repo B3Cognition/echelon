@@ -442,6 +442,76 @@ def _cmd_harness_run(args: list[str]) -> None:
     run(user_message, provider, gitops)
 
 
+def _make_run_id() -> str:
+    from datetime import datetime
+    return f"run-{datetime.now().strftime('%Y%m%d-%H%M')}"
+
+
+def _setup_run_dir(project_root: Path, run_id: str) -> Path:
+    """Create squad/<run_id>/ + staging/, write squad/.gitignore, update .current."""
+    squad_root = project_root / "squad"
+    squad_root.mkdir(exist_ok=True)
+
+    gitignore = squad_root / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*/state.json\n*/*.tmp\n.current\n")
+
+    run_dir = squad_root / run_id
+    run_dir.mkdir(exist_ok=True)
+    (run_dir / "staging").mkdir(exist_ok=True)
+
+    (squad_root / ".current").write_text(run_id)
+    return run_dir
+
+
+def _find_current_run_dir(project_root: Path) -> Optional[Path]:
+    """Return the active run dir from squad/.current, or None."""
+    current_file = project_root / "squad" / ".current"
+    if not current_file.exists():
+        return None
+    run_id = current_file.read_text().strip()
+    if not run_id:
+        return None
+    run_dir = project_root / "squad" / run_id
+    return run_dir if run_dir.exists() else None
+
+
+def _select_squad_dir(
+    project_root: Path,
+    user_message: str,
+    reset: bool = False,
+) -> tuple[Path, bool]:
+    """Return (squad_dir, is_fresh_start).
+
+    is_fresh_start=True  → caller should initialize state (new run).
+    is_fresh_start=False → caller should resume (existing run dir, same task).
+    """
+    import json as _json
+
+    if reset:
+        return _setup_run_dir(project_root, _make_run_id()), True
+
+    existing_dir = _find_current_run_dir(project_root)
+    if not existing_dir:
+        return _setup_run_dir(project_root, _make_run_id()), True
+
+    try:
+        state = _json.loads((existing_dir / "state.json").read_text())
+    except Exception:
+        return _setup_run_dir(project_root, _make_run_id()), True
+
+    status = state.get("status")
+    if status not in ("running", "in_progress"):
+        return _setup_run_dir(project_root, _make_run_id()), True
+
+    # Different task → new run dir (preserves old one, doesn't overwrite)
+    if user_message and user_message != state.get("user_message", ""):
+        return _setup_run_dir(project_root, _make_run_id()), True
+
+    # Same task, resumable status → resume in existing dir
+    return existing_dir, False
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
