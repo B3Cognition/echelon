@@ -444,7 +444,7 @@ def _cmd_harness_run(args: list[str]) -> None:
 
 def _make_run_id() -> str:
     from datetime import datetime
-    return f"run-{datetime.now().strftime('%Y%m%d-%H%M')}"
+    return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
 
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
