@@ -232,6 +232,64 @@ class TestSquadControllerBasics:
         assert state.get("escalation_question") is not None
         assert "consecutive" in state.get("escalation_question", "").lower()
 
+    def test_banzai_escalation_dispatches_commander_not_stops(self, tmp_path):
+        """Banzai mode: blocked+escalation_question → COMMANDER called, run continues."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        # COMMANDER judgment clears the block
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "DONE", max_iterations=5)
+        # Pre-set blocked with escalation_question and mode=banzai in state
+        state = store.load()
+        state["status"] = "blocked"
+        state["escalation_question"] = "Q1: Do you have author rights?"
+        state["blocked_reason"] = "WHY1: user-gated issues"
+        state["mode"] = "banzai"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+        # COMMANDER was dispatched, block cleared, run completed (phase=DONE)
+        assert result.status != "blocked"
+        assert provider.exec_agent.called
+
+    def test_semi_escalation_stops_run(self, tmp_path):
+        """Semi mode: blocked+escalation_question → run stops with status=blocked."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "DONE", max_iterations=5)
+        state = store.load()
+        state["status"] = "blocked"
+        state["escalation_question"] = "Q1: Do you have author rights?"
+        state["blocked_reason"] = "WHY1: user-gated issues"
+        state["mode"] = "semi"
+        store.save(state)
+        result = ctrl.run("msg", "semi")
+        assert result.status == "blocked"
+
+    def test_guided_escalation_stops_run(self, tmp_path):
+        """Guided mode: blocked+escalation_question → run stops with status=blocked."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "guided", "msg", 0, "DONE", max_iterations=5)
+        state = store.load()
+        state["status"] = "blocked"
+        state["escalation_question"] = "Q1: Do you have author rights?"
+        state["mode"] = "guided"
+        store.save(state)
+        result = ctrl.run("msg", "guided")
+        assert result.status == "blocked"
+
 
 class TestHumanGate:
     def test_banzai_auto_approves(self, tmp_path):

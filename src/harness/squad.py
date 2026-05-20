@@ -177,23 +177,45 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
-        # ── Escalation block — human answer required ───────────────────────
+        # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
             q = existing.get("escalation_question", "")
-            print(
-                f"\n[squad] ✗ Run is blocked — human input required.\n"
-                f"  Phase:    {existing.get('phase', '?')}\n"
-                f"  Reason:   {blocked_reason}\n"
-                f"  Question: {q}\n\n"
-                f"  Answer with:  echelon resume \"<your answer>\"\n"
-                f"  Discard with: echelon run --reset \"<new task>\"\n",
-                flush=True,
-            )
-            return SquadResult(
-                status="blocked",
-                phase=existing.get("phase", "unknown"),
-                run_id=existing.get("run_id", ""),
-            )
+            mode_at_block = existing.get("mode", mode)
+
+            if mode_at_block == "banzai":
+                print(
+                    f"\n[squad] escalation detected — banzai mode, "
+                    f"dispatching COMMANDER judgment\n"
+                    f"  Questions: {q[:120]}",
+                    flush=True,
+                )
+                # Clear the block so run() proceeds after judgment
+                s = self._state_store.load()
+                s["status"] = "running"
+                s["blocked_reason"] = None
+                self._state_store.save(s)
+                existing_status = "running"
+                self._judgment_dispatch_escalation(
+                    escalation_question=q,
+                    blocked_phase=existing.get("phase", "unknown"),
+                )
+                force_resume = True
+            else:
+                # semi / guided: stop and require echelon resume
+                print(
+                    f"\n[squad] ✗ Run is blocked — human input required.\n"
+                    f"  Phase:    {existing.get('phase', '?')}\n"
+                    f"  Reason:   {existing.get('blocked_reason', '')}\n"
+                    f"  Question: {q}\n\n"
+                    f"  Answer with:  echelon resume \"<your answer>\"\n"
+                    f"  Discard with: echelon run --reset \"<new task>\"\n",
+                    flush=True,
+                )
+                return SquadResult(
+                    status="blocked",
+                    phase=existing.get("phase", "unknown"),
+                    run_id=existing.get("run_id", ""),
+                )
 
         # (keep all recovery blocks exactly as-is above this point)
 
@@ -367,6 +389,61 @@ class SquadController:
         # echelon_result.journal_entries[] that it didn't write itself.
         self._write_journal_entries(judgment, node.id)
         return judgment
+
+    def _judgment_dispatch_escalation(
+        self,
+        escalation_question: str,
+        blocked_phase: str,
+    ) -> SquadAgentResult:
+        """Dispatch COMMANDER to resolve a user-gated escalation in banzai mode.
+
+        COMMANDER produces staging/user-clarifications.md with BANZAI-AUTO-RESOLVED
+        answers and returns state_updates that clear the block.
+        """
+        commander_path = self._ext_dir / "agents/control/commander.md"
+        state = self._state_store.load()
+
+        staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
+        staging_context = ""
+        for f in sorted(staging_dir.glob("*.md"))[:8]:
+            try:
+                staging_context += f"\n---\n# {f.name}\n{f.read_text()[:3000]}\n"
+            except Exception:
+                pass
+
+        context = (
+            f"# COMMANDER BANZAI ESCALATION JUDGMENT\n\n"
+            f"**Mode:** banzai — produce best-judgment answers and continue. "
+            f"Do NOT stop the run.\n\n"
+            f"**Phase blocked:** {blocked_phase}\n\n"
+            f"**Blocking questions:**\n{escalation_question}\n\n"
+            f"**Your task:**\n"
+            f"1. For each blocking question, produce a best-judgment answer.\n"
+            f"2. Write `{staging_dir}/user-clarifications.md` using the "
+            f"BANZAI-AUTO-RESOLVED format from commander.md §Banzai Escalation.\n"
+            f"3. Return echelon_result state_updates that clear the block:\n"
+            f"   escalation_question: null\n"
+            f"   escalation_resolved: true\n"
+            f"   escalation_resolver: COMMANDER-banzai\n"
+            f"   blocked_reason: null\n\n"
+            f"**Staging context:**\n{staging_context}"
+        )
+        if commander_path.exists():
+            context = commander_path.read_text() + "\n\n" + context
+
+        result = self._provider.exec_agent(str(self._project_root), context)
+        self._write_journal_entries(result, blocked_phase)
+
+        if result.state_updates:
+            s = self._state_store.load()
+            for k, v in result.state_updates.items():
+                if v is None:
+                    s.pop(k, None)   # null → remove key entirely
+                else:
+                    s[k] = v
+            self._state_store.save(s)
+
+        return result
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
         """Mirror of PhaseExecutor._write_journal_entries for SquadController use."""
