@@ -72,4 +72,9 @@ This command delegates entirely to the Python squad harness (`src/harness/squad.
 Phase routing is deterministic — COMMANDER is dispatched only for judgment calls
 (escalation, contradictions, human gates in guided mode).
 
-Monitor: `.specify/squad/state.json` · `.specify/squad/reasoning-journal.jsonl`
+Monitor: `squad/<run-id>/state.json` · `squad/<run-id>/reasoning-journal.jsonl`
+Run `cat squad/.current` to get the active run ID.
+
+Note: `squad/` is git-tracked (minus `state.json` per `squad/.gitignore`).
+Staging artifacts in `squad/<run-id>/staging/` are versioned — commit after
+each significant phase to enable rollback.
