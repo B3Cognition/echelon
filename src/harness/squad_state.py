@@ -63,6 +63,7 @@ class SquadStateStore:
             "convergence_detected": False,
             "quality_scores": [],
             "issues_log": [],
+            "why_fail_count": 0,
             "squad_dir": str(self._squad_dir),
             "staging_dir": str(self._staging_dir),
         })
@@ -105,6 +106,18 @@ class SquadStateStore:
     def increment_token_usage(self, tokens: int) -> None:
         state = self.load()
         state["token_usage"] = state.get("token_usage", 0) + tokens
+        self.save(state)
+
+    def increment_why_fail_count(self) -> int:
+        state = self.load()
+        count = state.get("why_fail_count", 0) + 1
+        state["why_fail_count"] = count
+        self.save(state)
+        return count
+
+    def reset_why_fail_count(self) -> None:
+        state = self.load()
+        state["why_fail_count"] = 0
         self.save(state)
 
     def token_budget(self) -> int:

@@ -134,3 +134,38 @@ def test_staging_dir_property(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     store = SquadStateStore(squad_dir)
     assert store.staging_dir == squad_dir / "staging"
+
+
+def test_initialize_sets_why_fail_count_zero(tmp_path):
+    from harness.squad_state import SquadStateStore
+    store = SquadStateStore(tmp_path / "squad/run-test")
+    store.initialize("r1", "semi", "msg", 0, "init")
+    assert store.load()["why_fail_count"] == 0
+
+
+def test_increment_why_fail_count(tmp_path):
+    from harness.squad_state import SquadStateStore
+    store = SquadStateStore(tmp_path / "squad/run-test")
+    store.initialize("r1", "semi", "msg", 0, "init")
+    store.increment_why_fail_count()
+    assert store.load()["why_fail_count"] == 1
+    store.increment_why_fail_count()
+    assert store.load()["why_fail_count"] == 2
+
+
+def test_reset_why_fail_count(tmp_path):
+    from harness.squad_state import SquadStateStore
+    store = SquadStateStore(tmp_path / "squad/run-test")
+    store.initialize("r1", "semi", "msg", 0, "init")
+    store.increment_why_fail_count()
+    store.increment_why_fail_count()
+    store.reset_why_fail_count()
+    assert store.load()["why_fail_count"] == 0
+
+
+def test_increment_why_fail_count_returns_new_count(tmp_path):
+    from harness.squad_state import SquadStateStore
+    store = SquadStateStore(tmp_path / "squad/run-test")
+    store.initialize("r1", "semi", "msg", 0, "init")
+    assert store.increment_why_fail_count() == 1
+    assert store.increment_why_fail_count() == 2
