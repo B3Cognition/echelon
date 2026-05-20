@@ -237,6 +237,58 @@ def _cmd_init(project_dir: Path) -> None:
 
 # ── land (pure Python, no LLM) ────────────────────────────────────────────
 
+def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
+    """Offer to archive the active squad run into specs/<spec_id>-*/squad/."""
+    import shutil
+    from harness.spec_frontmatter import find_spec_dir
+
+    current_file = project_dir / "squad" / ".current"
+    if not current_file.exists():
+        return
+
+    run_id = current_file.read_text().strip()
+    if not run_id:
+        return
+    run_dir = project_dir / "squad" / run_id
+    if not run_dir.exists():
+        return
+
+    spec_dir = find_spec_dir(spec_id, project_dir)
+    if spec_dir is None:
+        print(f"  (squad archive skipped — spec {spec_id!r} dir not found)", flush=True)
+        return
+
+    archive_dest = spec_dir / "squad"
+    try:
+        spec_rel = spec_dir.resolve().relative_to(project_dir.resolve())
+    except ValueError:
+        spec_rel = spec_dir
+    print(
+        f"\nArchive squad run {run_id!r} into "
+        f"{spec_rel}/squad/ ?"
+    )
+    choice = input("  [Y]es archive / [n]o keep in squad/ / [s]kip: ").strip().lower()
+
+    if choice in ("", "y", "yes"):
+        shutil.move(str(run_dir), str(archive_dest))
+        current_file.unlink()
+        import subprocess
+        subprocess.run(["git", "add", str(archive_dest)], cwd=str(project_dir), check=False)
+        subprocess.run(
+            ["git", "rm", "-r", "--cached", str(run_dir)],
+            cwd=str(project_dir), check=False, capture_output=True,
+        )
+        try:
+            archive_rel = archive_dest.resolve().relative_to(project_dir.resolve())
+        except ValueError:
+            archive_rel = archive_dest
+        print(f"  ✓ Archived to {archive_rel}", flush=True)
+    elif choice in ("s", "skip"):
+        print("  Skipped.", flush=True)
+    else:
+        print(f"  Squad run left at squad/{run_id}/", flush=True)
+
+
 def _cmd_land(args: list[str]) -> None:
     """Land a spec: merge PR, delete branch, clean worktrees, mark done."""
     import logging
@@ -266,6 +318,7 @@ def _cmd_land(args: list[str]) -> None:
     success = land(spec_id, project_dir=project_dir, gitops=gitops)
     if success:
         print(f"echelon land: {spec_id} landed successfully")
+        _archive_squad_run(project_dir, spec_id)
         sys.exit(0)
     else:
         print(f"echelon land: {spec_id} could not be landed (PR merge blocked?)", file=sys.stderr)
