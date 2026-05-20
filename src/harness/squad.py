@@ -430,6 +430,12 @@ class SquadController:
         )
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
+        else:
+            print(
+                f"[squad] warning: commander.md not found at {commander_path} — "
+                f"dispatching COMMANDER without preamble",
+                flush=True,
+            )
 
         result = self._provider.exec_agent(str(self._project_root), context)
         self._write_journal_entries(result, blocked_phase)
