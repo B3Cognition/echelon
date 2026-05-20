@@ -97,7 +97,7 @@ class PhaseExecutor(ABC):
                 parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
 
         # 4. Current state.json for context
-        state_path = self._project_root / ".specify/squad/state.json"
+        state_path = self._squad_dir / "state.json"
         if state_path.exists():
             import json
             parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
@@ -249,7 +249,7 @@ class StagedParallelExecutor(PhaseExecutor):
         impl_report_path: Optional[Path] = None
         for candidate in [
             self._project_root / "implementability-report.md",
-            self._project_root / ".specify/squad/staging/implementability-report.md",
+            self._squad_dir / "staging" / "implementability-report.md",
         ]:
             if candidate.exists():
                 impl_report_path = candidate

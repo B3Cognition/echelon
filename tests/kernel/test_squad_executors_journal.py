@@ -319,3 +319,23 @@ def test_assemble_prompt_translates_legacy_paths(tmp_path):
     prompt = ex._assemble_prompt(node, state)
     assert ".specify/squad/staging/" not in prompt
     assert str(squad_dir / "staging") in prompt
+
+
+def test_assemble_prompt_injects_state_json_from_squad_dir(tmp_path):
+    """state.json is read from squad_dir, not .specify/squad."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    # Write a state.json in squad_dir
+    (squad_dir / "state.json").write_text(json.dumps({"phase": "phase1-test", "squad_dir": str(squad_dir)}))
+    # Also write a different state.json in the legacy location to verify it's NOT read
+    legacy_dir = tmp_path / ".specify" / "squad"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "state.json").write_text(json.dumps({"phase": "phase1-legacy"}))
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(id="init", type="agent")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+    assert "phase1-test" in prompt
+    assert "phase1-legacy" not in prompt
