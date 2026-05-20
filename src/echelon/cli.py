@@ -486,7 +486,7 @@ def _cmd_run(
 
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
-    state_store = SquadStateStore(project_root / ".specify/squad/state.json")
+    state_store = SquadStateStore(project_root / ".specify/squad")
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",

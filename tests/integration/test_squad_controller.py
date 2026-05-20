@@ -37,7 +37,7 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
 
 def _controller(tmp_path: Path, provider=None, mode: str = "banzai"):
     graph = PhaseGraph(DEFINITION, EXT_YML)
-    store = SquadStateStore(tmp_path / ".specify/squad/state.json")
+    store = SquadStateStore(tmp_path / ".specify/squad")
     if provider is None:
         provider = _mock_provider()
     ctrl = SquadController(
@@ -131,7 +131,7 @@ class TestSquadControllerBasics:
     def test_budget_exhausted_when_exceeded(self, tmp_path):
         provider = _mock_provider()
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / ".specify/squad/state.json")
+        store = SquadStateStore(tmp_path / ".specify/squad")
         ctrl = SquadController(
             provider=provider,
             state_store=store,
@@ -167,7 +167,7 @@ class TestHumanGate:
     def test_banzai_auto_approves(self, tmp_path):
         from harness.squad_executors import HumanGateExecutor
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / ".specify/squad/state.json")
+        store = SquadStateStore(tmp_path / ".specify/squad")
         store.initialize("r", "banzai", "msg", 0, "init")
 
         executor = HumanGateExecutor(
@@ -185,7 +185,7 @@ class TestHumanGate:
     def test_semi_auto_approves(self, tmp_path):
         from harness.squad_executors import HumanGateExecutor
         graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / ".specify/squad/state.json")
+        store = SquadStateStore(tmp_path / ".specify/squad")
         store.initialize("r", "semi", "msg", 0, "init")
 
         executor = HumanGateExecutor(

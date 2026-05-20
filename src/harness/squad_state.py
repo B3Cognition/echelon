@@ -1,4 +1,4 @@
-"""SquadStateStore — atomic reads/writes for .specify/squad/state.json."""
+"""SquadStateStore — atomic reads/writes for squad/<run-id>/state.json."""
 from __future__ import annotations
 
 import json
@@ -11,9 +11,20 @@ if TYPE_CHECKING:
 
 
 class SquadStateStore:
-    def __init__(self, state_path: Path) -> None:
-        self._path = state_path
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, squad_dir: Path) -> None:
+        self._squad_dir = squad_dir
+        self._path = squad_dir / "state.json"
+        self._staging_dir = squad_dir / "staging"
+        self._squad_dir.mkdir(parents=True, exist_ok=True)
+        self._staging_dir.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def squad_dir(self) -> Path:
+        return self._squad_dir
+
+    @property
+    def staging_dir(self) -> Path:
+        return self._staging_dir
 
     def load(self) -> dict:
         if not self._path.exists():
@@ -52,6 +63,8 @@ class SquadStateStore:
             "convergence_detected": False,
             "quality_scores": [],
             "issues_log": [],
+            "squad_dir": str(self._squad_dir),
+            "staging_dir": str(self._staging_dir),
         })
 
     def current_phase(self) -> str:

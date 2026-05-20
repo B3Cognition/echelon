@@ -11,7 +11,7 @@ from harness.squad_provider import SquadAgentResult
 
 
 def _store(tmp_path: Path) -> SquadStateStore:
-    return SquadStateStore(tmp_path / ".specify/squad/state.json")
+    return SquadStateStore(tmp_path / "squad/run-test")
 
 
 def _result(verdict="DONE", updates=None) -> SquadAgentResult:
@@ -84,7 +84,7 @@ class TestSquadStateStore:
     def test_atomic_write_no_partial_state(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
-        tmp_file = (tmp_path / ".specify/squad/state.json").with_suffix(".json.tmp")
+        tmp_file = (tmp_path / "squad/run-test/state.json").with_suffix(".json.tmp")
         assert not tmp_file.exists()
 
     def test_set_blocked(self, tmp_path):
@@ -94,3 +94,43 @@ class TestSquadStateStore:
         state = store.load()
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "understanding unavailable"
+
+
+def test_store_creates_squad_and_staging_dirs(tmp_path):
+    from harness.squad_state import SquadStateStore
+    squad_dir = tmp_path / "squad" / "run-test"
+    store = SquadStateStore(squad_dir)
+    assert (squad_dir).exists()
+    assert (squad_dir / "staging").exists()
+
+
+def test_state_path_is_inside_squad_dir(tmp_path):
+    from harness.squad_state import SquadStateStore
+    squad_dir = tmp_path / "squad" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("r1", "semi", "msg", 0, "init")
+    assert (squad_dir / "state.json").exists()
+
+
+def test_initialize_writes_squad_and_staging_paths(tmp_path):
+    from harness.squad_state import SquadStateStore
+    squad_dir = tmp_path / "squad" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("r1", "semi", "msg", 0, "init")
+    state = store.load()
+    assert state["squad_dir"] == str(squad_dir)
+    assert state["staging_dir"] == str(squad_dir / "staging")
+
+
+def test_squad_dir_property(tmp_path):
+    from harness.squad_state import SquadStateStore
+    squad_dir = tmp_path / "squad" / "run-test"
+    store = SquadStateStore(squad_dir)
+    assert store.squad_dir == squad_dir
+
+
+def test_staging_dir_property(tmp_path):
+    from harness.squad_state import SquadStateStore
+    squad_dir = tmp_path / "squad" / "run-test"
+    store = SquadStateStore(squad_dir)
+    assert store.staging_dir == squad_dir / "staging"

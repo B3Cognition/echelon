@@ -151,7 +151,7 @@ def _squad_controller(tmp_path: Path):
     provider = MagicMock()
     graph = MagicMock(spec=PhaseGraph)
     graph.all_phase_ids.return_value = ["init", "phase1-discover", "DONE"]
-    store = SquadStateStore(tmp_path / ".specify/squad/state.json")
+    store = SquadStateStore(tmp_path / ".specify/squad")
     store.initialize(
         run_id="test-run",
         mode="semi",
