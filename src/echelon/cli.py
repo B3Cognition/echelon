@@ -444,7 +444,7 @@ def _cmd_harness_run(args: list[str]) -> None:
 
 def _make_run_id() -> str:
     from datetime import datetime
-    return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
 
 
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
@@ -548,15 +548,20 @@ def _cmd_run(
             i += 1
     message = " ".join(message_parts)
 
+    prev_dir = _find_current_run_dir(project_root)
+    squad_dir, is_fresh = _select_squad_dir(project_root, message, reset=reset)
     if reset:
-        state_path = project_root / ".specify/squad/state.json"
-        if state_path.exists():
-            state_path.unlink()
-            print("[squad] state reset — starting fresh", flush=True)
+        print("[squad] state reset — starting fresh", flush=True)
+    elif is_fresh and prev_dir is not None and prev_dir != squad_dir:
+        print(
+            f"[squad] new task — starting fresh in {squad_dir.name} "
+            f"(previous run preserved at {prev_dir.name})",
+            flush=True,
+        )
 
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
-    state_store = SquadStateStore(project_root / ".specify/squad")
+    state_store = SquadStateStore(squad_dir)
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",
@@ -584,9 +589,11 @@ def _cmd_run(
         project_root=project_root,
         token_budget=token_budget,
         max_iterations=max_iterations,
+        squad_dir=squad_dir,
     )
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
     print(f"\n[squad] {result.status} — phase: {result.phase}")
+    print(f"[squad] artifacts: {squad_dir}")
 
 
 # ── Skill resolution ──────────────────────────────────────────────────────
