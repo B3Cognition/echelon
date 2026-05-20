@@ -25,6 +25,25 @@ from harness.squad_state import SquadStateStore
 TERMINAL_PHASES = {"DONE", "done", "terminal-blocked"}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 
+_HR = "=" * 44
+
+
+def _blocked_banner(phase: str, reason: str, question: str) -> None:
+    print(f"\n{_HR}", flush=True)
+    print("  ✗  SQUAD RUN BLOCKED — human input required", flush=True)
+    print(_HR, flush=True)
+    print(f"\n  Phase:    {phase}", flush=True)
+    print(f"  Reason:   {reason}", flush=True)
+    print(f"\n  Question:", flush=True)
+    for line in question.strip().splitlines():
+        print(f"    {line}", flush=True)
+    print(
+        f"\n  Answer with:  echelon resume \"<your answer>\"\n"
+        f"  Discard with: echelon run --reset \"<new task>\"",
+        flush=True,
+    )
+    print(f"\n{_HR}\n", flush=True)
+
 
 @dataclass
 class SquadResult:
@@ -202,14 +221,10 @@ class SquadController:
                 force_resume = True
             else:
                 # semi / guided: stop and require echelon resume
-                print(
-                    f"\n[squad] ✗ Run is blocked — human input required.\n"
-                    f"  Phase:    {existing.get('phase', '?')}\n"
-                    f"  Reason:   {existing.get('blocked_reason', '')}\n"
-                    f"  Question: {q}\n\n"
-                    f"  Answer with:  echelon resume \"<your answer>\"\n"
-                    f"  Discard with: echelon run --reset \"<new task>\"\n",
-                    flush=True,
+                _blocked_banner(
+                    phase=existing.get("phase", "?"),
+                    reason=existing.get("blocked_reason", ""),
+                    question=q,
                 )
                 return SquadResult(
                     status="blocked",
@@ -276,7 +291,40 @@ class SquadController:
 
             next_phase = self._evaluate_transitions(node, result)
             self._state_store.advance(phase, next_phase, result)
-            print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
+
+            # Inline escalation check — fires when _evaluate_transitions detected
+            # escalation_question in state_updates and returned the current phase.
+            # Handles it in the same run() invocation rather than requiring a
+            # re-invocation to reach the top-of-loop escalation block.
+            state_now = self._state_store.load()
+            if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
+                q = state_now["escalation_question"]
+                run_mode = state_now.get("mode", mode)
+                if run_mode == "banzai":
+                    print(
+                        f"[squad] ~ {node.id}  escalation — banzai COMMANDER judgment",
+                        flush=True,
+                    )
+                    # Clear blocked status before dispatch (mirrors top-of-loop handler)
+                    s = self._state_store.load()
+                    s["status"] = "running"
+                    s["blocked_reason"] = None
+                    self._state_store.save(s)
+                    self._judgment_dispatch_escalation(q, phase)
+                    continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
+                else:
+                    _blocked_banner(
+                        phase=phase,
+                        reason=state_now.get("blocked_reason", ""),
+                        question=q,
+                    )
+                    return SquadResult(
+                        status="blocked",
+                        phase=phase,
+                        run_id=state_now.get("run_id", ""),
+                    )
+            else:
+                print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
 
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
@@ -285,6 +333,21 @@ class SquadController:
 
         # ── WHY fail tracking + consecutive-fail safety net ──────────────────
         if node.id in WHY_PHASES:
+            # Early escalation detection: agent explicitly signalled user-gated
+            # CRITICAL issues via escalation_question in state_updates.  Handle
+            # here before condition evaluation so empty quality_scores don't cause
+            # COMMANDER to be dispatched as a routing judge instead.
+            escalation_q = (result.state_updates or {}).get("escalation_question")
+            if escalation_q:
+                s = self._state_store.load()
+                s["escalation_question"] = escalation_q
+                s["blocked_reason"] = (result.state_updates or {}).get(
+                    "blocked_reason", "WHY phase: agent escalation"
+                )
+                s["status"] = "blocked"
+                self._state_store.save(s)
+                return node.id  # stay at current phase; inline loop check handles escalation
+
             # Merge result.state_updates into a local copy so quality_gates.fail
             # can see the freshly-written quality_scores before advance() runs.
             eval_state = {**state, **result.state_updates}

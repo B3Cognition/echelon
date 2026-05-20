@@ -46,6 +46,27 @@ SKILL_MAP = {
 
 CLI_VERSION = "2.2.0"
 
+_HR = "=" * 44
+
+
+def _banner(title: str, fields: list[tuple[str, str]], flush: bool = True) -> None:
+    """Print a formatted banner block."""
+    print(f"\n{_HR}", flush=flush)
+    print(f"  {title}", flush=flush)
+    print(_HR, flush=flush)
+    if fields:
+        label_w = max(len(k) for k, _ in fields) + 1
+        for key, val in fields:
+            label = f"{key}:".ljust(label_w + 1)
+            if "\n" in val:
+                print(f"\n  {label}", flush=flush)
+                for line in val.strip().splitlines():
+                    print(f"    {line}", flush=flush)
+            else:
+                print(f"\n  {label}  {val}", flush=flush)
+    print(f"\n{_HR}\n", flush=flush)
+
+
 USAGE = f"""\
 echelon {CLI_VERSION}
 
@@ -60,6 +81,9 @@ Commands:
                                             task differs or run is complete.
                                             --reset            force fresh start
                                             --next-phase <id>  recover from invalid-phase block
+  resume  "<answers>"                       Answer escalation questions from a blocked run
+                                            and continue it. Use when the run printed
+                                            "blocked — human input required".
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
   build   <spec_id>                         Build implementation for a spec
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
@@ -644,9 +668,140 @@ def _cmd_run(
         max_iterations=max_iterations,
         squad_dir=squad_dir,
     )
+
+    run_id = state_store.load().get("run_id", "?") if state_store.load() else "?"
+    _banner("SQUAD RUN", [
+        ("Run ID", run_id),
+        ("Mode", mode),
+        ("Task", (message[:80] + "…") if len(message) > 80 else message),
+        ("Dir", str(squad_dir.name)),
+    ])
+
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
-    print(f"\n[squad] {result.status} — phase: {result.phase}")
-    print(f"[squad] artifacts: {squad_dir}")
+
+    status_icon = "✓" if result.status == "done" else "✗"
+    _banner(f"{status_icon}  SQUAD RUN {result.status.upper()}", [
+        ("Phase", result.phase),
+        ("Artifacts", str(squad_dir)),
+    ])
+
+
+def _cmd_resume(
+    args: list[str],
+    project_root: Path,
+    ext_dir: Path,
+) -> None:
+    """Provide user answers to an escalation-blocked squad run and continue it."""
+    from harness.config import get_full_resolved_config, load_config
+    from harness.phase_graph import PhaseGraph
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadCliProvider
+    from harness.squad_state import SquadStateStore
+
+    answer = " ".join(args).strip()
+    if not answer:
+        print(
+            "Usage: echelon resume \"<your answers>\"\n"
+            "  Answer the escalation questions shown when the run was blocked.\n"
+            "  Example: echelon resume \"Q1: yes, I own the IP  Q2: 13+  Q3: short missions\"",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    squad_dir = _find_current_run_dir(project_root)
+    if squad_dir is None:
+        print("✗ No active squad run found.", file=sys.stderr)
+        print("  Start a run with: echelon run \"<task>\"", file=sys.stderr)
+        sys.exit(1)
+
+    store = SquadStateStore(squad_dir)
+    state = store.load()
+
+    if state.get("status") != "blocked":
+        print(
+            f"✗ Run is not blocked (status: {state.get('status', 'unknown')}).",
+            file=sys.stderr,
+        )
+        print("  Nothing to resume.", file=sys.stderr)
+        sys.exit(1)
+
+    escalation_q = state.get("escalation_question")
+    if not escalation_q:
+        print(
+            "✗ Run is blocked but no escalation question found.\n"
+            "  Use: echelon run --next-phase <phase-id>  to recover manually",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    _banner("RESUMING SQUAD RUN", [
+        ("Run ID", state.get("run_id", "?")),
+        ("Phase", state.get("phase", "?")),
+        ("Reason", state.get("blocked_reason", "?")),
+        ("Question", escalation_q.strip()),
+        ("Your answer", answer),
+    ])
+
+    # Write user's answer to staging so the re-dispatched phase can read it.
+    staging_dir = Path(state.get("staging_dir", str(squad_dir / "staging")))
+    clarifications_file = staging_dir / "user-clarifications.md"
+    clarifications_file.write_text(
+        f"# User Clarifications\n\n"
+        f"> Provided via `echelon resume` in response to the escalation block.\n\n"
+        f"## Questions asked\n\n"
+        f"{escalation_q}\n\n"
+        f"## User answers\n\n"
+        f"{answer}\n"
+    )
+
+    # Clear the blocked state.
+    state["escalation_question"] = None
+    state["escalation_resolved"] = True
+    state["escalation_resolver"] = "user"
+    state["blocked_reason"] = None
+    state["status"] = "running"
+    store.save(state)
+
+    # Re-run from the current phase (same mode, same task).
+    config = load_config(project_root, squad_only=True)
+    provider = SquadCliProvider(config)
+    graph = PhaseGraph(
+        ext_dir / "workflow/definition.yaml",
+        ext_dir / "extension.yml",
+    )
+    token_budget = 0
+    max_iterations = 5
+    try:
+        _full = get_full_resolved_config(project_root)
+        _analysis = _full.get("analysis") or {}
+        _k = int(_analysis.get("token_budget_k") or 0)
+        token_budget = _k * 1000 if _k else 0
+        max_iterations = int(_analysis.get("max_iterations") or 5)
+    except Exception:
+        pass
+
+    controller = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ext_dir,
+        project_root=project_root,
+        token_budget=token_budget,
+        max_iterations=max_iterations,
+        squad_dir=squad_dir,
+    )
+    result = controller.run(
+        user_message=state.get("user_message", ""),
+        mode=state.get("mode", "semi"),
+    )
+
+    _banner("SQUAD RESUMED", [
+        ("Phase resumed", state.get("phase", "?")),
+        ("Answer given", (answer[:60] + "…") if len(answer) > 60 else answer),
+        ("Status", result.status),
+        ("Current phase", result.phase),
+        ("Artifacts", str(squad_dir)),
+    ])
 
 
 # ── Skill resolution ──────────────────────────────────────────────────────
@@ -826,6 +981,25 @@ def main() -> None:
 
     if command == "land":
         _cmd_land(args[1:])
+        return
+
+    if command == "resume":
+        if os.environ.get("ECHELON_SQUAD_ACTIVE"):
+            print(
+                "✗ echelon resume: refusing nested invocation (ECHELON_SQUAD_ACTIVE is set).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        project_root = Path.cwd()
+        ext_dir = project_root / ".specify" / "extensions" / "echelon"
+        if not ext_dir.exists():
+            print(
+                f"✗ Echelon extension not installed: {ext_dir}\n"
+                "  Run: specify extension add echelon",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _cmd_resume(args[1:], project_root=project_root, ext_dir=ext_dir)
         return
 
     if command == "run":

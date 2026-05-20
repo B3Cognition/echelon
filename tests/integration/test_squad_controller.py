@@ -232,6 +232,85 @@ class TestSquadControllerBasics:
         assert state.get("escalation_question") is not None
         assert "consecutive" in state.get("escalation_question", "").lower()
 
+    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
+        """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
+        from harness.squad_provider import SquadAgentResult
+        call_count = {"n": 0}
+
+        def side_effect(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                # First call: WHY1 returns FAIL with escalation_question
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "FAIL",
+                        "state_updates": {
+                            "quality_scores": [],
+                            "escalation_question": "Q1: Do you own the IP?",
+                            "blocked_reason": "WHY1: user-gated CRITICAL issues",
+                        },
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 2:
+                # Second call: COMMANDER banzai judgment clears the block
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "JUDGMENT_RESOLVED",
+                        "state_updates": {
+                            "escalation_question": None,
+                            "escalation_resolved": True,
+                            "escalation_resolver": "COMMANDER-banzai",
+                            "blocked_reason": None,
+                        },
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            # Third call+: WHY1 re-dispatch passes (quality_scores present)
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"quality_scores": [{"pass": True}]},
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            )
+
+        provider = _mock_provider()
+        provider.exec_agent.side_effect = side_effect
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        result = ctrl.run("msg", "banzai")
+        # Provider called at least twice: once for WHY1, once for COMMANDER escalation
+        assert provider.exec_agent.call_count >= 2
+        # Run did not end blocked
+        assert result.status != "blocked"
+
+    def test_semi_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
+        """Semi: WHY1 returns escalation_question in state_updates → run stops blocked."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "quality_scores": [],
+                    "escalation_question": "Q1: Do you own the IP?",
+                    "blocked_reason": "WHY1: user-gated CRITICAL issues",
+                },
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "semi", "msg", 0, "phase1-why1", max_iterations=5)
+        result = ctrl.run("msg", "semi")
+        assert result.status == "blocked"
+        # escalation_question must be in state for echelon resume to pick up
+        assert store.load().get("escalation_question")
+
     def test_banzai_escalation_dispatches_commander_not_stops(self, tmp_path):
         """Banzai mode: blocked+escalation_question → COMMANDER called, run continues."""
         from harness.squad_provider import SquadAgentResult

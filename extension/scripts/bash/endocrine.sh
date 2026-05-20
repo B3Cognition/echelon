@@ -34,7 +34,7 @@
 #
 # Reads config via `specify extension config resolve echelon` (preferred).
 # Falls back to direct YAML read from .specify/extensions/echelon/echelon-config.yml when specify is unavailable.
-# State stored in .specify/squad/state.json under "endocrine_state".
+# State stored in squad/<run-id>/state.json under "endocrine_state" (auto-detected via squad/.current).
 set -euo pipefail
 . "$(CDPATH='' cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/python-detect.sh"
 
@@ -61,7 +61,24 @@ _endocrine_find_repo_root() {
   CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd
 }
 REPO_ROOT="${ENDOCRINE_REPO_ROOT:-$(_endocrine_find_repo_root)}"
-SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$REPO_ROOT/.specify/squad}"
+
+# Detect the active squad run from squad/.current.
+# Hormones are run-scoped; this avoids requiring ENDOCRINE_SQUAD_DIR to be set.
+# Falls back to the legacy .specify/squad path for backward compatibility.
+_endocrine_find_squad_dir() {
+  local root="$1"
+  local current_file="$root/squad/.current"
+  if [[ -f "$current_file" ]]; then
+    local run_id
+    run_id=$(tr -d '[:space:]' < "$current_file")
+    if [[ -n "$run_id" && -d "$root/squad/$run_id" ]]; then
+      echo "$root/squad/$run_id"
+      return 0
+    fi
+  fi
+  echo "$root/.specify/squad"
+}
+SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$(_endocrine_find_squad_dir "$REPO_ROOT")}"
 STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 
 # Config resolution: prefer spec-kit ConfigurationManager resolver.

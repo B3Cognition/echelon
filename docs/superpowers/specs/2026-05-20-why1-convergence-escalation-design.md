@@ -199,7 +199,7 @@ Add a new section **§ Banzai Escalation Judgment Protocol**:
 
 When dispatched with `# COMMANDER BANZAI ESCALATION JUDGMENT`, the harness has
 detected user-gated CRITICAL issues but is running in banzai mode. Your job:
-make the most defensible judgment and unblock the run.
+make the most defensible judgment (consider 3 options and pick the one that is the most defensible) and unblock the run.
 
 ### Output: `staging/user-clarifications.md`
 
@@ -240,6 +240,7 @@ echelon_result:
 
 - **Err toward the user's stated intent**: user said "addictive like Ticket to Ride" → choose entertainment-led, not education-led
 - **Choose the more conservative compliance posture** when legal/regulatory (e.g. age band: pick 13+, not 9+, to avoid COPPA)
+- **Consider at least 3 judgement principles based on the issue raised**: do not be satisfied with 0 or 1 judgement principle, find at least 3 that are relevant and judge the issue against them.
 - **Flag irresolvable questions** (e.g. "do you have written author rights?") as HIGH-CONFIDENCE-ASSUMPTION with explicit verification note — do not fabricate legal facts
 - **Never proceed on existential risks**: if the question is truly existential (e.g. "does this project have legal authority to exist?"), write the judgment file but also set `escalation_question` to a shorter summary so semi/guided runs can still catch it
 ```
