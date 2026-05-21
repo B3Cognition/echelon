@@ -38,22 +38,48 @@ class SquadAgentResult:
 
 
 def _extract_echelon_result(raw: str) -> Optional[dict]:
-    """Find the last echelon_result: block in raw output and parse it."""
+    """Find the last echelon_result: block in raw output and parse it.
+
+    Attempts full parse first. If YAML fails (commonly due to complex
+    journal_entries content), retries with journal_entries stripped so
+    that verdict and state_updates — the routing-critical fields — are
+    still extracted. Journal entries are handled separately by
+    _write_journal_entries, so losing them here is safe.
+    """
     idx = raw.rfind("echelon_result:")
     if idx == -1:
         return None
     snippet = raw[idx:]
-    # Trim at closing code fence if present
+    # Trim at closing code fence if present.
     fence_end = snippet.find("\n```")
     if fence_end != -1:
         snippet = snippet[:fence_end]
-    try:
-        parsed = yaml.safe_load(snippet)
-        if isinstance(parsed, dict) and "echelon_result" in parsed:
-            return parsed["echelon_result"]
+
+    def _parse(text: str) -> Optional[dict]:
+        try:
+            parsed = yaml.safe_load(text)
+            if isinstance(parsed, dict) and "echelon_result" in parsed:
+                return parsed["echelon_result"]
+        except yaml.YAMLError:
+            pass
         return None
-    except yaml.YAMLError:
-        return None
+
+    # Full parse — preferred.
+    result = _parse(snippet)
+    if result is not None:
+        return result
+
+    # Retry without journal_entries — routing fields (verdict, state_updates)
+    # appear before journal_entries in the block, so stripping journal_entries
+    # lets the rest parse correctly even when entries have YAML formatting errors.
+    for journal_key in ("  journal_entries:", "journal_entries:"):
+        je_idx = snippet.find(f"\n{journal_key}")
+        if je_idx != -1:
+            result = _parse(snippet[:je_idx])
+            if result is not None:
+                return result
+
+    return None
 
 
 class SquadCliProvider(AICodingCliProvider):
