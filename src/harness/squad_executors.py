@@ -1,6 +1,7 @@
 """Phase executors for SquadController — one class per definition.yaml type."""
 from __future__ import annotations
 
+import re
 import subprocess
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,54 @@ if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
     from harness.squad_provider import SquadAgentResult, SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+
+def _routing_contract(node: "PhaseNode") -> str:
+    """Build a compact echelon_result contract from the phase's transition conditions.
+
+    Scans condition expressions to derive which state_updates fields the harness
+    reads for routing, then returns a hint block to append at the end of the prompt.
+    Returns empty string when no agent-written fields are needed.
+    """
+    condition_text = " ".join(t.get("condition", "") for t in (node.transitions or []))
+    if not condition_text.strip():
+        return ""
+
+    fields: list[tuple[str, str]] = []
+
+    if "quality_gates" in condition_text or "CRITICAL_issues" in condition_text:
+        fields.append((
+            "quality_scores",
+            "[{pass: true}]  # true=PASS, false=FAIL",
+        ))
+
+    # phase-specific verdict fields e.g. why3-verdict, assess2-verdict
+    for m in re.finditer(r"\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*-verdict)\b", condition_text):
+        key = m.group(1).replace("-", "_")
+        if not any(f[0] == key for f in fields):
+            fields.append((key, "PASS | FAIL | REJECTED"))
+
+    if re.search(r"\balignment\s*=", condition_text):
+        fields.append(("alignment", "ALIGNED | DRIFT | STOP_AND_ASK"))
+
+    if not fields:
+        return ""
+
+    lines = [
+        "\n\n---",
+        "## Harness routing contract — REQUIRED",
+        "The harness reads these `echelon_result.state_updates` fields to route to the",
+        "next phase. Missing or absent fields prevent correct routing.",
+        "",
+        "```yaml",
+        "echelon_result:",
+        "  verdict: <DONE|FAIL|BLOCKED|COMPLETE|...>  # always required",
+        "  state_updates:",
+    ]
+    for field, hint in fields:
+        lines.append(f"    {field}: {hint}")
+    lines.append("```")
+    return "\n".join(lines)
 
 
 class PhaseExecutor(ABC):
@@ -119,6 +168,10 @@ class PhaseExecutor(ABC):
         prompt = prompt.replace(".specify/squad/staging", staging_dir_str)
         prompt = prompt.replace(".specify/squad/", f"{squad_dir_str}/")
         prompt = prompt.replace(".specify/squad", squad_dir_str)
+
+        # Append harness routing contract so agents know exactly what
+        # state_updates fields the harness needs for transition evaluation.
+        prompt = prompt + _routing_contract(node)
 
         return context_preamble + prompt
 
