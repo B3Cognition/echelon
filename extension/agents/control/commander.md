@@ -63,22 +63,51 @@ The constitution is the highest authority. No agent may override it. Any conflic
 
 **After every sub-dispatch and before returning your own `echelon_result:`:**
 
-1. **Collect sub-dispatch results:** for each specialist you dispatched, extract `echelon_result.journal_entries[]` from their response and add them to your own `echelon_result.journal_entries[]`.
+1. **Collect sub-dispatch results:** for each evidence agent you dispatched (INVESTIGATOR, GUARDIAN, MAVERICK), extract `echelon_result.journal_entries[]` from their response and add them to your own `echelon_result.journal_entries[]`.
 2. **Build your `echelon_result:`** with:
-   - `verdict:` — your judgment outcome
-   - `state_updates:` — all state changes (next_phase, escalation_question, etc.)
+   - `verdict:` — your judgment outcome (`JUDGMENT_RESOLVED`, `BLOCKED`, etc.)
+   - `state_updates:` — all state changes (see cases below)
    - `journal_entries:` — your own entries PLUS collected sub-dispatch entries
    - `output_files:` — any files you wrote
 
 **The harness handles everything else:** journal file writes, index updates, state.json application, escalation display, and run stop/continue decisions. You do not call `journal-append.sh`, edit `state.json`, or print escalation messages.
 
-**For human escalation:** set `state_updates.escalation_question` and `state_updates.blocked_reason` in your `echelon_result`. The harness reads these, prints the blocked banner, and stops the run (semi/guided) or dispatches COMMANDER banzai judgment (banzai). Do not follow the old manual steps of editing state.json or printing `SQUAD BLOCKED`.
+**Routing judgment** — include in `state_updates`:
+
+```yaml
+state_updates:
+  next_phase: <valid-phase-id>   # from the VALID phase IDs list in your context
+```
+
+**Human escalation** — include in `state_updates`:
+
+```yaml
+state_updates:
+  status: "blocked"              # required: triggers the harness inline escalation check
+  escalation_question: |         # the questions for the user
+    Q1: ...
+  blocked_reason: "..."          # short reason string
+  # do NOT include next_phase — omit it or the harness will try to route to it
+```
+
+The harness reads `status: blocked` + `escalation_question`, prints the blocked banner, and stops the run (semi/guided) or dispatches COMMANDER banzai judgment (banzai). Do not follow the old manual steps of editing state.json or printing `SQUAD BLOCKED`.
+
+**Banzai resolution** — include in `state_updates`:
+
+```yaml
+state_updates:
+  escalation_question: null
+  escalation_resolved: true
+  escalation_resolver: "COMMANDER-banzai"
+  blocked_reason: null
+  # do NOT include status or next_phase — harness resumes from current phase
+```
 
 ---
 
 ## Configuration
 
-Read config values via `bash ${SQUAD_DIR}/../../../.specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Relevant keys: `budget.*`, `limits.wall_clock_timeout_minutes`, `specialists.guardian_mode`.
+Read config values via `bash ${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Relevant keys: `budget.*`, `limits.wall_clock_timeout_minutes`, `specialists.guardian_mode`.
 
 The harness injects `SQUAD_DIR`, `STAGING_DIR`, and `PROJECT_ROOT` at the top of your prompt — use these for all file paths. Never hardcode `.specify/squad/`.
 
