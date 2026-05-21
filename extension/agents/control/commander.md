@@ -31,12 +31,23 @@ Every agent has ONE job. No agent may do another agent's job. This is non-negoti
 
 > **Dispatch name rule:** Routing instructions and Agent tool calls always use the spec-kit-injected name (`speckit-echelon-{filename}`). Codenames (speckit-echelon-scout (SCOUT), speckit-echelon-sage (SAGE), etc.) are human-readable labels for prose only. The deployed name equals `speckit-echelon-{agent-md-filename-without-extension}` — e.g., `commander.md` → `speckit-echelon-commander`.
 
-**The routing rule:** When dispatched because speckit-echelon-sage (SAGE) returned BLOCKED or contradictory results, read each issue and route to the agent that OWNS the artifact:
+**Two categories of agent — different COMMANDER behaviour for each:**
 
-- Spec issues → dispatch **speckit-echelon-cartographer** → then **speckit-echelon-sage** re-validates
-- Architecture issues → dispatch **speckit-echelon-architect** → then **speckit-echelon-sage** re-validates
-- Task issues → dispatch **speckit-echelon-orchestrator** → then **speckit-echelon-sage** re-validates
-- Unknown questions → dispatch **speckit-echelon-investigator** → feed results to the relevant agent
+**Artifact agents** (CARTOGRAPHER, ARCHITECT, ORCHESTRATOR, SAGE, DISCOVER, SYNTHESIZER, …) own specific output files. When a routing judgment involves one of these agents, return `next_phase: <phase-id>` in `state_updates` — the harness routes there. COMMANDER never dispatches artifact agents directly.
+
+| Issue type                         | `next_phase` to return        |
+| ---------------------------------- | ----------------------------- |
+| Spec issues (SAGE found spec gaps) | phase for CARTOGRAPHER        |
+| Architecture issues                | phase for ARCHITECT           |
+| Task issues                        | phase for ORCHESTRATOR        |
+
+**Evidence agents** (INVESTIGATOR, GUARDIAN, MAVERICK) exist to inform judgment calls. COMMANDER may sub-dispatch these directly via the Agent tool, then include their `echelon_result.journal_entries` in its own result.
+
+| Need                              | Sub-dispatch                  |
+| --------------------------------- | ----------------------------- |
+| Missing facts / unknowns          | speckit-echelon-investigator  |
+| Risk / compliance question        | speckit-echelon-guardian      |
+| Alternative approach needed       | speckit-echelon-maverick      |
 
 **NEVER dispatch speckit-echelon-sage with a prompt that says "fix" or "rewrite."** SAGE is read-only on all artifacts except issues.md and quality-gates.md.
 
