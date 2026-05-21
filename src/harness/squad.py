@@ -330,6 +330,9 @@ class SquadController:
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
         state = self._state_store.load()
+        # Merge result.state_updates so ALL condition evaluation sees freshly-written
+        # values (quality_scores, escalation_question, etc.) before advance() runs.
+        eval_state = {**state, **(result.state_updates or {})}
 
         # ── WHY fail tracking + consecutive-fail safety net ──────────────────
         if node.id in WHY_PHASES:
@@ -348,9 +351,17 @@ class SquadController:
                 self._state_store.save(s)
                 return node.id  # stay at current phase; inline loop check handles escalation
 
-            # Merge result.state_updates into a local copy so quality_gates.fail
-            # can see the freshly-written quality_scores before advance() runs.
-            eval_state = {**state, **result.state_updates}
+            # WHY phases return verdict: FAIL without quality_scores by design
+            # (COMMANDER NEVER rule #8).  Inject a synthetic score derived from
+            # result.verdict so quality_gates conditions evaluate correctly,
+            # preventing COMMANDER from being dispatched as a routing judge.
+            if not eval_state.get("quality_scores"):
+                verdict_upper = (result.verdict or "").upper()
+                if verdict_upper in ("FAIL", "BLOCKED"):
+                    eval_state["quality_scores"] = [{"pass": False}]
+                elif verdict_upper in ("DONE", "COMPLETE", "PASS"):
+                    eval_state["quality_scores"] = [{"pass": True}]
+
             is_fail = self._evaluator.evaluate("quality_gates.fail", eval_state, result) is True
             if is_fail:
                 fail_count = self._state_store.increment_why_fail_count()
@@ -378,7 +389,7 @@ class SquadController:
 
         for transition in node.transitions:
             condition = transition.get("condition", "always")
-            evaluation = self._evaluator.evaluate(condition, state, result)
+            evaluation = self._evaluator.evaluate(condition, eval_state, result)
             if evaluation is True:
                 return transition["to"]
             if evaluation is None:
