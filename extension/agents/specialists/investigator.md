@@ -156,7 +156,7 @@ speckit-echelon-commander (COMMANDER) will write this entry to the journal. spec
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
 
 ---
 

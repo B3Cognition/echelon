@@ -400,7 +400,7 @@ Artifacts: glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/scout.yaml`. Read this file to load your active calibration priors before making mode-detection and discovery depth decisions.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/scout.yaml`. Read this file to load your active calibration priors before making mode-detection and discovery depth decisions.
 
 ---
 

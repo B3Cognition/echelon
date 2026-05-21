@@ -369,7 +369,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/maverick.yaml`. Read this file to load your active calibration priors before selecting innovation methods and evaluating alternative quality.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/maverick.yaml`. Read this file to load your active calibration priors before selecting innovation methods and evaluating alternative quality.
 
 ---
 

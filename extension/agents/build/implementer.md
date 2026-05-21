@@ -366,7 +366,7 @@ If any regression eval fails, the task status is **BLOCKED** until the regressio
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/implementer.yaml`. Read this file to load your active calibration priors before making threshold decisions.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/implementer.yaml`. Read this file to load your active calibration priors before making threshold decisions.
 
 Return this entry in the `echelon_result` block at the end of your response.
 
