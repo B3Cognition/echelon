@@ -262,7 +262,12 @@ echelon_result:
 
 ## Belief Register
 
-Calibration beliefs are in `.specify/extensions/echelon/config/belief-registers/commander.yaml`. Read this file to load active calibration priors before judgment calls and threshold decisions.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/commander.yaml`. Read this file before judgment calls and threshold decisions.
+
+Two categories of belief:
+
+- **Judgment beliefs** — COMMANDER applies these directly: evidence hierarchy ranks (CMD-001), convergence thresholds (CMD-003), escalation triggers (CMD-005, CMD-008, CMD-011), calibration sample size (CMD-012).
+- **Operational limits** (CMD-002 timeout, CMD-004 max iterations, CMD-006/CMD-010 budget ratios) — the harness enforces these from `echelon-config.yml` via `echelon-config-get.sh`. Read them for situational awareness only; do not override or second-guess what the harness is enforcing.
 
 ---
 
