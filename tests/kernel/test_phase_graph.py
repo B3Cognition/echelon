@@ -63,3 +63,18 @@ class TestPhaseGraph:
                     if not full.exists():
                         missing.append((phase_id, rel))
         assert missing == [], f"Agent files missing: {missing}"
+
+
+def test_chief_registered_in_extension():
+    """CHIEF must be registered in extension.yml so phase_graph resolves it."""
+    import yaml
+    from pathlib import Path
+    ext = yaml.safe_load(
+        (Path(__file__).parent.parent.parent / "extension/extension.yml").read_text()
+    )
+    commands = ext.get("provides", {}).get("commands", [])
+    names = [c["name"] for c in commands]
+    assert "speckit.echelon.chief" in names, "speckit.echelon.chief not in extension.yml provides.commands"
+    chief = next(c for c in commands if c["name"] == "speckit.echelon.chief")
+    assert chief["file"] == "agents/control/chief.md"
+    assert chief["behavior"]["execution"] == "agent"

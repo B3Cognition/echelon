@@ -168,6 +168,15 @@ provides:
         capability: strong
         tools: full          # needs Bash (state-backup.sh) + Write (journal, state.json)
         color: blue
+    - name: "speckit.echelon.chief"
+      file: "agents/control/chief.md"
+      description: "CHIEF — project constitution author and governance steward"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: full          # needs Skill (speckit.constitution) + Bash (verification) + Write (placeholder fix)
+        color: blue
+        invocation: explicit
     - name: "speckit.echelon.checkpoint"
       file: "agents/control/checkpoint.md"
       description: "CHECKPOINT — internalization quality assessor"
