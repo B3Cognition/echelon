@@ -407,6 +407,250 @@ class TestHumanGate:
         assert result.verdict == "APPROVED"
 
 
+class TestBuildPhaseRouting:
+    """Regression: 12 build-phase transition conditions used lowercase 'and'
+    (e.g. 'verdict = FAIL and fix_cycle < 2'). The evaluator splits only on
+    uppercase AND/OR, so every compound was treated as a single field=value
+    match that always returned False — fix-cycle routing was silently broken.
+
+    Each test starts SquadController at the relevant build phase, injects the
+    appropriate initial state (fix_cycle, etc.), and asserts the first
+    (from, to) transition recorded by patching store.advance.
+    """
+
+    def _sequenced(self, responses: list) -> MagicMock:
+        """Provider whose exec_agent returns responses in order, then DONE."""
+        idx = {"n": 0}
+        provider = _mock_provider()
+
+        def _side_effect(*args, **kwargs):
+            i = idx["n"]
+            idx["n"] += 1
+            verdict, updates = responses[i] if i < len(responses) else ("DONE", {})
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": verdict, "state_updates": updates},
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        provider.exec_agent.side_effect = _side_effect
+        return provider
+
+    def _run_and_capture(
+        self,
+        tmp_path: Path,
+        start_phase: str,
+        initial_state: dict,
+        provider: MagicMock,
+    ) -> list:
+        """Run from start_phase and return list of (from_phase, to_phase) transitions."""
+        ctrl, store = _controller(tmp_path, provider)
+        store.initialize("r", "banzai", "msg", 0, start_phase)
+        state = store.load()
+        state.update(initial_state)
+        store.save(state)
+
+        with patch.object(store, "advance", wraps=store.advance) as spy:
+            ctrl.run("msg", "banzai")
+
+        return [(c.args[0], c.args[1]) for c in spy.call_args_list]
+
+    # Shared terminal tail: once a gate passes, drive to build-done quickly.
+    # Sequence after the gate under test: implement→spec-guard→code-review→
+    # test-guard→progress(all_done)→build-8-finalize(no-op)→build-done.
+    _TAIL_FROM_IMPLEMENT = [
+        ("DONE", {}),                # implement → spec-guard
+        ("PASS", {}),                # spec-guard → code-review
+        ("APPROVED", {}),            # code-review → test-guard
+        ("PASS", {}),                # test-guard → progress
+        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
+    ]
+    _TAIL_FROM_SPEC_GUARD = [
+        ("PASS", {}),                # spec-guard → code-review
+        ("APPROVED", {}),            # code-review → test-guard
+        ("PASS", {}),                # test-guard → progress
+        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
+    ]
+    _TAIL_FROM_CODE_REVIEW = [
+        ("APPROVED", {}),            # code-review → test-guard
+        ("PASS", {}),                # test-guard → progress
+        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
+    ]
+    _TAIL_FROM_TEST_GUARD = [
+        ("PASS", {}),                # test-guard → progress
+        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
+    ]
+    _TAIL_FROM_PROGRESS = [
+        ("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True}),
+    ]
+
+    # ── build-3-spec-guard ──────────────────────────────────────────────────
+
+    def test_spec_guard_fail_early_routes_to_implement(self, tmp_path):
+        """FAIL AND fix_cycle < 2 → implement (fix cycle)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-3-spec-guard",
+            initial_state={"fix_cycle": 0},
+            provider=self._sequenced(
+                [("FAIL", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-3-spec-guard", "build-2-implement")
+
+    def test_spec_guard_fail_late_routes_to_code_review(self, tmp_path):
+        """FAIL AND fix_cycle >= 2 → code-review (DEGRADED, skip back-route)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-3-spec-guard",
+            initial_state={"fix_cycle": 2},
+            provider=self._sequenced(
+                [("FAIL", {})] + self._TAIL_FROM_CODE_REVIEW
+            ),
+        )
+        assert transitions[0] == ("build-3-spec-guard", "build-4-code-review")
+
+    # ── build-4-code-review ─────────────────────────────────────────────────
+
+    def test_code_review_changes_early_routes_to_implement(self, tmp_path):
+        """CHANGES_REQUESTED AND fix_cycle < 2 → implement."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-4-code-review",
+            initial_state={"fix_cycle": 0},
+            provider=self._sequenced(
+                [("CHANGES_REQUESTED", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-4-code-review", "build-2-implement")
+
+    def test_code_review_changes_late_routes_to_test_guard(self, tmp_path):
+        """CHANGES_REQUESTED AND fix_cycle >= 2 → test-guard (DEGRADED)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-4-code-review",
+            initial_state={"fix_cycle": 2},
+            provider=self._sequenced(
+                [("CHANGES_REQUESTED", {})] + self._TAIL_FROM_TEST_GUARD
+            ),
+        )
+        assert transitions[0] == ("build-4-code-review", "build-5-test-guard")
+
+    # ── build-5-test-guard ──────────────────────────────────────────────────
+
+    def test_test_guard_fail_early_routes_to_implement(self, tmp_path):
+        """FAIL AND fix_cycle < 2 → implement."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-5-test-guard",
+            initial_state={"fix_cycle": 0},
+            provider=self._sequenced(
+                [("FAIL", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-5-test-guard", "build-2-implement")
+
+    def test_test_guard_fail_late_routes_to_progress(self, tmp_path):
+        """FAIL AND fix_cycle >= 2 → progress (DEGRADED)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-5-test-guard",
+            initial_state={"fix_cycle": 2},
+            provider=self._sequenced(
+                [("FAIL", {})] + self._TAIL_FROM_PROGRESS
+            ),
+        )
+        assert transitions[0] == ("build-5-test-guard", "build-6-progress")
+
+    # ── build-6-progress ────────────────────────────────────────────────────
+
+    def test_progress_all_done_routes_to_finalize(self, tmp_path):
+        """all_tasks_complete AND no_more_phase_checkpoints → build-8-finalize."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-6-progress",
+            initial_state={},
+            provider=self._sequenced(
+                [("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True})]
+            ),
+        )
+        assert transitions[0] == ("build-6-progress", "build-8-finalize")
+
+    def test_progress_more_tasks_routes_to_implement(self, tmp_path):
+        """more_tasks_in_phase_group → build-2-implement (next task)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-6-progress",
+            initial_state={"more_tasks_in_phase_group": True},
+            provider=self._sequenced(
+                [("DONE", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-6-progress", "build-2-implement")
+
+    # ── build-7-integration ─────────────────────────────────────────────────
+
+    def test_integration_fail_early_routes_to_implement(self, tmp_path):
+        """FAIL AND fix_cycle < 2 → implement."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-7-integration",
+            initial_state={"fix_cycle": 0},
+            provider=self._sequenced(
+                [("FAIL", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-7-integration", "build-2-implement")
+
+    def test_integration_fail_late_routes_to_finalize(self, tmp_path):
+        """FAIL AND fix_cycle >= 2 → build-8-finalize (DEGRADED)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-7-integration",
+            initial_state={"fix_cycle": 2},
+            provider=self._sequenced([("FAIL", {})]),
+        )
+        assert transitions[0] == ("build-7-integration", "build-8-finalize")
+
+    def test_integration_pass_more_groups_routes_to_implement(self, tmp_path):
+        """PASS AND more_phase_groups → implement (next phase group)."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-7-integration",
+            initial_state={"more_phase_groups": True},
+            provider=self._sequenced(
+                [("PASS", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-7-integration", "build-2-implement")
+
+    def test_integration_pass_all_done_routes_to_finalize(self, tmp_path):
+        """PASS AND all_phase_groups_complete → build-8-finalize."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-7-integration",
+            initial_state={"all_phase_groups_complete": True},
+            provider=self._sequenced([("PASS", {})]),
+        )
+        assert transitions[0] == ("build-7-integration", "build-8-finalize")
+
+    # ── build-2-implement (self-loop on NEEDS_CONTEXT) ──────────────────────
+
+    def test_implement_needs_context_early_retries(self, tmp_path):
+        """NEEDS_CONTEXT AND retry_count < 2 → self-loop back to implement."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-2-implement",
+            initial_state={"retry_count": 0},
+            provider=self._sequenced(
+                [("NEEDS_CONTEXT", {})] + self._TAIL_FROM_IMPLEMENT
+            ),
+        )
+        assert transitions[0] == ("build-2-implement", "build-2-implement")
+
+
 def test_journal_written_to_squad_dir_not_specify(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
@@ -423,3 +667,59 @@ def test_journal_written_to_squad_dir_not_specify(tmp_path):
     ctrl.run("msg", "banzai")
     assert (squad_dir / "reasoning-journal.jsonl").exists()
     assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
+
+
+class TestConstitutionPhase:
+    """Regression: phase1-constitution must dispatch CHIEF (agent), not be a no-op."""
+
+    def test_phase1_constitution_is_agent_not_commander_internal(self, tmp_path):
+        """phase1-constitution must be type=agent so CHIEF gets dispatched."""
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        node = graph.get("phase1-constitution")
+        assert node.type == "agent", (
+            f"phase1-constitution must be type=agent (so CHIEF is dispatched by the harness). "
+            f"Got: {node.type!r}. commander_internal silently skips the phase."
+        )
+
+    def test_phase1_constitution_agent_is_chief_not_commander(self, tmp_path):
+        """phase1-constitution must dispatch CHIEF, not COMMANDER."""
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        node = graph.get("phase1-constitution")
+        assert node.agent == "speckit-echelon-chief", (
+            f"phase1-constitution must dispatch speckit-echelon-chief. "
+            f"Got: {node.agent!r}. COMMANDER must not own constitution creation."
+        )
+
+    def test_chief_resolves_to_agent_file(self, tmp_path):
+        """speckit-echelon-chief must resolve to a real agent file path."""
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        rel = graph.agent_file("speckit-echelon-chief")
+        assert rel == "agents/control/chief.md", (
+            f"speckit-echelon-chief should resolve to agents/control/chief.md. "
+            f"Got: {rel!r}. Check extension.yml provides.commands registration."
+        )
+        agent_path = EXT_ROOT / "extension" / rel
+        assert agent_path.exists(), f"Agent file not found: {agent_path}"
+
+    def test_chief_has_constitution_context_pack(self, tmp_path):
+        """phase1-constitution must include staging artifacts in context_pack."""
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        node = graph.get("phase1-constitution")
+        pack = " ".join(node.context_pack)
+        assert "glossary" in pack
+        assert "mental-model" in pack
+        assert "boundaries" in pack
+        assert "assumptions" in pack
+        assert "user-intent" in pack
+
+    def test_chief_dispatched_in_controller(self, tmp_path):
+        """SquadController dispatches an agent (not no-op) for phase1-constitution."""
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-constitution")
+        ctrl.run("msg", "banzai")
+        # AgentExecutor calls exec_agent; CommanderInternalExecutor does not.
+        assert provider.exec_agent.called, (
+            "exec_agent was not called — phase1-constitution is still a harness no-op. "
+            "It must be type=agent so CHIEF gets dispatched."
+        )
