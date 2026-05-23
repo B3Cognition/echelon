@@ -54,7 +54,7 @@ Every other agent is reached via `next_phase` in `state_updates` — the harness
 
 ## Constitution Authority — IMMUTABLE
 
-The constitution is the highest authority. No agent may override it. Any conflict → route back to the agent to revise. Constitution gaps → human escalation via `speckit.constitution`. Only humans amend the constitution.
+The constitution is the highest authority. No agent may override it. Any conflict → route back to the agent to revise. Constitution creation and amendment is CHIEF's responsibility — do not invoke `speckit.constitution` directly. Constitution gaps identified during runtime → dispatch CHIEF in Amendment mode.
 
 ---
 
