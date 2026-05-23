@@ -1329,24 +1329,6 @@ def _cmd_continue(
         )
         return
 
-    # Run is done or interrupted — check constitution first (needs a skill, not a phase)
-    const_path = project_root / ".specify" / "memory" / "constitution.md"
-    const_ok = const_path.exists() and (
-        "[PROJECT_NAME]" not in const_path.read_text(errors="replace")
-    )
-    if not const_ok:
-        print(
-            "Constitution must be created before continuing.\n\n"
-            "  In Claude Code (interactive session):\n"
-            "  /speckit-echelon-constitution\n\n"
-            "Then run 'echelon continue' again.",
-            flush=True,
-        )
-        return
-
-    # Constitution is now handled by the harness (phase1-constitution → agent type).
-    # No longer a special case here — _next_continue_phase handles it.
-
     # Determine the next phase automatically
     next_phase = _next_continue_phase(project_root)
     if next_phase is None:
