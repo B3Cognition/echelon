@@ -78,3 +78,27 @@ def test_chief_registered_in_extension():
     chief = next(c for c in commands if c["name"] == "speckit.echelon.chief")
     assert chief["file"] == "agents/control/chief.md"
     assert chief["behavior"]["execution"] == "agent"
+
+
+def test_phase1_constitution_uses_chief():
+    """phase1-constitution must dispatch CHIEF, not COMMANDER."""
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    node = graph.get("phase1-constitution")
+    assert node.type == "agent", f"Expected type=agent, got {node.type!r}"
+    assert node.agent == "speckit-echelon-chief", f"Expected speckit-echelon-chief, got {node.agent!r}"
+    # Must resolve to an actual file
+    rel = graph.agent_file("speckit-echelon-chief")
+    assert rel is not None, "speckit-echelon-chief not resolved by agent_file()"
+    assert rel == "agents/control/chief.md"
+
+
+def test_phase1_constitution_context_pack_has_staging_artifacts():
+    """phase1-constitution must include all 5 staging artifacts in context_pack."""
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    node = graph.get("phase1-constitution")
+    pack = " ".join(node.context_pack)
+    assert "glossary" in pack
+    assert "mental-model" in pack
+    assert "boundaries" in pack
+    assert "assumptions" in pack
+    assert "user-intent" in pack
