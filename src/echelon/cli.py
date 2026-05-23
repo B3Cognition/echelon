@@ -81,6 +81,14 @@ Commands:
                                             task differs or run is complete.
                                             --reset            force fresh start
                                             --next-phase <id>  recover from invalid-phase block
+  status                                    Show current run state, staging artifacts, open
+                                            issues, cost, and next action — orient after a
+                                            break without reading files manually.
+  continue [--mode semi|banzai|guided]      Advance the last run to its next required phase.
+                                            Reads the task and mode from prior state — no
+                                            prompt needed. Handles: resume if running,
+                                            escalation guidance if blocked, or determines
+                                            the correct next phase if done.
   resume  "<answers>"                       Answer escalation questions from a blocked run
                                             and continue it. Use when the run printed
                                             "blocked — human input required".
@@ -553,6 +561,431 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
     return run_dir if run_dir.exists() else None
 
 
+def _print_next_steps(project_root: Path, result_status: str) -> None:
+    """Print actionable next-step guidance after a run completes or blocks.
+
+    Checks build readiness (constitution, quality gates, HOW phase, tasks) and
+    surfaces either 'ready to build' or a prioritised list of blockers. Silent
+    when the run is still in progress (status not in done/blocked/interrupted).
+    """
+    import json as _json
+    import re as _re
+
+    if result_status not in ("done", "blocked", "interrupted"):
+        return
+
+    # ── Gather signals ──────────────────────────────────────────────────────
+    blockers: list[str] = []
+    warnings: list[str] = []
+    ready_items: list[str] = []
+
+    # 1. Constitution — must exist and not be the blank template
+    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    if not const_path.exists():
+        blockers.append(
+            "constitution.md absent\n"
+            "     → echelon continue\n"
+            "       (CHIEF will invoke speckit.constitution and fill it)"
+        )
+    else:
+        text = const_path.read_text(errors="replace")
+        if "[PROJECT_NAME]" in text or "[PRINCIPLE_1_NAME]" in text:
+            blockers.append(
+                "constitution.md is still the blank template\n"
+                "     → echelon continue\n"
+                "       (CHIEF will invoke speckit.constitution and fill it)"
+            )
+        else:
+            ready_items.append("constitution.md ✓")
+
+    # 2. Quality gates — read from the most recent quality-gates.md
+    specs_root = project_root / "specs"
+    quality_gates_file: Optional[Path] = None
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            qg = d / "quality-gates.md"
+            if qg.exists():
+                quality_gates_file = qg
+                break
+
+    if quality_gates_file:
+        qg_text = quality_gates_file.read_text(errors="replace")
+        # Parse gate rows: | Gate | score | threshold | **FAIL** | note |
+        gate_pattern = _re.compile(
+            r"\|\s*(Overall|Structure|Testability|Semantic|Cognitive|Readability|Behavioral|Depth)"
+            r"\s*\|([^|]+)\|([^|]+)\|\s*\*\*FAIL\*\*\s*\|([^|]*)\|",
+        )
+        hard_fails, borderline = [], []
+        for m in gate_pattern.finditer(qg_text):
+            gate, _score, _threshold, note = m.group(1), m.group(2), m.group(3), m.group(4)
+            note_lower = note.lower()
+            # "NOT borderline" means hard fail; "borderline" alone means soft
+            if "borderline" in note_lower and "not borderline" not in note_lower:
+                borderline.append(gate)
+            else:
+                hard_fails.append(gate)
+        if hard_fails:
+            blockers.append(
+                f"WHY2 quality gates FAIL: {', '.join(hard_fails)}\n"
+                f"     → echelon continue\n"
+                f"       (CARTOGRAPHER amendment pass, then WHY2 re-validates)"
+            )
+        if borderline:
+            warnings.append(
+                f"WHY2 borderline: {', '.join(borderline)} — monitor after CARTOGRAPHER amendment"
+            )
+        if not hard_fails and not borderline:
+            ready_items.append("WHY2 quality gates ✓")
+    else:
+        warnings.append("WHY2 not yet run — spec validation pending")
+
+    # 3. HOW phase artifacts (plan.md, research.md, data-model.md)
+    how_present = 0
+    how_missing = []
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            for fname in ("plan.md", "research.md", "data-model.md"):
+                if (d / fname).exists():
+                    how_present += 1
+                else:
+                    how_missing.append(fname)
+            break  # only check most recent spec dir
+
+    if how_missing:
+        missing_str = ", ".join(dict.fromkeys(how_missing))  # dedup, preserve order
+        blockers.append(
+            f"HOW phase not run — {missing_str} absent\n"
+            f"     → echelon continue\n"
+            f"       (ARCHITECT commits stack, data-model, contracts)"
+        )
+    else:
+        ready_items.append("HOW artifacts ✓")
+
+    # 4. tasks.md — must exist for BUILD entry guard
+    tasks_present = False
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            if (d / "tasks.md").exists():
+                tasks_present = True
+                ready_items.append("tasks.md ✓")
+            break
+
+    if not tasks_present:
+        blockers.append(
+            "tasks.md absent — ORCHESTRATOR (phase3-plan) has not run\n"
+            "     → echelon continue"
+        )
+
+    # 5. Blocked run — remind user of resume
+    if result_status == "blocked":
+        warnings.append(
+            "Run is blocked — answer questions in .specify/squad/escalation-request.md then:\n"
+            "     → echelon resume \"Q1: <answer>; Q2: <answer>; ...\""
+        )
+
+    # ── Print ──────────────────────────────────────────────────────────────
+    print(f"\n{'─' * 60}", flush=True)
+    print(f"  NEXT STEP", flush=True)
+    print(f"{'─' * 60}", flush=True)
+
+    if not blockers and not warnings:
+        for item in ready_items:
+            print(f"  {item}", flush=True)
+        print(f"\n  ✓  Ready to build:", flush=True)
+        print(f"     echelon harness run <spec-id>", flush=True)
+    else:
+        if blockers:
+            print(f"\n  BUILD BLOCKED — fix in this order:", flush=True)
+            for i, b in enumerate(blockers, 1):
+                lines = b.splitlines()
+                print(f"\n  {i}. {lines[0]}", flush=True)
+                for line in lines[1:]:
+                    print(f"     {line}", flush=True)
+
+        if warnings:
+            print(f"\n  Note:", flush=True)
+            for w in warnings:
+                lines = w.splitlines()
+                print(f"  ⚠  {lines[0]}", flush=True)
+                for line in lines[1:]:
+                    print(f"     {line}", flush=True)
+
+        if ready_items:
+            print(f"\n  Already done: {', '.join(ready_items)}", flush=True)
+
+
+    print(f"{'─' * 60}\n", flush=True)
+
+
+def _print_staging_artifacts(project_root: Path, exclude_dir: Optional[Path] = None) -> None:
+    """Print a compact manifest of staging artifacts from the most recent prior run.
+
+    Skips squad-internal files (issues.md, assumption-review.md, *-endorsement.md)
+    so the list reflects substantive domain artifacts the squad can build on.
+    Silent when no prior run has staging content.
+    """
+    squad_root = project_root / "squad"
+    if not squad_root.exists():
+        return
+
+    candidates = sorted(
+        (d for d in squad_root.iterdir()
+         if d.is_dir() and d.name.startswith("run-") and d != exclude_dir
+         and (d / "staging").exists()),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    if not candidates:
+        return
+
+    staging = candidates[0] / "staging"
+
+    _SKIP_NAMES = {"issues.md", "assumption-review.md", "escalation-request.md",
+                   "user-clarifications.md"}
+    _SKIP_SUFFIXES = ("-halt-endorsement.md", "-endorsement.md")
+
+    names = sorted(
+        f.stem for f in staging.glob("*.md")
+        if f.name not in _SKIP_NAMES
+        and not any(f.name.endswith(s) for s in _SKIP_SUFFIXES)
+    )
+    if not names:
+        return
+
+    print(f"\n{'─' * 60}", flush=True)
+    print(
+        f"  STAGING ARTIFACTS  "
+        f"({len(names)} files · {candidates[0].name})",
+        flush=True,
+    )
+    print(f"{'─' * 60}", flush=True)
+
+    # Two-column layout; strip .md already done via .stem
+    col_w = 28
+    pairs = [names[i:i + 2] for i in range(0, len(names), 2)]
+    for pair in pairs:
+        row = "  ".join(n.ljust(col_w) for n in pair)
+        print(f"  {row.rstrip()}", flush=True)
+
+    print(f"{'─' * 60}\n", flush=True)
+
+
+def _print_cost_summary(project_root: Path) -> None:
+    """Print cumulative cost across all runs if cost data has been recorded.
+
+    Reads cost_usd from each run's state.json. Silent when no run has cost data
+    (i.e. all values are 0 — means tracking hasn't started yet or non-claude CLI).
+    """
+    import json as _json
+
+    squad_root = project_root / "squad"
+    if not squad_root.exists():
+        return
+
+    runs: list[tuple[str, float]] = []
+    for run_dir in sorted(squad_root.iterdir()):
+        if not (run_dir.is_dir() and run_dir.name.startswith("run-")):
+            continue
+        sf = run_dir / "state.json"
+        if not sf.exists():
+            continue
+        try:
+            state = _json.loads(sf.read_text())
+            cost = float(state.get("cost_usd") or 0)
+            if cost > 0:
+                runs.append((run_dir.name, cost))
+        except Exception:
+            pass
+
+    if not runs:
+        return
+
+    total = sum(c for _, c in runs)
+    print(f"\n{'─' * 60}", flush=True)
+    print(f"  COST  ({len(runs)} runs tracked)", flush=True)
+    print(f"{'─' * 60}", flush=True)
+    for name, cost in runs[-5:]:   # last 5 runs
+        print(f"  {name}    ${cost:.4f}", flush=True)
+    if len(runs) > 5:
+        omitted = len(runs) - 5
+        earlier = sum(c for _, c in runs[:-5])
+        print(f"  … {omitted} earlier runs    ${earlier:.4f}", flush=True)
+    print(f"\n  Total    ${total:.4f}", flush=True)
+    print(f"{'─' * 60}\n", flush=True)
+
+
+def _print_prior_knowledge(project_root: Path) -> None:
+    """Print a brief summary of accumulated knowledge-base content at run start.
+
+    Covers sage-decisions.yaml (calibration history + last resolution) and any
+    other KB files present (patterns, pitfalls, calibration-profile, agent-scores).
+    Silent when knowledge-base/ is absent or empty.
+    """
+    kb_dir = project_root / "knowledge-base"
+    if not kb_dir.exists():
+        return
+
+    lines: list[str] = []
+
+    # ── sage-decisions.yaml ─────────────────────────────────────────────────
+    sage_path = kb_dir / "sage-decisions.yaml"
+    if sage_path.exists():
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(sage_path.read_text(errors="replace")) or {}
+            entries = data.get("entries", [])
+            if entries:
+                total = len(entries)
+                overturned = sum(1 for e in entries if e.get("was_correct") is False)
+                calibration = "well-calibrated" if overturned == 0 else f"{overturned} overturned"
+                blocked_streak = sum(
+                    1 for e in reversed(entries) if e.get("outcome") == "blocked"
+                )
+                # First substantive sentence of last resolution, capped at 110 chars
+                last_res = (entries[-1].get("resolution") or "").replace("\n", " ").strip()
+                dot = last_res.find(". ")
+                # Skip trivial lead-ins like "Pending." or "Same as prior."
+                if 0 < dot < 20:
+                    tail = last_res[dot + 2:]
+                    dot2 = tail.find(". ")
+                    last_res = tail
+                    dot = dot2
+                snippet = last_res[:dot + 1] if 0 < dot < 110 else last_res[:110]
+                if len(last_res) > len(snippet):
+                    snippet = snippet.rstrip(".") + "…"
+
+                lines.append(
+                    f"SAGE decisions: {total} · {overturned} overturned ({calibration})"
+                )
+                if blocked_streak >= 2:
+                    lines.append(
+                        f"Blocker pattern: {blocked_streak} consecutive FAILs"
+                        f" on same root cause — human input required"
+                    )
+                if snippet:
+                    lines.append(f"Last resolution: {snippet}")
+        except Exception:
+            lines.append(f"SAGE decisions: {sage_path.stat().st_size} bytes (unreadable)")
+
+    # ── other KB files ──────────────────────────────────────────────────────
+    _KB_FILES = [
+        ("calibration-profile.yaml", "Calibration profile"),
+        ("agent-scores.yaml",        "Agent scores"),
+        ("patterns.yaml",            "Patterns"),
+        ("pitfalls.yaml",            "Pitfalls"),
+        ("estimates-log.yaml",       "Estimates log"),
+    ]
+    for fname, label in _KB_FILES:
+        fpath = kb_dir / fname
+        if not fpath.exists():
+            continue
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(fpath.read_text(errors="replace")) or {}
+            entries = data.get("entries", data if isinstance(data, list) else [])
+            count = len(entries) if isinstance(entries, (list, dict)) else "?"
+            lines.append(f"{label}: {count} entries")
+        except Exception:
+            lines.append(f"{label}: present")
+
+    if not lines:
+        return
+
+    print(f"\n{'─' * 60}", flush=True)
+    print(f"  PRIOR KNOWLEDGE  ({kb_dir.relative_to(project_root)})", flush=True)
+    print(f"{'─' * 60}", flush=True)
+    for line in lines:
+        print(f"  {line}", flush=True)
+    print(f"{'─' * 60}\n", flush=True)
+
+
+def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -> None:
+    """Print a formatted summary of open issues from the most recent prior run.
+
+    Reads staging/issues.md from the latest run dir (excluding the current one).
+    Shows CRITICAL issue titles and user-gated HIGH issues. Silent when nothing
+    to show — no output if no issues.md exists or all issues are LOW/MEDIUM.
+    """
+    import re as _re
+
+    squad_root = project_root / "squad"
+    if not squad_root.exists():
+        return
+
+    # Find most recent run dir with a staging/issues.md, skipping the current run
+    candidates = sorted(
+        (d for d in squad_root.iterdir()
+         if d.is_dir() and d.name.startswith("run-") and d != exclude_dir
+         and (d / "staging" / "issues.md").exists()),
+        key=lambda d: d.name,
+        reverse=True,
+    )
+    if not candidates:
+        return
+
+    issues_md = (candidates[0] / "staging" / "issues.md").read_text(errors="replace")
+
+    # Extract severity counts from the Summary block
+    counts: dict[str, int] = {}
+    for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+        m = _re.search(rf"\*\*{sev}:\*\*\s*(\d+)", issues_md)
+        if m:
+            counts[sev] = int(m.group(1))
+
+    if not counts.get("CRITICAL", 0) and not counts.get("HIGH", 0):
+        return
+
+    # Extract issue entries: title, severity, responsible agent
+    issue_blocks = _re.findall(
+        r"### (ISS-\d+:[^\n]+)\n(.*?)(?=\n### |\Z)",
+        issues_md,
+        _re.DOTALL,
+    )
+
+    criticals: list[str] = []
+    user_gated: list[str] = []
+
+    for title, body in issue_blocks:
+        sev_match = _re.search(r"\*\*Severity:\*\*\s*(\w+)", body)
+        sev = sev_match.group(1).upper() if sev_match else ""
+        is_user = bool(_re.search(r"(?i)responsible agent[^:]*:.*\buser\b", body))
+
+        if sev == "CRITICAL":
+            # Strip "ISS-NNN: " prefix for display, keep it compact
+            short = _re.sub(r"^ISS-\d+:\s*", "", title).strip()
+            criticals.append(short)
+        elif sev == "HIGH" and is_user:
+            short = _re.sub(r"^ISS-\d+:\s*", "", title).strip()
+            user_gated.append(short)
+
+    # Print the banner
+    run_label = candidates[0].name
+    print(f"\n{'─' * 60}", flush=True)
+    print(f"  ⚠  OPEN ISSUES FROM PRIOR RUN  ({run_label})", flush=True)
+    print(f"{'─' * 60}", flush=True)
+
+    if criticals:
+        print(f"\n  CRITICAL ({counts.get('CRITICAL', len(criticals))})", flush=True)
+        for i, title in enumerate(criticals):
+            prefix = "└" if i == len(criticals) - 1 else "├"
+            print(f"  {prefix} {title}", flush=True)
+
+    if user_gated:
+        print(f"\n  HIGH — needs your input before squad can proceed ({len(user_gated)})", flush=True)
+        for i, title in enumerate(user_gated):
+            prefix = "└" if i == len(user_gated) - 1 else "├"
+            print(f"  {prefix} {title}", flush=True)
+
+    other_high = counts.get("HIGH", 0) - len(user_gated)
+    if other_high > 0:
+        print(f"\n  HIGH — squad-solvable ({other_high})", flush=True)
+
+    print(f"\n  Details:  {candidates[0] / 'staging' / 'issues.md'}", flush=True)
+    if user_gated:
+        print(f"  Answer:   echelon resume \"<your answers>\"", flush=True)
+    print(f"{'─' * 60}\n", flush=True)
+
+
 def _select_squad_dir(
     project_root: Path,
     user_message: str,
@@ -669,6 +1102,11 @@ def _cmd_run(
         squad_dir=squad_dir,
     )
 
+    _print_cost_summary(project_root)
+    _print_prior_knowledge(project_root)
+    _print_staging_artifacts(project_root, exclude_dir=squad_dir)
+    _print_open_issues(project_root, exclude_dir=squad_dir)
+
     run_id = state_store.load().get("run_id", "?") if state_store.load() else "?"
     _banner("SQUAD RUN", [
         ("Run ID", run_id),
@@ -684,6 +1122,260 @@ def _cmd_run(
         ("Phase", result.phase),
         ("Artifacts", str(squad_dir)),
     ])
+    _print_next_steps(project_root, result.status)
+
+
+def _next_continue_phase(project_root: Path) -> Optional[str]:
+    """Return the phase ID to continue from, or None when build is ready.
+
+    Runs the same blockers analysis as _print_next_steps and maps each blocker
+    to the entry phase that resolves it. Returns the first (highest-priority)
+    actionable phase, or None if everything is clear.
+    """
+    import re as _re
+
+    # 0. Constitution missing or template — harness now handles it via phase1-constitution
+    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    if not const_path.exists():
+        return "phase1-constitution"
+    if "[PROJECT_NAME]" in const_path.read_text(errors="replace"):
+        return "phase1-constitution"
+
+    # 1. WHY2 failures — fix spec first, so CARTOGRAPHER runs before HOW
+    specs_root = project_root / "specs"
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            qg = d / "quality-gates.md"
+            if qg.exists():
+                qg_text = qg.read_text(errors="replace")
+                gate_pattern = _re.compile(
+                    r"\|\s*(Overall|Structure|Testability|Semantic|Cognitive|"
+                    r"Readability|Behavioral|Depth)\s*\|[^|]+\|[^|]+\|\s*\*\*FAIL\*\*\s*\|([^|]*)\|"
+                )
+                for m in gate_pattern.finditer(qg_text):
+                    note = m.group(2).lower()
+                    if "borderline" not in note or "not borderline" in note:
+                        return "phase1-what"  # hard gate fail → CARTOGRAPHER amendment
+            break
+
+    # 2. HOW artifacts missing
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            if not all((d / f).exists() for f in ("plan.md", "research.md", "data-model.md")):
+                return "phase3-how"
+            break
+
+    # 3. tasks.md missing
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            if not (d / "tasks.md").exists():
+                return "phase3-plan"
+            break
+
+    return None  # build is ready
+
+
+def _cmd_status(project_root: Path) -> None:
+    """Print a concise orientation summary for the current project state.
+
+    Shows: active run state (phase, status, task), staging artifacts,
+    open issues, cost summary, prior knowledge, and what to do next.
+    Designed to re-orient after a break without reading files manually.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    print(flush=True)
+    _banner("ECHELON STATUS", [("Project", str(project_root))])
+
+    # ── Run state ───────────────────────────────────────────────────────────
+    run_dir = _find_current_run_dir(project_root)
+    state: dict = {}
+    if run_dir and (run_dir / "state.json").exists():
+        try:
+            state = _json.loads((run_dir / "state.json").read_text())
+        except Exception:
+            pass
+
+    print(f"\n{'─' * 60}", flush=True)
+    print(f"  RUN STATE", flush=True)
+    print(f"{'─' * 60}", flush=True)
+
+    if not run_dir or not state:
+        print(f"  No active run found.", flush=True)
+        print(f"  → echelon run \"<your task description>\"", flush=True)
+        print(f"{'─' * 60}\n", flush=True)
+    else:
+        run_status = state.get("status", "unknown")
+        _ld = state.get("current_phase") or state.get("last_dispatch")
+        if isinstance(_ld, dict):
+            _ld = _ld.get("phase_id") or _ld.get("phase") or str(_ld)
+        current_phase = _ld or "—"
+        task_msg = state.get("user_message", "")
+        run_id = run_dir.name
+
+        # Human-friendly elapsed time
+        started_at = state.get("started_at", "")
+        elapsed = ""
+        if started_at:
+            try:
+                t = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                delta = datetime.now(timezone.utc) - t
+                h, rem = divmod(int(delta.total_seconds()), 3600)
+                m = rem // 60
+                elapsed = f"{h}h {m}m ago" if h else f"{m}m ago"
+            except Exception:
+                pass
+
+        status_icon = {"done": "✓", "blocked": "⚠", "running": "▶",
+                       "in_progress": "▶", "interrupted": "✗"}.get(run_status, "·")
+
+        print(f"  Run:     {run_id}", flush=True)
+        print(f"  Status:  {status_icon}  {run_status}", flush=True)
+        print(f"  Phase:   {current_phase}", flush=True)
+        if task_msg:
+            snippet = task_msg[:72] + ("…" if len(task_msg) > 72 else "")
+            print(f"  Task:    {snippet}", flush=True)
+        if elapsed:
+            print(f"  Started: {elapsed}", flush=True)
+
+        print(f"{'─' * 60}\n", flush=True)
+
+        # ── Next action hint based on status ────────────────────────────────
+        if run_status in ("running", "in_progress"):
+            print(f"  Run is active — to resume:", flush=True)
+            print(f"    echelon continue", flush=True)
+            print(flush=True)
+        elif run_status == "blocked":
+            esc_path = run_dir / "staging" / "escalation-request.md"
+            print(f"  Run is blocked — answer questions, then:", flush=True)
+            print(f"    echelon resume \"<your answers>\"", flush=True)
+            if esc_path.exists():
+                print(f"  Questions: {esc_path}", flush=True)
+            print(flush=True)
+
+    # ── Staging artifacts ───────────────────────────────────────────────────
+    _print_staging_artifacts(project_root)
+
+    # ── Open issues ─────────────────────────────────────────────────────────
+    _print_open_issues(project_root)
+
+    # ── Prior knowledge ─────────────────────────────────────────────────────
+    _print_prior_knowledge(project_root)
+
+    # ── Cost summary ────────────────────────────────────────────────────────
+    _print_cost_summary(project_root)
+
+    # ── Build readiness (only meaningful when run is done/blocked) ──────────
+    run_status = state.get("status", "")
+    if run_status in ("done", "blocked", "interrupted") or not run_dir:
+        _print_next_steps(project_root, run_status or "done")
+
+
+def _cmd_continue(
+    args: list[str],
+    project_root: Path,
+    ext_dir: Path,
+) -> None:
+    """Resume or advance a squad run without requiring the user to know phase names.
+
+    Behaviour by current run status:
+    - running / in_progress: re-invokes echelon run with the same message (resumes)
+    - blocked:               prints echelon resume guidance and exits
+    - done / interrupted:    determines the next actionable phase from the build-
+                             readiness analysis and starts a new run there, reusing
+                             the original task message and mode from state.json
+    - nothing found:         prints guidance to start a fresh echelon run
+    """
+    import json as _json
+
+    # Optionally accept --mode override
+    mode_override = ""
+    i = 0
+    while i < len(args):
+        if args[i] == "--mode" and i + 1 < len(args):
+            mode_override = args[i + 1]
+            i += 2
+        else:
+            i += 1
+
+    squad_dir = _find_current_run_dir(project_root)
+    if not squad_dir or not (squad_dir / "state.json").exists():
+        print(
+            "No prior run found in this project.\n"
+            "Start a new run:  echelon run \"<task description>\"",
+            flush=True,
+        )
+        return
+
+    state = _json.loads((squad_dir / "state.json").read_text())
+    user_message = state.get("user_message", "")
+    mode = mode_override or state.get("mode", "semi")
+    status = state.get("status", "")
+
+    if status in ("running", "in_progress"):
+        # Live run — let echelon run pick it up (same message → same dir → resume)
+        print(f"[squad] Resuming active run in {squad_dir.name}…", flush=True)
+        _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+        return
+
+    if status == "blocked":
+        q = state.get("escalation_question", "")
+        print(
+            "Run is blocked — answer the escalation questions then:\n\n"
+            "  echelon resume \"Q1: <answer>; Q2: <answer>; …\"\n\n"
+            "Full questions are in .specify/squad/escalation-request.md",
+            flush=True,
+        )
+        return
+
+    # Run is done or interrupted — check constitution first (needs a skill, not a phase)
+    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    const_ok = const_path.exists() and (
+        "[PROJECT_NAME]" not in const_path.read_text(errors="replace")
+    )
+    if not const_ok:
+        print(
+            "Constitution must be created before continuing.\n\n"
+            "  In Claude Code (interactive session):\n"
+            "  /speckit-echelon-constitution\n\n"
+            "Then run 'echelon continue' again.",
+            flush=True,
+        )
+        return
+
+    # Constitution is now handled by the harness (phase1-constitution → agent type).
+    # No longer a special case here — _next_continue_phase handles it.
+
+    # Determine the next phase automatically
+    next_phase = _next_continue_phase(project_root)
+    if next_phase is None:
+        print(
+            "Build is ready — nothing left to do in Phase A.\n\n"
+            "  echelon harness run <spec-id>",
+            flush=True,
+        )
+        return
+
+    phase_labels = {
+        "phase1-constitution": "COMMANDER → speckit.constitution (creates constitution.md)",
+        "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
+        "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
+        "phase3-plan":         "ORCHESTRATOR (task breakdown)",
+        "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
+    }
+    label = phase_labels.get(next_phase, next_phase)
+    print(
+        f"[squad] Continuing from {next_phase} — {label}\n"
+        f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
+        f"[squad] Mode:  {mode}",
+        flush=True,
+    )
+    _cmd_run(
+        ["--next-phase", next_phase, "--mode", mode, user_message],
+        project_root=project_root,
+        ext_dir=ext_dir,
+    )
 
 
 def _cmd_resume(
@@ -802,6 +1494,7 @@ def _cmd_resume(
         ("Current phase", result.phase),
         ("Artifacts", str(squad_dir)),
     ])
+    _print_next_steps(project_root, result.status)
 
 
 # ── Skill resolution ──────────────────────────────────────────────────────
@@ -981,6 +1674,23 @@ def main() -> None:
 
     if command == "land":
         _cmd_land(args[1:])
+        return
+
+    if command == "status":
+        _cmd_status(Path.cwd())
+        return
+
+    if command == "continue":
+        project_root = Path.cwd()
+        ext_dir = project_root / ".specify" / "extensions" / "echelon"
+        if not ext_dir.exists():
+            print(
+                f"✗ Echelon extension not installed: {ext_dir}\n"
+                "  Run: specify extension add echelon",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _cmd_continue(args[1:], project_root=project_root, ext_dir=ext_dir)
         return
 
     if command == "resume":
