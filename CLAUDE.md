@@ -115,3 +115,51 @@ Note the duplication: `scripts/bash/` (host install + sandbox tooling) and `exte
 - Editing CLI Python? Re-run `bash scripts/bash/install.sh` (or `scripts/install.sh`) — `echelon` on PATH points at `~/.echelon/venv/bin/echelon`, not `python -m echelon.cli` from this tree.
 - Adding a new echelon CLI verb? Update `SKILL_MAP` in `src/echelon/cli.py`, add the matching `extension/commands/echelon.<verb>.md` skill, and add the entry to the `USAGE` string. The CLI just forwards arguments — all behaviour lives in the skill.
 - Adding a new agent? Drop the markdown under the right `extension/agents/<layer>/` directory and reference it from `extension/workflow/definition.yaml`. Make sure it emits an `echelon_result` block (see existing agents for the schema; canonical types in `extension/workflow/journal-entry-types.yaml`).
+
+## Agent Authoring Patterns
+
+Established patterns for writing echelon agent and phase spec files. Apply to
+all new agents; adopt in existing agents when next revised.
+
+### Dispatcher / Protocol Split
+
+> The spec file is the dispatcher + phase contract. The agent file is the invariant protocol.
+
+A phase spec file (e.g. `workflow/phases/phase1-constitution.md`) owns:
+- **What to read** — context pack (which files)
+- **What mode** — Creation, Amendment, WHY1, ASSESS2, etc.
+- **What to produce** — expected output filenames
+- **What state to write** — `state_updates` keys the harness reads
+- **What echelon_result to emit** — routing contract
+
+A phase spec file must NOT describe how the agent does its work internally —
+that belongs in the agent file. Violations cause protocol drift: the same logic
+appears in two places and diverges over time (e.g. filename changes that only
+land in one location).
+
+The agent file owns the invariant protocol: identity, ALWAYS/NEVER rules, reasoning
+steps, tool invocation sequences, verification logic, output block schema.
+
+### ALWAYS / NEVER Pairs
+
+> Every behavioural rule in an agent file has both a positive and a negative form.
+
+The ALWAYS form states what good behaviour looks like (positive motivation,
+aligned with Anthropic prompting best-practices). The NEVER form closes the
+escape route and prevents rationalisation. Together they form a complete
+behavioural contract.
+
+Format:
+```
+ALWAYS [positive behaviour — what the agent should reach for]
+NEVER  [its violation — what must not happen]
+```
+
+Example (from CHIEF):
+```
+ALWAYS invoke `speckit.constitution` to write or update the constitution.
+NEVER write `constitution.md` via Write or Edit without first invoking `speckit.constitution`.
+```
+
+Existing agents only have NEVER rules. New agents must have paired rules.
+Existing agents adopt paired rules when next revised.
