@@ -238,12 +238,13 @@ class SquadController:
         # The correct squad dir was already selected by _cmd_run before creating this controller.
         if not existing or existing_status not in ("running", "in_progress"):
             run_id = f"squad-{int(time.time())}"
+            entry_phase = next_phase_override or self._graph.entry_phase()
             self._state_store.initialize(
                 run_id=run_id,
                 mode=mode,
                 user_message=user_message,
                 token_budget=self._token_budget,
-                entry_phase=self._graph.entry_phase(),
+                entry_phase=entry_phase,
                 max_iterations=self._max_iterations,
             )
         else:
@@ -428,6 +429,12 @@ class SquadController:
                     s = self._state_store.load()
                     s.update(extra)
                     self._state_store.save(s)
+                # If this judgment blocked the run (e.g. COMMANDER set
+                # status=blocked after reading SAGE artifacts), stop evaluating
+                # further transitions — continuing would let a second COMMANDER
+                # override the blocked state with a forward route.
+                if self._state_store.load().get("status") == "blocked":
+                    return node.id
                 if next_phase:
                     return next_phase
         return "DONE"

@@ -1340,7 +1340,7 @@ def _cmd_continue(
         return
 
     phase_labels = {
-        "phase1-constitution": "COMMANDER → speckit.constitution (creates constitution.md)",
+        "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
         "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
         "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
         "phase3-plan":         "ORCHESTRATOR (task breakdown)",
