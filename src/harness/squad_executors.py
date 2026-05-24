@@ -115,7 +115,7 @@ class PhaseExecutor(ABC):
                 entry.setdefault("id", next_id)
                 entry.setdefault("timestamp", ts)
                 entry.setdefault("phase", phase_id)
-                fh.write(json.dumps(entry) + "\n")
+                fh.write(json.dumps(entry, default=lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)) + "\n")
                 next_id += 1
 
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
@@ -214,6 +214,7 @@ class AgentExecutor(PhaseExecutor):
         prompt = self._assemble_prompt(node, state)
         result = self._provider.exec_agent(str(self._project_root), prompt)
         self._write_journal_entries(result, node.id)
+        state_store.increment_cost(result.cost_usd)
         return result
 
 
@@ -253,6 +254,76 @@ class StagedParallelExecutor(PhaseExecutor):
     that bypasses Stage 1.
     """
 
+    def _build_agent_prompt(
+        self,
+        agent_entry: dict,
+        state: dict,
+        extra_files: Optional[list] = None,
+    ) -> str:
+        """Build a prompt for a single staged agent.
+
+        Mirrors AgentExecutor._assemble_prompt logic but uses the per-agent
+        context_pack from the agent entry rather than the phase node's context_pack.
+        The phase spec_file is intentionally excluded: phase3-consensus.md is
+        COMMANDER dispatch instructions, not agent task instructions — including
+        it caused agents to receive confusing COMMANDER-oriented text and respond
+        with 'Ready. What would you like to work on?'
+        """
+        agent_id = str(
+            agent_entry.get("id") or agent_entry.get("agent", "")
+        ).split(" ")[0]
+        mode_label = str(agent_entry.get("mode", agent_id))
+
+        parts: list[str] = []
+
+        # 1. Agent role file (protocol + identity)
+        rel = self._graph.agent_file(agent_id)
+        if rel:
+            agent_path = self._ext_dir / rel
+            if agent_path.exists():
+                parts.append(agent_path.read_text())
+
+        # 2. Per-agent context_pack files.
+        # Try spec dirs (specs/*/) first, then project root, then squad staging.
+        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
+        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        spec_dirs: list[Path] = []
+        specs_root = self._project_root / "specs"
+        if specs_root.exists():
+            spec_dirs = sorted(
+                [d for d in specs_root.iterdir() if d.is_dir()],
+                key=lambda d: d.name,
+            )
+        search_bases = spec_dirs + [self._project_root, Path(staging_dir_str)]
+
+        for item in agent_entry.get("context_pack", []):
+            file_ref = item.split(" ")[0].split("(")[0].rstrip()
+            if not file_ref or file_ref.startswith("#"):
+                continue
+            for base in search_bases:
+                candidate = base / file_ref
+                if candidate.exists():
+                    parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                    break
+
+        # 3. Any extra files (e.g. implementability-report.md for PLAN2)
+        for extra_path in (extra_files or []):
+            if extra_path and extra_path.exists():
+                parts.append(
+                    f"\n---\n# {extra_path.name}\n{extra_path.read_text()}"
+                )
+
+        # 4. Squad run context preamble + mode instruction
+        preamble = (
+            f"# Squad Run Context\n"
+            f"SQUAD_DIR={squad_dir_str}\n"
+            f"STAGING_DIR={staging_dir_str}\n"
+            f"PROJECT_ROOT={self._project_root}\n\n"
+            f"Operate in **{mode_label}** mode.\n\n"
+        )
+
+        return preamble + "\n\n".join(parts)
+
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
     ) -> "SquadAgentResult":
@@ -262,25 +333,18 @@ class StagedParallelExecutor(PhaseExecutor):
         stage2_agents = [a for a in node.agents if a.get("stage", 1) == 2]
 
         stage1_results: dict[str, SquadAgentResult] = {}
+        state = state_store.load()
 
         # Stage 1: run in parallel
         with ThreadPoolExecutor(max_workers=max(len(stage1_agents), 1)) as pool:
             futures: dict = {}
             for agent_entry in stage1_agents:
-                agent_id = str(
-                    agent_entry.get("id") or agent_entry.get("agent", "")
-                ).split(" ")[0]
-                mode_label = str(agent_entry.get("mode", agent_id))
-                rel = self._graph.agent_file(agent_id)
-                prompt = ""
-                if rel:
-                    path = self._ext_dir / rel
-                    if path.exists():
-                        prompt = path.read_text()
-                if node.spec_file:
-                    spec_path = self._ext_dir / node.spec_file
-                    if spec_path.exists():
-                        prompt += "\n\n" + spec_path.read_text()
+                mode_label = str(
+                    agent_entry.get("mode")
+                    or agent_entry.get("id")
+                    or agent_entry.get("agent", "")
+                )
+                prompt = self._build_agent_prompt(agent_entry, state)
                 futures[pool.submit(
                     self._provider.exec_agent, str(self._project_root), prompt
                 )] = mode_label
@@ -289,9 +353,10 @@ class StagedParallelExecutor(PhaseExecutor):
                 label = futures[future]
                 stage1_results[label] = future.result()
 
-        # Write stage-1 verdicts and journal entries to state (serial — after join)
+        # Write stage-1 verdicts, journal entries, and cost to state (serial — after join)
         for label, result in stage1_results.items():
             self._write_journal_entries(result, node.id)
+            state_store.increment_cost(result.cost_usd)
             state = state_store.load()
             state[f"{label.lower().replace(' ', '_')}_verdict"] = result.verdict
             for k, v in result.state_updates.items():
@@ -300,28 +365,27 @@ class StagedParallelExecutor(PhaseExecutor):
 
         # Stage 2: PLAN2 — requires implementability-report.md from ASSESS2
         impl_report_path: Optional[Path] = None
-        for candidate in [
-            self._project_root / "implementability-report.md",
-            self._squad_dir / "staging" / "implementability-report.md",
-        ]:
+        specs_root = self._project_root / "specs"
+        spec_dirs: list[Path] = (
+            sorted([d for d in specs_root.iterdir() if d.is_dir()], key=lambda d: d.name)
+            if specs_root.exists() else []
+        )
+        for base in spec_dirs + [self._project_root, self._squad_dir / "staging"]:
+            candidate = base / "implementability-report.md"
             if candidate.exists():
                 impl_report_path = candidate
                 break
 
+        state = state_store.load()
         for agent_entry in stage2_agents:
-            agent_id = str(
-                agent_entry.get("id") or agent_entry.get("agent", "")
-            ).split(" ")[0]
-            rel = self._graph.agent_file(agent_id)
-            prompt = ""
-            if rel:
-                path = self._ext_dir / rel
-                if path.exists():
-                    prompt = path.read_text()
-            if impl_report_path:
-                prompt += f"\n\n---\n# implementability-report.md\n{impl_report_path.read_text()}"
+            prompt = self._build_agent_prompt(
+                agent_entry,
+                state,
+                extra_files=[impl_report_path] if impl_report_path else [],
+            )
             stage2_result = self._provider.exec_agent(str(self._project_root), prompt)
             self._write_journal_entries(stage2_result, node.id)
+            state_store.increment_cost(stage2_result.cost_usd)
             state = state_store.load()
             for k, v in stage2_result.state_updates.items():
                 state[k] = v
