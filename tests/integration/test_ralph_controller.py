@@ -131,7 +131,6 @@ class TestStaleCancelRequestedClearedOnResume:
         # mirroring what the coordinator's kill_losers path does.
         state = state_store.read()
         state["cancel_requested"] = True
-        state_store._data = state_store.read()  # sync cache so write() validates correctly
         state_store.write(state)
 
         # Confirm the stale flag is on disk before calling run_loop.
@@ -143,7 +142,7 @@ class TestStaleCancelRequestedClearedOnResume:
         # immediately exiting with status=cancelled.
         result = controller.run_loop(max_outer=3, max_inner=1)
 
-        assert result.status != "cancelled", (
+        assert result.status in ("converged", "failed", "interrupted"), (
             f"Expected run to proceed past stale cancel_requested. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
@@ -158,4 +157,4 @@ class TestStaleCancelRequestedClearedOnResume:
         assert on_disk["cancel_requested"] is False
 
         result = controller.run_loop(max_outer=3, max_inner=1)
-        assert result.status != "cancelled"
+        assert result.status in ("converged", "failed", "interrupted")
