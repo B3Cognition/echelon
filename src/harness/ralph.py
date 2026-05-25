@@ -134,6 +134,12 @@ class RalphController:
         # Transition to running
         if current_status in ("initialized", "interrupted"):
             state = self._state_store.transition("running")
+            # Clear stale cancel_requested left by a prior SIGINT (same fix squad harness got in 34981c4)
+            fresh = self._state_store.read()
+            if fresh.get("cancel_requested"):
+                fresh["cancel_requested"] = False
+                self._state_store.write(fresh)
+                state = fresh
 
         total_inner_iterations = 0
         pr_url = state.get("pr_url")
