@@ -11,6 +11,7 @@ Uses stdlib concurrent.futures.ThreadPoolExecutor (CS2: no external deps).
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -34,6 +35,20 @@ from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
 
 logger = logging.getLogger(__name__)
+
+
+def _print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
+    """Print a structured blocked banner to stderr when an escalation is still pending."""
+    sep = "=" * 60
+    print(f"\n{sep}", file=sys.stderr)
+    print("  ✗  HARNESS RUN BLOCKED — escalation pending", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
+    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
+    print(f"  Escalation: {esc_file}", file=sys.stderr)
+    print(f"\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
+    print(f"  Discard with: echelon harness run {spec_id} --reset\n", file=sys.stderr)
+    print(sep, file=sys.stderr)
 
 
 class StrategyCoordinator:
@@ -222,6 +237,22 @@ class StrategyCoordinator:
 
         mode_controller = ModeController(intent.mode)
         escalation_handler = EscalationHandler(str(self._escalation_dir))
+
+        # Guard: refuse to wipe an active escalation block without --reset
+        existing = state_store.read()
+        if (
+            existing.get("status") == "blocked"
+            and existing.get("escalation_file")
+            and not intent.reset
+        ):
+            esc_file = Path(existing["escalation_file"])
+            answer_file = esc_file.with_suffix(".answer.md")
+            if not answer_file.exists():
+                _print_escalation_sticky_banner(intent.spec_id, strategy_id, str(esc_file))
+                raise RuntimeError(
+                    f"[{strategy_id}] blocked — escalation pending. "
+                    f"Answer with /speckit-harness-resume or pass --reset to discard."
+                )
 
         # Initialize state
         import uuid

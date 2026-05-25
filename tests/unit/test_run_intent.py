@@ -173,3 +173,13 @@ class TestParseIntent:
         intent = parse_intent("spec 013 banzai mode task: implement feature X as described in spec.md")
         assert intent.task_description == "implement feature X as described in spec.md"
         assert intent.mode == "banzai"
+
+    def test_reset_flag_parsed_from_message(self) -> None:
+        """--reset flag sets reset=True on the parsed intent."""
+        intent = parse_intent("spec 001 --reset")
+        assert intent.reset is True
+
+    def test_no_reset_flag_default(self) -> None:
+        """Absence of --reset flag leaves reset=False (default)."""
+        intent = parse_intent("spec 001")
+        assert intent.reset is False

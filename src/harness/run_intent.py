@@ -38,6 +38,7 @@ class RunIntent:
     kill_losers: bool = False
     strategies: List[str] = field(default_factory=lambda: ["default"])
     task_description: str = ""
+    reset: bool = False
 
     def __post_init__(self) -> None:
         """Validate all fields after construction."""
@@ -211,6 +212,9 @@ def parse_intent(text: str) -> RunIntent:
     if task_match:
         task_description = task_match.group(1).strip()
 
+    # Extract --reset flag
+    reset = "--reset" in text
+
     return RunIntent(
         spec_id=spec_id,
         mode=mode,
@@ -221,4 +225,5 @@ def parse_intent(text: str) -> RunIntent:
         kill_losers=kill_losers,
         strategies=strategies,
         task_description=task_description,
+        reset=reset,
     )

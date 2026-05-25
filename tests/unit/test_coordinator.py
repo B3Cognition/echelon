@@ -318,3 +318,72 @@ class TestTaskDescriptionInBuildPrompt:
             coord.start(intent)
 
         assert captured["build_prompt"] == "spec spec-001 strategy=default semi mode"
+
+
+import json
+
+
+@pytest.mark.unit
+class TestStickyEscalationBlock:
+    """Guard in _run_strategy must refuse to wipe active escalation block unless --reset."""
+
+    def _make_state_file(self, tmp_path: Path, esc_file: str) -> None:
+        """Write a blocked state.json with an escalation_file set."""
+        state_dir = (
+            tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state" / "spec-001"
+        )
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state = {
+            "spec_id": "spec-001",
+            "strategy_id": "default",
+            "run_id": "old-run",
+            "status": "blocked",
+            "mode": "semi",
+            "outer_iter": 2,
+            "max_outer": 5,
+            "inner_iter": 1,
+            "max_inner": 3,
+            "token_budget": 0,
+            "tokens_used": 5000,
+            "cancel_requested": False,
+            "pr_url": None,
+            "branch_name": None,
+            "last_verify_result": None,
+            "termination_reason": None,
+            "escalation_file": esc_file,
+            "iteration_log": [],
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+        state_file = state_dir / "default.json"
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    def test_sticky_escalation_block_refuses_without_reset(self, tmp_path: Path) -> None:
+        """If state is blocked with escalation_file and no answer file, raises RuntimeError."""
+        esc_path = tmp_path / "escalations" / "spec-001-default-20260101T000000Z.md"
+        esc_path.parent.mkdir(parents=True, exist_ok=True)
+        esc_path.write_text("# Escalation\n", encoding="utf-8")
+        # No answer file exists
+
+        self._make_state_file(tmp_path, str(esc_path))
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=1, max_inner=1, reset=False)
+
+        with pytest.raises(RuntimeError, match="escalation pending"):
+            coord.start(intent)
+
+    def test_sticky_escalation_block_allows_with_reset(self, tmp_path: Path) -> None:
+        """If reset=True, the blocked state is wiped and the run proceeds normally."""
+        esc_path = tmp_path / "escalations" / "spec-001-default-20260101T000000Z.md"
+        esc_path.parent.mkdir(parents=True, exist_ok=True)
+        esc_path.write_text("# Escalation\n", encoding="utf-8")
+        # No answer file — but reset=True bypasses the guard
+
+        self._make_state_file(tmp_path, str(esc_path))
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=True)
+
+        results = coord.start(intent)
+        assert results[0].status == "converged"
