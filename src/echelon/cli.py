@@ -384,7 +384,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run
+    from harness.skills.run_skill import run, _count_tasks
 
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
@@ -430,6 +430,15 @@ def _cmd_harness_run(args: list[str]) -> None:
         sys.exit(1)
     gitops = GitOpsManager(config)
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+
+    task_count = _count_tasks(spec_id, str(Path.cwd()))
+    target_display = str(getattr(config, "target_repo", None) or "local")
+    _banner("HARNESS RUN", [
+        ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),
+        ("Mode", mode),
+        ("Strategy", strategy),
+        ("Target", target_display),
+    ])
 
     run(user_message, provider, gitops)
 
