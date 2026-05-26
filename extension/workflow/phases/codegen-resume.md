@@ -32,7 +32,8 @@ write_state "codegen_${RESUME_PHASE}" "building" $RESUME_COMPLETED null null
 ```
 
 Display:
-```
+
+```text
 [CODEGEN RESUME]
 Pipeline ID : <pipeline_id>
 Wing        : <wing>
@@ -49,12 +50,24 @@ Jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
 
 ## Error Handling
 
+Before stopping for any error below, write the harness status file if set:
+
+```bash
+if [ -n "${HARNESS_BUILD_STATUS_FILE:-}" ]; then
+  if [ -f "codegen-impasse.md" ]; then
+    printf '{"status":"impasse","impasse_file":"codegen-impasse.md"}' > "$HARNESS_BUILD_STATUS_FILE"
+  else
+    printf '{"status":"failed","reason":"%s"}' "${_CURRENT_PHASE:-unknown}" > "$HARNESS_BUILD_STATUS_FILE"
+  fi
+fi
+```
+
 | Error | Response |
-|-------|----------|
+| --- | --- |
 | Missing Phase A artifact | STOP — print which file is missing + hint to run `speckit.echelon.run` |
 | SOAR binary not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
 | codegen CLI not found | HARD STOP — print `bash ~/echelon/scripts/install.sh` |
 | No test runner found | Warn, mark tier1 unavailable, generate CI config |
 | Impasse (exit 2) | Stop, report `codegen-impasse.md` — do NOT enter feedback loop |
-| Context window limit | Write state.json, print `[CODEGEN] Run speckit.echelon.codegen --resume to continue` |
+| Context window limit | Write state.json + harness status file, print `[CODEGEN] Run speckit.echelon.codegen --resume to continue` |
 | Filesystem write outside target | BLOCK — `[CODEGEN SECURITY] Write outside target blocked` |
