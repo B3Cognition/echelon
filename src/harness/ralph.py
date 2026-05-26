@@ -1107,13 +1107,14 @@ class RalphController:
         # Budget-exhausted recovery: if budget was bumped, resume from current progress
         if state.get("termination_reason") == "budget_exhausted":
             stored_usage = state.get("tokens_used", 0)
-            budget_ok = token_budget is None or token_budget <= 0 or token_budget > stored_usage
+            budget_ok = token_budget is None or token_budget <= 0 or token_budget > stored_usage / 0.95
             if budget_ok:
                 self._state_store.transition("running")
                 budget_display = f"{token_budget:,}" if token_budget else "∞"
                 print(
                     f"[harness] budget bumped → resuming "
                     f"(usage={stored_usage:,}, new budget={budget_display})",
+                    file=sys.stderr,
                     flush=True,
                 )
                 return self._run_loop_inner(
@@ -1131,6 +1132,9 @@ class RalphController:
                     f"  Increase token_budget in harness config or pass --reset to start fresh.",
                     file=sys.stderr,
                 )
+                # _finalize() is intentionally skipped here: the state already
+                # reflects the blocked/exhausted status from the prior run and
+                # calling it would not change anything meaningful.
                 return LoopResult(
                     status="blocked",
                     termination_reason="budget_exhausted",
