@@ -494,3 +494,117 @@ class TestVerifyLocallyUnknownProjectType:
         assert result.final_verify is not None
         assert result.final_verify.passed is False
         assert any(f.id == "local-verify-skipped" for f in result.final_verify.failures)
+
+
+@pytest.mark.unit
+class TestVerifyLocallySwift:
+    """Swift project detection and verification."""
+
+    def test_root_package_swift_detected(self, tmp_path: Path) -> None:
+        """Package.swift at worktree root → swift build + swift test."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        with patch("subprocess.run") as mock_run, \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["swift", "build"] in calls
+        assert ["swift", "test"] in calls
+
+    def test_nested_package_swift_detected(self, tmp_path: Path) -> None:
+        """Package.swift in a subdirectory → detected and used as package dir."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        pkg_dir = worktree / "Packages" / "MyLib"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        with patch("subprocess.run") as mock_run, \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert mock_run.call_args_list[0].kwargs.get("cwd") == str(pkg_dir) or \
+               mock_run.call_args_list[0].args[1] == str(pkg_dir) or \
+               all(c.kwargs.get("cwd") == str(pkg_dir) for c in mock_run.call_args_list)
+
+    def test_swift_build_failure_reported(self, tmp_path: Path) -> None:
+        """swift build non-zero exit → failure with id='swift-build', test not run."""
+        from harness.verify_result import FailureCategory
+
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        def _side_effect(cmd, **kwargs):
+            if cmd == ["swift", "build"]:
+                return MagicMock(returncode=1, stdout="error: compile error", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=_side_effect), \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "swift-build"
+        assert result.failures[0].category == FailureCategory.BUILD
+
+    def test_swift_test_failure_reported(self, tmp_path: Path) -> None:
+        """swift test non-zero exit → failure with id='swift-test'."""
+        from harness.verify_result import FailureCategory
+
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        def _side_effect(cmd, **kwargs):
+            if cmd == ["swift", "test"]:
+                return MagicMock(returncode=1, stdout="", stderr="Test failed: assertion error")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=_side_effect), \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "swift-test"
+        assert result.failures[0].category == FailureCategory.TEST
+
+    def test_swift_not_on_path_returns_clear_error(self, tmp_path: Path) -> None:
+        """swift toolchain absent → passed=False, id='swift-not-found'."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        with patch("shutil.which", return_value=None):
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "swift-not-found"
+        assert "swift" in result.failures[0].error.lower()
+
+    def test_python_takes_priority_over_swift(self, tmp_path: Path) -> None:
+        """pyproject.toml + Package.swift → Python path taken, not Swift."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+        (worktree / "pyproject.toml").write_text('[project]\nname = "x"\n')
+
+        with patch.object(controller, "_exec_verify_python") as mock_py, \
+             patch.object(controller, "_exec_verify_swift") as mock_sw:
+            mock_py.return_value = MagicMock(passed=True, failures=[])
+            result = controller._exec_verify_locally(str(worktree))
+
+        mock_py.assert_called_once()
+        mock_sw.assert_not_called()

@@ -658,6 +658,9 @@ class RalphController:
         but no package.json), runs verify.sh if it exists, otherwise falls back
         to ``python -m pytest``.
 
+        For Swift projects (Package.swift present at root or in a subdirectory),
+        runs ``swift build`` then ``swift test``.
+
         Returns VerifyResult with structured failures when tests fail.
         """
         import subprocess
@@ -705,8 +708,22 @@ class RalphController:
         is_node = (wt / "package.json").exists() and not has_python_markers
         is_python = has_python_markers
 
+        # Swift Package Manager: root Package.swift takes priority; fall back to
+        # the shallowest Package.swift found in subdirectories (e.g. Packages/Foo/).
+        swift_package_dir: Optional[Path] = None
+        if (wt / "Package.swift").exists():
+            swift_package_dir = wt
+        else:
+            candidates = sorted(wt.glob("**/Package.swift"), key=lambda p: len(p.parts))
+            if candidates:
+                swift_package_dir = candidates[0].parent
+        is_swift = swift_package_dir is not None and not is_python and not is_node
+
         if is_python:
             return self._exec_verify_python(worktree_path, start)
+
+        if is_swift:
+            return self._exec_verify_swift(str(swift_package_dir), start)
 
         if (wt / "pnpm-lock.yaml").exists():
             commands = [
@@ -847,6 +864,73 @@ class RalphController:
                 id="pytest-error",
                 error=str(e),
             ))
+
+        duration_s = time.monotonic() - start
+        return VerifyResult(
+            passed=len(failures) == 0,
+            failures=failures,
+            duration_s=duration_s,
+        )
+
+    def _exec_verify_swift(self, package_dir: str, start: float) -> VerifyResult:
+        """Run Swift Package Manager verification: ``swift build`` then ``swift test``.
+
+        Runs from ``package_dir`` (the directory containing Package.swift).
+        Timeout is 600 s per stage to allow for initial dependency resolution and
+        compilation which can be slow on a cold cache.
+        """
+        import subprocess
+        import shutil
+        import time
+
+        failures = []
+
+        if not shutil.which("swift"):
+            duration_s = time.monotonic() - start
+            return VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.BUILD,
+                    id="swift-not-found",
+                    error=(
+                        "swift toolchain not found on PATH. "
+                        "Install Xcode or the Swift toolchain and ensure 'swift' is on PATH."
+                    ),
+                )],
+                duration_s=duration_s,
+            )
+
+        for stage, cmd in [("build", "swift build"), ("test", "swift test")]:
+            try:
+                result = subprocess.run(
+                    cmd.split(),
+                    cwd=package_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                if result.returncode != 0:
+                    output = (result.stdout + result.stderr).strip()
+                    failures.append(FailureEntry(
+                        category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
+                        id=f"swift-{stage}",
+                        error=output[-2000:] if len(output) > 2000 else output,
+                    ))
+                    break
+            except subprocess.TimeoutExpired:
+                failures.append(FailureEntry(
+                    category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
+                    id=f"swift-{stage}-timeout",
+                    error=f"{cmd} timed out after 600 seconds",
+                ))
+                break
+            except Exception as e:
+                failures.append(FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=f"swift-{stage}-error",
+                    error=str(e),
+                ))
+                break
 
         duration_s = time.monotonic() - start
         return VerifyResult(
