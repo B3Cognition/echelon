@@ -18,12 +18,31 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
+    """Print a structured blocked banner to stderr when an escalation is still pending."""
+    import os
+
+    use_color = not os.environ.get("NO_COLOR", "")
+    sep = "=" * 60
+    print(f"\n{sep}", file=sys.stderr)
+    print("  HARNESS RUN BLOCKED — escalation pending", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
+    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
+    print(f"  Escalation: {esc_file}", file=sys.stderr)
+    print(f"\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
+    print(f"  Discard with: echelon harness run {spec_id} --reset\n", file=sys.stderr)
+    print(sep, file=sys.stderr)
+
+
 VALID_CATEGORIES = {
     "same_failure_repeat",
     "spec_guard_violation",
     "why_quality_regression",
     "budget_exhaustion",
     "infra_failure",
+    "no_progress",
 }
 
 

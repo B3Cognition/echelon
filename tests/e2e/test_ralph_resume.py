@@ -159,12 +159,15 @@ class TestRalphResume:
             config=harness_config,
         )
 
-        with pytest.raises(RuntimeError, match="Loop is blocked"):
-            controller2.run_loop(
-                max_outer=5,
-                max_inner=5,
-                token_budget=500_000,
-            )
+        result2 = controller2.run_loop(
+            max_outer=5,
+            max_inner=5,
+            token_budget=500_000,
+        )
+
+        # Now should return LoopResult with status="blocked" instead of raising
+        assert result2.status == "blocked"
+        assert result2.termination_reason == "blocker_escalation"
 
     def test_guided_mode_pause_and_resume(
         self, tmp_harness_dir: Path, harness_config: HarnessConfig,

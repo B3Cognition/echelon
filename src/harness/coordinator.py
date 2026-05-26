@@ -21,7 +21,7 @@ from harness.budget import slice_budget
 from harness.paths import harness_dir
 from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
-from harness.escalation import EscalationHandler
+from harness.escalation import EscalationHandler, print_escalation_sticky_banner
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxProvider
@@ -34,6 +34,7 @@ from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
 
 logger = logging.getLogger(__name__)
+
 
 
 class StrategyCoordinator:
@@ -76,6 +77,24 @@ class StrategyCoordinator:
             List of LoopResults from all strategies.
         """
         n = len(intent.strategies)
+
+        # Pre-flight: refuse to wipe any active escalation block without --reset
+        for sid in intent.strategies:
+            store = StateStore(self._state_dir, intent.spec_id, sid)
+            existing = store.read()
+            if (
+                existing.get("status") == "blocked"
+                and existing.get("escalation_file")
+                and not intent.reset
+            ):
+                escalation_handler = EscalationHandler(str(self._escalation_dir))
+                answer = escalation_handler.check_resume(str(existing["escalation_file"]))
+                if answer is None:
+                    print_escalation_sticky_banner(intent.spec_id, sid, str(existing["escalation_file"]))
+                    raise RuntimeError(
+                        f"[{sid}] blocked — escalation pending. "
+                        f"Answer with /speckit-harness-resume or pass --reset to discard."
+                    )
 
         # Load strategy specs (build_command + context per strategy)
         strategy_specs = load_strategies(
@@ -229,14 +248,30 @@ class StrategyCoordinator:
         state_store.acquire_lock(run_id)
 
         try:
-            state_store.initialize(
-                run_id=run_id,
-                mode=intent.mode,
-                max_outer=intent.max_outer,
-                max_inner=intent.max_inner,
-                token_budget=budget or 0,
+            existing = state_store.read()
+            existing_status = existing.get("status")
+            should_resume = (
+                not intent.reset
+                and existing_status in ("running", "interrupted")
             )
-            state_store.transition("running")
+
+            if should_resume:
+                logger.info(
+                    "[%s/%s] Resuming from %s state (outer=%s)",
+                    intent.spec_id, strategy_id,
+                    existing_status,
+                    existing.get("outer_iter", 0),
+                )
+                state_store.transition("running")
+            else:
+                state_store.initialize(
+                    run_id=run_id,
+                    mode=intent.mode,
+                    max_outer=intent.max_outer,
+                    max_inner=intent.max_inner,
+                    token_budget=budget or 0,
+                )
+                state_store.transition("running")
 
             arguments = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
             if intent.task_description:

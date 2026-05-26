@@ -460,7 +460,10 @@ def _cmd_harness_run(args: list[str]) -> None:
     spec_id = args[0]
     kv: dict[str, str] = {}
     free_text: list[str] = []
+    reset = "--reset" in args[1:]
     for arg in args[1:]:
+        if arg == "--reset":
+            continue
         if "=" in arg:
             k, _, v = arg.partition("=")
             kv[k.strip()] = v.strip()
@@ -472,6 +475,8 @@ def _cmd_harness_run(args: list[str]) -> None:
     parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
     if free_text:
         parts.append(f"task: {' '.join(free_text)}")
+    if reset:
+        parts.append("--reset")
     user_message = " ".join(parts)
 
     from harness.config import load_config, ValidationError as HarnessValidationError

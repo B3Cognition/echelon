@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import signal
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,10 @@ from harness.state import StateStore
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 logger = logging.getLogger(__name__)
+
+# Number of consecutive failed outer iterations with no file changes before
+# escalating with a no-progress block.
+_NO_PROGRESS_THRESHOLD = 2
 
 
 class RalphController:
@@ -134,6 +139,11 @@ class RalphController:
         # Transition to running
         if current_status in ("initialized", "interrupted"):
             state = self._state_store.transition("running")
+            # Clear stale cancel_requested set by a prior SIGINT — it persists across process
+            # invocations and would cause immediate killed_by_coordinator exit on next run.
+            if state.get("cancel_requested"):
+                state["cancel_requested"] = False
+                self._state_store.write(state)
 
         total_inner_iterations = 0
         pr_url = state.get("pr_url")
@@ -141,6 +151,7 @@ class RalphController:
         start_outer = state.get("outer_iter", 0)
         last_verify_failures_text: str = ""
         final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
+        no_progress_count = 0  # consecutive failed outer iters with no file changes
 
         for outer_iter in range(start_outer, max_outer):
             # Check termination conditions
@@ -149,9 +160,14 @@ class RalphController:
                 token_budget=token_budget,
             )
             if termination:
-                term_status = "cancelled" if termination == "killed_by_coordinator" else (
-                    "interrupted" if termination == "user_cancel" else "failed"
-                )
+                if termination == "killed_by_coordinator":
+                    term_status = "cancelled"
+                elif termination == "user_cancel":
+                    term_status = "interrupted"
+                elif termination == "budget_exhausted":
+                    term_status = "blocked"
+                else:
+                    term_status = "failed"
                 return self._finalize(
                     status=term_status,
                     reason=termination,
@@ -202,11 +218,14 @@ class RalphController:
                     # the build phase, which check_cancel() alone does not detect.
                     termination = self._check_termination(tokens_used, token_budget)
                     if termination:
-                        term_status = (
-                            "interrupted" if termination == "user_cancel"
-                            else "cancelled" if termination == "killed_by_coordinator"
-                            else "failed"
-                        )
+                        if termination == "killed_by_coordinator":
+                            term_status = "cancelled"
+                        elif termination == "user_cancel":
+                            term_status = "interrupted"
+                        elif termination == "budget_exhausted":
+                            term_status = "blocked"
+                        else:
+                            term_status = "failed"
                         return self._finalize(
                             status=term_status,
                             reason=termination,
@@ -305,6 +324,51 @@ class RalphController:
                             tokens_used=tokens_used,
                             final_verify=inner_result.get("final_verify"),
                         )
+
+                    # No-progress guard: if the LLM made no file changes on a
+                    # failed iteration, increment the stuck counter and escalate
+                    # after _NO_PROGRESS_THRESHOLD consecutive stuck iterations.
+                    if self._has_file_changes(worktree_path):
+                        no_progress_count = 0
+                    else:
+                        no_progress_count += 1
+                        logger.warning(
+                            "No file changes detected after failed outer iter %d "
+                            "(no_progress_count=%d/%d)",
+                            outer_iter, no_progress_count, _NO_PROGRESS_THRESHOLD,
+                        )
+                        if no_progress_count >= _NO_PROGRESS_THRESHOLD:
+                            escalation_file = self._escalation.escalate(
+                                spec_id=self._spec_id,
+                                strategy_id=self._strategy_id,
+                                category="no_progress",
+                                context=(
+                                    "## No Progress Detected\n\n"
+                                    f"The build loop has failed {no_progress_count} consecutive "
+                                    "iterations with no file changes.\n"
+                                    "This usually means the LLM is stuck or the build "
+                                    "instructions are unclear.\n\n"
+                                    "Please review the build output above and either:\n"
+                                    "1. Clarify the task description and resume with "
+                                    "/speckit-harness-resume\n"
+                                    "2. Reset and restart with --reset flag"
+                                ),
+                                last_verify_result=_verify_to_dict(
+                                    inner_result["final_verify"]
+                                ) if inner_result.get("final_verify") else None,
+                            )
+                            state = self._state_store.read()
+                            state["escalation_file"] = escalation_file
+                            self._state_store.write(state)
+                            return self._finalize(
+                                status="blocked",
+                                reason="no_progress",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                            )
 
                     # Inner loop exhausted -- commit progress and continue outer
                     self._commit_and_push(worktree_path, outer_iter)
@@ -869,6 +933,24 @@ class RalphController:
 
     # === Git operations ===
 
+    def _has_file_changes(self, worktree_path: str) -> bool:
+        """Return True if any files were added or modified since last commit.
+
+        Checks both working-tree changes and staged (index) changes so that
+        files written and staged but not yet committed are also detected.
+        Returns True on error to avoid false escalation.
+        """
+        try:
+            # git status --porcelain covers both staged and unstaged changes
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True, text=True,
+                cwd=worktree_path, timeout=10,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return True  # Assume progress on error to avoid false escalation
+
     def _commit_and_push(self, worktree_path: str, outer_iter: int) -> None:
         """Commit all changes and push to remote.
 
@@ -1091,6 +1173,48 @@ class RalphController:
         build_prompt: str = "",
     ) -> LoopResult:
         """Handle resume from blocked state."""
+        # Budget-exhausted recovery: if budget was bumped, resume from current progress
+        if state.get("termination_reason") == "budget_exhausted":
+            stored_usage = state.get("tokens_used", 0)
+            # None/<=0 = unlimited; positive must clear 95% re-trigger threshold
+            budget_sufficient = token_budget is None or token_budget <= 0 or token_budget > stored_usage / 0.95
+            if budget_sufficient:
+                self._state_store.transition("running")
+                budget_display = f"{token_budget:,}" if token_budget else "∞"
+                print(
+                    f"[harness] budget bumped → resuming "
+                    f"(usage={stored_usage:,}, new budget={budget_display})",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return self._run_loop_inner(
+                    max_outer=max_outer,
+                    max_inner=max_inner,
+                    token_budget=token_budget,
+                    build_command=build_command,
+                    strategy_context=strategy_context,
+                    build_prompt=build_prompt,
+                )
+            else:
+                print(
+                    f"\n[harness] ✗ Token budget still exhausted "
+                    f"(usage={stored_usage:,}, budget={token_budget:,}).\n"
+                    f"  Increase token_budget in harness config or pass --reset to start fresh.",
+                    file=sys.stderr,
+                )
+                # _finalize() is intentionally skipped here: the state already
+                # reflects the blocked/exhausted status from the prior run and
+                # calling it would not change anything meaningful.
+                return LoopResult(
+                    status="blocked",
+                    termination_reason="budget_exhausted",
+                    outer_iterations=state.get("outer_iter", 0),
+                    inner_iterations=state.get("inner_iter", 0),
+                    tokens_used=stored_usage,
+                    pr_url=state.get("pr_url"),
+                    final_verify=None,
+                )
+
         escalation_file = state.get("escalation_file")
         if escalation_file:
             answer = self._escalation.check_resume(escalation_file)
@@ -1108,8 +1232,19 @@ class RalphController:
                     build_prompt=build_prompt,
                 )
             else:
-                raise RuntimeError(
-                    "Loop is blocked -- provide answer via /speckit-harness-resume"
+                _print_blocked_banner(
+                    spec_id=self._spec_id,
+                    strategy_id=self._strategy_id,
+                    escalation_file=escalation_file,
+                )
+                return LoopResult(
+                    status="blocked",
+                    termination_reason="blocker_escalation",
+                    outer_iterations=state.get("outer_iter", 0),
+                    inner_iterations=state.get("inner_iter", 0),
+                    tokens_used=state.get("tokens_used", 0),
+                    pr_url=state.get("pr_url"),
+                    final_verify=None,
                 )
         else:
             # Blocked without escalation file (e.g., guided mode pause)
@@ -1166,6 +1301,20 @@ class RalphController:
 
 
 # === Utility functions ===
+
+def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) -> None:
+    """Print a formatted blocked banner to stderr."""
+    sep = "=" * 60
+    print(f"\n{sep}", file=sys.stderr)
+    print("  ✗  HARNESS RUN BLOCKED — escalation pending", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
+    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
+    print(f"  File:      {escalation_file}", file=sys.stderr)
+    print("\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
+    print(f"  Discard with: echelon harness run {spec_id} --reset\n", file=sys.stderr)
+    print(sep, file=sys.stderr)
+
 
 def _estimate_tokens(result: ExecResult) -> int:
     """Rough token estimate from ExecResult output length."""

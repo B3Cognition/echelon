@@ -27,6 +27,7 @@ VALID_TERMINATION_REASONS = {
     "killed_by_coordinator",
     "visual_failed",
     "review_fix_queued",
+    "no_progress",
 }
 
 
