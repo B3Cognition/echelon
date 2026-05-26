@@ -77,11 +77,11 @@ Define `write_state` helper (called after every phase transition):
 
 ```bash
 write_state() {
-  local phase="$1" status="$2" completed="${3:-0}" current="${4:-null}" verdict="${5:-null}"
+  local phase="$1" phase_status="$2" completed="${3:-0}" current="${4:-null}" verdict="${5:-null}"
   mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
   cat > "$HARNESS_STATE_FILE" << STATEOF
 {
-  "status": "${status}",
+  "status": "${phase_status}",
   "phase": "${phase}",
   "build": {
     "total_tasks": ${TOTAL_TASKS:-0},
