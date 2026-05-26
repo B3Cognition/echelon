@@ -262,11 +262,6 @@ class StrategyCoordinator:
                     existing_status,
                     existing.get("outer_iter", 0),
                 )
-                # A leftover "running" status means the previous process crashed;
-                # transition through interrupted first so the transition validator
-                # allows the subsequent running transition.
-                if existing_status == "running":
-                    state_store.transition("interrupted")
                 state_store.transition("running")
             else:
                 state_store.initialize(

@@ -491,6 +491,16 @@ class TestSmartResumeDetection:
         should_resume = not reset and existing_status in ("running", "interrupted")
         assert should_resume is False
 
+    def test_terminal_state_starts_fresh(self) -> None:
+        """Terminal states (converged, failed) → should_resume=False (fresh start)."""
+        for terminal_status in ("converged", "failed"):
+            reset = False
+            should_resume = not reset and terminal_status in ("running", "interrupted")
+            assert should_resume is False, (
+                f"expected should_resume=False for terminal status '{terminal_status}', "
+                f"got True"
+            )
+
     # --- Integration-style tests via StrategyCoordinator ---
 
     def test_interrupted_state_resumes_and_converges(self, tmp_path: Path) -> None:
@@ -572,6 +582,7 @@ class TestSmartResumeDetection:
 
             results = coord.start(intent)
 
-        # Should converge — the blocked state was NOT wiped (initialize not called
-        # by smart resume), and ralph handles it via _handle_blocked_resume.
+        # Should converge — blocked status falls through to fresh initialization;
+        # the sticky-escalation pre-flight guard (in start()) prevents this from
+        # wiping mid-run blocked state when an escalation_file is present.
         assert results[0].status == "converged"
