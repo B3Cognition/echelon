@@ -320,9 +320,6 @@ class TestTaskDescriptionInBuildPrompt:
         assert captured["build_prompt"] == "spec spec-001 strategy=default semi mode"
 
 
-import json
-
-
 @pytest.mark.unit
 class TestStickyEscalationBlock:
     """Guard in _run_strategy must refuse to wipe active escalation block unless --reset."""
@@ -385,5 +382,26 @@ class TestStickyEscalationBlock:
         coord = _make_coordinator(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=True)
 
+        results = coord.start(intent)
+        assert results[0].status == "converged"
+
+    def test_sticky_escalation_block_passes_when_answered(self, tmp_path: Path) -> None:
+        """If a ## Answer section exists in the escalation file, the guard passes."""
+        from harness.escalation import EscalationHandler
+
+        esc_path = tmp_path / "escalations" / "spec-001-default-20260101T000000Z.md"
+        esc_path.parent.mkdir(parents=True, exist_ok=True)
+        esc_path.write_text("# Escalation\n", encoding="utf-8")
+
+        # Simulate what /speckit-harness-resume does — append ## Answer via EscalationHandler.resume()
+        handler = EscalationHandler(str(tmp_path))
+        handler.resume(str(esc_path), "Continue with approach B")
+
+        self._make_state_file(tmp_path, str(esc_path))
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=3, max_inner=1, reset=False)
+
+        # Should NOT raise — the answer is present
         results = coord.start(intent)
         assert results[0].status == "converged"
