@@ -253,3 +253,217 @@ class TestBudgetBumpAutoResume:
             f"Expected run to resume with unlimited budget. "
             f"Got status={result.status!r}, reason={result.termination_reason!r}"
         )
+
+
+# === No-progress guard providers ===
+
+
+class _AlwaysFailNoChangesProvider(SandboxProvider):
+    """Provider that always fails verification and writes no files to worktree.
+
+    Simulates an LLM that is stuck — it consistently fails and never makes
+    progress (no file changes between outer iterations).
+    """
+
+    def create(self, spec: SandboxSpec) -> SandboxHandle:
+        return SandboxHandle(id="mock-noprogress", session_id="sess-np")
+
+    def exec(
+        self,
+        handle: SandboxHandle,
+        cmd: str,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        # Build always succeeds (exit 0) but verify always fails.
+        if "verify" in cmd:
+            return ExecResult(
+                exit_code=1,
+                stdout=json.dumps({
+                    "passed": False,
+                    "failures": [{"category": "test", "id": "test-fail", "error": "always failing"}],
+                }),
+                stderr="",
+                duration_ms=50,
+                resource_stats=None,
+            )
+        return ExecResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=50,
+            resource_stats=None,
+        )
+
+    def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
+        pass  # Never write anything — simulates no file changes
+
+    def read_file(self, handle: SandboxHandle, path: str) -> bytes:
+        return b""
+
+    def destroy(self, handle: SandboxHandle) -> None:
+        pass
+
+
+class _FailThenChangeProvider(SandboxProvider):
+    """Provider that fails consistently but writes a file on the second outer iter.
+
+    Iteration behaviour:
+      - outer iter 0: fail verify, no file changes  -> no_progress_count = 1
+      - outer iter 1: fail verify, write a file     -> no_progress_count reset to 0
+      - outer iter 2: fail verify, no file changes  -> no_progress_count = 1 (< 2, no escalation)
+
+    This exercises that the counter properly resets when file changes occur,
+    preventing premature escalation.
+    """
+
+    def __init__(self, worktree_path: str) -> None:
+        self._worktree_path = worktree_path
+        self._outer_call_count = 0  # counts create() calls (one per outer iter)
+
+    def create(self, spec: SandboxSpec) -> SandboxHandle:
+        outer = self._outer_call_count
+        self._outer_call_count += 1
+        return SandboxHandle(id=f"mock-change-{outer}", session_id=f"sess-{outer}")
+
+    def exec(
+        self,
+        handle: SandboxHandle,
+        cmd: str,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        # Determine which outer iteration this is from the handle id.
+        outer = int(handle.id.split("-")[-1])
+
+        # On outer iter 1: write a file to the worktree to simulate file changes.
+        if "verify" not in cmd and outer == 1:
+            import os
+            wt = self._worktree_path
+            if os.path.isdir(wt):
+                with open(os.path.join(wt, "progress_marker.txt"), "w") as f:
+                    f.write("changed\n")
+
+        # Always fail verify
+        if "verify" in cmd:
+            return ExecResult(
+                exit_code=1,
+                stdout=json.dumps({
+                    "passed": False,
+                    "failures": [{"category": "test", "id": "test-fail", "error": "still failing"}],
+                }),
+                stderr="",
+                duration_ms=50,
+                resource_stats=None,
+            )
+        return ExecResult(
+            exit_code=0,
+            stdout="",
+            stderr="",
+            duration_ms=50,
+            resource_stats=None,
+        )
+
+    def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
+        pass
+
+    def read_file(self, handle: SandboxHandle, path: str) -> bytes:
+        return b""
+
+    def destroy(self, handle: SandboxHandle) -> None:
+        pass
+
+
+def _make_controller_with_provider(
+    tmp_path: Path,
+    provider: SandboxProvider,
+    mode: str = "semi",
+) -> tuple:
+    """Create a RalphController with a custom provider and real StateStore."""
+    config = HarnessConfig(
+        target_repo="git@github.com:test/repo.git",
+        target_default_branch="main",
+        provider="docker",
+    )
+    state_store = StateStore(tmp_path, "spec-001", "default")
+    mode_controller = ModeController(mode)
+    escalation_handler = EscalationHandler(str(tmp_path / "harness"))
+    gitops = _make_gitops()
+
+    controller = RalphController(
+        provider=provider,
+        gitops=gitops,
+        state_store=state_store,
+        mode_controller=mode_controller,
+        escalation_handler=escalation_handler,
+        spec_id="spec-001",
+        strategy_id="default",
+        config=config,
+    )
+    return controller, state_store
+
+
+class TestNoProgressGuard:
+    """No-progress guard: escalate early when LLM is stuck (no file changes)."""
+
+    def test_no_progress_triggers_escalation_after_two_fails(
+        self, tmp_path: Path
+    ) -> None:
+        """Two consecutive failed outer iterations with no file changes trigger
+        a no_progress escalation before max_outer is exhausted."""
+        import unittest.mock as mock
+
+        provider = _AlwaysFailNoChangesProvider()
+        controller, state_store = _make_controller_with_provider(tmp_path, provider)
+        state_store.initialize("run-np-001", "semi")
+
+        # Patch _has_file_changes to always return False (no file changes in a
+        # real git repo would require actual git setup, so we simulate via mock).
+        with mock.patch.object(controller, "_has_file_changes", return_value=False):
+            result = controller.run_loop(max_outer=5, max_inner=1)
+
+        assert result.status == "blocked", (
+            f"Expected status=blocked after no-progress escalation. "
+            f"Got status={result.status!r}, reason={result.termination_reason!r}"
+        )
+        assert result.termination_reason == "no_progress", (
+            f"Expected termination_reason=no_progress. "
+            f"Got {result.termination_reason!r}"
+        )
+        # Should escalate after 2 iterations, not burn through all 5
+        assert result.outer_iterations <= 3, (
+            f"Expected escalation before outer iter 3, "
+            f"got outer_iterations={result.outer_iterations}"
+        )
+
+    def test_progress_resets_no_progress_count(self, tmp_path: Path) -> None:
+        """File changes on iter 2 reset the no_progress counter so iter 3
+        alone is insufficient to trigger escalation (count=1, threshold=2)."""
+        import unittest.mock as mock
+
+        # Sequence: [False, True, False] — no change, change, no change
+        file_change_sequence = [False, True, False]
+        call_counter = {"n": 0}
+
+        def _side_effect(wt_path: str) -> bool:
+            idx = call_counter["n"]
+            call_counter["n"] += 1
+            if idx < len(file_change_sequence):
+                return file_change_sequence[idx]
+            return False  # extra calls: no change (but shouldn't be reached)
+
+        provider = _AlwaysFailNoChangesProvider()
+        controller, state_store = _make_controller_with_provider(tmp_path, provider)
+        state_store.initialize("run-np-002", "semi")
+
+        with mock.patch.object(controller, "_has_file_changes", side_effect=_side_effect):
+            result = controller.run_loop(max_outer=3, max_inner=1)
+
+        # Should NOT have escalated with no_progress — after iter 2 the counter
+        # was reset to 0, so iter 3 only brought it to 1 (below threshold=2).
+        assert result.termination_reason != "no_progress", (
+            f"no_progress escalation should not fire when count was reset. "
+            f"Got status={result.status!r}, reason={result.termination_reason!r}"
+        )

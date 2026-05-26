@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import signal
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,10 @@ from harness.state import StateStore
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 logger = logging.getLogger(__name__)
+
+# Number of consecutive failed outer iterations with no file changes before
+# escalating with a no-progress block.
+_NO_PROGRESS_THRESHOLD = 2
 
 
 class RalphController:
@@ -146,6 +151,7 @@ class RalphController:
         start_outer = state.get("outer_iter", 0)
         last_verify_failures_text: str = ""
         final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
+        no_progress_count = 0  # consecutive failed outer iters with no file changes
 
         for outer_iter in range(start_outer, max_outer):
             # Check termination conditions
@@ -318,6 +324,53 @@ class RalphController:
                             tokens_used=tokens_used,
                             final_verify=inner_result.get("final_verify"),
                         )
+
+                    # No-progress guard: if the LLM made no file changes on a
+                    # failed iteration, increment the stuck counter and escalate
+                    # after _NO_PROGRESS_THRESHOLD consecutive stuck iterations.
+                    if self._has_file_changes(worktree_path):
+                        no_progress_count = 0
+                    else:
+                        no_progress_count += 1
+                        logger.warning(
+                            "No file changes detected after failed outer iter %d "
+                            "(no_progress_count=%d/%d)",
+                            outer_iter, no_progress_count, _NO_PROGRESS_THRESHOLD,
+                        )
+                        if no_progress_count >= _NO_PROGRESS_THRESHOLD:
+                            escalation_file = self._escalation.escalate(
+                                spec_id=self._spec_id,
+                                strategy_id=self._strategy_id,
+                                category="no_progress",
+                                context=(
+                                    f"The build loop has failed {no_progress_count} consecutive "
+                                    "iterations with no file changes.\n\n"
+                                    "## No Progress Detected\n\n"
+                                    f"The build loop has failed {no_progress_count} consecutive "
+                                    "iterations with no file changes.\n"
+                                    "This usually means the LLM is stuck or the build "
+                                    "instructions are unclear.\n\n"
+                                    "Please review the build output above and either:\n"
+                                    "1. Clarify the task description and resume with "
+                                    "/speckit-harness-resume\n"
+                                    "2. Reset and restart with --reset flag"
+                                ),
+                                last_verify_result=_verify_to_dict(
+                                    inner_result["final_verify"]
+                                ) if inner_result.get("final_verify") else None,
+                            )
+                            state = self._state_store.read()
+                            state["escalation_file"] = escalation_file
+                            self._state_store.write(state)
+                            return self._finalize(
+                                status="blocked",
+                                reason="no_progress",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                            )
 
                     # Inner loop exhausted -- commit progress and continue outer
                     self._commit_and_push(worktree_path, outer_iter)
@@ -881,6 +934,23 @@ class RalphController:
         )
 
     # === Git operations ===
+
+    def _has_file_changes(self, worktree_path: str) -> bool:
+        """Return True if any tracked files changed since last commit.
+
+        Used by the no-progress guard: if the LLM fails a full outer iteration
+        and produced zero file changes, the loop may be stuck.
+        Returns True on error to avoid false escalation.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "diff", "--name-only", "HEAD"],
+                capture_output=True, text=True,
+                cwd=worktree_path, timeout=10,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return True  # Assume progress on error to avoid false escalation
 
     def _commit_and_push(self, worktree_path: str, outer_iter: int) -> None:
         """Commit all changes and push to remote.

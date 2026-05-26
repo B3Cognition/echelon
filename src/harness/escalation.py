@@ -42,6 +42,7 @@ VALID_CATEGORIES = {
     "why_quality_regression",
     "budget_exhaustion",
     "infra_failure",
+    "no_progress",
 }
 
 
