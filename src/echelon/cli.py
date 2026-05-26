@@ -364,16 +364,18 @@ def _cmd_harness(args: list[str]) -> None:
         print(
             "Usage: echelon harness <subcommand> [args...]\n\n"
             "Subcommands:\n"
-            "  init [<target_repo>]              Initialize harness — config, mirror clone, image fingerprint\n"
-            "  run  <spec_id> [strategy=<s>]     Run build→verify→PR loop\n"
-            "                                    strategy: default (echelon squad) or codegen (SOAR)\n"
-            "                                    mode:     semi (default) | banzai | guided\n\n"
+            "  init   [<target_repo>]             Initialize harness — config, mirror clone, image fingerprint\n"
+            "  run    <spec_id> [strategy=<s>]    Run build→verify→PR loop\n"
+            "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
+            "                                     mode:     semi (default) | banzai | guided\n"
+            "  resume <spec_id>                   Resume a blocked run (e.g. after adding verify_command)\n\n"
             "Examples:\n"
             "  echelon harness init\n"
             "  echelon harness init https://github.com/org/repo\n"
             "  echelon harness run 001\n"
             "  echelon harness run 001 strategy=codegen\n"
             "  echelon harness run 001 strategy=default mode=banzai\n"
+            "  echelon harness resume 001\n"
         )
         return
 
@@ -382,6 +384,8 @@ def _cmd_harness(args: list[str]) -> None:
         _cmd_harness_init(args[1:])
     elif subcmd == "run":
         _cmd_harness_run(args[1:])
+    elif subcmd == "resume":
+        _cmd_harness_resume(args[1:])
     else:
         print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
         sys.exit(1)
@@ -538,6 +542,108 @@ def _cmd_harness_run(args: list[str]) -> None:
         ("Target", target_display),
     ])
 
+    run(user_message, provider, gitops)
+
+
+def _cmd_harness_resume(args: list[str]) -> None:
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon harness resume <spec_id> [strategy=<s>]\n\n"
+            "Resume a harness run that is blocked waiting for verify_command configuration.\n\n"
+            "Steps:\n"
+            "  1. Add verify_command to echelon-config.yml (or run 'echelon cicd').\n"
+            "  2. Run: echelon harness resume <spec_id>\n",
+        )
+        return
+
+    spec_id = args[0]
+    kv: dict[str, str] = {}
+    for arg in args[1:]:
+        if "=" in arg:
+            k, _, v = arg.partition("=")
+            kv[k.strip()] = v.strip()
+    strategy = kv.get("strategy", "default")
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.paths import harness_dir
+    from harness.state import StateStore
+
+    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    if not echelon_yml.exists():
+        print(
+            "✗ Harness not initialised for this project.\n"
+            f"  Expected: {echelon_yml}\n"
+            "  Fix: run 'echelon harness init' first.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    try:
+        config = load_config()
+    except HarnessValidationError as e:
+        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        sys.exit(1)
+
+    # Check the blocked state before proceeding
+    state_dir = harness_dir(Path.cwd()) / "state"
+    state_store = StateStore(state_dir, spec_id, strategy)
+    state = state_store.read()
+
+    if not state:
+        print(
+            f"✗ No harness state found for spec {spec_id!r} (strategy={strategy!r}).\n"
+            "  Run 'echelon harness run <spec_id>' to start a new run.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    current_status = state.get("status", "unknown")
+    termination_reason = state.get("termination_reason", "")
+
+    if current_status != "blocked":
+        print(
+            f"✗ Spec {spec_id!r} is not blocked (status={current_status!r}).\n"
+            "  Use 'echelon harness run <spec_id>' to start or continue.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if termination_reason != "verify_command_needed":
+        print(
+            f"✗ Spec {spec_id!r} is blocked for a different reason: {termination_reason!r}.\n"
+            "  Use 'echelon harness run <spec_id>' to resume.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not config.verify_command:
+        print(
+            "✗ verify_command is still not set in echelon-config.yml.\n\n"
+            "  Option 1 — auto-configure:  echelon cicd\n"
+            "  Option 2 — manual:          add to echelon-config.yml:\n"
+            "    verify_command: swift test --package-path Packages/MyLib\n"
+            "    verify_command: pytest\n"
+            "    verify_command: go test ./...\n\n"
+            f"  Then re-run:  echelon harness resume {spec_id}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    _banner("HARNESS RESUME", [
+        ("Spec", spec_id),
+        ("Strategy", strategy),
+        ("Verify", config.verify_command),
+    ])
+
+    from harness.skills.run_skill import run
+    gitops = GitOpsManager(config)
+    provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+    user_message = f"spec {spec_id} {strategy} mode resume"
     run(user_message, provider, gitops)
 
 

@@ -466,8 +466,8 @@ class TestVerifyLocallyUnknownProjectType:
         assert result.failures[0].id == "local-verify-skipped"
         assert result.failures[0].category == FailureCategory.BUILD
 
-    def test_unknown_project_type_does_not_converge(self, tmp_path: Path) -> None:
-        """Build succeeds + unknown project type → status=failed, not converged."""
+    def test_unknown_project_type_blocks_with_verify_command_needed(self, tmp_path: Path) -> None:
+        """Build succeeds + unknown project type → status=blocked, reason=verify_command_needed."""
         from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
@@ -485,15 +485,153 @@ class TestVerifyLocallyUnknownProjectType:
 
         result = controller.run_loop(
             max_outer=1,
-            max_inner=0,  # skip inner loop — not under test here
+            max_inner=0,
             build_command="echelon codegen",
             build_prompt="build a hello world",
         )
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
+        assert result.termination_reason == "verify_command_needed"
         assert result.final_verify is not None
         assert result.final_verify.passed is False
         assert any(f.id == "local-verify-skipped" for f in result.final_verify.failures)
+
+
+@pytest.mark.unit
+class TestVerifyCommandNeeded:
+    """local-verify-skipped escalates to blocked, not silent failure."""
+
+    def test_banner_printed_to_stderr(self, tmp_path: Path, capsys) -> None:
+        """Unknown project type → escalation banner printed to stderr."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+        err = capsys.readouterr().err
+        assert "HARNESS RUN BLOCKED" in err
+        assert "verify_command" in err
+        assert "echelon harness resume" in err
+
+    def test_state_written_as_blocked(self, tmp_path: Path) -> None:
+        """Unknown project type → StateStore reflects blocked + verify_command_needed."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+        state = state_store.read()
+        assert state["status"] == "blocked"
+        assert state["termination_reason"] == "verify_command_needed"
+
+    def test_does_not_iterate_build_loop(self, tmp_path: Path) -> None:
+        """Hard-stop after first verify_command_needed — LLM not called again."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        controller.run_loop(max_outer=5, max_inner=3,
+                            build_command="echelon codegen", build_prompt="x")
+        # Build must only have been called once (hard stop, no retries)
+        assert llm.exec_build.call_count == 1
+
+    def test_resume_with_verify_command_configured_reruns(self, tmp_path: Path) -> None:
+        """After blocking, resume with verify_command set → loop re-enters."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+        from harness.config import HarnessConfig
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        # First run: blocks
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+        assert state_store.read()["termination_reason"] == "verify_command_needed"
+
+        # Now configure verify_command on the controller's config
+        controller._config = HarnessConfig(
+            **{**controller._config.__dict__, "verify_command": "pytest"}
+        )
+        llm.exec_build.reset_mock()
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        with patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = controller.run_loop(max_outer=1, max_inner=0,
+                                         build_command="echelon codegen", build_prompt="x")
+
+        # Loop re-entered: build was called again
+        assert llm.exec_build.call_count == 1
+
+    def test_resume_without_verify_command_still_blocked(self, tmp_path: Path) -> None:
+        """Resume without configuring verify_command → still blocked, banner printed."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        # First run blocks
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+
+        # Resume without adding verify_command → still blocked
+        result = controller.run_loop(max_outer=1, max_inner=0,
+                                     build_command="echelon codegen", build_prompt="x")
+        assert result.status == "blocked"
+        assert result.termination_reason == "verify_command_needed"
 
 
 @pytest.mark.unit

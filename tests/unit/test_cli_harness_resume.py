@@ -1,0 +1,106 @@
+"""Tests for _cmd_harness_resume in cli.py."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+def _write_state(state_dir: Path, spec_id: str, strategy: str, state: dict) -> None:
+    """Write a fake harness state file (matches StateStore layout: spec_id/strategy.json)."""
+    path = state_dir / spec_id / f"{strategy}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state))
+
+
+def _make_echelon_yml(base: Path, verify_command: str = "") -> Path:
+    """Write a minimal echelon-config.yml."""
+    yml_dir = base / ".specify" / "extensions" / "echelon"
+    yml_dir.mkdir(parents=True, exist_ok=True)
+    content = "autonomy:\n  mode: banzai\ntarget_repo: .\ntarget_default_branch: main\nprovider: docker\n"
+    if verify_command:
+        content += f"verify_command: {verify_command}\n"
+    (yml_dir / "echelon-config.yml").write_text(content)
+    return yml_dir / "echelon-config.yml"
+
+
+@pytest.mark.unit
+class TestCmdHarnessResume:
+    """_cmd_harness_resume guards and banner."""
+
+    def _call(self, args: list[str], cwd: Path) -> int:
+        """Call _cmd_harness_resume and return exit code (0 = ok, else sys.exit arg)."""
+        from echelon.cli import _cmd_harness_resume
+        with patch("pathlib.Path.cwd", return_value=cwd):
+            try:
+                _cmd_harness_resume(args)
+                return 0
+            except SystemExit as e:
+                return int(e.code)
+
+    def test_missing_echelon_yml_exits_1(self, tmp_path: Path) -> None:
+        rc = self._call(["001"], tmp_path)
+        assert rc == 1
+
+    def test_spec_not_blocked_exits_1(self, tmp_path: Path) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        from harness.paths import harness_dir
+        with patch("pathlib.Path.cwd", return_value=tmp_path):
+            sd = harness_dir(tmp_path) / "state"
+        _write_state(sd, "001", "default", {"status": "converged", "termination_reason": "converged"})
+        rc = self._call(["001"], tmp_path)
+        assert rc == 1
+
+    def test_wrong_blocked_reason_exits_1(self, tmp_path: Path) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        from harness.paths import harness_dir
+        with patch("pathlib.Path.cwd", return_value=tmp_path):
+            sd = harness_dir(tmp_path) / "state"
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "budget_exhausted",
+        })
+        rc = self._call(["001"], tmp_path)
+        assert rc == 1
+
+    def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
+        _make_echelon_yml(tmp_path)   # no verify_command
+        from harness.paths import harness_dir
+        with patch("pathlib.Path.cwd", return_value=tmp_path):
+            sd = harness_dir(tmp_path) / "state"
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "verify_command_needed",
+        })
+        rc = self._call(["001"], tmp_path)
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "verify_command" in err
+        assert "echelon cicd" in err
+
+    def test_valid_resume_prints_banner_and_calls_run(self, tmp_path: Path) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        from harness.paths import harness_dir
+        with patch("pathlib.Path.cwd", return_value=tmp_path):
+            sd = harness_dir(tmp_path) / "state"
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "verify_command_needed",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001"])
+
+        mock_run.assert_called_once()
+
+    def test_no_args_prints_help(self, tmp_path: Path, capsys) -> None:
+        from echelon.cli import _cmd_harness_resume
+        _cmd_harness_resume([])
+        out = capsys.readouterr().out
+        assert "verify_command" in out
+        assert "echelon harness resume" in out

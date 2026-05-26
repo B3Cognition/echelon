@@ -240,6 +240,20 @@ class RalphController:
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
                     tokens_used += verify_result.token_usage
 
+                    # Hard-stop: unknown project type cannot be fixed by the LLM.
+                    # Block immediately and ask the human to configure verify_command.
+                    if any(f.id == "local-verify-skipped" for f in verify_result.failures):
+                        _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
+                        return self._finalize(
+                            status="blocked",
+                            reason="verify_command_needed",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
+
                     # Log verify iteration
                     self._append_iteration_log(
                         state, outer_iter, 0, "verify",
@@ -1257,6 +1271,36 @@ class RalphController:
         build_prompt: str = "",
     ) -> LoopResult:
         """Handle resume from blocked state."""
+        # verify_command_needed: check if the user has now configured verify_command
+        # or if the project type is now auto-detectable, then re-run from scratch.
+        if state.get("termination_reason") == "verify_command_needed":
+            if self._config.verify_command:
+                self._state_store.transition("running")
+                print(
+                    "[harness] verify_command configured → re-running from scratch",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return self._run_loop_inner(
+                    max_outer=max_outer,
+                    max_inner=max_inner,
+                    token_budget=token_budget,
+                    build_command=build_command,
+                    strategy_context=strategy_context,
+                    build_prompt=build_prompt,
+                )
+            else:
+                _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
+                return LoopResult(
+                    status="blocked",
+                    termination_reason="verify_command_needed",
+                    outer_iterations=state.get("outer_iter", 0),
+                    inner_iterations=state.get("inner_iter", 0),
+                    tokens_used=state.get("tokens_used", 0),
+                    pr_url=state.get("pr_url"),
+                    final_verify=None,
+                )
+
         # Budget-exhausted recovery: if budget was bumped, resume from current progress
         if state.get("termination_reason") == "budget_exhausted":
             stored_usage = state.get("tokens_used", 0)
@@ -1385,6 +1429,28 @@ class RalphController:
 
 
 # === Utility functions ===
+
+def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
+    """Print a formatted banner when verify_command is missing."""
+    sep = "=" * 60
+    print(f"\n{sep}", file=sys.stderr)
+    print("  ✗  HARNESS RUN BLOCKED — test runner not configured", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
+    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
+    print(
+        "\n  The harness could not detect a test runner in the built worktree.\n"
+        "  Run 'echelon cicd' to auto-configure verification, or add\n"
+        "  verify_command manually to echelon-config.yml, for example:\n\n"
+        "    verify_command: swift test --package-path Packages/MyLib\n"
+        "    verify_command: pytest\n"
+        "    verify_command: go test ./...",
+        file=sys.stderr,
+    )
+    print(f"\n  Then resume with:  echelon harness resume {spec_id}", file=sys.stderr)
+    print(f"  Discard with:     echelon harness run {spec_id} --reset\n", file=sys.stderr)
+    print(sep, file=sys.stderr)
+
 
 def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) -> None:
     """Print a formatted blocked banner to stderr."""

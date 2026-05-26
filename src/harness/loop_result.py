@@ -28,6 +28,7 @@ VALID_TERMINATION_REASONS = {
     "visual_failed",
     "review_fix_queued",
     "no_progress",
+    "verify_command_needed",
 }
 
 
