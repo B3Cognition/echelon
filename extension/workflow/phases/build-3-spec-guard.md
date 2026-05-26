@@ -27,7 +27,7 @@ Use the Agent tool:
   <instructions>
   You are SPEC GUARD. Read agents/build/spec-guard.md for your complete protocol.
   Verify task {task_id} implementation against spec requirements.
-  Append to `spec-compliance-report.md`. Append entries to `reasoning-journal.json`.
+  Append to `spec-compliance-report.md`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

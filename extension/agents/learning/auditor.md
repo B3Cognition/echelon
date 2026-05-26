@@ -561,22 +561,21 @@ If speckit-echelon-veteran (VETERAN) is inaccessible: use 0.5 defaults for both 
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: CALIBRATED
-output_files:
-  - knowledge-base/calibration-profile.yaml
-  - .specify/specs/<feature>/calibration-dashboard.md
-  - confidence-flags.md
-journal_entries:
-  - id: null
-    type: calibration_update
-    phase: finalize
-    agent: CALIBRATE
-    timestamp: null
-    data:
-      # speckit-echelon-auditor (AUDITOR) FINALIZE parses adr_self_check and self_check type entries to validate unresolved concerns (FR-INH-006).
-      # Do NOT rename those entry types — speckit-echelon-auditor (AUDITOR) FINALIZE depends on the exact type strings.
-      confidence_delta: 0.0
-      agents_reviewed: []
-      adr_self_check_count: 0
-```
+echelon_result:
+  verdict: CALIBRATED
+  output_files:
+    - knowledge-base/calibration-profile.yaml
+    - .specify/specs/<feature>/calibration-dashboard.md
+    - confidence-flags.md
+  journal_entries:
+    - id: null
+      type: calibration_update
+      phase: finalize
+      agent: CALIBRATE
+      timestamp: null
+      data:
+        # speckit-echelon-auditor (AUDITOR) FINALIZE parses adr_self_check and self_check type entries to validate unresolved concerns (FR-INH-006).
+        # Do NOT rename those entry types — speckit-echelon-auditor (AUDITOR) FINALIZE depends on the exact type strings.
+        confidence_delta: 0.0
+        agents_reviewed: []
+        adr_self_check_count: 0

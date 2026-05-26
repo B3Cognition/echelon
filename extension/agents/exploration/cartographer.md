@@ -215,7 +215,7 @@ Optionally:
 
 - `reference-architectures.md` — similar projects analyzed (greenfield only)
 - `assumption-review.md` — WHY1's challenge results (if WHY1 has run)
-- `reasoning-journal.json` — shared reasoning log from prior agents
+- `reasoning-journal.jsonl` — shared reasoning log from prior agents
 
 Read ALL input artifacts before beginning. Pay special attention to:
 
@@ -590,21 +590,20 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Repeat one `decision` entry per major requirement or scope decision.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../spec.md
-  - .specify/.../00-overview.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase1-what
-    agent: WHAT
-    timestamp: null
-    data:
-      artifact: "spec.md"
-      section: "<section name where this decision appears>"
-      reasoning: "<why you made this requirement decision>"
-      rationale: "<principle or constraint that drove the choice>"
-      alternatives_considered: ["<alternative 1>", "<alternative 2>"]
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../spec.md
+    - .specify/.../00-overview.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase1-what
+      agent: WHAT
+      timestamp: null
+      data:
+        artifact: "spec.md"
+        section: "<section name where this decision appears>"
+        reasoning: "<why you made this requirement decision>"
+        rationale: "<principle or constraint that drove the choice>"
+        alternatives_considered: ["<alternative 1>", "<alternative 2>"]

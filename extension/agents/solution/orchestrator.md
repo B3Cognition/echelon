@@ -64,7 +64,7 @@ If no mode is specified, infer from context:
 - `estimates.md` — effort estimates from ASSESS
 - `mvp-scope.md` — what must ship vs what can defer
 - `constitution.md` — non-negotiable project principles
-- `reasoning-journal.json` — prior agent reasoning
+- `reasoning-journal.jsonl` — prior agent reasoning
 
 ### Process
 
@@ -291,21 +291,20 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per significant task grouping, dependency, or priority decision.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../tasks.md
-  - .specify/.../critical-path.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: <phase3-plan | phase3-consensus>
-    agent: PLAN
-    timestamp: null
-    data:
-      artifact: "tasks.md"
-      section: "<task group or dependency area>"
-      reasoning: "<why tasks are grouped or ordered this way>"
-      rationale: "<constraint or dependency principle>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../tasks.md
+    - .specify/.../critical-path.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: <phase3-plan | phase3-consensus>
+      agent: PLAN
+      timestamp: null
+      data:
+        artifact: "tasks.md"
+        section: "<task group or dependency area>"
+        reasoning: "<why tasks are grouped or ordered this way>"
+        rationale: "<constraint or dependency principle>"
+        alternatives_considered: []

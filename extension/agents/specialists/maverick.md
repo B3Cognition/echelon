@@ -380,20 +380,19 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per alternative generated. Reference the TRIZ principle applied in the `rationale` field.
 
-```echelon_result
-verdict: ALTERNATIVES_GENERATED
-output_files:
-  - .specify/.../alternatives.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-maverick (MAVERICK)
-    timestamp: null
-    data:
-      artifact: "alternatives.md"
-      section: "<alternative name>"
-      reasoning: "<why this alternative breaks the current assumption or constraint>"
-      rationale: "<TRIZ principle applied — e.g. Principle 1: Segmentation>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: ALTERNATIVES_GENERATED
+  output_files:
+    - .specify/.../alternatives.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-maverick (MAVERICK)
+      timestamp: null
+      data:
+        artifact: "alternatives.md"
+        section: "<alternative name>"
+        reasoning: "<why this alternative breaks the current assumption or constraint>"
+        rationale: "<TRIZ principle applied — e.g. Principle 1: Segmentation>"
+        alternatives_considered: []

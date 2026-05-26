@@ -190,3 +190,88 @@ class TestConditionEvaluator:
         assert self.ev.evaluate("quality_gates.fail AND iteration < max_iterations", state) is True
         assert self.ev.evaluate("quality_gates.pass OR convergence_detected", state) is False
         assert self.ev.evaluate("iteration >= max_iterations", state) is False
+
+    # ── Literal numeric RHS in comparisons ───────────────────────────────
+    # Regression guard: conditions like "fix_cycle < 2" use a numeric literal
+    # on the right, not a state field name. Previously _get(state, "2") returned
+    # None, so the comparison always returned False regardless of fix_cycle.
+
+    def test_literal_rhs_lt_true(self):
+        assert self.ev.evaluate("fix_cycle < 2", {"fix_cycle": 1}) is True
+
+    def test_literal_rhs_lt_false(self):
+        assert self.ev.evaluate("fix_cycle < 2", {"fix_cycle": 2}) is False
+
+    def test_literal_rhs_gte_true(self):
+        assert self.ev.evaluate("fix_cycle >= 2", {"fix_cycle": 2}) is True
+
+    def test_literal_rhs_gte_false(self):
+        assert self.ev.evaluate("fix_cycle >= 2", {"fix_cycle": 1}) is False
+
+    def test_literal_rhs_blocked_task_count(self):
+        assert self.ev.evaluate("blocked_task_count >= 3", {"blocked_task_count": 3}) is True
+        assert self.ev.evaluate("blocked_task_count >= 3", {"blocked_task_count": 2}) is False
+
+    def test_literal_rhs_retry_count(self):
+        assert self.ev.evaluate("retry_count < 2", {"retry_count": 1}) is True
+        assert self.ev.evaluate("retry_count < 2", {"retry_count": 2}) is False
+
+    # ── Compound conditions from build phases (definition.yaml lines 943-1065) ──
+    # Regression guard: these conditions used lowercase "and" which the evaluator
+    # splits on \bAND\b (uppercase only). The compound was treated as a single
+    # field=value match (field="verdict", expected="FAIL and fix_cycle < 2"),
+    # always returning False even when both sides would have been True.
+
+    def test_verdict_and_literal_early_cycle(self):
+        """verdict = FAIL AND fix_cycle < 2: both true → True."""
+        assert self.ev.evaluate(
+            "verdict = FAIL AND fix_cycle < 2",
+            {"fix_cycle": 1},
+            _result("FAIL"),
+        ) is True
+
+    def test_verdict_and_literal_late_cycle(self):
+        """verdict = FAIL AND fix_cycle >= 2: fix_cycle satisfied → True."""
+        assert self.ev.evaluate(
+            "verdict = FAIL AND fix_cycle >= 2",
+            {"fix_cycle": 2},
+            _result("FAIL"),
+        ) is True
+
+    def test_verdict_and_literal_wrong_verdict(self):
+        """verdict = FAIL AND fix_cycle < 2: verdict mismatch → False."""
+        assert self.ev.evaluate(
+            "verdict = FAIL AND fix_cycle < 2",
+            {"fix_cycle": 1},
+            _result("PASS"),
+        ) is False
+
+    def test_verdict_and_literal_cycle_exhausted(self):
+        """verdict = FAIL AND fix_cycle < 2: cycle exhausted → False."""
+        assert self.ev.evaluate(
+            "verdict = FAIL AND fix_cycle < 2",
+            {"fix_cycle": 2},
+            _result("FAIL"),
+        ) is False
+
+    def test_changes_requested_and_literal(self):
+        assert self.ev.evaluate(
+            "verdict = CHANGES_REQUESTED AND fix_cycle < 2",
+            {"fix_cycle": 0},
+            _result("CHANGES_REQUESTED"),
+        ) is True
+
+    def test_needs_context_and_literal(self):
+        assert self.ev.evaluate(
+            "verdict = NEEDS_CONTEXT AND retry_count < 2",
+            {"retry_count": 1},
+            _result("NEEDS_CONTEXT"),
+        ) is True
+
+    def test_all_tasks_complete_and_no_more_checkpoints(self):
+        state = {"all_tasks_complete": True, "no_more_phase_checkpoints": True}
+        assert self.ev.evaluate("all_tasks_complete AND no_more_phase_checkpoints", state) is True
+
+    def test_all_tasks_complete_but_more_checkpoints(self):
+        state = {"all_tasks_complete": True, "no_more_phase_checkpoints": False}
+        assert self.ev.evaluate("all_tasks_complete AND no_more_phase_checkpoints", state) is False

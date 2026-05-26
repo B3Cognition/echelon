@@ -66,7 +66,7 @@ Validate DISCOVER's outputs before the WHAT agent builds requirements on top of 
 - `assumptions.md` — explicit assumptions requiring validation
 - `unknowns.md` — questions and knowledge gaps
 - `reference-architectures.md` (greenfield only)
-- `reasoning-journal.json` — prior agent reasoning
+- `reasoning-journal.jsonl` — prior agent reasoning
 
 **This mode does NOT run Understanding metrics.** No spec exists yet. Understanding is not required for WHY1.
 
@@ -112,7 +112,7 @@ Review `unknowns.md` and assess:
 
 #### 5. Cross-Reference Reasoning Journal
 
-Read `reasoning-journal.json` entries from DISCOVER:
+Read `reasoning-journal.jsonl` entries from DISCOVER:
 
 - Are there low-confidence insights that were used to make high-impact decisions?
 - Are there implications listed that seem unjustified by the reasoning?
@@ -197,7 +197,7 @@ All current artifacts:
 - `spec.md` — the specification to validate
 - `00-overview.md` — domain overview
 - `assumption-review.md` (from WHY1, if it ran)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 - `calibration-profile.yaml` (if available from knowledge base)
 - Access to Understanding (via `speckit.echelon.understanding-validate` Skill tool)
 
@@ -819,30 +819,13 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).
 
-```echelon_result
-verdict: <PASS | FAIL>
-output_files:
-  - .specify/.../assumptions.md
-state_updates:
-  quality_scores:
-    - pass: <true | false>
-      overall: <0.0-1.0>
-      structure: <0.0-1.0>
-      testability: <0.0-1.0>
-      readability: <0.0-1.0>
-      cognitive: <0.0-1.0>
-      semantic: <0.0-1.0>
-      behavioral: <0.0-1.0>
-      depth: <0.0-1.0>
-journal_entries:
-  - id: null
-    type: quality_check
-    phase: <phase1-why1 | phase1-why2 | phase3-consensus>
-    agent: WHY
-    timestamp: null
-    data:
-      pass: <true | false>
-      scores:
+echelon_result:
+  verdict: <PASS | FAIL>
+  output_files:
+    - .specify/.../assumptions.md
+  state_updates:
+    quality_scores:
+      - pass: <true | false>
         overall: <0.0-1.0>
         structure: <0.0-1.0>
         testability: <0.0-1.0>
@@ -851,17 +834,33 @@ journal_entries:
         semantic: <0.0-1.0>
         behavioral: <0.0-1.0>
         depth: <0.0-1.0>
-      issues: []
-  - id: null
-    type: challenge
-    phase: <phase1-why1 | phase1-why2 | phase3-consensus>
-    agent: WHY
-    timestamp: null
-    data:
-      artifact: "<filename>"
-      section: "<section>"
-      reasoning: "<why this is a problem, what evidence supports the finding>"
-      confidence: <0.0-1.0>
-      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
-      action_required: "<specific action: fix wording, investigate, re-analyze, etc.>"
-```
+  journal_entries:
+    - id: null
+      type: quality_check
+      phase: <phase1-why1 | phase1-why2 | phase3-consensus>
+      agent: WHY
+      timestamp: null
+      data:
+        pass: <true | false>
+        scores:
+          overall: <0.0-1.0>
+          structure: <0.0-1.0>
+          testability: <0.0-1.0>
+          readability: <0.0-1.0>
+          cognitive: <0.0-1.0>
+          semantic: <0.0-1.0>
+          behavioral: <0.0-1.0>
+          depth: <0.0-1.0>
+        issues: []
+    - id: null
+      type: challenge
+      phase: <phase1-why1 | phase1-why2 | phase3-consensus>
+      agent: WHY
+      timestamp: null
+      data:
+        artifact: "<filename>"
+        section: "<section>"
+        reasoning: "<why this is a problem, what evidence supports the finding>"
+        confidence: <0.0-1.0>
+        severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+        action_required: "<specific action: fix wording, investigate, re-analyze, etc.>"

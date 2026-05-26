@@ -370,18 +370,17 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: DONE
-output_files:
-  - .specify/.../implementation/<file>
-journal_entries:
-  - id: null
-    type: implementation_complete
-    phase: build
-    agent: speckit-echelon-implementer (IMPLEMENTER)
-    timestamp: null
-    data:
-      task_id: <task_id>
-      files_changed: []
-      tests_passing: true
-```
+echelon_result:
+  verdict: DONE
+  output_files:
+    - .specify/.../implementation/<file>
+  journal_entries:
+    - id: null
+      type: implementation_complete
+      phase: build
+      agent: speckit-echelon-implementer (IMPLEMENTER)
+      timestamp: null
+      data:
+        task_id: <task_id>
+        files_changed: []
+        tests_passing: true

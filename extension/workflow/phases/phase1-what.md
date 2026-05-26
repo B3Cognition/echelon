@@ -14,7 +14,7 @@ Read and include in the subagent prompt (all from `.specify/squad/staging/`):
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
 - `reference-architectures.md` (if greenfield)
-- `reasoning-journal.json` (filtered to DISCOVER + WHY1 entries)
+- `reasoning-journal.jsonl` (filtered to DISCOVER + WHY1 entries)
 - User input (original request)
 
 ### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
@@ -27,12 +27,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, reasoning-journal.json — all from .specify/squad/staging/, user input]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, reasoning-journal.jsonl — all from .specify/squad/staging/, user input]
   </context>
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.jsonl`.
 
   Do NOT return until ALL of the following are true:
   1. `specs/{spec_id}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.

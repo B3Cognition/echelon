@@ -58,12 +58,18 @@ class ConditionEvaluator:
             return str(self._get(state, field, "")) in values
 
         # field >= value  /  field <= value  /  field > value  /  field < value
-        # (both operands are field names — look them up in state)
+        # Right operand is either a state field name or a numeric literal (e.g. "fix_cycle < 2").
         m = re.fullmatch(r"([\w.\-]+)\s*(>=|<=|>|<)\s*([\w.\-]+)", condition)
         if m:
             left_field, op, right_field = m.group(1), m.group(2), m.group(3)
             left_val = self._get(state, left_field)
             right_val = self._get(state, right_field)
+            # If right side isn't a state key, treat it as a numeric literal.
+            if right_val is None:
+                try:
+                    right_val = float(right_field)
+                except ValueError:
+                    pass
             if left_val is None or right_val is None:
                 return False
             try:

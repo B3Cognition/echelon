@@ -55,6 +55,7 @@ class SquadStateStore:
             "max_iterations": max_iterations,
             "token_usage": 0,
             "token_budget": token_budget,
+            "cost_usd": 0.0,
             "user_message": user_message,
             "created_at": ts,
             "updated_at": ts,
@@ -118,6 +119,14 @@ class SquadStateStore:
     def reset_why_fail_count(self) -> None:
         state = self.load()
         state["why_fail_count"] = 0
+        self.save(state)
+
+    def increment_cost(self, amount: float) -> None:
+        if not amount:
+            return
+        state = self.load()
+        state["cost_usd"] = round(state.get("cost_usd", 0.0) + amount, 6)
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save(state)
 
     def token_budget(self) -> int:

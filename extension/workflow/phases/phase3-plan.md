@@ -12,7 +12,7 @@ Read and include in the subagent prompt:
 - `plan.md` + `research.md` + `data-model.md`
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### Dispatch
 
@@ -22,12 +22,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, reasoning-journal.json]
+  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
-  Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

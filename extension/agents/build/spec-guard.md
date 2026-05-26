@@ -255,18 +255,17 @@ Record all orphans in the reverse trace table with requirement column set to `â€
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: COMPLIANT
-output_files:
-  - .specify/.../spec-compliance-report.md
-journal_entries:
-  - id: null
-    type: quality_check
-    phase: build
-    agent: SPEC_GUARD
-    timestamp: null
-    data:
-      task_id: <task_id>
-      pass: true
-      violations: []
-```
+echelon_result:
+  verdict: COMPLIANT
+  output_files:
+    - .specify/.../spec-compliance-report.md
+  journal_entries:
+    - id: null
+      type: quality_check
+      phase: build
+      agent: SPEC_GUARD
+      timestamp: null
+      data:
+        task_id: <task_id>
+        pass: true
+        violations: []

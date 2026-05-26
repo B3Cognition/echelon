@@ -108,18 +108,17 @@ Uses values from `echelon-config.yml`:
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: CONSOLIDATED
-output_files:
-  - .specify/specs/<feature>/patterns/
-journal_entries:
-  - id: null
-    type: pattern_identified
-    phase: finalize
-    agent: speckit-echelon-consolidator (CONSOLIDATOR)
-    timestamp: null
-    data:
-      schema_name: ""
-      pattern_type: ""
-      confidence: 0.0
-```
+echelon_result:
+  verdict: CONSOLIDATED
+  output_files:
+    - .specify/specs/<feature>/patterns/
+  journal_entries:
+    - id: null
+      type: pattern_identified
+      phase: finalize
+      agent: speckit-echelon-consolidator (CONSOLIDATOR)
+      timestamp: null
+      data:
+        schema_name: ""
+        pattern_type: ""
+        confidence: 0.0

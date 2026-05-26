@@ -214,22 +214,21 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per security finding. Use `severity` in the data field. If verdict is FINDINGS, list findings in separate entries. The `output_files` should include `risk-acceptance-log.md` always.
 
-```echelon_result
-verdict: <COMPLETE | FINDINGS>
-output_files:
-  - .specify/.../security-findings.md
-  - .specify/.../risk-acceptance-log.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-guardian (GUARDIAN)
-    timestamp: null
-    data:
-      artifact: "security-findings.md"
-      section: "<threat area — STRIDE category or OWASP category>"
-      reasoning: "<specific security finding and its risk>"
-      rationale: "STRIDE threat model and OWASP analysis"
-      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: <COMPLETE | FINDINGS>
+  output_files:
+    - .specify/.../security-findings.md
+    - .specify/.../risk-acceptance-log.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-guardian (GUARDIAN)
+      timestamp: null
+      data:
+        artifact: "security-findings.md"
+        section: "<threat area — STRIDE category or OWASP category>"
+        reasoning: "<specific security finding and its risk>"
+        rationale: "STRIDE threat model and OWASP analysis"
+        severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+        alternatives_considered: []

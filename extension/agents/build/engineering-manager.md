@@ -201,18 +201,17 @@ The build is COMPLETE only when ALL of these are true:
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: CONVERGING
-output_files:
-  - .specify/.../build-status.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: build
-    agent: ENGINEERING_MANAGER
-    timestamp: null
-    data:
-      iteration: <iteration_number>
-      tasks_complete: <count>
-      tasks_remaining: <count>
-```
+echelon_result:
+  verdict: CONVERGING
+  output_files:
+    - .specify/.../build-status.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: build
+      agent: ENGINEERING_MANAGER
+      timestamp: null
+      data:
+        iteration: <iteration_number>
+        tasks_complete: <count>
+        tasks_remaining: <count>

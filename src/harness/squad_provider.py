@@ -23,6 +23,7 @@ class SquadAgentResult:
     raw_output: str
     duration_ms: int
     timed_out: bool
+    cost_usd: float = 0.0
 
     @property
     def verdict(self) -> Optional[str]:
@@ -38,7 +39,24 @@ class SquadAgentResult:
 
 
 def _extract_echelon_result(raw: str) -> Optional[dict]:
-    """Find the last echelon_result: block in raw output and parse it.
+    """Find the last echelon_result block in raw output and parse it.
+
+    Handles two formats agents emit:
+
+    1. YAML-key format (COMMANDER and ~10 agents):
+         echelon_result:
+           verdict: FAIL
+           state_updates: ...
+
+    2. Fenced-block format (SAGE, GATEKEEPER, and ~40 other agents):
+         ```echelon_result
+         verdict: FAIL
+         state_updates: ...
+         ```
+
+    Uses rfind to find the last occurrence of each format, then picks
+    whichever starts later in the text (most likely to be the actual
+    agent output rather than a template or quoted example).
 
     Attempts full parse first. If YAML fails (commonly due to complex
     journal_entries content), retries with journal_entries stripped so
@@ -46,14 +64,30 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
     still extracted. Journal entries are handled separately by
     _write_journal_entries, so losing them here is safe.
     """
-    idx = raw.rfind("echelon_result:")
-    if idx == -1:
+    _FENCE = "```echelon_result"
+    yaml_idx = raw.rfind("echelon_result:")
+    fence_idx = raw.rfind(_FENCE)
+
+    if yaml_idx == -1 and fence_idx == -1:
         return None
-    snippet = raw[idx:]
-    # Trim at closing code fence if present.
-    fence_end = snippet.find("\n```")
-    if fence_end != -1:
-        snippet = snippet[:fence_end]
+
+    snippet: str
+    if fence_idx != -1 and fence_idx > yaml_idx:
+        # Fenced format: extract body and wrap in echelon_result: key so
+        # _parse sees a standard YAML mapping with the expected root key.
+        body = raw[fence_idx + len(_FENCE):]
+        fence_end = body.find("\n```")
+        if fence_end != -1:
+            body = body[:fence_end]
+        # Indent each line by 2 spaces to nest it under echelon_result:.
+        indented = "\n".join("  " + line for line in body.splitlines())
+        snippet = "echelon_result:\n" + indented
+    else:
+        snippet = raw[yaml_idx:]
+        # Trim at closing code fence if present.
+        fence_end = snippet.find("\n```")
+        if fence_end != -1:
+            snippet = snippet[:fence_end]
 
     def _parse(text: str) -> Optional[dict]:
         try:
@@ -101,30 +135,52 @@ class SquadCliProvider(AICodingCliProvider):
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
 
         start = time.monotonic()
+        cost_usd = 0.0
         if self._cli == "claude":
-            exit_code, raw = self._run_streaming_captured(cmd, project_root, env, timeout_ms)
+            exit_code, raw, cost_usd = self._run_streaming_captured(cmd, project_root, env, timeout_ms)
         else:
             exit_code, raw = self._run_plain_captured(cmd, project_root, env, timeout_ms)
 
         duration_ms = int((time.monotonic() - start) * 1000)
         timed_out = exit_code is None
+        echelon_result = _extract_echelon_result(raw)
+
+        # Debug capture: write raw + parse result to /tmp/echelon-raw-<pid>.txt
+        # when the parse returns None or missing state_updates so we can inspect
+        # what the harness actually received vs what the terminal shows.
+        import os as _os
+        _debug_dir = _os.environ.get("ECHELON_DEBUG_RAW_DIR", "")
+        if _debug_dir and (echelon_result is None or not (echelon_result or {}).get("state_updates")):
+            try:
+                import pathlib as _pl
+                _pl.Path(_debug_dir).mkdir(parents=True, exist_ok=True)
+                _tag = f"{_os.getpid()}-{duration_ms}"
+                _pl.Path(f"{_debug_dir}/raw-{_tag}.txt").write_text(raw, errors="replace")
+                _pl.Path(f"{_debug_dir}/result-{_tag}.txt").write_text(
+                    f"echelon_result={echelon_result!r}\nexit_code={exit_code}\n"
+                )
+            except Exception:
+                pass
+
         return SquadAgentResult(
             exit_code=exit_code if exit_code is not None else -1,
-            echelon_result=_extract_echelon_result(raw),
+            echelon_result=echelon_result,
             raw_output=raw,
             duration_ms=duration_ms,
             timed_out=timed_out,
+            cost_usd=cost_usd,
         )
 
     def _run_streaming_captured(
         self, cmd: list, cwd: str, env: dict, timeout_ms: Optional[int]
-    ) -> tuple[Optional[int], str]:
+    ) -> tuple[Optional[int], str, float]:
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
         proc = subprocess.Popen(
             cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=None
         )
         text_chunks: list[str] = []
         timed_out = False
+        cost_usd = 0.0
         printer = StreamEventPrinter()
 
         def _kill() -> None:
@@ -142,11 +198,21 @@ class SquadCliProvider(AICodingCliProvider):
                 try:
                     event = json.loads(line)
                     printer(event)
-                    if (
-                        event.get("type") == "content_block_delta"
+                    etype = event.get("type")
+                    if etype == "assistant":
+                        # Full assistant turn message — extract all text blocks.
+                        # This is the primary format emitted by the Claude CLI.
+                        for block in event.get("message", {}).get("content", []):
+                            if block.get("type") == "text":
+                                text_chunks.append(block.get("text", ""))
+                    elif (
+                        etype == "content_block_delta"
                         and event.get("delta", {}).get("type") == "text_delta"
                     ):
+                        # Streaming delta format (older CLI versions).
                         text_chunks.append(event["delta"].get("text", ""))
+                    elif etype == "result":
+                        cost_usd = float(event.get("total_cost_usd") or 0)
                 except json.JSONDecodeError:
                     print(line, flush=True)
                     text_chunks.append(line)
@@ -156,7 +222,7 @@ class SquadCliProvider(AICodingCliProvider):
             timer.cancel()
 
         exit_code = None if timed_out else proc.returncode
-        return exit_code, "".join(text_chunks)
+        return exit_code, "".join(text_chunks), cost_usd
 
     def _run_plain_captured(
         self, cmd: list, cwd: str, env: dict, timeout_ms: Optional[int]

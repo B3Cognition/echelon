@@ -184,21 +184,20 @@ Top recommendation: {one-line summary}
 At the end of your response, append this block exactly.
 speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../strategic-overview.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: <current phase>
-    agent: OVERVIEW
-    timestamp: null
-    data:
-      artifact: "strategic-overview.md"
-      section: "risk_areas"
-      reasoning: "<strategic assessment rationale>"
-      rationale: "risk-weighted alignment analysis"
-      risk_areas: ["<area>"]
-      focus_recommendation: "<where to focus intelligence>"
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../strategic-overview.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: <current phase>
+      agent: OVERVIEW
+      timestamp: null
+      data:
+        artifact: "strategic-overview.md"
+        section: "risk_areas"
+        reasoning: "<strategic assessment rationale>"
+        rationale: "risk-weighted alignment analysis"
+        risk_areas: ["<area>"]
+        focus_recommendation: "<where to focus intelligence>"

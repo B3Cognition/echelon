@@ -91,3 +91,97 @@ echelon_result:
 """
         result = _extract_echelon_result(raw)
         assert result["verdict"] == "DONE"
+
+    # ── Fenced block format (```echelon_result) ───────────────────────────
+    # 40 of 50 agents emit this format. Regression guard for the bug where
+    # rfind("echelon_result:") returned -1 and _extract returned None,
+    # causing state_updates to be silently lost and quality_scores to stay [].
+
+    def test_extracts_fenced_block_verdict(self):
+        raw = """Some preamble.
+
+```echelon_result
+verdict: FAIL
+state_updates:
+  quality_scores:
+    - pass: false
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result is not None
+        assert result["verdict"] == "FAIL"
+
+    def test_extracts_fenced_block_state_updates(self):
+        raw = """```echelon_result
+verdict: FAIL
+state_updates:
+  quality_scores:
+    - pass: false
+  escalation_question: |
+    Q1: Is AR required?
+  blocked_reason: "WHY1: critical issues"
+journal_entries:
+  - id: null
+    type: quality_check
+    agent: WHY
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["state_updates"]["quality_scores"] == [{"pass": False}]
+        assert "Q1:" in result["state_updates"]["escalation_question"]
+
+    def test_fenced_block_wins_when_last(self):
+        """When YAML-key block appears first and fenced block appears last, pick fenced."""
+        raw = """echelon_result:
+  verdict: YAML_KEY_EARLIER
+  state_updates: {}
+
+... agent continues writing ...
+
+```echelon_result
+verdict: FENCED_LATER
+state_updates:
+  quality_scores:
+    - pass: true
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "FENCED_LATER"
+
+    def test_yaml_key_wins_when_last(self):
+        """When fenced block appears first and YAML-key block appears last, pick YAML-key."""
+        raw = """```echelon_result
+verdict: FENCED_EARLIER
+state_updates: {}
+```
+
+... commander writes its own result ...
+
+echelon_result:
+  verdict: YAML_KEY_LATER
+  state_updates:
+    next_phase: phase1-discover
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "YAML_KEY_LATER"
+        assert result["state_updates"]["next_phase"] == "phase1-discover"
+
+    def test_fenced_block_journal_entries_parsed(self):
+        raw = """```echelon_result
+verdict: PASS
+state_updates:
+  quality_scores:
+    - pass: true
+journal_entries:
+  - id: null
+    type: quality_check
+    agent: WHY
+    data:
+      pass: true
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "PASS"
+        entries = result.get("journal_entries", [])
+        assert len(entries) == 1
+        assert entries[0]["type"] == "quality_check"

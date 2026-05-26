@@ -173,55 +173,50 @@ Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders
 At the end of your response, append this block exactly. Fill in all fields.
 speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
-```echelon_result
-verdict: <ALIGNED | DRIFTING | ESCALATE>
-output_files:
-  - .specify/.../user-intent.md
-journal_entries:
-  - id: null
-    type: prediction
-    phase: <current phase>
-    agent: INTENT
-    timestamp: null
-    data:
-      predicted_intent: "<summary of predicted user intent>"
-      confidence: <0.0-1.0>
-      evidence: "<what signals led to this prediction>"
-```
-
+echelon_result:
+  verdict: <ALIGNED | DRIFTING | ESCALATE>
+  output_files:
+    - .specify/.../user-intent.md
+  journal_entries:
+    - id: null
+      type: prediction
+      phase: <current phase>
+      agent: INTENT
+      timestamp: null
+      data:
+        predicted_intent: "<summary of predicted user intent>"
+        confidence: <0.0-1.0>
+        evidence: "<what signals led to this prediction>"
 The block above shows the base case. Use additional entry types as needed:
 
 **When the active-learning threshold is met** (prediction_confidence >= 0.5 in Learning mode), add a second journal entry to the array:
-```echelon_result
-journal_entries:
-  - id: null
-    type: prediction
-    phase: <current phase>
-    agent: INTENT
-    timestamp: null
-    data:
-      predicted_intent: "<summary>"
-      confidence: <0.0-1.0>
-      evidence: "<signals>"
-  - id: null
-    type: tracker_model_update_requested
-    phase: <current phase>
-    agent: INTENT
-    timestamp: null
-    data:
-      reason: "<why a model update is needed — what pattern or drift triggered this>"
-```
-
+echelon_result:
+  journal_entries:
+    - id: null
+      type: prediction
+      phase: <current phase>
+      agent: INTENT
+      timestamp: null
+      data:
+        predicted_intent: "<summary>"
+        confidence: <0.0-1.0>
+        evidence: "<signals>"
+    - id: null
+      type: tracker_model_update_requested
+      phase: <current phase>
+      agent: INTENT
+      timestamp: null
+      data:
+        reason: "<why a model update is needed — what pattern or drift triggered this>"
 **When signalling a social prediction error** (observed intent diverges from predicted), replace the `prediction` entry with:
-```echelon_result
-journal_entries:
-  - id: null
-    type: social_prediction_error
-    phase: <current phase>
-    agent: INTENT
-    timestamp: null
-    data:
-      expected: "<what you predicted the user would do>"
-      observed: "<what the user actually did>"
-      error_magnitude: <0.0-1.0>
-```
+echelon_result:
+  journal_entries:
+    - id: null
+      type: social_prediction_error
+      phase: <current phase>
+      agent: INTENT
+      timestamp: null
+      data:
+        expected: "<what you predicted the user would do>"
+        observed: "<what the user actually did>"
+        error_magnitude: <0.0-1.0>

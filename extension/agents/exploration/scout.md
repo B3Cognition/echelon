@@ -415,25 +415,24 @@ For greenfield projects, also include:
   - .specify/.../reference-architectures.md
 in `output_files` if that artifact was produced.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../glossary.md
-  - .specify/.../mental-model.md
-  - .specify/.../boundaries.md
-  - .specify/.../assumptions.md
-  - .specify/.../unknowns.md
-journal_entries:
-  - id: null
-    type: insight
-    phase: phase1-discover
-    agent: DISCOVER
-    timestamp: null
-    data:
-      artifact: "<filename this relates to>"
-      section: "<specific section>"
-      reasoning: "<why you drew this conclusion — interpretive inference from analyzed evidence>"
-      confidence: <0.0-1.0>
-      evidence_grade: "<A|B|C|D|E>"
-      implications: ["<downstream impact for other agents>"]
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../glossary.md
+    - .specify/.../mental-model.md
+    - .specify/.../boundaries.md
+    - .specify/.../assumptions.md
+    - .specify/.../unknowns.md
+  journal_entries:
+    - id: null
+      type: insight
+      phase: phase1-discover
+      agent: DISCOVER
+      timestamp: null
+      data:
+        artifact: "<filename this relates to>"
+        section: "<specific section>"
+        reasoning: "<why you drew this conclusion — interpretive inference from analyzed evidence>"
+        confidence: <0.0-1.0>
+        evidence_grade: "<A|B|C|D|E>"
+        implications: ["<downstream impact for other agents>"]

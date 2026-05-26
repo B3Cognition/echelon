@@ -185,17 +185,16 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: INTEGRATED
-output_files:
-  - .specify/.../integration-report.md
-journal_entries:
-  - id: null
-    type: integration_finding
-    phase: build
-    agent: speckit-echelon-integrator (INTEGRATOR)
-    timestamp: null
-    data:
-      components_checked: []
-      failures: []
-```
+echelon_result:
+  verdict: INTEGRATED
+  output_files:
+    - .specify/.../integration-report.md
+  journal_entries:
+    - id: null
+      type: integration_finding
+      phase: build
+      agent: speckit-echelon-integrator (INTEGRATOR)
+      timestamp: null
+      data:
+        components_checked: []
+        failures: []

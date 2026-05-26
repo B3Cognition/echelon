@@ -125,18 +125,17 @@ Verification: {PASS | FAIL}
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: RESOLVED
-output_files:
-  - .specify/.../debug-report.md
-journal_entries:
-  - id: null
-    type: debug_finding
-    phase: build
-    agent: speckit-echelon-debugger (DEBUGGER)
-    timestamp: null
-    data:
-      task_id: <task_id>
-      root_cause: <root_cause_summary>
-      fix_applied: <fix_description>
-```
+echelon_result:
+  verdict: RESOLVED
+  output_files:
+    - .specify/.../debug-report.md
+  journal_entries:
+    - id: null
+      type: debug_finding
+      phase: build
+      agent: speckit-echelon-debugger (DEBUGGER)
+      timestamp: null
+      data:
+        task_id: <task_id>
+        root_cause: <root_cause_summary>
+        fix_applied: <fix_description>

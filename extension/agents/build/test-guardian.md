@@ -221,18 +221,17 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: SUFFICIENT
-output_files:
-  - .specify/.../test-quality-report.md
-journal_entries:
-  - id: null
-    type: quality_check
-    phase: build
-    agent: TEST_GUARDIAN
-    timestamp: null
-    data:
-      task_id: <task_id>
-      pass: true
-      coverage_gaps: []
-```
+echelon_result:
+  verdict: SUFFICIENT
+  output_files:
+    - .specify/.../test-quality-report.md
+  journal_entries:
+    - id: null
+      type: quality_check
+      phase: build
+      agent: TEST_GUARDIAN
+      timestamp: null
+      data:
+        task_id: <task_id>
+        pass: true
+        coverage_gaps: []

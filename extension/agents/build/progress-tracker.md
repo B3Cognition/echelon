@@ -312,18 +312,17 @@ Generate alerts in `process-metrics.md` and return journal entries in the `echel
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: ON_TRACK
-output_files:
-  - .specify/.../progress-report.md
-journal_entries:
-  - id: null
-    type: progress_update
-    phase: build
-    agent: PROGRESS_TRACKER
-    timestamp: null
-    data:
-      iteration: <iteration_number>
-      velocity: <tasks_per_unit_time>
-      drift_days: <drift_in_days>
-```
+echelon_result:
+  verdict: ON_TRACK
+  output_files:
+    - .specify/.../progress-report.md
+  journal_entries:
+    - id: null
+      type: progress_update
+      phase: build
+      agent: PROGRESS_TRACKER
+      timestamp: null
+      data:
+        iteration: <iteration_number>
+        velocity: <tasks_per_unit_time>
+        drift_days: <drift_in_days>

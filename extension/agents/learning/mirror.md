@@ -224,24 +224,22 @@ Produce `.specify/specs/{feature}/knowledge-transfer-assessment.md`:
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/specs/<feature>/retrospective/knowledge-transfer-assessment.md
-  - knowledge-base/patterns.yaml
-  - knowledge-base/pitfalls.yaml
-journal_entries:
-  - id: null
-    type: retrospective
-    phase: finalize
-    agent: REFLECT
-    timestamp: null
-    data:
-      patterns_found: []
-      recommendations: []
-      agent_performance_notes: ""
-```
-
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/specs/<feature>/retrospective/knowledge-transfer-assessment.md
+    - knowledge-base/patterns.yaml
+    - knowledge-base/pitfalls.yaml
+  journal_entries:
+    - id: null
+      type: retrospective
+      phase: finalize
+      agent: REFLECT
+      timestamp: null
+      data:
+        patterns_found: []
+        recommendations: []
+        agent_performance_notes: ""
 ---
 
 **Amendment Candidates Output (required when dispatched in consolidation phase):**

@@ -476,20 +476,19 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: INTERNALIZED
-output_files:
-  - knowledge-base/internalization-log.yaml
-  - knowledge-base/agent-scores.yaml
-  - internalization-metrics.md
-journal_entries:
-  - id: null
-    type: internalization_score
-    phase: finalize
-    agent: INTERNALIZE_METRICS
-    timestamp: null
-    data:
-      overall_score: 0.0
-      metrics: []
-      gaps: []
-```
+echelon_result:
+  verdict: INTERNALIZED
+  output_files:
+    - knowledge-base/internalization-log.yaml
+    - knowledge-base/agent-scores.yaml
+    - internalization-metrics.md
+  journal_entries:
+    - id: null
+      type: internalization_score
+      phase: finalize
+      agent: INTERNALIZE_METRICS
+      timestamp: null
+      data:
+        overall_score: 0.0
+        metrics: []
+        gaps: []

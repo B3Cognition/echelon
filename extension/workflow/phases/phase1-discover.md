@@ -32,7 +32,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SCOUT. Read agents/exploration/scout.md for your complete protocol.
-  Your mode is `{greenfield|brownfield}`. Produce all outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json` for every significant insight, assumption, or decision.
+  Your mode is `{greenfield|brownfield}`. Produce all outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.jsonl` for every significant insight, assumption, or decision.
   </instructions>
   ```
 

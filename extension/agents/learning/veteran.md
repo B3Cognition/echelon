@@ -177,24 +177,22 @@ speckit-echelon-veteran (VETERAN) exposes its episodic trace store to speckit-ec
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: PATTERNS_APPLIED
-output_files:
-  - knowledge-base/patterns.yaml
-  - knowledge-base/pitfalls.yaml
-  - knowledge-base/marketplace-index.yaml
-journal_entries:
-  - id: null
-    type: pattern_identified
-    phase: finalize
-    agent: speckit-echelon-veteran (VETERAN)
-    timestamp: null
-    data:
-      patterns_matched: []
-      pitfalls_flagged: []
-      confidence: 0.0
-```
-
+echelon_result:
+  verdict: PATTERNS_APPLIED
+  output_files:
+    - knowledge-base/patterns.yaml
+    - knowledge-base/pitfalls.yaml
+    - knowledge-base/marketplace-index.yaml
+  journal_entries:
+    - id: null
+      type: pattern_identified
+      phase: finalize
+      agent: speckit-echelon-veteran (VETERAN)
+      timestamp: null
+      data:
+        patterns_matched: []
+        pitfalls_flagged: []
+        confidence: 0.0
 ---
 
 **Cross-Run Amendment Candidates (required when dispatched in consolidation phase):**

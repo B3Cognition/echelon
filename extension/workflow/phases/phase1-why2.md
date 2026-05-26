@@ -54,7 +54,7 @@ Read and include in the subagent prompt:
 - All current artifacts in `specs/{feature}/`
 - Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `calibration-profile.yaml`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### Dispatch
 
@@ -64,12 +64,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include all current artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.json]
+  [include all current artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY2 — post-WHAT).
-  Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

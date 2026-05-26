@@ -23,7 +23,7 @@ Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MAN
 - `progress-report.md`
 - all build gate reports
 - `state.json`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -32,7 +32,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, all build gate reports, state.json, reasoning-journal.json]
+  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, all build gate reports, state.json, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -174,7 +174,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, all implemented code, all gate reports, traceability-matrix.md, coverage-map.md, state.json, reasoning-journal.json]
+  [include spec.md, all implemented code, all gate reports, traceability-matrix.md, coverage-map.md, state.json, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -261,12 +261,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include state.json, progress-report.md, all gate reports, reasoning-journal.json, knowledge-base/agent-scores.yaml]
+  [include state.json, progress-report.md, all gate reports, reasoning-journal.jsonl, knowledge-base/agent-scores.yaml]
   </context>
 
   <instructions>
   You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
-  Score all build agents: speckit-echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), speckit-echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by speckit-echelon-verification (VERIFICATION)), speckit-echelon-code-reviewer (CODE REVIEWER) (issues found), speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.json. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+  Score all build agents: speckit-echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), speckit-echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by speckit-echelon-verification (VERIFICATION)), speckit-echelon-code-reviewer (CODE REVIEWER) (issues found), speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.jsonl. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
   </instructions>
   ```
 
@@ -309,19 +309,19 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all build artifacts, spec artifacts, state.json, reasoning-journal.json, knowledge-base/]
+  [include all build artifacts, spec artifacts, state.json, reasoning-journal.jsonl, knowledge-base/]
   </context>
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol. Operate in **Mode 4: Post-Build Self-Assessment**.
-  Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.json (risks), test-strategy.md + test-quality-report.md (tests).
+  Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.jsonl (risks), test-strategy.md + test-quality-report.md (tests).
   Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for speckit-echelon-commander (COMMANDER) triage.
   </instructions>
   ```
 
 - **description:** "speckit-echelon-auditor (AUDITOR): post-build self-assessment — auto-feedback generation"
 
-Context pack: all build artifacts + spec artifacts + state.json + reasoning-journal.json + knowledge-base/
+Context pack: all build artifacts + spec artifacts + state.json + reasoning-journal.jsonl + knowledge-base/
 
 ### 8.5.2 speckit-echelon-commander (COMMANDER) Triage of Critical Findings
 
@@ -356,7 +356,7 @@ Dispatch speckit-echelon-sage (SAGE) in post-build-validation mode using the Age
 
   ```xml
   <context>
-  [include spec.md, quality-gates.md from WHY3, auto-feedback.yaml, reasoning-journal.json]
+  [include spec.md, quality-gates.md from WHY3, auto-feedback.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -379,7 +379,7 @@ Dispatch speckit-echelon-tracker (TRACKER) in post-build-alignment mode using th
 
   ```xml
   <context>
-  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, reasoning-journal.json]
+  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -455,7 +455,7 @@ Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) i
 
 **Dispatch speckit-echelon-mirror (MIRROR)** (`mode: "consolidation"`):
 
-- Context pack: `feedback-report.md`, `intent-alignment-final.md`, `reasoning-journal.json` (last 20 entries), `traceability-matrix.md`
+- Context pack: `feedback-report.md`, `intent-alignment-final.md`, `reasoning-journal.jsonl` (last 20 entries), `traceability-matrix.md`
 - Output required: `amendment_candidates` list (may be empty)
 
 **Dispatch speckit-echelon-veteran (VETERAN)** (`mode: "consolidation"`):
