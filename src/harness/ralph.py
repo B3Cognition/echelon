@@ -1107,8 +1107,9 @@ class RalphController:
         # Budget-exhausted recovery: if budget was bumped, resume from current progress
         if state.get("termination_reason") == "budget_exhausted":
             stored_usage = state.get("tokens_used", 0)
-            budget_ok = token_budget is None or token_budget <= 0 or token_budget > stored_usage / 0.95
-            if budget_ok:
+            # None/<=0 = unlimited; positive must clear 95% re-trigger threshold
+            budget_sufficient = token_budget is None or token_budget <= 0 or token_budget > stored_usage / 0.95
+            if budget_sufficient:
                 self._state_store.transition("running")
                 budget_display = f"{token_budget:,}" if token_budget else "∞"
                 print(
