@@ -158,3 +158,69 @@ class TestStaleCancelRequestedClearedOnResume:
 
         result = controller.run_loop(max_outer=3, max_inner=1)
         assert result.status in ("converged", "failed", "interrupted")
+
+
+class TestBudgetBumpAutoResume:
+    """Budget-exhausted auto-resume: when a run writes status=blocked with
+    termination_reason=budget_exhausted, the next call with a higher budget
+    should resume rather than starting fresh.
+    """
+
+    def test_budget_bump_auto_resumes(self, tmp_path: Path) -> None:
+        """Calling run_loop with a budget higher than stored usage resumes
+        the run (status is not blocked)."""
+        controller, state_store = _make_controller(tmp_path)
+
+        # Simulate a prior run that hit the budget limit
+        state_store.initialize("run-001", "semi")
+        state = state_store.read()
+        state_store.transition("running")
+        state = state_store.read()
+        state["tokens_used"] = 5000
+        state["termination_reason"] = "budget_exhausted"
+        state["outer_iter"] = 1
+        state["inner_iter"] = 0
+        state_store.write(state)
+        state_store.transition("blocked")
+
+        # Confirm setup
+        on_disk = state_store.read()
+        assert on_disk["status"] == "blocked"
+        assert on_disk["termination_reason"] == "budget_exhausted"
+        assert on_disk["tokens_used"] == 5000
+
+        # Re-invoke with a higher budget — should resume, not stay blocked
+        result = controller.run_loop(max_outer=3, max_inner=1, token_budget=10000)
+
+        assert result.status != "blocked", (
+            f"Expected run to resume after budget bump. "
+            f"Got status={result.status!r}, reason={result.termination_reason!r}"
+        )
+
+    def test_budget_still_exhausted_returns_blocked(self, tmp_path: Path) -> None:
+        """Calling run_loop with a budget still below stored usage keeps
+        status=blocked with reason=budget_exhausted."""
+        controller, state_store = _make_controller(tmp_path)
+
+        # Simulate a prior run that hit the budget limit
+        state_store.initialize("run-002", "semi")
+        state_store.transition("running")
+        state = state_store.read()
+        state["tokens_used"] = 5000
+        state["termination_reason"] = "budget_exhausted"
+        state["outer_iter"] = 1
+        state["inner_iter"] = 0
+        state_store.write(state)
+        state_store.transition("blocked")
+
+        # Re-invoke with a budget still less than usage — should stay blocked
+        result = controller.run_loop(max_outer=3, max_inner=1, token_budget=4000)
+
+        assert result.status == "blocked", (
+            f"Expected status=blocked when budget still exhausted. "
+            f"Got status={result.status!r}"
+        )
+        assert result.termination_reason == "budget_exhausted", (
+            f"Expected termination_reason=budget_exhausted. "
+            f"Got {result.termination_reason!r}"
+        )

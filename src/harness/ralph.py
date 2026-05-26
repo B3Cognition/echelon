@@ -154,9 +154,14 @@ class RalphController:
                 token_budget=token_budget,
             )
             if termination:
-                term_status = "cancelled" if termination == "killed_by_coordinator" else (
-                    "interrupted" if termination == "user_cancel" else "failed"
-                )
+                if termination == "killed_by_coordinator":
+                    term_status = "cancelled"
+                elif termination == "user_cancel":
+                    term_status = "interrupted"
+                elif termination == "budget_exhausted":
+                    term_status = "blocked"
+                else:
+                    term_status = "failed"
                 return self._finalize(
                     status=term_status,
                     reason=termination,
@@ -207,11 +212,14 @@ class RalphController:
                     # the build phase, which check_cancel() alone does not detect.
                     termination = self._check_termination(tokens_used, token_budget)
                     if termination:
-                        term_status = (
-                            "interrupted" if termination == "user_cancel"
-                            else "cancelled" if termination == "killed_by_coordinator"
-                            else "failed"
-                        )
+                        if termination == "killed_by_coordinator":
+                            term_status = "cancelled"
+                        elif termination == "user_cancel":
+                            term_status = "interrupted"
+                        elif termination == "budget_exhausted":
+                            term_status = "blocked"
+                        else:
+                            term_status = "failed"
                         return self._finalize(
                             status=term_status,
                             reason=termination,
@@ -1096,6 +1104,43 @@ class RalphController:
         build_prompt: str = "",
     ) -> LoopResult:
         """Handle resume from blocked state."""
+        # Budget-exhausted recovery: if budget was bumped, resume from current progress
+        if state.get("termination_reason") == "budget_exhausted":
+            stored_usage = state.get("tokens_used", 0)
+            budget_ok = token_budget is None or token_budget <= 0 or token_budget > stored_usage
+            if budget_ok:
+                self._state_store.transition("running")
+                budget_display = f"{token_budget:,}" if token_budget else "∞"
+                print(
+                    f"[harness] budget bumped → resuming "
+                    f"(usage={stored_usage:,}, new budget={budget_display})",
+                    flush=True,
+                )
+                return self._run_loop_inner(
+                    max_outer=max_outer,
+                    max_inner=max_inner,
+                    token_budget=token_budget,
+                    build_command=build_command,
+                    strategy_context=strategy_context,
+                    build_prompt=build_prompt,
+                )
+            else:
+                print(
+                    f"\n[harness] ✗ Token budget still exhausted "
+                    f"(usage={stored_usage:,}, budget={token_budget:,}).\n"
+                    f"  Increase token_budget in harness config or pass --reset to start fresh.",
+                    file=sys.stderr,
+                )
+                return LoopResult(
+                    status="blocked",
+                    termination_reason="budget_exhausted",
+                    outer_iterations=state.get("outer_iter", 0),
+                    inner_iterations=state.get("inner_iter", 0),
+                    tokens_used=stored_usage,
+                    pr_url=state.get("pr_url"),
+                    final_verify=None,
+                )
+
         escalation_file = state.get("escalation_file")
         if escalation_file:
             answer = self._escalation.check_resume(escalation_file)
