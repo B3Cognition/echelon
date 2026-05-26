@@ -343,8 +343,6 @@ class RalphController:
                                 strategy_id=self._strategy_id,
                                 category="no_progress",
                                 context=(
-                                    f"The build loop has failed {no_progress_count} consecutive "
-                                    "iterations with no file changes.\n\n"
                                     "## No Progress Detected\n\n"
                                     f"The build loop has failed {no_progress_count} consecutive "
                                     "iterations with no file changes.\n"
@@ -936,15 +934,16 @@ class RalphController:
     # === Git operations ===
 
     def _has_file_changes(self, worktree_path: str) -> bool:
-        """Return True if any tracked files changed since last commit.
+        """Return True if any files were added or modified since last commit.
 
-        Used by the no-progress guard: if the LLM fails a full outer iteration
-        and produced zero file changes, the loop may be stuck.
+        Checks both working-tree changes and staged (index) changes so that
+        files written and staged but not yet committed are also detected.
         Returns True on error to avoid false escalation.
         """
         try:
+            # git status --porcelain covers both staged and unstaged changes
             result = subprocess.run(
-                ["git", "diff", "--name-only", "HEAD"],
+                ["git", "status", "--porcelain"],
                 capture_output=True, text=True,
                 cwd=worktree_path, timeout=10,
             )
