@@ -248,14 +248,35 @@ class StrategyCoordinator:
         state_store.acquire_lock(run_id)
 
         try:
-            state_store.initialize(
-                run_id=run_id,
-                mode=intent.mode,
-                max_outer=intent.max_outer,
-                max_inner=intent.max_inner,
-                token_budget=budget or 0,
+            existing = state_store.read()
+            existing_status = existing.get("status")
+            should_resume = (
+                not intent.reset
+                and existing_status in ("running", "interrupted")
             )
-            state_store.transition("running")
+
+            if should_resume:
+                logger.info(
+                    "[%s/%s] Resuming from %s state (outer=%s)",
+                    intent.spec_id, strategy_id,
+                    existing_status,
+                    existing.get("outer_iter", 0),
+                )
+                # A leftover "running" status means the previous process crashed;
+                # transition through interrupted first so the transition validator
+                # allows the subsequent running transition.
+                if existing_status == "running":
+                    state_store.transition("interrupted")
+                state_store.transition("running")
+            else:
+                state_store.initialize(
+                    run_id=run_id,
+                    mode=intent.mode,
+                    max_outer=intent.max_outer,
+                    max_inner=intent.max_inner,
+                    token_budget=budget or 0,
+                )
+                state_store.transition("running")
 
             arguments = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
             if intent.task_description:

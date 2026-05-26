@@ -30,7 +30,7 @@ VALID_TRANSITIONS = {
     "blocked": {"running"},
     "converged": set(),
     "failed": set(),
-    "interrupted": set(),
+    "interrupted": {"running"},
     "cancelled_by_coordinator": set(),
 }
 

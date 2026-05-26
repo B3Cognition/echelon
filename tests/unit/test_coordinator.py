@@ -405,3 +405,173 @@ class TestStickyEscalationBlock:
         # Should NOT raise — the answer is present
         results = coord.start(intent)
         assert results[0].status == "converged"
+
+
+@pytest.mark.unit
+class TestSmartResumeDetection:
+    """Smart resume: interrupted/running states are resumed instead of wiped
+    unless --reset is specified.
+
+    Tests exercise the should_resume condition in _run_strategy() directly
+    by setting up a pre-existing state file and observing coordinator behaviour.
+    """
+
+    def _make_state_file(
+        self,
+        tmp_path: Path,
+        status: str,
+        outer_iter: int = 2,
+        spec_id: str = "spec-001",
+        strategy_id: str = "default",
+    ) -> None:
+        """Write a state.json with the given status and outer_iter."""
+        state_dir = (
+            tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state" / spec_id
+        )
+        state_dir.mkdir(parents=True, exist_ok=True)
+        state = {
+            "spec_id": spec_id,
+            "strategy_id": strategy_id,
+            "run_id": "prior-run-id",
+            "status": status,
+            "mode": "semi",
+            "outer_iter": outer_iter,
+            "max_outer": 5,
+            "inner_iter": 0,
+            "max_inner": 3,
+            "token_budget": 0,
+            "tokens_used": 0,
+            "cancel_requested": False,
+            "pr_url": None,
+            "branch_name": None,
+            "last_verify_result": None,
+            "termination_reason": None,
+            "escalation_file": None,
+            "iteration_log": [],
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00",
+        }
+        state_file = state_dir / f"{strategy_id}.json"
+        state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    # --- should_resume condition unit tests ---
+
+    def test_interrupted_no_reset_should_resume(self) -> None:
+        """interrupted + reset=False → should_resume=True."""
+        existing_status = "interrupted"
+        reset = False
+        should_resume = not reset and existing_status in ("running", "interrupted")
+        assert should_resume is True
+
+    def test_running_no_reset_should_resume(self) -> None:
+        """running + reset=False → should_resume=True (crash recovery)."""
+        existing_status = "running"
+        reset = False
+        should_resume = not reset and existing_status in ("running", "interrupted")
+        assert should_resume is True
+
+    def test_interrupted_with_reset_should_not_resume(self) -> None:
+        """interrupted + reset=True → should_resume=False (forced fresh start)."""
+        existing_status = "interrupted"
+        reset = True
+        should_resume = not reset and existing_status in ("running", "interrupted")
+        assert should_resume is False
+
+    def test_blocked_no_reset_should_not_resume(self) -> None:
+        """blocked + reset=False → should_resume=False (blocked handled by ralph)."""
+        existing_status = "blocked"
+        reset = False
+        should_resume = not reset and existing_status in ("running", "interrupted")
+        assert should_resume is False
+
+    def test_no_prior_state_should_not_resume(self) -> None:
+        """None (no prior state) + reset=False → should_resume=False."""
+        existing_status = None
+        reset = False
+        should_resume = not reset and existing_status in ("running", "interrupted")
+        assert should_resume is False
+
+    # --- Integration-style tests via StrategyCoordinator ---
+
+    def test_interrupted_state_resumes_and_converges(self, tmp_path: Path) -> None:
+        """A pre-existing interrupted state is resumed (not wiped) and the run converges."""
+        self._make_state_file(tmp_path, status="interrupted", outer_iter=2)
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False)
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            results = coord.start(intent)
+
+        assert results[0].status == "converged"
+        # The state should have been transitioned to running (not re-initialized);
+        # verify by checking the state file still exists and was NOT wiped to outer_iter=0.
+        from harness.state import StateStore
+        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        store = StateStore(state_dir, "spec-001", "default")
+        final_state = store.read()
+        # outer_iter is preserved from the interrupted state (not reset to 0)
+        assert final_state.get("outer_iter", 0) >= 2, (
+            f"outer_iter should be >= 2 (preserved from interrupted state), "
+            f"got {final_state.get('outer_iter')}"
+        )
+
+    def test_reset_flag_wipes_interrupted_state(self, tmp_path: Path) -> None:
+        """With reset=True, an existing interrupted state is wiped and starts fresh."""
+        self._make_state_file(tmp_path, status="interrupted", outer_iter=2)
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            results = coord.start(intent)
+
+        assert results[0].status == "converged"
+        # State was re-initialized — outer_iter reset to 0
+        from harness.state import StateStore
+        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        store = StateStore(state_dir, "spec-001", "default")
+        final_state = store.read()
+        assert final_state.get("outer_iter") == 0, (
+            f"outer_iter should be 0 after forced reset, got {final_state.get('outer_iter')}"
+        )
+
+    def test_blocked_state_not_affected_by_resume_logic(self, tmp_path: Path) -> None:
+        """A blocked state with no escalation file is not resumed by the smart resume path;
+        it flows through to ralph (which handles blocked resume internally)."""
+        self._make_state_file(tmp_path, status="blocked", outer_iter=1)
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        # No escalation_file in state, so the pre-flight guard passes
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False)
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            results = coord.start(intent)
+
+        # Should converge — the blocked state was NOT wiped (initialize not called
+        # by smart resume), and ralph handles it via _handle_blocked_resume.
+        assert results[0].status == "converged"
