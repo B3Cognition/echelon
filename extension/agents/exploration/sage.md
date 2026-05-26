@@ -37,6 +37,17 @@ These rules prevent silent data loss and Edit tool failures:
 
 3. **One output file per run.** Use `--output /tmp/u_perreq.json` when calling `understanding ... --json` to avoid stdout/stderr mixing that causes `JSONDecodeError`.
 
+4. **Use block scalar style for multi-line SAGE fields.** `challenge_summary` and `resolution` routinely contain colons (e.g. `supporting: file.md`, `artifact: specs/...`). A bare colon-space inside a YAML flow string is parsed as a mapping key and corrupts the file. Always write these two fields using the block scalar indicator `|`:
+
+   ```yaml
+   challenge_summary: |
+     Your summary text here, colons: allowed freely.
+   resolution: |
+     Your resolution text here, colons: allowed freely.
+   ```
+
+   Never write them as inline quoted strings (e.g. `challenge_summary: "..."`) — quoted strings require escaping every internal double-quote and backslash, which LLMs routinely miss.
+
 ---
 
 ## Operating Modes
@@ -704,6 +715,7 @@ This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes
 2. Append the entry to the `entries` array in `knowledge-base/sage-decisions.yaml`.
 3. If the file has reached `max_entries` (100), remove the oldest entry before appending.
 4. Never modify existing entries except to backfill `was_correct`.
+5. Write `challenge_summary` and `resolution` using block scalar style (`|`) — see Tool Hygiene rule 4.
 
 ### Example Entry
 
@@ -711,9 +723,11 @@ This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes
 - run_id: squad-003-1742652000
   artifact: specs/001-echelon-improvements/spec.md
   challenge_type: quality_threshold
-  challenge_summary: "Testability score 0.58 below 0.70 threshold."
+  challenge_summary: |
+    Testability score 0.58 below 0.70 threshold.
   outcome: blocked
-  resolution: "WHAT agent improved acceptance criteria; re-validation scored 0.74."
+  resolution: |
+    WHAT agent improved acceptance criteria; re-validation scored 0.74.
   was_correct: true
 ```
 
@@ -863,4 +877,5 @@ echelon_result:
         reasoning: "<why this is a problem, what evidence supports the finding>"
         confidence: <0.0-1.0>
         severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
-        action_required: "<specific action: fix wording, investigate, re-analyze, etc.>"
+        action_required: |
+          <specific action: fix wording, investigate, re-analyze, etc.>

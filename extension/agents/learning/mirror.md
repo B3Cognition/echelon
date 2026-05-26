@@ -104,7 +104,8 @@ Append to `knowledge-base/patterns.yaml` — new validated patterns:
   source: "squad-run-{RUN_ID}, reasoning-journal entry {RJ-ID}"
   validated_by_feedback: false
   confidence: {0.0-1.0}
-  description: "{what the pattern is, when to apply it, why it works}"
+  description: |
+    {what the pattern is, when to apply it, why it works}
   tags: ["{tag1}", "{tag2}"]
   status: active
   project_fingerprint: "{12-char hex from Step 0}"
@@ -117,9 +118,12 @@ Append to `knowledge-base/pitfalls.yaml` — new failure modes:
 - id: PIT-{NNN}
   name: "{concise pitfall name}"
   domain: "{domain}"
-  trigger: "{what conditions cause this failure}"
-  impact: "{what goes wrong}"
-  avoidance: "{how to avoid it next time}"
+  trigger: |
+    {what conditions cause this failure}
+  impact: |
+    {what goes wrong}
+  avoidance: |
+    {how to avoid it next time}
   source: "squad-run-{RUN_ID}, reasoning-journal entry {RJ-ID}"
   confidence: {0.0-1.0}
   tags: ["{tag1}", "{tag2}"]

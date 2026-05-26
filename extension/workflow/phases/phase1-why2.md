@@ -133,7 +133,8 @@ be resolved by any squad agent — include in `echelon_result.state_updates`:
 escalation_question: |
   Q1: <compact blocking question — one line, state the stakes>
   Q2: <compact blocking question>
-blocked_reason: "WHY2: CRITICAL user-gated issues — squad-internal iteration cannot substitute for user input"
+blocked_reason: |
+  WHY2: CRITICAL user-gated issues — squad-internal iteration cannot substitute for user input
 ```
 
 **Criteria — ALL must be true to set escalation_question:**

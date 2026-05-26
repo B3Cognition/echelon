@@ -105,6 +105,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-3-verify
-      summary: "Coverage: {coverage_pct}% ({orphan_count} orphan files)"
+      summary: |
+        Coverage: {coverage_pct}% ({orphan_count} orphan files)
   blocked_reason: null
 ```

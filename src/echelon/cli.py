@@ -726,13 +726,20 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     print(f"{'─' * 60}\n", flush=True)
 
 
-def _print_staging_artifacts(project_root: Path, exclude_dir: Optional[Path] = None) -> None:
+def _print_staging_artifacts(
+    project_root: Path,
+    exclude_dir: Optional[Path] = None,
+    run_status: str = "",
+) -> None:
     """Print a compact manifest of staging artifacts from the most recent prior run.
 
     Skips squad-internal files (issues.md, assumption-review.md, *-endorsement.md)
     so the list reflects substantive domain artifacts the squad can build on.
-    Silent when no prior run has staging content.
+    Silent when no prior run has staging content, or when the run is done (the
+    NEXT STEP section already surfaces readiness in that case).
     """
+    if run_status == "done":
+        return
     squad_root = project_root / "squad"
     if not squad_root.exists():
         return
@@ -874,7 +881,16 @@ def _print_prior_knowledge(project_root: Path) -> None:
                 if snippet:
                     lines.append(f"Last resolution: {snippet}")
         except Exception:
-            lines.append(f"SAGE decisions: {sage_path.stat().st_size} bytes (unreadable)")
+            import re as _re
+            size_kb = sage_path.stat().st_size // 1024
+            try:
+                raw = sage_path.read_text(errors="replace")
+                # Entries are indented list items: "  - run_id: ..."
+                entry_est = len(_re.findall(r"^\s+- run_id:", raw, _re.MULTILINE))
+            except Exception:
+                entry_est = 0
+            note = f"~{entry_est} entries · {size_kb}KB" if entry_est else f"{size_kb}KB"
+            lines.append(f"SAGE decisions: {note} (could not parse YAML)")
 
     # ── other KB files ──────────────────────────────────────────────────────
     _KB_FILES = [
@@ -1264,7 +1280,7 @@ def _cmd_status(project_root: Path) -> None:
             print(flush=True)
 
     # ── Staging artifacts ───────────────────────────────────────────────────
-    _print_staging_artifacts(project_root)
+    _print_staging_artifacts(project_root, run_status=state.get("status", ""))
 
     # ── Open issues ─────────────────────────────────────────────────────────
     _print_open_issues(project_root)

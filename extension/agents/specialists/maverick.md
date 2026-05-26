@@ -394,5 +394,6 @@ echelon_result:
         artifact: "alternatives.md"
         section: "<alternative name>"
         reasoning: "<why this alternative breaks the current assumption or constraint>"
-        rationale: "<TRIZ principle applied — e.g. Principle 1: Segmentation>"
+        rationale: |
+          <TRIZ principle applied — e.g. Principle 1: Segmentation>
         alternatives_considered: []
