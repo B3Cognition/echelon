@@ -1113,8 +1113,19 @@ class RalphController:
                     build_prompt=build_prompt,
                 )
             else:
-                raise RuntimeError(
-                    "Loop is blocked -- provide answer via /speckit-harness-resume"
+                _print_blocked_banner(
+                    spec_id=self._spec_id,
+                    strategy_id=self._strategy_id,
+                    escalation_file=escalation_file,
+                )
+                return LoopResult(
+                    status="blocked",
+                    termination_reason="blocker_escalation",
+                    outer_iterations=state.get("outer_iter", 0),
+                    inner_iterations=state.get("inner_iter", 0),
+                    tokens_used=state.get("tokens_used", 0),
+                    pr_url=state.get("pr_url"),
+                    final_verify=None,
                 )
         else:
             # Blocked without escalation file (e.g., guided mode pause)
@@ -1171,6 +1182,20 @@ class RalphController:
 
 
 # === Utility functions ===
+
+def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) -> None:
+    """Print a formatted blocked banner to stderr."""
+    sep = "=" * 60
+    print(f"\n{sep}", file=sys.stderr)
+    print("  ✗  HARNESS RUN BLOCKED — escalation pending", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
+    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
+    print(f"  File:      {escalation_file}", file=sys.stderr)
+    print(f"\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
+    print(f"  Discard with: echelon harness run {spec_id} --reset\n", file=sys.stderr)
+    print(sep, file=sys.stderr)
+
 
 def _estimate_tokens(result: ExecResult) -> int:
     """Rough token estimate from ExecResult output length."""
