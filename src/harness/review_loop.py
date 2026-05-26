@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from harness.config import HarnessConfig
-from harness.paths import harness_dir
+from harness.paths import build_dir as _build_dir_fn
 from harness.loop_result import LoopResult
 
 logger = logging.getLogger(__name__)
@@ -143,6 +143,7 @@ class ReviewLoopController:
         spec_id: str,
         strategy_id: str,
         base_dir: str = ".",
+        build_id: str = "",
     ) -> None:
         self._gitops = gitops
         self._config = config
@@ -160,8 +161,8 @@ class ReviewLoopController:
 
         # Persistent state: tracks which comment IDs we've already acted on
         self._state_file = (
-            harness_dir(self._base_dir) / "state"
-            / spec_id / f"{strategy_id}-review.json"
+            _build_dir_fn(self._base_dir, build_id) / "state"
+            / f"{strategy_id}-review.json"
         )
         self._seen_ids: Set[str] = self._load_seen_ids()
 

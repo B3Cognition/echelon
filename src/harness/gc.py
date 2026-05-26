@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from harness.config import HarnessConfig
-from harness.paths import harness_dir
+from harness.paths import runs_dir
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +92,8 @@ def _get_stale_worktrees(
 ) -> List[Path]:
     """Find worktree directories older than threshold by mtime.
 
+    Worktrees are nested as: worktree_base/{strategy}/{iter-N}
+
     Returns list of worktree paths to remove.
     """
     stale = []
@@ -100,21 +102,18 @@ def _get_stale_worktrees(
 
     cutoff = time.time() - (max_age_hours * 3600)
 
-    for spec_dir in worktree_base.iterdir():
-        if not spec_dir.is_dir():
+    for strategy_dir in worktree_base.iterdir():
+        if not strategy_dir.is_dir():
             continue
-        for strategy_dir in spec_dir.iterdir():
-            if not strategy_dir.is_dir():
+        for iter_dir in strategy_dir.iterdir():
+            if not iter_dir.is_dir():
                 continue
-            for iter_dir in strategy_dir.iterdir():
-                if not iter_dir.is_dir():
-                    continue
-                try:
-                    mtime = iter_dir.stat().st_mtime
-                    if mtime < cutoff:
-                        stale.append(iter_dir)
-                except OSError:
-                    continue
+            try:
+                mtime = iter_dir.stat().st_mtime
+                if mtime < cutoff:
+                    stale.append(iter_dir)
+            except OSError:
+                continue
 
     return stale
 
@@ -160,8 +159,11 @@ def run_gc(
         Dict with counts of removed items.
     """
     base = Path(base_dir) if base_dir else Path.cwd()
-    worktree_base = harness_dir(base) / "worktrees"
-    state_base = harness_dir(base) / "state"
+    rd = runs_dir(base)
+    # Collect worktree and state bases from all build dirs
+    build_dirs = sorted(rd.glob("build-*/")) if rd.exists() else []
+    worktree_bases = [d / "worktrees" for d in build_dirs if d.is_dir()]
+    state_bases = [d / "state" for d in build_dirs if d.is_dir()]
 
     result = {
         "containers_removed": 0,
@@ -185,33 +187,35 @@ def run_gc(
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 logger.warning("Could not remove container %s", container_id)
 
-    # 2. Stale worktrees
-    stale_worktrees = _get_stale_worktrees(
-        worktree_base, config.gc.worktree_max_age_hours,
-    )
-    for wt_path in stale_worktrees:
-        if dry_run:
-            logger.warning("DRY RUN: Would remove worktree %s", wt_path)
-        else:
-            try:
-                import shutil
-                shutil.rmtree(str(wt_path))
-                logger.warning("Removed stale worktree: %s", wt_path)
-                result["worktrees_removed"] += 1
-            except OSError as e:
-                logger.warning("Could not remove worktree %s: %s", wt_path, e)
+    # 2. Stale worktrees (across all build dirs)
+    for worktree_base in worktree_bases:
+        stale_worktrees = _get_stale_worktrees(
+            worktree_base, config.gc.worktree_max_age_hours,
+        )
+        for wt_path in stale_worktrees:
+            if dry_run:
+                logger.warning("DRY RUN: Would remove worktree %s", wt_path)
+            else:
+                try:
+                    import shutil
+                    shutil.rmtree(str(wt_path))
+                    logger.warning("Removed stale worktree: %s", wt_path)
+                    result["worktrees_removed"] += 1
+                except OSError as e:
+                    logger.warning("Could not remove worktree %s: %s", wt_path, e)
 
-    # 3. Stale backups
-    stale_backups = _get_stale_backups(state_base, config.gc.backup_max_age_days)
-    for bak_path in stale_backups:
-        if dry_run:
-            logger.warning("DRY RUN: Would remove backup %s", bak_path)
-        else:
-            try:
-                bak_path.unlink()
-                logger.warning("Removed stale backup: %s", bak_path)
-                result["backups_removed"] += 1
-            except OSError as e:
-                logger.warning("Could not remove backup %s: %s", bak_path, e)
+    # 3. Stale backups (across all build state dirs)
+    for state_base in state_bases:
+        stale_backups = _get_stale_backups(state_base, config.gc.backup_max_age_days)
+        for bak_path in stale_backups:
+            if dry_run:
+                logger.warning("DRY RUN: Would remove backup %s", bak_path)
+            else:
+                try:
+                    bak_path.unlink()
+                    logger.warning("Removed stale backup: %s", bak_path)
+                    result["backups_removed"] += 1
+                except OSError as e:
+                    logger.warning("Could not remove backup %s: %s", bak_path, e)
 
     return result

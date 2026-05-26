@@ -12,9 +12,8 @@ from harness.land import find_pr_url, land
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
-    d = state_dir / spec_id
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{strategy}.json").write_text(
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / f"{strategy}.json").write_text(
         json.dumps({"spec_id": spec_id, "pr_url": pr_url}), encoding="utf-8"
     )
 
@@ -45,16 +44,16 @@ class TestFindPrUrl:
         assert find_pr_url("042", tmp_path) is None
 
     def test_returns_first_sorted_file_when_multiple_have_pr_url(self, tmp_path: Path) -> None:
-        spec_dir = tmp_path / "spec-042"
-        spec_dir.mkdir()
-        (spec_dir / "a-state.json").write_text('{"pr_url": "https://github.com/org/repo/pull/1"}')
-        (spec_dir / "b-state.json").write_text('{"pr_url": "https://github.com/org/repo/pull/2"}')
+        (tmp_path / "a-state.json").write_text(
+            '{"spec_id": "spec-042", "pr_url": "https://github.com/org/repo/pull/1"}'
+        )
+        (tmp_path / "b-state.json").write_text(
+            '{"spec_id": "spec-042", "pr_url": "https://github.com/org/repo/pull/2"}'
+        )
         assert find_pr_url("spec-042", tmp_path) == "https://github.com/org/repo/pull/1"
 
     def test_skips_corrupt_json(self, tmp_path: Path) -> None:
-        d = tmp_path / "042"
-        d.mkdir()
-        (d / "bad.json").write_text("{not json}", encoding="utf-8")
+        (tmp_path / "bad.json").write_text("{not json}", encoding="utf-8")
         _write_state(tmp_path, "042", "good", "https://github.com/o/r/pull/9")
         assert find_pr_url("042", tmp_path) == "https://github.com/o/r/pull/9"
 
@@ -69,7 +68,7 @@ class TestLand:
         gitops.delete_remote_branch.assert_not_called()
 
     def test_merges_pr_when_feature_branch_and_pr_url_exist(self, tmp_path: Path) -> None:
-        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
         gitops = _make_gitops()
         result = land("042", project_dir=tmp_path, gitops=gitops)
@@ -77,7 +76,7 @@ class TestLand:
         gitops.merge_pr.assert_called_once_with("https://github.com/o/r/pull/7")
 
     def test_deletes_remote_branch_after_merge(self, tmp_path: Path) -> None:
-        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
         gitops = _make_gitops()
         land("042", project_dir=tmp_path, gitops=gitops)
@@ -86,7 +85,7 @@ class TestLand:
         )
 
     def test_returns_false_when_merge_blocked(self, tmp_path: Path) -> None:
-        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
         gitops = _make_gitops(merge_result=False)
         result = land("042", project_dir=tmp_path, gitops=gitops)
@@ -120,9 +119,7 @@ class TestLand:
         assert result is True
 
     def test_cleans_up_worktrees(self, tmp_path: Path) -> None:
-        worktree_dir = (
-            tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "worktrees" / "042" / "default" / "iter-0"
-        )
+        worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
         worktree_dir.mkdir(parents=True)
         gitops = _make_gitops()
         land("042", project_dir=tmp_path, gitops=gitops)
@@ -133,7 +130,7 @@ class TestLand:
         gitops = _make_gitops(feature_branch=None)
         list_result = MagicMock(
             returncode=0,
-            stdout="  harness/042-strategy1-iter-1\n  harness/042-strategy1-iter-2\n",
+            stdout="  harness/042/strategy1/iter-1\n  harness/042/strategy1/iter-2\n",
         )
         delete_result = MagicMock(returncode=0, stdout="")
         mock_run.side_effect = [list_result, delete_result, delete_result]
@@ -143,12 +140,12 @@ class TestLand:
         assert result is True
         # Verify git branch --list was called
         list_call = mock_run.call_args_list[0]
-        assert list_call[0][0] == ["git", "branch", "--list", "harness/042-*"]
+        assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
         # Verify git branch -D was called for each branch
         assert mock_run.call_count == 3
         deleted_branches = [c[0][0][3] for c in mock_run.call_args_list[1:]]
-        assert "harness/042-strategy1-iter-1" in deleted_branches
-        assert "harness/042-strategy1-iter-2" in deleted_branches
+        assert "harness/042/strategy1/iter-1" in deleted_branches
+        assert "harness/042/strategy1/iter-2" in deleted_branches
 
     def test_accepts_explicit_state_dir(self, tmp_path: Path) -> None:
         custom_state = tmp_path / "custom-state"
@@ -166,19 +163,19 @@ class TestDeleteHarnessBranches:
     def test_deletes_legacy_harness_branches(self, tmp_path: Path) -> None:
         """Simulate two harness/* branches existing for spec 042."""
         gitops = _make_gitops()
-        list_result = MagicMock(returncode=0, stdout="  harness/042-codegen-iter-0\n  harness/042-codegen-iter-1\n")
+        list_result = MagicMock(returncode=0, stdout="  harness/042/codegen/iter-0\n  harness/042/codegen/iter-1\n")
         delete_result = MagicMock(returncode=0, stdout="")
         with patch("harness.land.subprocess.run") as mock_run:
             mock_run.side_effect = [list_result, delete_result, delete_result]
             land("042", project_dir=tmp_path, gitops=gitops)
-        # First call: git branch --list harness/042-*
+        # First call: git branch --list harness/042/*
         first_call = mock_run.call_args_list[0]
-        assert first_call[0][0] == ["git", "branch", "--list", "harness/042-*"]
+        assert first_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
         # Subsequent calls: git branch -D <branch>
         delete_calls = mock_run.call_args_list[1:]
         deleted_branches = [c[0][0][3] for c in delete_calls]
-        assert "harness/042-codegen-iter-0" in deleted_branches
-        assert "harness/042-codegen-iter-1" in deleted_branches
+        assert "harness/042/codegen/iter-0" in deleted_branches
+        assert "harness/042/codegen/iter-1" in deleted_branches
 
     def test_no_error_when_no_harness_branches(self, tmp_path: Path) -> None:
         gitops = _make_gitops()
@@ -206,7 +203,7 @@ class TestLandIntegration:
         sp.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], check=True, capture_output=True)
 
         # State file with PR URL
-        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
 
         # Spec dir
@@ -215,7 +212,7 @@ class TestLandIntegration:
         (spec_dir / "spec.md").write_text("---\ntargets: []\n---\n# Body\n", encoding="utf-8")
 
         # Worktree dir
-        worktree_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "worktrees" / "042" / "default" / "iter-0"
+        worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
         worktree_dir.mkdir(parents=True)
 
         gitops = _make_gitops()

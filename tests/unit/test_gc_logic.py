@@ -20,7 +20,7 @@ class TestStaleWorktreeDetection:
     def test_old_worktree_detected(self, tmp_path):
         """Worktrees older than threshold identified for removal."""
         wt_base = tmp_path / "worktrees"
-        wt_dir = wt_base / "spec-001" / "default" / "iter-1"
+        wt_dir = wt_base / "default" / "iter-1"
         wt_dir.mkdir(parents=True)
         (wt_dir / "README.md").write_text("test")
 
@@ -35,7 +35,7 @@ class TestStaleWorktreeDetection:
     def test_fresh_worktree_not_detected(self, tmp_path):
         """Worktrees newer than threshold NOT identified."""
         wt_base = tmp_path / "worktrees"
-        wt_dir = wt_base / "spec-001" / "default" / "iter-1"
+        wt_dir = wt_base / "default" / "iter-1"
         wt_dir.mkdir(parents=True)
         (wt_dir / "README.md").write_text("test")
 

@@ -33,12 +33,9 @@ from tests.e2e.stub_llm import StubLLM, StubSandboxProvider
 @pytest.fixture
 def tmp_harness_dir(tmp_path: Path) -> Path:
     """Create a temporary harness directory structure."""
-    state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
-    state_dir.mkdir(parents=True)
-    esc_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "escalations"
-    esc_dir.mkdir(parents=True)
-    strategies_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies"
-    strategies_dir.mkdir(parents=True)
+    (tmp_path / "runs" / "state").mkdir(parents=True)
+    (tmp_path / "runs" / "escalations").mkdir(parents=True)
+    (tmp_path / "runs" / "strategies").mkdir(parents=True)
     return tmp_path
 
 
@@ -75,6 +72,7 @@ class MockGitOps:
 
     def __init__(self, tmp_dir: Path) -> None:
         self._tmp_dir = tmp_dir
+        self.base_dir = tmp_dir
         self.worktrees_created: list = []
         self.worktrees_destroyed: list = []
         self.commits: list = []
@@ -87,10 +85,24 @@ class MockGitOps:
 
     def create_worktree(
         self, spec_id: str, strategy_id: str, outer_iter: int,
+        base_branch: str | None = None, build_id: str = "",
     ) -> str:
-        """Create a fake worktree directory."""
-        wt_path = self._tmp_dir / "worktrees" / f"{spec_id}-{strategy_id}-{outer_iter}"
+        """Create a fake worktree directory with a real git repo so that
+        _has_file_changes works correctly (avoids false no-progress escalation).
+        """
+        import subprocess as _sp
+        wt_path = self._tmp_dir / "runs" / "worktrees" / f"{spec_id}-{strategy_id}-{outer_iter}"
         wt_path.mkdir(parents=True, exist_ok=True)
+        # Initialize as a git repo and stage a dummy change so that
+        # _has_file_changes() returns True and the no-progress guard doesn't fire.
+        try:
+            _sp.run(["git", "init"], cwd=str(wt_path), capture_output=True, check=False)
+            _sp.run(["git", "config", "user.email", "test@test.com"], cwd=str(wt_path), capture_output=True, check=False)
+            _sp.run(["git", "config", "user.name", "Test"], cwd=str(wt_path), capture_output=True, check=False)
+            (wt_path / "stub_change.txt").write_text(f"iter-{outer_iter}")
+            _sp.run(["git", "add", "stub_change.txt"], cwd=str(wt_path), capture_output=True, check=False)
+        except Exception:
+            pass
         self.worktrees_created.append(str(wt_path))
         return str(wt_path)
 
@@ -150,14 +162,12 @@ def make_ralph_controller(
     """
     from harness.ralph import RalphController
 
-    state_dir = tmp_dir / ".specify" / "extensions" / "echelon" / "harness" / "state"
+    state_dir = tmp_dir / "runs" / "state"
     state_dir.mkdir(parents=True, exist_ok=True)
 
     state_store = StateStore(state_dir, spec_id, strategy_id)
     mode_controller = ModeController(mode)
-    escalation_handler = EscalationHandler(
-        str(tmp_dir / ".specify" / "extensions" / "echelon" / "harness")
-    )
+    escalation_handler = EscalationHandler(str(tmp_dir / "runs"))
     stub_provider = StubSandboxProvider(stub_llm)
 
     if mock_gitops is None:

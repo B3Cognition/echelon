@@ -34,7 +34,7 @@ from harness.errors import GitOpsError, SandboxCreationError, SelfTargetError
 from harness.fingerprint import fingerprint_repo, detect_playwright
 from harness.gitops import GitOpsManager
 from harness.image_resolver import resolve_image, ImageResolutionError
-from harness.paths import harness_dir
+from harness.paths import runs_dir, strategies_dir as _strategies_dir_fn, mirror_path as _mirror_path_fn
 
 logger = logging.getLogger(__name__)
 
@@ -42,42 +42,6 @@ logger = logging.getLogger(__name__)
 class InitError(Exception):
     """Raised when harness initialization fails."""
 
-
-# REMOVE IN JUL 2026 — legacy path migration
-def _migrate_legacy_harness_dir(base: Path) -> None:
-    """Move .specify/harness/ → .specify/extensions/echelon/harness/ if the old
-    layout exists and the new one does not yet.
-
-    Prior to this change all runtime artifacts (mirror, worktrees, state, …)
-    lived under .specify/harness/, which is a top-level namespace not owned by
-    any single extension. They now live under .specify/extensions/echelon/harness/
-    so that ownership is unambiguous.
-    """
-    import shutil as _shutil
-
-    old = base / ".specify" / "harness"
-    new = harness_dir(base)
-
-    if not old.exists():
-        return
-    if new.exists():
-        logger.info(
-            "Legacy .specify/harness/ detected but new path already exists — skipping migration"
-        )
-        return
-
-    try:
-        new.parent.mkdir(parents=True, exist_ok=True)
-        _shutil.move(str(old), str(new))
-        logger.info(
-            "Migrated harness artifacts: %s → %s", old, new
-        )
-        print(
-            f"Migrated harness directory: {old} → {new}",
-            file=__import__("sys").stderr,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Could not migrate legacy harness dir %s: %s", old, exc)
 
 
 def _check_docker() -> bool:
@@ -225,9 +189,6 @@ def init_harness(
     """
     base = Path(base_dir) if base_dir else Path.cwd()
 
-    # REMOVE IN JUL 2026 — migrate .specify/harness/ to new extension-owned path
-    _migrate_legacy_harness_dir(base)
-
     # Step 1: OS detection + Windows rejection
     os_name = _check_os()
     logger.info("OS detected: %s", os_name)
@@ -285,7 +246,7 @@ def init_harness(
 
     # Step 7: Create worktree for fingerprinting
     try:
-        worktree_path = mgr.create_worktree("init", "fingerprint", 0)
+        worktree_path = mgr.create_worktree("init", "fingerprint", 0, build_id="init")
     except GitOpsError as e:
         raise InitError(f"Failed to create worktree for fingerprinting: {e}")
 
@@ -398,10 +359,15 @@ def init_harness(
 
     logger.info("Harness config written to %s (harness: section)", config_file)
 
-    # Create strategies dir so codegen preflight finds it without noise
-    strategies_dir = harness_dir(base) / "strategies"
-    strategies_dir.mkdir(parents=True, exist_ok=True)
-    gitkeep = strategies_dir / ".gitkeep"
+    # Create runs/ and strategies dir so codegen preflight finds them without noise
+    rd = runs_dir(base)
+    rd.mkdir(parents=True, exist_ok=True)
+    gitignore = rd / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("# echelon harness runtime artifacts — do not commit\n*\n!.gitignore\n", encoding="utf-8")
+    strats = _strategies_dir_fn(base)
+    strats.mkdir(parents=True, exist_ok=True)
+    gitkeep = strats / ".gitkeep"
     if not gitkeep.exists():
         gitkeep.touch()
 

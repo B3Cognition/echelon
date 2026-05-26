@@ -24,19 +24,21 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
     Returns:
         Status dict for programmatic use.
     """
-    from harness.paths import harness_dir
-    state_dir = harness_dir(Path(base_dir)) / "state"
+    from harness.paths import runs_dir
+    base_path = Path(base_dir)
+    rd = runs_dir(base_path)
 
-    if not state_dir.exists():
+    if not rd.exists():
         print("No active loops.", file=sys.stderr)
         return {"active_loops": 0, "strategies": {}}
 
     strategies: Dict[str, Any] = {}
 
-    for spec_dir in state_dir.iterdir():
-        if not spec_dir.is_dir():
+    for build in sorted(rd.glob("build-*/")):
+        state_dir = build / "state"
+        if not state_dir.exists():
             continue
-        for state_file in spec_dir.glob("*.json"):
+        for state_file in state_dir.glob("*.json"):
             sid = state_file.stem
             try:
                 data = json.loads(state_file.read_text(encoding="utf-8"))

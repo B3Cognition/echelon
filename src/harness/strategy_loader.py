@@ -50,7 +50,7 @@ BUILTIN_STRATEGIES: Dict[str, StrategySpec] = {
 def load_strategies(
     spec_id: str,
     strategy_ids: List[str],
-    base_dir: str = ".specify/extensions/echelon/harness/strategies",
+    base_dir: str = "runs/strategies",
 ) -> Dict[str, StrategySpec]:
     """Load strategy definition files from disk.
 

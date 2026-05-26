@@ -60,6 +60,7 @@ class RalphController:
         strategy_id: str,
         config: HarnessConfig,
         llm_provider: Optional[ClaudeCliProvider] = None,
+        build_id: str = "",
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -70,6 +71,7 @@ class RalphController:
         self._strategy_id = strategy_id
         self._config = config
         self._llm_provider = llm_provider
+        self._build_id = build_id
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -181,6 +183,7 @@ class RalphController:
             # Create worktree
             worktree_path = self._gitops.create_worktree(
                 self._spec_id, self._strategy_id, outer_iter,
+                build_id=self._build_id,
             )
 
             try:
