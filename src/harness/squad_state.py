@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from harness.squad_provider import SquadAgentResult
@@ -32,9 +37,32 @@ class SquadStateStore:
         return json.loads(self._path.read_text())
 
     def save(self, state: dict) -> None:
-        tmp = self._path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2))
-        tmp.replace(self._path)
+        # Keep previous state as recovery point before overwriting
+        if self._path.exists():
+            bak = self._path.with_suffix(".json.bak")
+            try:
+                bak.write_text(self._path.read_text())
+            except OSError:
+                logger.warning("Could not write .bak file: %s", bak)
+
+        content = json.dumps(state, indent=2)
+        fd, tmp = tempfile.mkstemp(
+            dir=str(self._squad_dir),
+            prefix=".state-",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            Path(tmp).replace(self._path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def initialize(
         self,

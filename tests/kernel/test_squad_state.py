@@ -1,6 +1,7 @@
 """Tests for SquadStateStore."""
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
@@ -169,3 +170,77 @@ def test_increment_why_fail_count_returns_new_count(tmp_path):
     store.initialize("r1", "semi", "msg", 0, "init")
     assert store.increment_why_fail_count() == 1
     assert store.increment_why_fail_count() == 2
+
+
+# ── Step 1: fsync ────────────────────────────────────────────────────────────
+
+class TestFsync:
+    def test_fsync_called_on_save(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        with patch("harness.squad_state.os.fsync") as mock_fsync:
+            store.save(store.load())
+        mock_fsync.assert_called_once()
+
+    def test_no_stale_tmp_file_after_save(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        state_dir = tmp_path / "squad/run-test"
+        leftovers = list(state_dir.glob(".state-*.tmp"))
+        assert leftovers == [], f"Stale tmp files: {leftovers}"
+
+    def test_tmp_file_cleaned_up_on_write_error(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        state_dir = tmp_path / "squad/run-test"
+
+        with patch("harness.squad_state.os.fsync", side_effect=OSError("disk full")):
+            try:
+                store.save(store.load())
+            except OSError:
+                pass
+
+        leftovers = list(state_dir.glob(".state-*.tmp"))
+        assert leftovers == [], f"Tmp file not cleaned up: {leftovers}"
+
+
+# ── Step 2: .bak ─────────────────────────────────────────────────────────────
+
+class TestBak:
+    def test_no_bak_after_first_save(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        bak = tmp_path / "squad/run-test/state.json.bak"
+        assert not bak.exists()
+
+    def test_bak_exists_after_second_save(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.save(store.load())   # second write
+        bak = tmp_path / "squad/run-test/state.json.bak"
+        assert bak.exists()
+
+    def test_bak_contains_previous_state(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        state = store.load()
+        state["token_usage"] = 1000
+        store.save(state)           # writes token_usage=1000; bak = initialized state
+
+        state2 = store.load()
+        state2["token_usage"] = 2000
+        store.save(state2)          # writes token_usage=2000; bak = token_usage=1000
+
+        import json
+        bak_state = json.loads((tmp_path / "squad/run-test/state.json.bak").read_text())
+        assert bak_state["token_usage"] == 1000
+
+    def test_bak_write_failure_does_not_abort_save(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+
+        with patch("harness.squad_state.Path.write_text", side_effect=OSError("read-only")):
+            # save must complete even if .bak write fails
+            store.save(store.load())
+
+        assert (tmp_path / "squad/run-test/state.json").exists()
