@@ -7,12 +7,19 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from harness.squad_provider import SquadAgentResult
+
+
+VALID_SQUAD_TRANSITIONS: dict[str, set[str]] = {
+    "running": {"blocked", "done"},
+    "blocked": {"running"},
+    "done": set(),
+}
 
 
 class SquadStateStore:
@@ -37,14 +44,19 @@ class SquadStateStore:
         return json.loads(self._path.read_text())
 
     def save(self, state: dict) -> None:
-        # Keep previous state as recovery point before overwriting
         if self._path.exists():
+            old_text = self._path.read_text()
             bak = self._path.with_suffix(".json.bak")
             try:
-                bak.write_text(self._path.read_text())
+                bak.write_text(old_text)
             except OSError:
                 logger.warning("Could not write .bak file: %s", bak)
+            try:
+                self._check_monotonics(json.loads(old_text), state)
+            except json.JSONDecodeError:
+                pass
 
+        state["updated_at"] = datetime.now(timezone.utc).isoformat()
         content = json.dumps(state, indent=2)
         fd, tmp = tempfile.mkstemp(
             dir=str(self._squad_dir),
@@ -73,6 +85,7 @@ class SquadStateStore:
         entry_phase: str,
         max_iterations: int = 5,
     ) -> None:
+        logger.debug("squad init run_id=%s mode=%s entry_phase=%s", run_id, mode, entry_phase)
         ts = datetime.now(timezone.utc).isoformat()
         self.save({
             "run_id": run_id,
@@ -97,6 +110,29 @@ class SquadStateStore:
             "staging_dir": str(self._staging_dir),
         })
 
+    def _check_monotonics(self, old: dict, new: dict) -> None:
+        old_tokens = old.get("token_usage", 0)
+        new_tokens = new.get("token_usage", 0)
+        if new_tokens < old_tokens:
+            logger.warning(
+                "token_usage decreased: %d → %d (run_id=%s)",
+                old_tokens,
+                new_tokens,
+                new.get("run_id", "?"),
+            )
+
+    def _transition_status(self, state: dict, new_status: str) -> None:
+        current = state.get("status", "running")
+        allowed = VALID_SQUAD_TRANSITIONS.get(current, set())
+        if new_status not in allowed:
+            logger.warning(
+                "Invalid squad status transition %r → %r (run_id=%s)",
+                current,
+                new_status,
+                state.get("run_id", "?"),
+            )
+        state["status"] = new_status
+
     def current_phase(self) -> str:
         return self.load().get("phase", "init")
 
@@ -104,6 +140,13 @@ class SquadStateStore:
         self, from_phase: str, to_phase: str, result: "SquadAgentResult"
     ) -> None:
         state = self.load()
+        logger.debug(
+            "squad advance %s → %s verdict=%s run_id=%s",
+            from_phase,
+            to_phase,
+            result.verdict,
+            state.get("run_id", "?"),
+        )
         state["phase"] = to_phase
         state["last_dispatch"] = {
             "phase_id": from_phase,
@@ -111,13 +154,16 @@ class SquadStateStore:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         for key, value in result.state_updates.items():
-            state[key] = value
-        state["updated_at"] = datetime.now(timezone.utc).isoformat()
+            if key == "status":
+                self._transition_status(state, value)
+            else:
+                state[key] = value
         self.save(state)
 
     def set_blocked(self, reason: str) -> None:
         state = self.load()
-        state["status"] = "blocked"
+        logger.debug("squad blocked run_id=%s reason=%r", state.get("run_id", "?"), reason)
+        self._transition_status(state, "blocked")
         state["blocked_reason"] = reason
         self.save(state)
 
@@ -154,7 +200,6 @@ class SquadStateStore:
             return
         state = self.load()
         state["cost_usd"] = round(state.get("cost_usd", 0.0) + amount, 6)
-        state["updated_at"] = datetime.now(timezone.utc).isoformat()
         self.save(state)
 
     def token_budget(self) -> int:

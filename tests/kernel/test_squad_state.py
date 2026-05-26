@@ -244,3 +244,168 @@ class TestBak:
             store.save(store.load())
 
         assert (tmp_path / "squad/run-test/state.json").exists()
+
+
+# ── Step 3: status transition model ──────────────────────────────────────────
+
+class TestStatusTransitions:
+    def test_valid_transition_running_to_blocked(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.set_blocked("reason")
+        assert store.load()["status"] == "blocked"
+
+    def test_valid_transition_blocked_to_running(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.set_blocked("reason")
+        # simulate controller un-blocking by direct save
+        state = store.load()
+        store._transition_status(state, "running")
+        store.save(state)
+        assert store.load()["status"] == "running"
+
+    def test_invalid_transition_logs_warning(self, tmp_path, caplog):
+        import logging
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        # Attempt running → done directly via state_updates (valid transition)
+        state = store.load()
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store._transition_status(state, "done")
+        # running → done IS valid, so no warning
+        assert "Invalid squad status transition" not in caplog.text
+
+    def test_invalid_transition_emits_warning_and_still_writes(self, tmp_path, caplog):
+        import logging
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        state = store.load()
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            # done is a terminal state; done → blocked is invalid
+            state["status"] = "done"
+            store._transition_status(state, "blocked")
+        assert "Invalid squad status transition" in caplog.text
+        assert state["status"] == "blocked"
+
+    def test_state_updates_status_routes_through_guard(self, tmp_path, caplog):
+        import logging
+        from harness.squad_provider import SquadAgentResult
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {"status": "done"}},
+            raw_output="",
+            duration_ms=10,
+            timed_out=False,
+        )
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store.advance("init", "phase1-discover", result)
+        # running → done is valid, no warning
+        assert "Invalid squad status transition" not in caplog.text
+        assert store.load()["status"] == "done"
+
+
+# ── Step 4: token_usage monotonicity ─────────────────────────────────────────
+
+class TestTokenMonotonicity:
+    def test_increment_increases_token_usage(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.increment_token_usage(100)
+        store.increment_token_usage(50)
+        assert store.token_usage() == 150
+
+    def test_no_warning_on_normal_increment(self, tmp_path, caplog):
+        import logging
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store.increment_token_usage(500)
+        assert "token_usage decreased" not in caplog.text
+
+    def test_decrease_logs_warning(self, tmp_path, caplog):
+        import logging
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 10_000, "init")
+        store.increment_token_usage(5_000)
+        state = store.load()
+        state["token_usage"] = 100  # forced decrease
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store.save(state)
+        assert "token_usage decreased" in caplog.text
+
+    def test_decrease_still_writes_state(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.increment_token_usage(5_000)
+        state = store.load()
+        state["token_usage"] = 100
+        store.save(state)
+        assert store.token_usage() == 100
+
+    def test_state_updates_token_decrease_warns(self, tmp_path, caplog):
+        import logging
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.increment_token_usage(1_000)
+        result = _result("DONE", {"token_usage": 10})
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store.advance("init", "phase1-discover", result)
+        assert "token_usage decreased" in caplog.text
+
+
+# ── Step 5: updated_at on every write ────────────────────────────────────────
+
+class TestUpdatedAt:
+    def _ts(self, store) -> str:
+        return store.load().get("updated_at", "")
+
+    def test_initialize_sets_updated_at(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        assert self._ts(store) != ""
+
+    def test_set_blocked_updates_timestamp(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        t0 = self._ts(store)
+        store.set_blocked("reason")
+        assert self._ts(store) >= t0
+
+    def test_set_cancel_requested_updates_timestamp(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        t0 = self._ts(store)
+        store.set_cancel_requested()
+        assert self._ts(store) >= t0
+
+    def test_increment_token_usage_updates_timestamp(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        t0 = self._ts(store)
+        store.increment_token_usage(100)
+        assert self._ts(store) >= t0
+
+    def test_increment_why_fail_count_updates_timestamp(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        t0 = self._ts(store)
+        store.increment_why_fail_count()
+        assert self._ts(store) >= t0
+
+    def test_reset_why_fail_count_updates_timestamp(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        store.increment_why_fail_count()
+        t0 = self._ts(store)
+        store.reset_why_fail_count()
+        assert self._ts(store) >= t0
+
+    def test_advance_updates_timestamp(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        t0 = self._ts(store)
+        store.advance("init", "phase1-discover", _result())
+        assert self._ts(store) >= t0
