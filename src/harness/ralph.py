@@ -1192,7 +1192,7 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
     print(f"\n  Spec:      {spec_id}", file=sys.stderr)
     print(f"  Strategy:  {strategy_id}", file=sys.stderr)
     print(f"  File:      {escalation_file}", file=sys.stderr)
-    print(f"\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
+    print("\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
     print(f"  Discard with: echelon harness run {spec_id} --reset\n", file=sys.stderr)
     print(sep, file=sys.stderr)
 

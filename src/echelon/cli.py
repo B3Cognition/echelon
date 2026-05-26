@@ -31,6 +31,27 @@ except ImportError:
         def check_wing_collision(*a, **k):  # type: ignore[assignment]
             return []
 
+_HR = "=" * 44
+
+
+def _banner(title: str, fields: list[tuple[str, str]], flush: bool = True) -> None:
+    """Print a formatted banner block."""
+    print(f"\n{_HR}", flush=flush)
+    print(f"  {title}", flush=flush)
+    print(_HR, flush=flush)
+    if fields:
+        label_w = max(len(k) for k, _ in fields) + 1
+        for key, val in fields:
+            label = f"{key}:".ljust(label_w + 1)
+            if "\n" in val:
+                print(f"\n  {label}", flush=flush)
+                for line in val.strip().splitlines():
+                    print(f"    {line}", flush=flush)
+            else:
+                print(f"\n  {label}  {val}", flush=flush)
+    print(f"\n{_HR}\n", flush=flush)
+
+
 # Maps CLI command → spec-kit skill base name (used to derive file paths)
 SKILL_MAP = {
     "run":     "echelon.run",
