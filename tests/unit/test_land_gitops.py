@@ -86,11 +86,12 @@ class TestDeleteRemoteBranchIntegration:
         sp.run(["git", "-C", str(clone), "commit", "-m", "init"], check=True, capture_output=True)
         sp.run(["git", "-C", str(clone), "push", "origin", "HEAD:main"], check=True, capture_output=True)
 
-        # Now try to delete a branch that doesn't exist on remote
+        # Now try to delete a branch that doesn't exist on remote.
+        # "Already gone" is treated as success — no cleanup needed.
         m = MagicMock(spec=GitOpsManager)
         m.delete_remote_branch = GitOpsManager.delete_remote_branch.__get__(m, GitOpsManager)
         result = m.delete_remote_branch("nonexistent-branch", project_dir=str(clone))
-        assert result is False  # graceful — branch doesn't exist
+        assert result is True  # branch not found = already gone = cleanup succeeded
 
     def test_returns_true_for_existing_remote_branch(self, tmp_path) -> None:
         """Uses a real local git repo — delete_remote_branch on a branch that exists."""

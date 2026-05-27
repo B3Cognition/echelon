@@ -778,7 +778,7 @@ class GitOpsManager:
     def delete_remote_branch(
         self, branch_name: str, *, project_dir: str, remote: str = "origin"
     ) -> bool:
-        """Delete branch_name from remote. Returns True if deleted, False if blocked or not found."""
+        """Delete branch_name from remote. Returns True if deleted or already gone, False on real error."""
         try:
             subprocess.run(
                 ["git", "push", remote, "--delete", branch_name],
@@ -790,8 +790,19 @@ class GitOpsManager:
             )
             logger.info("Deleted remote branch %s/%s", remote, branch_name)
             return True
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger.warning("Could not delete remote branch %s/%s: %s", remote, branch_name, e)
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").lower()
+            if "remote ref does not exist" in stderr or "error: unable to delete" in stderr:
+                # Branch was never pushed to this remote or was already deleted — not an error.
+                logger.info("Remote branch %s/%s not found (already gone)", remote, branch_name)
+                return True
+            logger.warning(
+                "Could not delete remote branch %s/%s: %s\n  stderr: %s",
+                remote, branch_name, e, e.stderr.strip() if e.stderr else "(none)",
+            )
+            return False
+        except subprocess.TimeoutExpired as e:
+            logger.warning("Could not delete remote branch %s/%s: timed out", remote, branch_name)
             return False
 
     # === Query Operations ===

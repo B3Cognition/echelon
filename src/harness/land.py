@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
+from echelon.ui import banner as _banner
+
 from harness.paths import runs_dir
 from harness.spec_frontmatter import find_spec_dir, write_status
 
@@ -72,15 +74,38 @@ def land(
     if pr_url:
         merged = gitops.merge_pr(pr_url)
         if not merged:
-            logger.warning(
-                "land: %s — PR merge blocked; branch protection requires manual merge", spec_id
+            _banner(
+                "LAND — ACTION NEEDED",
+                [
+                    ("spec", spec_id),
+                    ("problem", "PR merge blocked by branch protection or conflicts"),
+                    ("PR", pr_url),
+                    ("next step", f"echelon land {spec_id}"),
+                ],
+                subtitle="Merge the PR on GitHub, then re-run land.",
             )
             return False
     else:
-        logger.warning("land: %s — no PR URL in state, skipping merge step", spec_id)
+        _banner(
+            "LAND — NO PR",
+            [
+                ("spec", spec_id),
+                ("reason", "run completed without a PR (gh/glab not configured)"),
+                ("branch", feature_branch),
+                ("next step", f"open a PR for {feature_branch} manually if needed"),
+            ],
+        )
 
     if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
-        logger.warning("land: remote branch %s could not be deleted; continuing", feature_branch)
+        _banner(
+            "LAND — BRANCH CLEANUP NOTE",
+            [
+                ("branch", feature_branch),
+                ("problem", "could not delete from origin — not configured or wrong remote"),
+                ("safe to ignore?", "yes, if you pushed to a different remote (e.g. upstream)"),
+                ("manual cleanup", f"git push origin --delete {feature_branch}"),
+            ],
+        )
     _cleanup_worktrees(spec_id, project_dir, gitops)
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
