@@ -20,6 +20,7 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER). T
 2. **NEVER rewrite architecture — only report problems.**
 3. **NEVER approve own fixes.**
 4. **NEVER produce quality gate scores without invoking Understanding via the Skill tool.** In spec-validation mode (WHY2/WHY3), `speckit.echelon.understanding-validate` must be invoked via the Skill tool and must return before any quality scores are produced. Heuristic review is not a valid substitute. Do NOT call the `understanding` CLI binary directly via Bash — use the Skill tool.
+5. **NEVER use markdown formatting in the Status column of quality-gates.md.** The value must be the exact literal word `PASS` or `FAIL` — no bold (`**`), no italics, no backticks, no other decoration. The Python harness parses this column programmatically; decorated values are silently ignored and break gate detection.
 
 ## Configuration
 
@@ -554,14 +555,16 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 
 | Metric | Score | Threshold | Status | Notes |
 |--------|-------|-----------|--------|-------|
-| Overall | <score> | <load: quality_gates.overall> | <PASS/FAIL> | |
-| Structure | <score> | <load: quality_gates.structure> | <PASS/FAIL> | |
-| Testability | <score> | <load: quality_gates.testability> | <PASS/FAIL> | |
-| Semantic | <score> | <load: quality_gates.semantic> | <PASS/FAIL> | |
-| Cognitive | <score> | <load: quality_gates.cognitive> | <PASS/FAIL> | |
-| Readability | <score> | <load: quality_gates.readability> | <PASS/FAIL> | |
-| Depth | <score> | <load: quality_gates.depth> | <PASS/FAIL> | Understanding v3.6+ |
-| Behavioral | <score> | <load: quality_gates.behavioral> | <PASS/FAIL> | |
+| Overall | <score> | <load: quality_gates.overall> | PASS or FAIL | |
+| Structure | <score> | <load: quality_gates.structure> | PASS or FAIL | |
+| Testability | <score> | <load: quality_gates.testability> | PASS or FAIL | |
+| Semantic | <score> | <load: quality_gates.semantic> | PASS or FAIL | |
+| Cognitive | <score> | <load: quality_gates.cognitive> | PASS or FAIL | |
+| Readability | <score> | <load: quality_gates.readability> | PASS or FAIL | |
+| Depth | <score> | <load: quality_gates.depth> | PASS or FAIL | Understanding v3.6+ |
+| Behavioral | <score> | <load: quality_gates.behavioral> | PASS or FAIL | |
+
+<!-- STATUS COLUMN: write the literal word PASS or FAIL only. No bold, no asterisks, no markdown. -->
 
 ## Metric Improvement Recommendations
 <!-- For each failing metric, specific changes to improve the score -->

@@ -745,7 +745,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         else:
             ready_items.append("constitution.md ✓")
 
-    # 2. Quality gates — read from the most recent quality-gates.md
+    # 2. Quality gates — check specs/ first, then staging/ for mid-run blocked states
     specs_root = project_root / "specs"
     quality_gates_file: Optional[Path] = None
     if specs_root.exists():
@@ -755,26 +755,57 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 quality_gates_file = qg
                 break
 
+    # Blocked runs may not have finalized to specs/ yet — load state once for reuse
+    run_dir = _find_current_run_dir(project_root)
+    run_state: dict = {}
+    if run_dir:
+        try:
+            run_state = _json.loads((run_dir / "state.json").read_text())
+        except Exception:
+            pass
+
+    if quality_gates_file is None and run_state:
+        staging_dir = Path(run_state.get("staging_dir") or str(run_dir / "staging"))
+        staging_qg = staging_dir / "quality-gates.md"
+        if staging_qg.exists():
+            quality_gates_file = staging_qg
+
+    hard_fails: list[str] = []
+    borderline: list[str] = []
+    fail_scores: dict[str, tuple[str, str]] = {}  # gate -> (score, threshold)
+    qg_verdict = ""
+
     if quality_gates_file:
         qg_text = quality_gates_file.read_text(errors="replace")
-        # Parse gate rows: | Gate | score | threshold | FAIL | note |
-        # Matches plain "FAIL" and bold "**FAIL**" (both formats used by SAGE).
+
+        verdict_m = _re.search(r"^##\s+Verdict:\s+(PASS|FAIL|BLOCKED)", qg_text, _re.MULTILINE)
+        qg_verdict = verdict_m.group(1) if verdict_m else ""
+
+        # Parse gate rows: | Gate | score | threshold | PASS/FAIL | note |
+        # Matches plain FAIL and bold **FAIL** (NEVER rule in sage.md enforces plain text)
         gate_pattern = _re.compile(
             r"\|\s*(Overall|Structure|Testability|Semantic|Cognitive|Readability|Behavioral|Depth)"
-            r"\s*\|([^|]+)\|([^|]+)\|\s*\*{0,2}FAIL\*{0,2}\s*\|([^|]*)\|",
+            r"\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*\*{0,2}FAIL\*{0,2}\s*\|([^|]*)\|",
         )
-        hard_fails, borderline = [], []
         for m in gate_pattern.finditer(qg_text):
-            gate, _score, _threshold, note = m.group(1), m.group(2), m.group(3), m.group(4)
+            gate, score, threshold, note = (
+                m.group(1), m.group(2).strip(), m.group(3).strip(), m.group(4)
+            )
+            fail_scores[gate] = (score, threshold)
             note_lower = note.lower()
-            # "NOT borderline" means hard fail; "borderline" alone means soft
             if "borderline" in note_lower and "not borderline" not in note_lower:
                 borderline.append(gate)
             else:
                 hard_fails.append(gate)
+
         if hard_fails:
+            fail_detail = ", ".join(
+                f"{g} {fail_scores[g][0]} (need {fail_scores[g][1]})"
+                if g in fail_scores else g
+                for g in hard_fails
+            )
             blockers.append(
-                f"WHY2 quality gates FAIL: {', '.join(hard_fails)}\n"
+                f"WHY2 quality gates FAIL: {fail_detail}\n"
                 f"     → echelon continue\n"
                 f"       (CARTOGRAPHER amendment pass, then WHY2 re-validates)"
             )
@@ -782,14 +813,26 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             warnings.append(
                 f"WHY2 borderline: {', '.join(borderline)} — monitor after CARTOGRAPHER amendment"
             )
-        if not hard_fails and not borderline:
+        # Verdict FAIL/BLOCKED with no numeric rows = SAGE ran in BLOCKED mode (spec.md absent)
+        if qg_verdict in ("FAIL", "BLOCKED") and not hard_fails and not borderline:
+            blockers.append(
+                "WHY2 BLOCKED — spec.md absent: CARTOGRAPHER has not written it yet\n"
+                "     → echelon continue\n"
+                "       (CARTOGRAPHER will write spec.md, then WHY2 re-validates)"
+            )
+        if not hard_fails and not borderline and qg_verdict not in ("FAIL", "BLOCKED"):
             ready_items.append("WHY2 quality gates ✓")
     else:
         warnings.append("WHY2 not yet run — spec validation pending")
 
     # 3. HOW phase artifacts — only surface when quality gates have passed
     # (if gates are failing, HOW/tasks missing is expected and not actionable yet)
-    why2_passed = quality_gates_file is not None and not hard_fails and not borderline
+    why2_passed = (
+        quality_gates_file is not None
+        and not hard_fails
+        and not borderline
+        and qg_verdict not in ("FAIL", "BLOCKED")
+    )
     how_present = 0
     how_missing = []
     if why2_passed and specs_root.exists():
@@ -826,12 +869,53 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             "     → echelon continue"
         )
 
-    # 5. Blocked run — remind user of resume
+    # 5. Blocked run — surface escalation context and improvement recommendations
     if result_status == "blocked":
-        warnings.append(
-            "Run is blocked — answer questions then:\n"
-            "     → echelon resume \"<your answer>\""
-        )
+        blocked_reason = run_state.get("blocked_reason") or ""
+        escalation_q = run_state.get("escalation_question") or ""
+
+        # Extract improvement recommendations from quality-gates.md
+        improvement_lines: list[str] = []
+        if quality_gates_file:
+            try:
+                qg_for_tips = quality_gates_file.read_text(errors="replace")
+                in_section = False
+                for line in qg_for_tips.splitlines():
+                    if _re.match(r"^##\s+(Metric Improvement|Action Required)", line):
+                        in_section = True
+                        continue
+                    if in_section:
+                        if line.startswith("## ") or line.startswith("# "):
+                            break
+                        stripped = line.strip()
+                        if stripped and not stripped.startswith("<!--"):
+                            improvement_lines.append(stripped)
+                            if len(improvement_lines) >= 8:
+                                break
+            except Exception:
+                pass
+
+        if blocked_reason == "consecutive_why_fails":
+            msg_lines = ["Run blocked: 2+ consecutive WHY FAILs — spec is not improving"]
+            if improvement_lines:
+                msg_lines.append("  Recommended fixes (from quality-gates.md):")
+                for il in improvement_lines[:6]:
+                    msg_lines.append(f"    {il}")
+            msg_lines.append(
+                "  → echelon resume \"<tell CARTOGRAPHER what to fix>\"\n"
+                "    e.g. \"Fix structure: split compound FRs, add numeric thresholds\""
+            )
+            warnings.append("\n".join(msg_lines))
+        elif escalation_q:
+            warnings.append(
+                f"Run blocked: {escalation_q}\n"
+                "     → echelon resume \"<your answer>\""
+            )
+        else:
+            warnings.append(
+                "Run blocked\n"
+                "     → echelon resume \"<your answer>\""
+            )
 
     # ── Print ──────────────────────────────────────────────────────────────
     print(f"\n{'─' * 60}", flush=True)
