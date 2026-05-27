@@ -73,7 +73,9 @@ Both `echelon init` and `echelon harness init` are pure Python — no AI session
 ```bash
 # Phase A — spec authoring (default: Claude)
 echelon run "Build a photo album app with sharing and tagging"
-echelon bugfix 001 "upload button does nothing on mobile Safari"
+echelon status                             # re-orient: run state, artifacts, cost, next step
+echelon continue                           # advance to next pending phase automatically
+echelon resume "your clarification"        # unblock a paused run
 
 # Phase B — build, verify in Docker, open PR
 echelon harness run 001                    # echelon squad build (default)
@@ -82,6 +84,9 @@ echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
 # Polyrepo: run against multiple sub-repos from a polyrepo root
 echelon spec target 001 og-platform fet-frontend-libs   # set target repos in spec frontmatter
 echelon harness run 001                                  # auto-dispatches to each sub-repo in parallel
+
+# After build converges and PR is open
+echelon land 001                           # merge PR, delete branch, clean worktrees, mark landed
 
 # After PR is open — review triage runs automatically via harness Phase 3
 # but can also be invoked directly:
@@ -96,6 +101,7 @@ Set `ECHELON_LLM` to switch AI provider for any command above — see [AI Provid
 echelon change  001 "scope change description"   # mid-build spec change
 echelon codegen 001                              # SOAR pipeline directly (no harness)
 echelon build   001                              # agent-driven build (no harness)
+echelon cicd                                     # auto-detect + write verify_command into echelon-config.yml
 ```
 
 ### Spec-kit skills (Claude session)
@@ -429,10 +435,13 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
 | `echelon review <id> [pr_url=…]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
 | `echelon change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
+| `echelon cicd` | `speckit.echelon.cicd` | Auto-detect and write `verify_command` into `echelon-config.yml` |
+| `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
+| `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
+| `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
+| `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed |
 | *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
 | *(spec-kit only)* | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
-| *(spec-kit only)* | `speckit.echelon.status` | Check progress |
-| *(spec-kit only)* | `speckit.echelon.resume` | Answer squad's question |
 | *(spec-kit only)* | `speckit.echelon.investigate` | Trigger INVESTIGATOR |
 | *(spec-kit only)* | `speckit.echelon.innovate` | Trigger MAVERICK |
 | *(spec-kit only)* | `speckit.echelon.ground` | Trigger REALIST |
@@ -446,8 +455,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon harness init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
 | `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy) |
 | `echelon harness run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on escalation or missing `verify_command` |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
-| *(spec-kit only)* | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on a human escalation question |
 
 ## Codegen Pipeline
 
