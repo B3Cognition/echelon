@@ -72,7 +72,7 @@ def _print_delivery_summary(
         # Branch / PR
         outer = info.get("outer_iterations", 0)
         inner = info.get("inner_iterations", 0)
-        branch = f"harness/{intent.spec_id}/{sid}/iter-{max(outer - 1, 0)}"
+        branch = info.get("branch") or f"harness/{intent.spec_id}/{sid}/iter-{max(outer - 1, 0)}"
         print(f"    Branch:     {branch}", file=sys.stderr)
         pr_url = info.get("pr_url")
         if pr_url:

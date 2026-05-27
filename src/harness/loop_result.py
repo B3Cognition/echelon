@@ -49,6 +49,7 @@ class LoopResult:
     pr_url: Optional[str]
     tokens_used: int
     final_verify: Optional[VerifyResult]
+    branch: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Validate fields after construction."""
@@ -85,6 +86,7 @@ class LoopResult:
             "pr_url": self.pr_url,
             "tokens_used": self.tokens_used,
             "final_verify": None,
+            "branch": self.branch,
         }
         if self.final_verify is not None:
             result["final_verify"] = {

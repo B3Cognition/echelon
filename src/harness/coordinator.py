@@ -209,6 +209,7 @@ class StrategyCoordinator:
                 "inner_iterations": result.inner_iterations,
                 "tokens_used": result.tokens_used,
                 "pr_url": result.pr_url,
+                "branch": result.branch,
                 "converged": result.status == "converged",
             }
 

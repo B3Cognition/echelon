@@ -306,11 +306,8 @@ class RalphController:
 
                     if verify_result.passed:
                         # Converged!
-                        # Commit and push
-                        self._commit_and_push(worktree_path, outer_iter)
-
-                        # Create/promote PR
-                        pr_url = self._manage_pr(pr_url, outer_iter, converged=True)
+                        branch = self._commit_and_push(worktree_path, outer_iter)
+                        pr_url = self._manage_pr(pr_url, branch, converged=True)
 
                         return self._finalize(
                             status="converged",
@@ -320,6 +317,7 @@ class RalphController:
                             pr_url=pr_url,
                             tokens_used=tokens_used,
                             final_verify=verify_result,
+                            branch=branch,
                         )
 
                     # Inner loop
@@ -347,8 +345,8 @@ class RalphController:
                         )
 
                     if inner_result["converged"]:
-                        self._commit_and_push(worktree_path, outer_iter)
-                        pr_url = self._manage_pr(pr_url, outer_iter, converged=True)
+                        branch = self._commit_and_push(worktree_path, outer_iter)
+                        pr_url = self._manage_pr(pr_url, branch, converged=True)
                         return self._finalize(
                             status="converged",
                             reason="converged",
@@ -357,6 +355,7 @@ class RalphController:
                             pr_url=pr_url,
                             tokens_used=tokens_used,
                             final_verify=inner_result.get("final_verify"),
+                            branch=branch,
                         )
 
                     if inner_result.get("blocked"):
@@ -416,8 +415,8 @@ class RalphController:
                             )
 
                     # Inner loop exhausted -- commit progress and continue outer
-                    self._commit_and_push(worktree_path, outer_iter)
-                    pr_url = self._manage_pr(pr_url, outer_iter, converged=False)
+                    branch = self._commit_and_push(worktree_path, outer_iter)
+                    pr_url = self._manage_pr(pr_url, branch, converged=False)
 
                 finally:
                     self._provider.destroy(handle)
@@ -1080,14 +1079,15 @@ class RalphController:
         except Exception:
             return True  # Assume progress on error to avoid false escalation
 
-    def _commit_and_push(self, worktree_path: str, outer_iter: int) -> None:
-        """Commit all changes and push to remote.
+    def _commit_and_push(self, worktree_path: str, outer_iter: int) -> str:
+        """Commit all changes and push to remote. Returns the branch pushed to.
 
         Uses the actual current branch of the worktree rather than a hardcoded
         harness/* pattern. In feature-branch mode (echelon flow) the worktree is
         checked out on the echelon feature branch (e.g. '001-weather-dashboard'),
         not on a harness/* branch — pushing the wrong name silently fails.
         """
+        fallback = f"harness/{self._spec_id}-{self._strategy_id}-iter-{outer_iter}"
         try:
             message = f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}"
             self._gitops.commit(worktree_path, message)
@@ -1101,30 +1101,26 @@ class RalphController:
                 cwd=worktree_path,
                 check=False,
             )
-            branch = result.stdout.strip()
-            if not branch:
-                # Detached HEAD — fall back to legacy naming so we at least try
-                branch = f"harness/{self._spec_id}-{self._strategy_id}-iter-{outer_iter}"
+            branch = result.stdout.strip() or fallback
+            if not result.stdout.strip():
                 logger.warning(
                     "Worktree at %s is in detached HEAD state; pushing as %s",
                     worktree_path, branch,
                 )
 
             self._gitops.push(worktree_path, branch)
+            return branch
         except Exception as e:
             logger.warning("Commit/push failed: %s", e)
+            return fallback
 
-    def _manage_pr(self, pr_url: Optional[str], outer_iter: int, converged: bool) -> Optional[str]:
+    def _manage_pr(self, pr_url: Optional[str], branch: str, converged: bool) -> Optional[str]:
         """Create/update/promote PR as needed."""
-        branch = f"harness/{self._spec_id}/{self._strategy_id}/iter-{outer_iter}"
-
         if pr_url is None:
             # First iteration: create draft PR
             pr_url = self._gitops.create_draft_pr(
                 branch, self._spec_id, self._strategy_id,
-            )
-            if not pr_url:
-                pr_url = None
+            ) or None
 
         if converged and pr_url:
             self._gitops.promote_pr_ready(pr_url)
@@ -1217,6 +1213,7 @@ class RalphController:
         pr_url: Optional[str],
         tokens_used: int,
         final_verify: Optional[VerifyResult],
+        branch: Optional[str] = None,
     ) -> LoopResult:
         """Write final state and return LoopResult."""
         # Map to state status
@@ -1241,6 +1238,7 @@ class RalphController:
             state["tokens_used"] = tokens_used
             state["pr_url"] = pr_url
             state["termination_reason"] = reason
+            state["branch"] = branch
             state["last_verify_result"] = (
                 _verify_to_dict(final_verify) if final_verify else None
             )
@@ -1256,6 +1254,7 @@ class RalphController:
             pr_url=pr_url,
             tokens_used=tokens_used,
             final_verify=final_verify,
+            branch=branch,
         )
 
     def _pause_at_boundary(
