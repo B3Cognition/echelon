@@ -77,6 +77,7 @@ Define `write_state` helper (called after every phase transition):
 
 ```bash
 write_state() {
+  [ -z "${HARNESS_STATE_FILE:-}" ] && return 0
   local phase="$1" phase_status="$2" completed="${3:-0}" current="${4:-null}" verdict="${5:-null}"
   mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
   cat > "$HARNESS_STATE_FILE" << STATEOF

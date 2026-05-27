@@ -115,12 +115,23 @@ fi
 echo "[ECHELON CODEGEN] Dependencies verified ✓ (soar=${SOAR_BIN})"
 ```
 
-### A.4 Set harness state file (direct — no env file)
+### A.4 Set harness state file
 
 ```bash
-HARNESS_STATE_FILE="${PROJECT_ROOT}/${SQUAD_DIR}/state.json"
-mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
-echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE}"
+# Derive from HARNESS_BUILD_STATUS_FILE when running inside echelon-harness.
+# Layout: {build_dir}/worktrees/{strategy}/iter-{n}/.harness-build-status.json
+# State:  {build_dir}/state/codegen.json
+if [ -n "${HARNESS_BUILD_STATUS_FILE:-}" ]; then
+  _WT=$(dirname "${HARNESS_BUILD_STATUS_FILE}")  # iter-{n}/
+  _WT=$(dirname "${_WT}")                         # {strategy}/
+  _WT=$(dirname "${_WT}")                         # worktrees/
+  _BUILD_DIR=$(dirname "${_WT}")                  # build-{id}/
+  HARNESS_STATE_FILE="${_BUILD_DIR}/state/codegen.json"
+  mkdir -p "${_BUILD_DIR}/state"
+else
+  HARNESS_STATE_FILE=""
+fi
+echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE:-not set (standalone mode)}"
 ```
 
 ### A.5 Validate deploy infrastructure
