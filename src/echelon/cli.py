@@ -256,18 +256,11 @@ def _cmd_init(project_dir: Path) -> None:
 
     # Step 4: Confirm
     state_file = project_dir / ".specify" / "squad" / "deploy-state.json"
-    print(
-        f"\n"
-        f"╔══════════════════════════════════════════╗\n"
-        f"║         echelon init — complete          ║\n"
-        f"╚══════════════════════════════════════════╝\n"
-        f"\n"
-        f"  config       → {echelon_cfg}\n"
-        f"  deploy-state → {state_file}\n"
-        f"\n"
-        f"Next step:\n"
-        f"  echelon run <description>\n"
-    )
+    _banner("ECHELON INIT — COMPLETE", [
+        ("Config",       str(echelon_cfg)),
+        ("Deploy state", str(state_file)),
+        ("Next step",    "echelon run <description>"),
+    ])
 
 
 # ── land (pure Python, no LLM) ────────────────────────────────────────────
@@ -434,23 +427,17 @@ def _cmd_harness_init(args: list[str]) -> None:
         except Exception:
             pass
 
-    print(
-        f"\n"
-        f"╔══════════════════════════════════════════╗\n"
-        f"║      echelon harness init — complete     ║\n"
-        f"╚══════════════════════════════════════════╝\n"
-        f"\n"
-        f"  target_repo  → {config.target_repo}\n"
-        f"  config       → {config_file}\n"
-        f"  mirror       → {mirror_dir}\n"
-        f"  provider     → {config.provider}\n"
-        f"  pr_host      → {config.pr_host}\n"
-        f"{image_note}"
-        f"\n"
-        f"Next step:\n"
-        f"  echelon run \"<feature description>\"\n"
-        f"  echelon harness run <spec_id>\n"
-    )
+    fields = [
+        ("Target repo", config.target_repo),
+        ("Config",      str(config_file)),
+        ("Mirror",      str(mirror_dir)),
+        ("Provider",    config.provider),
+        ("PR host",     config.pr_host),
+    ]
+    if image_note.strip():
+        fields.append(("Base image", image_note.strip()))
+    fields.append(("Next step", "echelon run \"<feature>\"\n  echelon harness run <spec_id>"))
+    _banner("HARNESS INIT — COMPLETE", fields)
 
 
 def _cmd_harness_run(args: list[str]) -> None:
@@ -1458,14 +1445,11 @@ def _cmd_status(project_root: Path) -> None:
         except Exception:
             pass
 
-    print(f"\n{'─' * 60}", flush=True)
-    print(f"  RUN STATE", flush=True)
-    print(f"{'─' * 60}", flush=True)
-
     if not run_dir or not state:
-        print(f"  No active run found.", flush=True)
-        print(f"  → echelon run \"<your task description>\"", flush=True)
-        print(f"{'─' * 60}\n", flush=True)
+        _banner("RUN STATE", [
+            ("Status", "No active run found"),
+            ("Next",   'echelon run "<task description>"'),
+        ])
     else:
         run_status = state.get("status", "unknown")
         _ld = state.get("current_phase") or state.get("last_dispatch")
@@ -1475,7 +1459,6 @@ def _cmd_status(project_root: Path) -> None:
         task_msg = state.get("user_message", "")
         run_id = run_dir.name
 
-        # Human-friendly elapsed time
         started_at = state.get("started_at", "")
         elapsed = ""
         if started_at:
@@ -1491,29 +1474,22 @@ def _cmd_status(project_root: Path) -> None:
         status_icon = {"done": "✓", "blocked": "⚠", "running": "▶",
                        "in_progress": "▶", "interrupted": "✗"}.get(run_status, "·")
 
-        print(f"  Run:     {run_id}", flush=True)
-        print(f"  Status:  {status_icon}  {run_status}", flush=True)
-        print(f"  Phase:   {current_phase}", flush=True)
+        fields: list[tuple[str, str]] = [
+            ("Run",    run_id),
+            ("Status", f"{status_icon}  {run_status}"),
+            ("Phase",  current_phase),
+        ]
         if task_msg:
             snippet = task_msg[:72] + ("…" if len(task_msg) > 72 else "")
-            print(f"  Task:    {snippet}", flush=True)
+            fields.append(("Task", snippet))
         if elapsed:
-            print(f"  Started: {elapsed}", flush=True)
-
-        print(f"{'─' * 60}\n", flush=True)
-
-        # ── Next action hint based on status ────────────────────────────────
+            fields.append(("Started", elapsed))
         if run_status in ("running", "in_progress"):
-            print(f"  Run is active — to resume:", flush=True)
-            print(f"    echelon continue", flush=True)
-            print(flush=True)
+            fields.append(("Next", "echelon continue"))
         elif run_status == "blocked":
-            esc_path = run_dir / "staging" / "escalation-request.md"
-            print(f"  Run is blocked — answer questions, then:", flush=True)
-            print(f"    echelon resume \"<your answers>\"", flush=True)
-            if esc_path.exists():
-                print(f"  Questions: {esc_path}", flush=True)
-            print(flush=True)
+            fields.append(("Next", 'echelon resume "<your answer>"'))
+
+        _banner("RUN STATE", fields)
 
     # ── Staging artifacts ───────────────────────────────────────────────────
     _print_staging_artifacts(project_root, run_status=state.get("status", ""))
