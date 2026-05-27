@@ -42,7 +42,30 @@ Run ID: ${RUN_ID}"
   echo "[FINALIZE] Spec artifacts committed ✓"
 fi
 
-# ── 4. Return to default branch ───────────────────────────────────────────────
+# ── 4. Push feature branch so harness mirror can resolve it ──────────────────
+FEATURE_BRANCH="${SPEC_ID}-${FEATURE_NAME}"
+ORIGIN_URL=$(git -C "${PROJECT_ROOT}" remote get-url origin 2>/dev/null || echo "")
+IS_LOCAL=0
+if [ -z "${ORIGIN_URL}" ]; then
+  IS_LOCAL=1
+elif echo "${ORIGIN_URL}" | grep -qE '^(/|\./)'; then
+  IS_LOCAL=1
+elif [ -d "${ORIGIN_URL}" ]; then
+  IS_LOCAL=1
+fi
+
+if [ "${IS_LOCAL}" -eq 0 ]; then
+  # Remote repo — push so the harness mirror can fetch the branch
+  if git -C "${PROJECT_ROOT}" push origin "${FEATURE_BRANCH}" --set-upstream 2>/dev/null; then
+    echo "[FINALIZE] Feature branch pushed to origin ✓"
+  else
+    echo "[FINALIZE] WARNING: could not push ${FEATURE_BRANCH} to origin (harness mirror may not see it)"
+  fi
+else
+  echo "[FINALIZE] Local repo — push not needed (mirror clones directly)"
+fi
+
+# ── 5. Return to default branch ───────────────────────────────────────────────
 DEFAULT_BRANCH="main"
 for branch in main master; do
   if git -C "${PROJECT_ROOT}" show-ref --quiet "refs/heads/${branch}"; then
@@ -59,4 +82,4 @@ else
   echo "[FINALIZE] Switched ${CURRENT} → ${DEFAULT_BRANCH} ✓"
 fi
 
-echo "[FINALIZE] Done — feature branch ${SPEC_ID}-${FEATURE_NAME} ready for harness.run"
+echo "[FINALIZE] Done — feature branch ${FEATURE_BRANCH} ready for harness.run"

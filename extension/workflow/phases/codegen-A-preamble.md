@@ -46,6 +46,42 @@ if [ "$RESUME_MODE" -eq 0 ]; then
     fi
   fi
 
+  # If spec.md (or other core artifacts) are still missing, the worktree may not
+  # have the spec branch merged in. The harness should have used the feature branch
+  # directly (via base_branch in create_worktree), so missing spec.md here means
+  # either the feature branch was never committed or the harness used legacy mode.
+  # Auto-recover: merge the feature branch if discoverable.
+  if echo "${MISSING}" | grep -q "spec\.md"; then
+    FEATURE_BRANCH=$(git -C "${PROJECT_ROOT}" branch --list "${SPEC_ID}-*" \
+                     | head -1 | tr -d '* ' | xargs)
+    if [ -z "${FEATURE_BRANCH}" ]; then
+      # Try remote
+      FEATURE_BRANCH=$(git -C "${PROJECT_ROOT}" branch -r --list "origin/${SPEC_ID}-*" \
+                       | head -1 | tr -d '* ' | sed 's|origin/||' | xargs)
+    fi
+    if [ -n "${FEATURE_BRANCH}" ]; then
+      echo "[RECOVERY] spec.md missing — merging feature branch ${FEATURE_BRANCH}..."
+      if git -C "${PROJECT_ROOT}" merge --no-ff --no-edit "${FEATURE_BRANCH}" 2>/dev/null \
+         || git -C "${PROJECT_ROOT}" merge --no-ff --no-edit "origin/${FEATURE_BRANCH}" 2>/dev/null; then
+        echo "[RECOVERY] Feature branch merged ✓"
+        MISSING=""
+        for f in spec.md tasks.md constitution.md research.md; do
+          [ ! -f "${FEATURE_DIR}/${f}" ] && MISSING="${MISSING} ${f}"
+        done
+        # Try constitution once more after merge
+        if echo "${MISSING}" | grep -q "constitution\.md"; then
+          if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
+            cp "${PROJECT_ROOT}/.specify/memory/constitution.md" "${FEATURE_DIR}/constitution.md"
+            echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
+            MISSING=$(echo "${MISSING}" | sed 's/ constitution\.md//')
+          fi
+        fi
+      else
+        echo "[RECOVERY] Merge failed — branch ${FEATURE_BRANCH} may not be accessible"
+      fi
+    fi
+  fi
+
   if [ -n "${MISSING}" ]; then
     echo "[ECHELON CODEGEN] ERROR: Missing Phase A artifacts:${MISSING}"
     echo "[ECHELON CODEGEN] Run speckit.echelon.run ${FEATURE_PATH} first."
