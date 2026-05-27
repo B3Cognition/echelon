@@ -1363,6 +1363,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     to the entry phase that resolves it. Returns the first (highest-priority)
     actionable phase, or None if everything is clear.
     """
+    import json as _json
     import re as _re
 
     # 0. Constitution missing or template — harness now handles it via phase1-constitution
@@ -1374,20 +1375,40 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
 
     # 1. WHY2 failures — fix spec first, so CARTOGRAPHER runs before HOW
     specs_root = project_root / "specs"
+    quality_gates_file: Optional[Path] = None
     if specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
             qg = d / "quality-gates.md"
             if qg.exists():
-                qg_text = qg.read_text(errors="replace")
-                gate_pattern = _re.compile(
-                    r"\|\s*(Overall|Structure|Testability|Semantic|Cognitive|"
-                    r"Readability|Behavioral|Depth)\s*\|[^|]+\|[^|]+\|\s*\*\*FAIL\*\*\s*\|([^|]*)\|"
-                )
-                for m in gate_pattern.finditer(qg_text):
-                    note = m.group(2).lower()
-                    if "borderline" not in note or "not borderline" in note:
-                        return "phase1-what"  # hard gate fail → CARTOGRAPHER amendment
+                quality_gates_file = qg
             break
+
+    # Also check staging/ for mid-run blocked states (same as _print_next_steps)
+    if quality_gates_file is None:
+        run_dir = _find_current_run_dir(project_root)
+        if run_dir:
+            try:
+                state = _json.loads((run_dir / "state.json").read_text())
+                staging_dir = Path(state.get("staging_dir") or str(run_dir / "staging"))
+                staging_qg = staging_dir / "quality-gates.md"
+                if staging_qg.exists():
+                    quality_gates_file = staging_qg
+            except Exception:
+                pass
+
+    if quality_gates_file:
+        qg_text = quality_gates_file.read_text(errors="replace")
+        verdict_m = _re.search(r"^##\s+Verdict:\s+(FAIL|BLOCKED)", qg_text, _re.MULTILINE)
+        if verdict_m:
+            return "phase1-what"  # top-level FAIL or BLOCKED → CARTOGRAPHER amendment
+        gate_pattern = _re.compile(
+            r"\|\s*(Overall|Structure|Testability|Semantic|Cognitive|"
+            r"Readability|Behavioral|Depth)\s*\|[^|]+\|[^|]+\|\s*\*{0,2}FAIL\*{0,2}\s*\|([^|]*)\|"
+        )
+        for m in gate_pattern.finditer(qg_text):
+            note = m.group(2).lower()
+            if "borderline" not in note or "not borderline" in note:
+                return "phase1-what"  # hard gate fail → CARTOGRAPHER amendment
 
     # 2. HOW artifacts missing
     if specs_root.exists():
@@ -1551,13 +1572,12 @@ def _cmd_continue(
         return
 
     if status == "blocked":
-        q = state.get("escalation_question", "")
-        print(
-            "Run is blocked — answer the escalation questions then:\n\n"
-            "  echelon resume \"Q1: <answer>; Q2: <answer>; …\"\n\n"
-            "Full questions are in .specify/squad/escalation-request.md",
-            flush=True,
-        )
+        q = (state.get("escalation_question") or "").strip()
+        if q:
+            print(f"Run is blocked:\n\n  {q}\n", flush=True)
+        else:
+            print("Run is blocked (no escalation question recorded).\n", flush=True)
+        print("  echelon resume \"<your answer>\"", flush=True)
         return
 
     # Determine the next phase automatically
