@@ -138,7 +138,26 @@ echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE:-not set (stand
 
 ```bash
 ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
-bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
+_DEPLOY_ROOT="${PROJECT_ROOT}"
+
+# In a harness worktree, PROJECT_ROOT is the worktree path — .specify/ and deploy
+# config live in the main checkout, not the worktree. Derive the main project root
+# from HARNESS_BUILD_STATUS_FILE (injected by the harness at worktree creation):
+#   .harness-build-status.json → iter-{n}/ → {strategy}/ → worktrees/ → build-{id}/ → runs/ → project root
+if [ ! -d "${ECHELON_EXT}" ] && [ -n "${HARNESS_BUILD_STATUS_FILE:-}" ]; then
+  _p=$(dirname "${HARNESS_BUILD_STATUS_FILE}")
+  _p=$(dirname "${_p}")
+  _p=$(dirname "${_p}")
+  _p=$(dirname "${_p}")
+  _p=$(dirname "${_p}")
+  _p=$(dirname "${_p}")
+  if [ -d "${_p}/.specify/extensions/echelon" ]; then
+    ECHELON_EXT="${_p}/.specify/extensions/echelon"
+    _DEPLOY_ROOT="${_p}"
+  fi
+fi
+
+bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${_DEPLOY_ROOT}"
 ```
 
 If exit code is non-zero, HARD STOP. Do not launch harness. The error output contains the fix instructions.

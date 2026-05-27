@@ -75,7 +75,8 @@ class PhaseExecutor(ABC):
         self._graph = phase_graph
         self._ext_dir = ext_dir
         self._project_root = project_root
-        self._squad_dir = squad_dir or (project_root / ".specify/squad")
+        from harness.paths import runs_dir as _runs_dir
+        self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
     @abstractmethod
     def execute(
@@ -121,6 +122,19 @@ class PhaseExecutor(ABC):
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         parts: list[str] = []
 
+        # Resolve run dirs early — needed for both context pack file reads and
+        # the text-level translation applied to agent/spec file content below.
+        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
+        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+
+        def _translate_squad_path(ref: str) -> str:
+            """Rewrite legacy .specify/squad/ prefixes to the actual run dir."""
+            r = ref.replace(".specify/squad/staging/", f"{staging_dir_str}/")
+            r = r.replace(".specify/squad/staging", staging_dir_str)
+            r = r.replace(".specify/squad/", f"{squad_dir_str}/")
+            r = r.replace(".specify/squad", squad_dir_str)
+            return r
+
         # 1. Agent file (role + instructions)
         if node.agent:
             rel = self._graph.agent_file(node.agent)
@@ -135,27 +149,27 @@ class PhaseExecutor(ABC):
             if spec_path.exists():
                 parts.append(spec_path.read_text())
 
-        # 3. Context pack files (read each that exists on disk)
+        # 3. Context pack files (read each that exists on disk).
+        # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
+        # items may reference these legacy paths (e.g. .specify/squad/staging/glossary.md).
         for item in node.context_pack:
             # Items may have inline comments: ".specify/echelon/re/state.json — current run state"
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            candidate = self._project_root / file_ref
+            resolved = _translate_squad_path(file_ref)
+            candidate = Path(resolved) if resolved.startswith("/") else self._project_root / resolved
             if candidate.exists():
                 parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
         if state_path.exists():
-            import json
             parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
 
         prompt = "\n\n".join(parts)
 
         # Inject squad run context so agents know where to write
-        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
-        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
         context_preamble = (
             f"# Squad Run Context\n"
             f"SQUAD_DIR={squad_dir_str}\n"
@@ -163,7 +177,7 @@ class PhaseExecutor(ABC):
             f"PROJECT_ROOT={self._project_root}\n\n"
         )
 
-        # Translate legacy .specify/squad paths so phase spec files need no edits
+        # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
         prompt = prompt.replace(".specify/squad/staging", staging_dir_str)
         prompt = prompt.replace(".specify/squad/", f"{squad_dir_str}/")
