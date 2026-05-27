@@ -1582,11 +1582,13 @@ def _cmd_continue(
 
     if status == "blocked":
         q = (state.get("escalation_question") or "").strip()
-        if q:
-            print(f"Run is blocked:\n\n  {q}\n", flush=True)
-        else:
-            print("Run is blocked (no escalation question recorded).\n", flush=True)
-        print("  echelon resume \"<your answer>\"", flush=True)
+        _banner(
+            "RUN BLOCKED — HUMAN INPUT REQUIRED",
+            [
+                ("Question", q or "(no escalation question recorded)"),
+                ("Resume",   'echelon resume "<your answer>"'),
+            ],
+        )
         return
 
     # Determine the next phase automatically
