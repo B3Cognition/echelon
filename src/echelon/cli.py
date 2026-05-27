@@ -277,15 +277,8 @@ def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
     import shutil
     from harness.spec_frontmatter import find_spec_dir
 
-    current_file = project_dir / "squad" / ".current"
-    if not current_file.exists():
-        return
-
-    run_id = current_file.read_text().strip()
-    if not run_id:
-        return
-    run_dir = project_dir / "squad" / run_id
-    if not run_dir.exists():
+    run_dir = _find_current_run_dir(project_dir)
+    if run_dir is None:
         return
 
     spec_dir = find_spec_dir(spec_id, project_dir)
@@ -679,15 +672,40 @@ def _setup_run_dir(project_root: Path, run_id: str) -> Path:
 
 
 def _find_current_run_dir(project_root: Path) -> Optional[Path]:
-    """Return the active run dir from squad/.current, or None."""
-    current_file = project_root / "squad" / ".current"
-    if not current_file.exists():
-        return None
-    run_id = current_file.read_text().strip()
-    if not run_id:
-        return None
-    run_dir = project_root / "squad" / run_id
-    return run_dir if run_dir.exists() else None
+    """Return the active run dir from a .current pointer, or None.
+
+    Checks runs/.current first (interactive/spec-kit layout), then
+    squad/.current (CLI-created layout) for backward compatibility.
+    """
+    for base_dir in [project_root / "runs", project_root / "squad"]:
+        current_file = base_dir / ".current"
+        if not current_file.exists():
+            continue
+        run_id = current_file.read_text().strip()
+        if not run_id:
+            continue
+        run_dir = base_dir / run_id
+        if run_dir.exists():
+            return run_dir
+    return None
+
+
+def _iter_run_dirs(project_root: Path) -> list[Path]:
+    """Return all squad run dirs across squad/ and runs/, sorted newest-first.
+
+    Covers both CLI-created runs (squad/run-*) and interactive/spec-kit runs
+    (runs/spec-* or runs/run-*) so display helpers see the full history.
+    """
+    dirs: list[Path] = []
+    for base_name in ("squad", "runs"):
+        base = project_root / base_name
+        if not base.exists():
+            continue
+        for d in base.iterdir():
+            if d.is_dir() and not d.name.startswith(".") and (d / "state.json").exists():
+                dirs.append(d)
+    dirs.sort(key=lambda d: d.name, reverse=True)
+    return dirs
 
 
 def _print_next_steps(project_root: Path, result_status: str) -> None:
@@ -860,17 +878,11 @@ def _print_staging_artifacts(
     """
     if run_status == "done":
         return
-    squad_root = project_root / "squad"
-    if not squad_root.exists():
-        return
 
-    candidates = sorted(
-        (d for d in squad_root.iterdir()
-         if d.is_dir() and d.name.startswith("run-") and d != exclude_dir
-         and (d / "staging").exists()),
-        key=lambda d: d.name,
-        reverse=True,
-    )
+    candidates = [
+        d for d in _iter_run_dirs(project_root)
+        if d != exclude_dir and (d / "staging").exists()
+    ]
     if not candidates:
         return
 
@@ -914,14 +926,8 @@ def _print_cost_summary(project_root: Path) -> None:
     """
     import json as _json
 
-    squad_root = project_root / "squad"
-    if not squad_root.exists():
-        return
-
     runs: list[tuple[str, float]] = []
-    for run_dir in sorted(squad_root.iterdir()):
-        if not (run_dir.is_dir() and run_dir.name.startswith("run-")):
-            continue
+    for run_dir in _iter_run_dirs(project_root):
         sf = run_dir / "state.json"
         if not sf.exists():
             continue
@@ -1053,18 +1059,11 @@ def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -
     """
     import re as _re
 
-    squad_root = project_root / "squad"
-    if not squad_root.exists():
-        return
-
     # Find most recent run dir with a staging/issues.md, skipping the current run
-    candidates = sorted(
-        (d for d in squad_root.iterdir()
-         if d.is_dir() and d.name.startswith("run-") and d != exclude_dir
-         and (d / "staging" / "issues.md").exists()),
-        key=lambda d: d.name,
-        reverse=True,
-    )
+    candidates = [
+        d for d in _iter_run_dirs(project_root)
+        if d != exclude_dir and (d / "staging" / "issues.md").exists()
+    ]
     if not candidates:
         return
 
