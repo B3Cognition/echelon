@@ -240,7 +240,7 @@ class TestBudgetExhaustion:
         # Very tight budget
         result = controller.run_loop(max_outer=10, max_inner=3, token_budget=100)
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         assert result.termination_reason == "budget_exhausted"
 
 

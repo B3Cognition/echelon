@@ -350,10 +350,16 @@ rm -rf .specify/squad/staging
 
 This is the harness handoff: spec artifacts (including `constitution.md` copied from `.specify/memory/`) are committed to the feature branch, and the working directory is switched back to the default branch. If this step is skipped, the harness will stash uncommitted artifacts and worktrees will be missing files.
 
-Read `RUN_ID` from state.json, then call `finalize-run.sh`:
+Read `RUN_ID` from state.json (squad runs are stored under `runs/`), then call `finalize-run.sh`:
 
 ```bash
-RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+# State is at runs/<run-id>/state.json — find the current run via .current pointer
+CURRENT_RUN=$(cat "${PROJECT_ROOT}/runs/.current" 2>/dev/null || echo "")
+if [ -n "${CURRENT_RUN}" ] && [ -f "${PROJECT_ROOT}/runs/${CURRENT_RUN}/state.json" ]; then
+  RUN_ID=$(python3 -c "import json; print(json.load(open('${PROJECT_ROOT}/runs/${CURRENT_RUN}/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+else
+  RUN_ID="unknown"
+fi
 ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
 bash "${ECHELON_EXT}/scripts/bash/finalize-run.sh" \
   "${PROJECT_ROOT}" "${SPEC_ID}" "${FEATURE_NAME}" "${RUN_ID}"

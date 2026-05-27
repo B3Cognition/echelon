@@ -7,24 +7,41 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-from harness.paths import harness_dir
+from harness.paths import runs_dir
 from harness.spec_frontmatter import find_spec_dir, write_status
 
 logger = logging.getLogger(__name__)
 
 
 def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:
-    """Return the first PR URL found in any strategy state file for spec_id."""
-    spec_state_dir = state_dir / spec_id
-    if not spec_state_dir.exists():
+    """Return the first PR URL found in any strategy state file for spec_id.
+
+    When state_dir is given, scans it directly.
+    When state_dir is the runs/ root (no spec_id subdir), delegates to
+    _find_pr_url_all_builds which scans all build dirs.
+    """
+    # Direct scan: state files are at state_dir/*.json (no spec_id subdir)
+    if state_dir.exists():
+        for state_file in sorted(state_dir.glob("*.json")):
+            try:
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+                if data.get("pr_url") and data.get("spec_id") == spec_id:
+                    return data["pr_url"]
+            except (json.JSONDecodeError, OSError):
+                continue
+    return None
+
+
+def _find_pr_url_all_builds(spec_id: str, project_dir: Path) -> Optional[str]:
+    """Scan all runs/build-*/state/ directories for a PR URL matching spec_id."""
+    rd = runs_dir(project_dir)
+    if not rd.exists():
         return None
-    for state_file in sorted(spec_state_dir.glob("*.json")):
-        try:
-            data = json.loads(state_file.read_text(encoding="utf-8"))
-            if data.get("pr_url"):
-                return data["pr_url"]
-        except (json.JSONDecodeError, OSError):
-            continue
+    for build in sorted(rd.glob("build-*/"), reverse=True):
+        state_dir = build / "state"
+        url = find_pr_url(spec_id, state_dir)
+        if url:
+            return url
     return None
 
 
@@ -40,9 +57,6 @@ def land(
     Returns True if spec is now in landed state.
     Returns False only when PR merge is blocked — caller must retry or merge manually.
     """
-    if state_dir is None:
-        state_dir = harness_dir(project_dir) / "state"
-
     feature_branch = gitops.find_feature_branch(spec_id)
     if feature_branch is None:
         logger.info("land: %s — feature branch not found, already landed", spec_id)
@@ -50,7 +64,11 @@ def land(
         _delete_harness_branches(spec_id, project_dir)
         return True
 
-    pr_url = find_pr_url(spec_id, state_dir)
+    if state_dir is not None:
+        pr_url = find_pr_url(spec_id, state_dir)
+    else:
+        pr_url = _find_pr_url_all_builds(spec_id, project_dir)
+
     if pr_url:
         merged = gitops.merge_pr(pr_url)
         if not merged:
@@ -76,26 +94,31 @@ def land(
 
 
 def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
-    worktree_base = harness_dir(project_dir) / "worktrees" / spec_id
-    if not worktree_base.exists():
+    """Remove all worktrees for this spec across all build dirs."""
+    rd = runs_dir(project_dir)
+    if not rd.exists():
         return
-    for strategy_dir in sorted(worktree_base.iterdir()):
-        if not strategy_dir.is_dir():
+    for build in sorted(rd.glob("build-*/")):
+        worktree_base = build / "worktrees"
+        if not worktree_base.exists():
             continue
-        for iter_dir in sorted(strategy_dir.iterdir()):
-            if iter_dir.is_dir():
-                try:
-                    gitops.destroy_worktree(iter_dir, keep_branch=True)
-                    logger.info("land: removed worktree %s", iter_dir)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("land: could not remove worktree %s: %s", iter_dir, e)
+        for strategy_dir in sorted(worktree_base.iterdir()):
+            if not strategy_dir.is_dir():
+                continue
+            for iter_dir in sorted(strategy_dir.iterdir()):
+                if iter_dir.is_dir():
+                    try:
+                        gitops.destroy_worktree(iter_dir, keep_branch=True)
+                        logger.info("land: removed worktree %s", iter_dir)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning("land: could not remove worktree %s: %s", iter_dir, e)
 
 
 def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
     """Delete local harness/{spec_id}-* branches left over from harness runs."""
     try:
         result = subprocess.run(
-            ["git", "branch", "--list", f"harness/{spec_id}-*"],
+            ["git", "branch", "--list", f"harness/{spec_id}/*"],
             capture_output=True,
             text=True,
             timeout=30,

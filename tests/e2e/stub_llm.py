@@ -141,12 +141,15 @@ class StubLLM:
             raise UnknownPromptError(f"Unknown command type: {cmd}")
 
     def _handle_build(self, cmd: str) -> StubLLMResponse:
-        """Handle echelon build command — always succeeds."""
-        return StubLLMResponse(
-            content="Build completed successfully.",
-            tokens_used=self.tokens_per_call,
-            exit_code=0,
-        )
+        """Handle echelon build command — always succeeds.
+
+        Pads content so _estimate_tokens(result) ≈ tokens_per_call, which is
+        needed for budget-exhaustion tests that check against token_budget.
+        """
+        base = "Build completed successfully."
+        target_len = self.tokens_per_call * 4
+        content = base + ("." * max(0, target_len - len(base)))
+        return StubLLMResponse(content=content, tokens_used=self.tokens_per_call, exit_code=0)
 
     def _handle_verify(self, cmd: str) -> StubLLMResponse:
         """Handle echelon verify command — depends on mode and call count."""
@@ -199,13 +202,18 @@ class StubLLM:
         else:
             raise UnknownPromptError(f"Unknown mode: {self.mode}")
 
+    def _pad(self, base: str) -> str:
+        """Pad base string so _estimate_tokens(result) ≈ tokens_per_call."""
+        target_len = self.tokens_per_call * 4
+        return base + ("." * max(0, target_len - len(base)))
+
     def _handle_feedback(self, cmd: str) -> StubLLMResponse:
         """Handle echelon feedback command — returns fix diff based on mode."""
         feedback_calls = sum(1 for c in self.calls if "feedback" in c["cmd"])
 
         if self.mode == "converge_on_first":
             return StubLLMResponse(
-                content=CORRECT_DIVIDE_FIX,
+                content=self._pad(CORRECT_DIVIDE_FIX),
                 tokens_used=self.tokens_per_call,
                 exit_code=0,
             )
@@ -214,27 +222,27 @@ class StubLLM:
             # Wrong fix first, correct fix on second feedback
             if feedback_calls <= 1:
                 return StubLLMResponse(
-                    content=WRONG_DIVIDE_FIX,
+                    content=self._pad(WRONG_DIVIDE_FIX),
                     tokens_used=self.tokens_per_call,
                     exit_code=0,
                 )
             else:
                 return StubLLMResponse(
-                    content=CORRECT_DIVIDE_FIX,
+                    content=self._pad(CORRECT_DIVIDE_FIX),
                     tokens_used=self.tokens_per_call,
                     exit_code=0,
                 )
 
         elif self.mode in ("never_converge", "same_failure_3x"):
             return StubLLMResponse(
-                content=WRONG_DIVIDE_FIX,
+                content=self._pad(WRONG_DIVIDE_FIX),
                 tokens_used=self.tokens_per_call,
                 exit_code=0,
             )
 
         elif self.mode == "spec_guard_fail":
             return StubLLMResponse(
-                content=CORRECT_DIVIDE_FIX,
+                content=self._pad(CORRECT_DIVIDE_FIX),
                 tokens_used=self.tokens_per_call,
                 exit_code=0,
             )

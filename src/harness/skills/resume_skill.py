@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from harness.escalation import EscalationHandler
-from harness.paths import harness_dir
+from harness.paths import runs_dir, current_build_marker, build_dir as _build_dir_fn
 from harness.state import StateStore
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,18 @@ def resume(
         print("Please provide an answer for the escalation.", file=sys.stderr)
         return
 
-    # 2. Load state
-    state_dir = harness_dir(Path(base_dir)) / "state"
+    # 2. Resolve build directory from .current-build-{spec_id} marker
+    base_path = Path(base_dir)
+    marker = current_build_marker(base_path, spec_id)
+    if marker.exists():
+        _bid = marker.read_text().strip()
+        _bdir = _build_dir_fn(base_path, _bid)
+    else:
+        # Fall back to most-recent build-* dir for this spec
+        rd = runs_dir(base_path)
+        builds = sorted(rd.glob("build-*/"), reverse=True) if rd.exists() else []
+        _bdir = builds[0] if builds else _build_dir_fn(base_path, "")
+    state_dir = _bdir / "state"
     state_store = StateStore(state_dir, spec_id, strategy_id)
     state = state_store.read()
 
@@ -70,7 +80,7 @@ def resume(
 
     # 4. Resume with answer
     escalation_file = state.get("escalation_file")
-    escalation_handler = EscalationHandler(str(harness_dir(Path(base_dir))))
+    escalation_handler = EscalationHandler(str(_bdir))
 
     if escalation_file:
         escalation_handler.resume(escalation_file, answer)

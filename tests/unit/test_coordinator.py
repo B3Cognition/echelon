@@ -58,7 +58,7 @@ def _make_coordinator(tmp_path: Path, should_pass: bool = True) -> StrategyCoord
     gitops.create_draft_pr.return_value = "https://github.com/t/r/pull/1"
 
     # Create strategy dir for default
-    strat_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / "spec-001"
+    strat_dir = tmp_path / "runs" / "strategies" / "spec-001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
     return StrategyCoordinator(
@@ -179,7 +179,7 @@ def test_coordinator_runs_visual_loop_after_convergence(tmp_path):
     )
 
     # Create strategy dir
-    strat_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / "001"
+    strat_dir = tmp_path / "runs" / "strategies" / "001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
     gitops = MagicMock()
@@ -236,7 +236,7 @@ def test_coordinator_skips_visual_loop_when_phase1_fails(tmp_path):
         final_verify=None,
     )
 
-    strat_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "strategies" / "001"
+    strat_dir = tmp_path / "runs" / "strategies" / "001"
     strat_dir.mkdir(parents=True, exist_ok=True)
 
     gitops = MagicMock()
@@ -326,9 +326,7 @@ class TestStickyEscalationBlock:
 
     def _make_state_file(self, tmp_path: Path, esc_file: str) -> None:
         """Write a blocked state.json with an escalation_file set."""
-        state_dir = (
-            tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state" / "spec-001"
-        )
+        state_dir = tmp_path / "runs" / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
         state = {
             "spec_id": "spec-001",
@@ -425,9 +423,7 @@ class TestSmartResumeDetection:
         strategy_id: str = "default",
     ) -> None:
         """Write a state.json with the given status and outer_iter."""
-        state_dir = (
-            tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state" / spec_id
-        )
+        state_dir = tmp_path / "runs" / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
         state = {
             "spec_id": spec_id,
@@ -525,7 +521,7 @@ class TestSmartResumeDetection:
         # The state should have been transitioned to running (not re-initialized);
         # verify by checking the state file still exists and was NOT wiped to outer_iter=0.
         from harness.state import StateStore
-        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        state_dir = tmp_path / "runs" / "state"
         store = StateStore(state_dir, "spec-001", "default")
         final_state = store.read()
         # outer_iter is preserved from the interrupted state (not reset to 0)
@@ -555,7 +551,7 @@ class TestSmartResumeDetection:
         assert results[0].status == "converged"
         # State was re-initialized — outer_iter reset to 0
         from harness.state import StateStore
-        state_dir = tmp_path / ".specify" / "extensions" / "echelon" / "harness" / "state"
+        state_dir = tmp_path / "runs" / "state"
         store = StateStore(state_dir, "spec-001", "default")
         final_state = store.read()
         assert final_state.get("outer_iter") == 0, (

@@ -10,11 +10,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+_TEST_BUILD_ID = "build-test"
+
+
 def _write_state(state_dir: Path, spec_id: str, strategy: str, state: dict) -> None:
-    """Write a fake harness state file (matches StateStore layout: spec_id/strategy.json)."""
-    path = state_dir / spec_id / f"{strategy}.json"
+    """Write a fake harness state file (new layout: state_dir/{strategy}.json, no spec_id subdir)."""
+    path = state_dir / f"{strategy}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(state))
+
+
+def _setup_build(base: Path, spec_id: str) -> Path:
+    """Write current-build marker and return the build's state_dir."""
+    from harness.paths import build_dir, current_build_marker
+    marker = current_build_marker(base, spec_id)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(_TEST_BUILD_ID)
+    sd = build_dir(base, _TEST_BUILD_ID) / "state"
+    sd.mkdir(parents=True, exist_ok=True)
+    return sd
 
 
 def _make_echelon_yml(base: Path, verify_command: str = "") -> Path:
@@ -48,18 +62,14 @@ class TestCmdHarnessResume:
 
     def test_spec_not_blocked_exits_1(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
-        from harness.paths import harness_dir
-        with patch("pathlib.Path.cwd", return_value=tmp_path):
-            sd = harness_dir(tmp_path) / "state"
+        sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {"status": "converged", "termination_reason": "converged"})
         rc = self._call(["001"], tmp_path)
         assert rc == 1
 
     def test_wrong_blocked_reason_exits_1(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
-        from harness.paths import harness_dir
-        with patch("pathlib.Path.cwd", return_value=tmp_path):
-            sd = harness_dir(tmp_path) / "state"
+        sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
             "status": "blocked", "termination_reason": "budget_exhausted",
         })
@@ -68,9 +78,7 @@ class TestCmdHarnessResume:
 
     def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
         _make_echelon_yml(tmp_path)   # no verify_command
-        from harness.paths import harness_dir
-        with patch("pathlib.Path.cwd", return_value=tmp_path):
-            sd = harness_dir(tmp_path) / "state"
+        sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
             "status": "blocked", "termination_reason": "verify_command_needed",
         })
@@ -82,9 +90,7 @@ class TestCmdHarnessResume:
 
     def test_valid_resume_prints_banner_and_calls_run(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
-        from harness.paths import harness_dir
-        with patch("pathlib.Path.cwd", return_value=tmp_path):
-            sd = harness_dir(tmp_path) / "state"
+        sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
             "status": "blocked", "termination_reason": "verify_command_needed",
         })

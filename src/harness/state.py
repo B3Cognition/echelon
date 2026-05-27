@@ -69,8 +69,8 @@ class StateStore:
         self.state_dir = Path(state_dir)
         self.spec_id = spec_id
         self.strategy_id = strategy_id
-        self.state_file = self.state_dir / spec_id / f"{strategy_id}.json"
-        self.lock_file = self.state_dir / spec_id / ".lock"
+        self.state_file = self.state_dir / f"{strategy_id}.json"
+        self.lock_file = self.state_dir / f"{strategy_id}.lock"
         self._data: Optional[Dict[str, Any]] = None
 
     def _ensure_dir(self) -> None:

@@ -15,8 +15,8 @@ from typing import Any, Dict
 from harness.config import load_config
 from harness.coordinator import StrategyCoordinator
 from harness.gc import run_gc
+from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
-from harness.state import StateStore
 
 logger = logging.getLogger(__name__)
 
@@ -148,30 +148,39 @@ def run(
     except Exception as e:
         logger.warning("ensure_on_default_branch failed (continuing): %s", e)
 
-    # 4. Create coordinator
+    # 4. Generate build ID and write .current-build marker
+    base_path = Path(base_dir).resolve()
+    build_id = make_build_id()
+    rd = runs_dir(base_path)
+    rd.mkdir(parents=True, exist_ok=True)
+    current_build_marker(base_path, intent.spec_id).write_text(build_id)
+    logger.info("Build ID: %s", build_id)
+
+    # 5. Create coordinator
     coordinator = StrategyCoordinator(
         provider=provider,
         gitops=gitops,
         config=config,
         base_dir=base_dir,
+        build_id=build_id,
     )
 
-    # 5. Run GC before starting
+    # 6. Run GC before starting
     try:
         run_gc(config, base_dir=base_dir)
     except Exception as e:
         logger.warning("GC failed (continuing): %s", e)
 
-    # 6. Launch coordinator
+    # 7. Launch coordinator
     results = coordinator.start(intent)
 
-    # 7. Print results
+    # 8. Print results
     result_map = dict(zip(intent.strategies, results))
     comparison = coordinator.compare_results(result_map)
 
     _print_delivery_summary(intent, result_map, comparison, base_dir, config)
 
-    # 8. Auto-land if applicable
+    # 9. Auto-land if applicable
     converged = comparison.get("summary", {}).get("converged", 0) > 0
     if intent.auto_merge and converged:
         from harness.land import land

@@ -64,7 +64,7 @@ class TestRalphBudget:
         assert result.termination_reason == "budget_exhausted", (
             f"Expected budget_exhausted, got {result.termination_reason}"
         )
-        assert result.status == "failed"
+        assert result.status == "blocked"
 
     def test_tokens_tracked_in_state(
         self, tmp_harness_dir: Path, harness_config: HarnessConfig,
@@ -129,7 +129,7 @@ class TestRalphBudget:
             token_budget=5000,
         )
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
         # PR may or may not be created depending on timing, but should NOT be promoted
         assert not gitops.pr_promoted, "PR should not be promoted when not converged"
 

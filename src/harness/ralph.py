@@ -60,6 +60,7 @@ class RalphController:
         strategy_id: str,
         config: HarnessConfig,
         llm_provider: Optional[AICodingCliProvider] = None,
+        build_id: str = "",
     ) -> None:
         self._provider = provider
         self._gitops = gitops
@@ -70,6 +71,7 @@ class RalphController:
         self._strategy_id = strategy_id
         self._config = config
         self._llm_provider = llm_provider
+        self._build_id = build_id
 
         self._interrupted = False
         self._original_sigterm: Any = None
@@ -153,6 +155,32 @@ class RalphController:
         final_verify: Optional[VerifyResult] = None  # tracks last known verify across outer iters
         no_progress_count = 0  # consecutive failed outer iters with no file changes
 
+        # Resolve the spec's feature branch once. When found, all worktrees are
+        # checked out on that branch so spec artifacts (spec.md, tasks.md,
+        # constitution.md, etc.) are available without the build agent needing to
+        # merge them in manually.  Falls back to legacy harness/* branching when no
+        # feature branch exists (first-time or pure-harness workflows).
+        feature_branch: Optional[str] = None
+        try:
+            feature_branch = self._gitops.find_feature_branch(self._spec_id)
+            if feature_branch:
+                logger.info(
+                    "Feature branch '%s' found — worktrees will use it as base "
+                    "so spec artifacts are available from the start",
+                    feature_branch,
+                )
+            else:
+                logger.info(
+                    "No feature branch found for spec '%s' — using legacy harness/* branching",
+                    self._spec_id,
+                )
+        except Exception as e:
+            logger.warning(
+                "Could not resolve feature branch for spec '%s' (continuing with "
+                "legacy harness/* mode): %s",
+                self._spec_id, e,
+            )
+
         for outer_iter in range(start_outer, max_outer):
             # Check termination conditions
             termination = self._check_termination(
@@ -178,9 +206,12 @@ class RalphController:
                     final_verify=None,
                 )
 
-            # Create worktree
+            # Create worktree — use feature branch when available so spec artifacts
+            # (spec.md, tasks.md, constitution.md) are present from the start.
             worktree_path = self._gitops.create_worktree(
                 self._spec_id, self._strategy_id, outer_iter,
+                base_branch=feature_branch,
+                build_id=self._build_id,
             )
 
             try:

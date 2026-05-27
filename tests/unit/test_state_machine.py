@@ -71,6 +71,14 @@ class TestValidTransitions:
         data = store.transition("running")
         assert data["status"] == "running"
 
+    def test_interrupted_to_running(self, tmp_path: Path) -> None:
+        store = self._make_store(tmp_path)
+        store.initialize("run-1", "semi")
+        store.transition("running")
+        store.transition("interrupted")
+        data = store.transition("running")
+        assert data["status"] == "running"
+
 
 @pytest.mark.unit
 class TestInvalidTransitions:
@@ -105,14 +113,6 @@ class TestInvalidTransitions:
         store.initialize("run-1", "semi")
         store.transition("running")
         store.transition("failed")
-        with pytest.raises(InvalidTransitionError):
-            store.transition("running")
-
-    def test_interrupted_to_running_rejected(self, tmp_path: Path) -> None:
-        store = self._make_store(tmp_path)
-        store.initialize("run-1", "semi")
-        store.transition("running")
-        store.transition("interrupted")
         with pytest.raises(InvalidTransitionError):
             store.transition("running")
 

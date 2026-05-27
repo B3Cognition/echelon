@@ -231,7 +231,7 @@ class TestRalphConvergence:
         # Get initial top-level contents (excluding .specify and worktrees)
         initial_contents = {
             p.name for p in tmp_harness_dir.iterdir()
-            if p.name not in (".specify", "worktrees")
+            if p.name not in (".specify", "worktrees", "runs")
         }
 
         controller, state_store, gitops, provider, _ = make_ralph_controller(
@@ -259,7 +259,7 @@ class TestRalphConvergence:
         # Check no new top-level files/dirs (besides .specify and worktrees)
         post_contents = {
             p.name for p in tmp_harness_dir.iterdir()
-            if p.name not in (".specify", "worktrees")
+            if p.name not in (".specify", "worktrees", "runs")
         }
         new_items = post_contents - initial_contents
         assert not new_items, f"Host pollution detected: new items {new_items}"

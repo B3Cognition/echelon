@@ -46,6 +46,42 @@ if [ "$RESUME_MODE" -eq 0 ]; then
     fi
   fi
 
+  # If spec.md (or other core artifacts) are still missing, the worktree may not
+  # have the spec branch merged in. The harness should have used the feature branch
+  # directly (via base_branch in create_worktree), so missing spec.md here means
+  # either the feature branch was never committed or the harness used legacy mode.
+  # Auto-recover: merge the feature branch if discoverable.
+  if echo "${MISSING}" | grep -q "spec\.md"; then
+    FEATURE_BRANCH=$(git -C "${PROJECT_ROOT}" branch --list "${SPEC_ID}-*" \
+                     | head -1 | tr -d '* ' | xargs)
+    if [ -z "${FEATURE_BRANCH}" ]; then
+      # Try remote
+      FEATURE_BRANCH=$(git -C "${PROJECT_ROOT}" branch -r --list "origin/${SPEC_ID}-*" \
+                       | head -1 | tr -d '* ' | sed 's|origin/||' | xargs)
+    fi
+    if [ -n "${FEATURE_BRANCH}" ]; then
+      echo "[RECOVERY] spec.md missing — merging feature branch ${FEATURE_BRANCH}..."
+      if git -C "${PROJECT_ROOT}" merge --no-ff --no-edit "${FEATURE_BRANCH}" 2>/dev/null \
+         || git -C "${PROJECT_ROOT}" merge --no-ff --no-edit "origin/${FEATURE_BRANCH}" 2>/dev/null; then
+        echo "[RECOVERY] Feature branch merged ✓"
+        MISSING=""
+        for f in spec.md tasks.md constitution.md research.md; do
+          [ ! -f "${FEATURE_DIR}/${f}" ] && MISSING="${MISSING} ${f}"
+        done
+        # Try constitution once more after merge
+        if echo "${MISSING}" | grep -q "constitution\.md"; then
+          if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
+            cp "${PROJECT_ROOT}/.specify/memory/constitution.md" "${FEATURE_DIR}/constitution.md"
+            echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
+            MISSING=$(echo "${MISSING}" | sed 's/ constitution\.md//')
+          fi
+        fi
+      else
+        echo "[RECOVERY] Merge failed — branch ${FEATURE_BRANCH} may not be accessible"
+      fi
+    fi
+  fi
+
   if [ -n "${MISSING}" ]; then
     echo "[ECHELON CODEGEN] ERROR: Missing Phase A artifacts:${MISSING}"
     echo "[ECHELON CODEGEN] Run speckit.echelon.run ${FEATURE_PATH} first."
@@ -100,7 +136,7 @@ If exit code is non-zero, HARD STOP. Do not launch harness. The error output con
 
 ```bash
 if [ "$RESUME_MODE" -eq 0 ]; then
-  STRATEGY_DIR="${PROJECT_ROOT}/.specify/harness/strategies/${FEATURE_PATH}"
+  STRATEGY_DIR="${PROJECT_ROOT}/runs/strategies/${FEATURE_PATH}"
   STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
   mkdir -p "$STRATEGY_DIR"
 
@@ -151,7 +187,15 @@ DEPLOY_TYPE=$(echo "${DEPLOY_STATE}" | python3 -c "import sys,json; d=json.load(
 if [ "${DEPLOY_TYPE}" = "http" ] && [ -n "${DEPLOY_APP}" ]; then
   echo "[ECHELON CODEGEN] Applying SPA base path for ${DEPLOY_APP}..."
   bash "${ECHELON_EXT}/scripts/bash/fix-spa-base.sh" "${PROJECT_ROOT}" "${DEPLOY_APP}"
-  cd "${PROJECT_ROOT}" && git add -A && git commit -m "chore: apply SPA base path for ${DEPLOY_APP} [skip ci]" --allow-empty
-  echo "[ECHELON CODEGEN] SPA base path committed — safe from merge overwrites"
+  # Only stage files the SPA fix actually modified (tracked files only).
+  # Using `git add -u` avoids accidentally staging untracked files written by
+  # earlier preamble steps (e.g. the strategy file, constitution recovery).
+  if ! git -C "${PROJECT_ROOT}" diff --quiet; then
+    git -C "${PROJECT_ROOT}" add -u
+    git -C "${PROJECT_ROOT}" commit -m "chore: apply SPA base path for ${DEPLOY_APP} [skip ci]"
+    echo "[ECHELON CODEGEN] SPA base path committed — safe from merge overwrites"
+  else
+    echo "[ECHELON CODEGEN] SPA base path — no tracked files changed, skipping commit"
+  fi
 fi
 ```

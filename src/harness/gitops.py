@@ -25,7 +25,7 @@ from typing import Dict, Optional
 
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
-from harness.paths import MIRROR_REL_PATH, harness_dir
+from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
 
 logger = logging.getLogger(__name__)
 
@@ -89,15 +89,7 @@ class GitOpsManager:
         """
         self._config = config
         self._base_dir = Path(base_dir) if base_dir else Path.cwd()
-
-        # REMOVE IN JUL 2026 — migrate .specify/harness/ to new extension-owned path
-        try:
-            from harness.init import _migrate_legacy_harness_dir
-            _migrate_legacy_harness_dir(self._base_dir)
-        except Exception as _mig_exc:
-            logger.debug("Legacy harness dir migration skipped: %s", _mig_exc)
-
-        self._mirror_path = self._base_dir / MIRROR_REL_PATH
+        self._mirror_path = _mirror_path_fn(self._base_dir)
 
         # Validate git is available
         if not _check_tool_available("git"):
@@ -256,6 +248,7 @@ class GitOpsManager:
         strategy_id: str,
         outer_iter: int,
         base_branch: Optional[str] = None,
+        build_id: str = "",
     ) -> str:
         """Create ephemeral worktree from mirror.
 
@@ -282,8 +275,8 @@ class GitOpsManager:
 
         # Worktree directory — same path regardless of branching mode.
         worktree_dir = (
-            harness_dir(self._base_dir) / "worktrees"
-            / spec_id / strategy_id / f"iter-{outer_iter}"
+            _build_dir_fn(self._base_dir, build_id) / "worktrees"
+            / strategy_id / f"iter-{outer_iter}"
         )
         worktree_dir.parent.mkdir(parents=True, exist_ok=True)
 
@@ -360,7 +353,7 @@ class GitOpsManager:
         else:
             # Legacy mode: create a new harness/* branch from default branch HEAD.
             default_branch = self.get_default_branch()
-            branch_name = f"harness/{spec_id}-{strategy_id}-iter-{outer_iter}"
+            branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
             try:
                 _run_git(
                     ["branch", branch_name, default_branch],
@@ -797,21 +790,33 @@ class GitOpsManager:
 
     # === Query Operations ===
 
-    def get_latest_worktree(self, spec_id: str, strategy_id: str) -> Optional[str]:
+    def get_latest_worktree(
+        self, spec_id: str, strategy_id: str, build_id: str = ""
+    ) -> Optional[str]:
         """Return path to the most recently created worktree for this spec/strategy.
 
-        Worktrees are created at:
-            {base_dir}/.specify/extensions/echelon/harness/worktrees/{spec_id}/{strategy_id}/iter-{N}
+        When build_id is provided, looks in that specific build's worktrees.
+        When build_id is empty, scans all builds under runs/ and returns the
+        highest-mtime iter directory across all of them.
 
-        Returns the highest-mtime iter directory, or None if none exists.
+        Worktrees are created at:
+            runs/{build_id}/worktrees/{strategy_id}/iter-{N}
         """
-        target = (
-            harness_dir(self._base_dir) / "worktrees"
-            / spec_id / strategy_id
-        )
-        if not target.exists():
-            return None
-        candidates = [p for p in target.iterdir() if p.is_dir()]
+        rd = _runs_dir_fn(self._base_dir)
+        if build_id:
+            search_dirs = [_build_dir_fn(self._base_dir, build_id) / "worktrees" / strategy_id]
+        else:
+            search_dirs = [
+                d / "worktrees" / strategy_id
+                for d in sorted(rd.glob("build-*/"))
+                if d.is_dir()
+            ] if rd.exists() else []
+
+        candidates = []
+        for target in search_dirs:
+            if target.exists():
+                candidates.extend(p for p in target.iterdir() if p.is_dir())
+
         if not candidates:
             return None
         return str(max(candidates, key=lambda p: p.stat().st_mtime))

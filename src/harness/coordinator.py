@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from harness.budget import slice_budget
-from harness.paths import harness_dir
+from harness.paths import build_dir, strategies_dir as _strategies_dir_fn
 from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler, print_escalation_sticky_banner
@@ -50,14 +50,17 @@ class StrategyCoordinator:
         gitops: Any,
         config: HarnessConfig,
         base_dir: str = ".",
+        build_id: str = "",
     ) -> None:
         self._provider = provider
         self._gitops = gitops
         self._config = config
         self._base_dir = base_dir
-        self._state_dir = harness_dir(Path(base_dir)) / "state"
-        self._strategies_dir = harness_dir(Path(base_dir)) / "strategies"
-        self._escalation_dir = harness_dir(Path(base_dir))
+        self._build_id = build_id
+        self._build_dir = build_dir(Path(base_dir), build_id)
+        self._state_dir = self._build_dir / "state"
+        self._strategies_dir = _strategies_dir_fn(Path(base_dir))
+        self._escalation_dir = self._build_dir
 
         # Convergence event for kill_losers
         self._convergence_event = threading.Event()
@@ -163,25 +166,22 @@ class StrategyCoordinator:
         if not self._state_dir.exists():
             return {"active_loops": 0, "strategies": {}}
 
-        for spec_dir in self._state_dir.iterdir():
-            if not spec_dir.is_dir():
-                continue
-            for state_file in spec_dir.glob("*.json"):
-                try:
-                    import json
-                    data = json.loads(state_file.read_text(encoding="utf-8"))
-                    sid = data.get("strategy_id", state_file.stem)
-                    statuses[sid] = {
-                        "status": data.get("status", "unknown"),
-                        "outer_iter": data.get("outer_iter", 0),
-                        "inner_iter": data.get("inner_iter", 0),
-                        "tokens_used": data.get("tokens_used", 0),
-                        "token_budget": data.get("token_budget"),
-                        "pr_url": data.get("pr_url"),
-                        "termination_reason": data.get("termination_reason"),
-                    }
-                except Exception as e:
-                    statuses[state_file.stem] = {"status": "corrupted", "error": str(e)}
+        for state_file in self._state_dir.glob("*.json"):
+            try:
+                import json
+                data = json.loads(state_file.read_text(encoding="utf-8"))
+                sid = data.get("strategy_id", state_file.stem)
+                statuses[sid] = {
+                    "status": data.get("status", "unknown"),
+                    "outer_iter": data.get("outer_iter", 0),
+                    "inner_iter": data.get("inner_iter", 0),
+                    "tokens_used": data.get("tokens_used", 0),
+                    "token_budget": data.get("token_budget"),
+                    "pr_url": data.get("pr_url"),
+                    "termination_reason": data.get("termination_reason"),
+                }
+            except Exception as e:
+                statuses[state_file.stem] = {"status": "corrupted", "error": str(e)}
 
         return {
             "active_loops": sum(
@@ -305,6 +305,7 @@ class StrategyCoordinator:
                 strategy_id=strategy_id,
                 config=self._config,
                 llm_provider=llm_provider,
+                build_id=self._build_id,
             )
 
             result = controller.run_loop(
@@ -327,7 +328,7 @@ class StrategyCoordinator:
             ):
 
                 worktree_path = self._gitops.get_latest_worktree(
-                    intent.spec_id, strategy_id,
+                    intent.spec_id, strategy_id, build_id=self._build_id,
                 )
                 visual_controller = VisualRalphController(
                     provider=self._provider,
@@ -373,10 +374,11 @@ class StrategyCoordinator:
                         spec_id=intent.spec_id,
                         strategy_id=strategy_id,
                         base_dir=str(self._base_dir),
+                        build_id=self._build_id,
                     )
                     for _ in range(self._config.review_loop.max_fix_iterations):
                         worktree_path = self._gitops.get_latest_worktree(
-                            intent.spec_id, strategy_id,
+                            intent.spec_id, strategy_id, build_id=self._build_id,
                         )
                         review_result = review_controller.run_loop(
                             pr_url=pr_url,
