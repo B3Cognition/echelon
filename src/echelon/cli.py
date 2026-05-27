@@ -757,10 +757,11 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     if quality_gates_file:
         qg_text = quality_gates_file.read_text(errors="replace")
-        # Parse gate rows: | Gate | score | threshold | **FAIL** | note |
+        # Parse gate rows: | Gate | score | threshold | FAIL | note |
+        # Matches plain "FAIL" and bold "**FAIL**" (both formats used by SAGE).
         gate_pattern = _re.compile(
             r"\|\s*(Overall|Structure|Testability|Semantic|Cognitive|Readability|Behavioral|Depth)"
-            r"\s*\|([^|]+)\|([^|]+)\|\s*\*\*FAIL\*\*\s*\|([^|]*)\|",
+            r"\s*\|([^|]+)\|([^|]+)\|\s*\*{0,2}FAIL\*{0,2}\s*\|([^|]*)\|",
         )
         hard_fails, borderline = [], []
         for m in gate_pattern.finditer(qg_text):
@@ -786,10 +787,12 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     else:
         warnings.append("WHY2 not yet run — spec validation pending")
 
-    # 3. HOW phase artifacts (plan.md, research.md, data-model.md)
+    # 3. HOW phase artifacts — only surface when quality gates have passed
+    # (if gates are failing, HOW/tasks missing is expected and not actionable yet)
+    why2_passed = quality_gates_file is not None and not hard_fails and not borderline
     how_present = 0
     how_missing = []
-    if specs_root.exists():
+    if why2_passed and specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
             for fname in ("plan.md", "research.md", "data-model.md"):
                 if (d / fname).exists():
@@ -805,19 +808,19 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             f"     → echelon continue\n"
             f"       (ARCHITECT commits stack, data-model, contracts)"
         )
-    else:
+    elif why2_passed:
         ready_items.append("HOW artifacts ✓")
 
-    # 4. tasks.md — must exist for BUILD entry guard
+    # 4. tasks.md — only surface when quality gates have passed
     tasks_present = False
-    if specs_root.exists():
+    if why2_passed and specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
             if (d / "tasks.md").exists():
                 tasks_present = True
                 ready_items.append("tasks.md ✓")
             break
 
-    if not tasks_present:
+    if why2_passed and not tasks_present:
         blockers.append(
             "tasks.md absent — ORCHESTRATOR (phase3-plan) has not run\n"
             "     → echelon continue"
@@ -826,8 +829,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     # 5. Blocked run — remind user of resume
     if result_status == "blocked":
         warnings.append(
-            "Run is blocked — answer questions in .specify/squad/escalation-request.md then:\n"
-            "     → echelon resume \"Q1: <answer>; Q2: <answer>; ...\""
+            "Run is blocked — answer questions then:\n"
+            "     → echelon resume \"<your answer>\""
         )
 
     # ── Print ──────────────────────────────────────────────────────────────
