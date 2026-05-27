@@ -641,10 +641,12 @@ def _setup_run_dir(project_root: Path, run_id: str) -> Path:
 
 
 def _find_current_run_dir(project_root: Path) -> Optional[Path]:
-    """Return the active run dir from a .current pointer, or None.
+    """Return the active run dir from a .current pointer, or the newest run dir.
 
-    Checks runs/.current first (interactive/spec-kit layout), then
-    squad/.current (CLI-created layout) for backward compatibility.
+    Checks runs/.current first (CLI-created layout), then squad/.current
+    (legacy layout).  Falls back to the newest run-* directory with a
+    state.json when no .current pointer exists — handles spec-kit-created
+    runs which don't write the pointer file.
     """
     for base_dir in [project_root / "runs", project_root / "squad"]:
         current_file = base_dir / ".current"
@@ -656,7 +658,9 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
         run_dir = base_dir / run_id
         if run_dir.exists():
             return run_dir
-    return None
+    # No .current pointer — fall back to newest run dir that has state.json
+    all_runs = _iter_run_dirs(project_root)
+    return all_runs[0] if all_runs else None
 
 
 def _iter_run_dirs(project_root: Path) -> list[Path]:
@@ -673,6 +677,26 @@ def _iter_run_dirs(project_root: Path) -> list[Path]:
     return dirs
 
 
+def _find_converged_harness_build(project_root: Path) -> Optional[tuple[str, Optional[str]]]:
+    """Return (spec_id, pr_url) for the most recent converged harness build, or None."""
+    import json as _json
+    runs = project_root / "runs"
+    if not runs.exists():
+        return None
+    for build in sorted(runs.glob("build-*/"), reverse=True):
+        state_dir = build / "state"
+        if not state_dir.exists():
+            continue
+        for state_file in sorted(state_dir.glob("*.json")):
+            try:
+                data = _json.loads(state_file.read_text(encoding="utf-8"))
+                if data.get("status") == "converged":
+                    return data.get("spec_id", ""), data.get("pr_url")
+            except Exception:
+                pass
+    return None
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -684,6 +708,19 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     import re as _re
 
     if result_status not in ("done", "blocked", "interrupted"):
+        return
+
+    # ── Phase B already done? Skip Phase A checks entirely ─────────────────
+    harness = _find_converged_harness_build(project_root)
+    if harness:
+        spec_id, pr_url = harness
+        fields: list[tuple[str, str]] = [("spec", spec_id)] if spec_id else []
+        if pr_url:
+            fields.append(("PR", pr_url))
+            fields.append(("next", f"echelon land {spec_id}"))
+        else:
+            fields.append(("next", f"echelon land {spec_id}"))
+        _banner("NEXT STEP", fields, subtitle="Harness build converged — ready to land")
         return
 
     # ── Gather signals ──────────────────────────────────────────────────────
