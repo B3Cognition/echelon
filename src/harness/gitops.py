@@ -212,11 +212,12 @@ class GitOpsManager:
     def find_feature_branch(self, spec_id: str) -> Optional[str]:
         """Find the echelon feature branch for a spec.
 
-        Fetches the mirror and searches for a branch whose name starts with
-        '{spec_id}-' (e.g., '001-weather-dashboard' for spec_id '001').
+        Tries two patterns against the mirror:
+          1. Exact match of spec_id (handles full-slug IDs like '069-state-reader-role-assumption').
+          2. Prefix match '{spec_id}-*' (handles numeric-only IDs like '069').
 
         Returns:
-            Branch name (e.g., '001-weather-dashboard') or None if not found.
+            Branch name or None if not found.
         """
         if not self._mirror_path.exists():
             logger.warning("Mirror does not exist — cannot search for feature branch")
@@ -227,18 +228,23 @@ class GitOpsManager:
         except GitOpsError as e:
             logger.warning("Could not fetch mirror while looking for feature branch: %s", e)
 
-        try:
-            result = _run_git(
-                ["branch", "--list", f"{spec_id}-*"],
-                cwd=str(self._mirror_path),
-            )
-            branches = [b.strip().lstrip("* ") for b in result.stdout.splitlines() if b.strip()]
+        def _list_branches(pattern: str) -> list[str]:
+            try:
+                result = _run_git(
+                    ["branch", "--list", pattern],
+                    cwd=str(self._mirror_path),
+                )
+                return [b.strip().lstrip("* ") for b in result.stdout.splitlines() if b.strip()]
+            except GitOpsError as e:
+                logger.warning("Could not list branches (pattern=%r) for spec %s: %s", pattern, spec_id, e)
+                return []
+
+        for pattern in (spec_id, f"{spec_id}-*"):
+            branches = _list_branches(pattern)
             if branches:
                 chosen = branches[0]
                 logger.info("Found feature branch for spec %s: %s", spec_id, chosen)
                 return chosen
-        except GitOpsError as e:
-            logger.warning("Could not list branches for spec %s: %s", spec_id, e)
 
         return None
 
