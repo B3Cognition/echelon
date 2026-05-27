@@ -100,7 +100,7 @@ If exit code is non-zero, HARD STOP. Do not launch harness. The error output con
 
 ```bash
 if [ "$RESUME_MODE" -eq 0 ]; then
-  STRATEGY_DIR="${PROJECT_ROOT}/.specify/harness/strategies/${FEATURE_PATH}"
+  STRATEGY_DIR="${PROJECT_ROOT}/runs/strategies/${FEATURE_PATH}"
   STRATEGY_FILE="${STRATEGY_DIR}/codegen.md"
   mkdir -p "$STRATEGY_DIR"
 
@@ -151,7 +151,15 @@ DEPLOY_TYPE=$(echo "${DEPLOY_STATE}" | python3 -c "import sys,json; d=json.load(
 if [ "${DEPLOY_TYPE}" = "http" ] && [ -n "${DEPLOY_APP}" ]; then
   echo "[ECHELON CODEGEN] Applying SPA base path for ${DEPLOY_APP}..."
   bash "${ECHELON_EXT}/scripts/bash/fix-spa-base.sh" "${PROJECT_ROOT}" "${DEPLOY_APP}"
-  cd "${PROJECT_ROOT}" && git add -A && git commit -m "chore: apply SPA base path for ${DEPLOY_APP} [skip ci]" --allow-empty
-  echo "[ECHELON CODEGEN] SPA base path committed — safe from merge overwrites"
+  # Only stage files the SPA fix actually modified (tracked files only).
+  # Using `git add -u` avoids accidentally staging untracked files written by
+  # earlier preamble steps (e.g. the strategy file, constitution recovery).
+  if ! git -C "${PROJECT_ROOT}" diff --quiet; then
+    git -C "${PROJECT_ROOT}" add -u
+    git -C "${PROJECT_ROOT}" commit -m "chore: apply SPA base path for ${DEPLOY_APP} [skip ci]"
+    echo "[ECHELON CODEGEN] SPA base path committed — safe from merge overwrites"
+  else
+    echo "[ECHELON CODEGEN] SPA base path — no tracked files changed, skipping commit"
+  fi
 fi
 ```
