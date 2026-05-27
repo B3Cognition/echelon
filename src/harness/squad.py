@@ -350,7 +350,13 @@ class SquadController:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
 
     def _apply_phase_recommendation_guard(self, phase: str) -> str:
-        """Honor forced-convergence routing before dispatching another agent."""
+        """Honor forced-convergence routing before dispatching another agent.
+
+        The guard fires exactly once per convergence event: it redirects to the
+        recommended phase, then clears itself when we arrive there.  Without the
+        clear, every subsequent transition from the recommended phase would be
+        overridden back to it, creating an infinite loop.
+        """
         if phase in TERMINAL_PHASES:
             return phase
 
@@ -360,6 +366,12 @@ class SquadController:
 
         recommended = state.get("phase_recommendation")
         if not recommended or recommended == phase:
+            # We've arrived at the recommended phase (or there's no recommendation).
+            # Clear the flags so they don't override the next forward transition.
+            state["convergence_forced"] = False
+            state["convergence_detected"] = False
+            state["phase_recommendation"] = None
+            self._state_store.save(state)
             return phase
         if recommended not in self._graph.all_phase_ids():
             return phase
