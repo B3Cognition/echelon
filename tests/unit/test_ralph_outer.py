@@ -520,7 +520,7 @@ class TestVerifyCommandNeeded:
         controller.run_loop(max_outer=1, max_inner=0,
                             build_command="echelon codegen", build_prompt="x")
         err = capsys.readouterr().err
-        assert "HARNESS RUN BLOCKED" in err
+        assert "TEST RUNNER MISSING" in err
         assert "verify_command" in err
         assert "echelon harness resume" in err
 

@@ -63,17 +63,16 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
         if s.get("status") in ("running", "blocked", "initialized")
     )
 
-    if not strategies:
-        print("No active loops.", file=sys.stderr)
-    elif active == 0:
-        print("No active loops (all completed).", file=sys.stderr)
-    else:
-        print(f"\n--- LOOP STATUS ({active} active) ---", file=sys.stderr)
+    from echelon.ui import banner as _banner
 
+    if not strategies:
+        _banner("LOOP STATUS", [("active loops", "0")], file=sys.stderr)
+        return {"active_loops": 0, "strategies": {}}
+
+    fields: list[tuple[str, str]] = []
     for sid, info in strategies.items():
         if info.get("status") == "corrupted":
-            print(f"  {sid}: STATE CORRUPTED -- run speckit.echelon.harness-resume to recover",
-                  file=sys.stderr)
+            fields.append((sid, "STATE CORRUPTED — run speckit.echelon.harness-resume to recover"))
             continue
 
         budget_str = ""
@@ -81,17 +80,17 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
             pct = (info["tokens_used"] / info["token_budget"]) * 100
             budget_str = f" ({pct:.0f}% of {info['token_budget']})"
 
-        print(
-            f"  {sid}: {info['status']} | "
-            f"iter {info['outer_iter']}.{info['inner_iter']} | "
-            f"tokens: {info['tokens_used']}{budget_str}",
-            file=sys.stderr,
-        )
-
+        val_lines = [
+            f"{info['status']}  |  iter {info['outer_iter']}.{info['inner_iter']}  |  tokens: {info['tokens_used']}{budget_str}"
+        ]
         if info.get("pr_url"):
-            print(f"    PR: {info['pr_url']}", file=sys.stderr)
-
+            val_lines.append(f"PR: {info['pr_url']}")
         if info.get("status") == "blocked" and info.get("escalation_file"):
-            print(f"    Blocked: see {info['escalation_file']}", file=sys.stderr)
+            val_lines.append(f"blocked: see {info['escalation_file']}")
+
+        fields.append((sid, "\n".join(val_lines)))
+
+    active_label = f"{active} active" if active > 0 else "all completed"
+    _banner(f"LOOP STATUS ({active_label})", fields, file=sys.stderr)
 
     return {"active_loops": active, "strategies": strategies}

@@ -45,76 +45,59 @@ def _print_delivery_summary(
     config: Any = None,
 ) -> None:
     """Print a structured delivery summary to stderr."""
-    sep = "=" * 60
-    print(f"\n{sep}", file=sys.stderr)
-    print("  DELIVERY SUMMARY", file=sys.stderr)
-    print(sep, file=sys.stderr)
+    from echelon.ui import banner as _banner
 
-    # -- Spec / target --
     task_count = _count_tasks(intent.spec_id, base_dir)
     task_note = f"  ({task_count} tasks)" if task_count else ""
-    print(f"  Spec:      {intent.spec_id}{task_note}", file=sys.stderr)
     target_repo = getattr(config, "target_repo", None) if config is not None else None
-    if target_repo:
-        print(f"  Target:    {target_repo}", file=sys.stderr)
-    print(f"  Strategy:  {', '.join(intent.strategies)}  |  Mode: {intent.mode}",
-          file=sys.stderr)
 
-    # -- Per-strategy outcome --
-    print("", file=sys.stderr)
+    fields: list[tuple[str, str]] = [("spec", f"{intent.spec_id}{task_note}")]
+    if target_repo:
+        fields.append(("target", target_repo))
+    fields.append(("strategies", f"{', '.join(intent.strategies)}  |  mode: {intent.mode}"))
+
     for sid, info in comparison.get("strategies", {}).items():
         result = result_map.get(sid)
         converged = info.get("converged", False)
         status_icon = "✓" if converged else "✗"
         status_str = "CONVERGED" if converged else info.get("status", "FAILED").upper()
-        print(f"  {status_icon} [{sid}]  {status_str}", file=sys.stderr)
-
-        # Branch / PR
         outer = info.get("outer_iterations", 0)
         inner = info.get("inner_iterations", 0)
         branch = info.get("branch") or f"harness/{intent.spec_id}/{sid}/iter-{max(outer - 1, 0)}"
-        print(f"    Branch:     {branch}", file=sys.stderr)
         pr_url = info.get("pr_url")
-        if pr_url:
-            print(f"    PR:         {pr_url}", file=sys.stderr)
-        else:
-            print(f"    PR:         not created (gh/glab unavailable or pr_host unset)",
-                  file=sys.stderr)
 
-        # Iterations
-        print(f"    Iterations: {outer} outer, {inner} inner retries", file=sys.stderr)
-
-        # Termination reason when not clean convergence
+        lines = [
+            f"{status_icon} {status_str}",
+            f"branch: {branch}",
+            f"PR: {pr_url}" if pr_url else "PR: not created (gh/glab unavailable or pr_host unset)",
+            f"iterations: {outer} outer, {inner} inner retries",
+        ]
         if result is not None:
             reason = getattr(result, "termination_reason", None)
             if reason and reason != "converged":
-                print(f"    Stopped:    {reason}", file=sys.stderr)
-
-        # Verification
-        if result is not None:
+                lines.append(f"stopped: {reason}")
             fv = getattr(result, "final_verify", None)
             if fv is not None:
                 v_icon = "✓" if fv.passed else "✗"
                 duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
-                print(f"    Verify:     {v_icon} {'passed' if fv.passed else 'FAILED'}"
-                      f"{duration}", file=sys.stderr)
+                lines.append(f"verify: {v_icon} {'passed' if fv.passed else 'FAILED'}{duration}")
                 for failure in (fv.failures or []):
-                    print(f"                ✗ [{failure.category.value}] {failure.error}",
-                          file=sys.stderr)
+                    lines.append(f"        ✗ [{failure.category.value}] {failure.error}")
             else:
-                print(f"    Verify:     skipped (no sandbox / project type undetected)",
-                      file=sys.stderr)
+                lines.append("verify: skipped (no sandbox / project type undetected)")
 
-    # -- Totals --
+        fields.append((sid, "\n".join(lines)))
+
     summary = comparison.get("summary", {})
     n_converged = summary.get("converged", 0)
     n_failed = summary.get("failed", 0)
     total_tokens = summary.get("total_tokens", 0)
-    print("", file=sys.stderr)
-    print(f"  Result:    {n_converged} converged, {n_failed} failed"
-          + (f"  |  {total_tokens:,} tokens" if total_tokens else ""),
-          file=sys.stderr)
-    print(sep, file=sys.stderr)
+    result_str = f"{n_converged} converged, {n_failed} failed"
+    if total_tokens:
+        result_str += f"  ·  {total_tokens:,} tokens"
+    fields.append(("result", result_str))
+
+    _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 
 
 def run(

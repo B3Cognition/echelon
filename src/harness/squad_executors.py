@@ -487,11 +487,16 @@ class HumanGateExecutor(PhaseExecutor):
             )
 
         # guided: prompt user
-        print(f"\n{'='*60}")
-        print(f"CHECKPOINT: {node.label}")
+        from echelon.ui import banner as _banner
         spec_dir = state.get("spec_dir", "specs/")
-        print(f"Review artifacts in {spec_dir} then type 'approve' or 'reject':")
-        print(f"{'='*60}")
+        _banner(
+            "SQUAD — CHECKPOINT",
+            [
+                ("phase", node.label),
+                ("review artifacts in", spec_dir),
+                ("type", "'approve' to continue, 'reject' to stop"),
+            ],
+        )
         try:
             answer = input("> ").strip().lower()
         except EOFError:

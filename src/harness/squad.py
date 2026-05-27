@@ -25,24 +25,18 @@ from harness.squad_state import SquadStateStore
 TERMINAL_PHASES = {"DONE", "done", "terminal-blocked"}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 
-_HR = "=" * 44
-
-
 def _blocked_banner(phase: str, reason: str, question: str) -> None:
-    print(f"\n{_HR}", flush=True)
-    print("  ✗  SQUAD RUN BLOCKED — human input required", flush=True)
-    print(_HR, flush=True)
-    print(f"\n  Phase:    {phase}", flush=True)
-    print(f"  Reason:   {reason}", flush=True)
-    print(f"\n  Question:", flush=True)
-    for line in question.strip().splitlines():
-        print(f"    {line}", flush=True)
-    print(
-        f"\n  Answer with:  echelon resume \"<your answer>\"\n"
-        f"  Discard with: echelon run --reset \"<new task>\"",
-        flush=True,
+    from echelon.ui import banner as _banner
+    _banner(
+        "SQUAD — BLOCKED",
+        [
+            ("phase", phase),
+            ("reason", reason),
+            ("question", question),
+            ("answer with", "echelon resume \"<your answer>\""),
+            ("discard with", "echelon run --reset \"<new task>\""),
+        ],
     )
-    print(f"\n{_HR}\n", flush=True)
 
 
 @dataclass
@@ -135,17 +129,20 @@ class SquadController:
                     flush=True,
                 )
             else:
+                from echelon.ui import banner as _banner
                 config_path = self._project_root / ".specify/extensions/echelon/echelon-config.yml"
-                print(
-                    f"\n[squad] ✗ Token budget still exhausted "
-                    f"(usage={existing.get('token_usage', 0):,}, "
-                    f"budget={self._token_budget:,}).\n"
-                    f"  Edit {config_path}:\n"
-                    f"    analysis:\n"
-                    f"      token_budget_k: <increase this value>\n"
-                    f"  then re-run:  echelon run\n"
-                    f"  Or discard:   echelon run --reset\n",
-                    flush=True,
+                _banner(
+                    "SQUAD — TOKEN BUDGET EXHAUSTED",
+                    [
+                        ("usage", f"{existing.get('token_usage', 0):,}"),
+                        ("budget", f"{self._token_budget:,}"),
+                        ("fix",
+                         f"Edit {config_path}:\n"
+                         f"  analysis:\n"
+                         f"    token_budget_k: <increase this value>"),
+                        ("then re-run", "echelon run"),
+                        ("or discard", "echelon run --reset"),
+                    ],
                 )
                 return SquadResult(
                     status="blocked",
@@ -156,14 +153,15 @@ class SquadController:
         # ── Recovery: invalid judgment phase (--next-phase manual override) ─
         elif existing_status == "blocked" and "invalid next_phase" in blocked_reason:
             valid_phases = self._graph.all_phase_ids()
+            from echelon.ui import banner as _banner
             if next_phase_override:
                 if next_phase_override not in valid_phases:
-                    phases_fmt = "\n".join(f"    {p}" for p in valid_phases)
-                    print(
-                        f"\n[squad] ✗ --next-phase {next_phase_override!r} is not a "
-                        f"valid phase ID.\n"
-                        f"  Valid phase IDs:\n{phases_fmt}\n",
-                        flush=True,
+                    _banner(
+                        "SQUAD — INVALID PHASE ID",
+                        [
+                            ("given", next_phase_override),
+                            ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
+                        ],
                     )
                     return SquadResult(
                         status="blocked",
@@ -182,13 +180,14 @@ class SquadController:
                     flush=True,
                 )
             else:
-                phases_fmt = "\n".join(f"    {p}" for p in valid_phases)
-                print(
-                    f"\n[squad] ✗ Blocked: {blocked_reason}\n"
-                    f"  Recover:  echelon run --next-phase <phase-id>\n"
-                    f"  Valid phase IDs:\n{phases_fmt}\n"
-                    f"  Discard:  echelon run --reset\n",
-                    flush=True,
+                _banner(
+                    "SQUAD — BLOCKED",
+                    [
+                        ("reason", blocked_reason),
+                        ("recover", "echelon run --next-phase <phase-id>"),
+                        ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
+                        ("discard", "echelon run --reset"),
+                    ],
                 )
                 return SquadResult(
                     status="blocked",

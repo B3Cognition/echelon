@@ -324,11 +324,11 @@ def _cmd_land(args: list[str]) -> None:
 
     success = land(spec_id, project_dir=project_dir, gitops=gitops)
     if success:
-        print(f"echelon land: {spec_id} landed successfully")
+        _banner("LAND", [("spec", spec_id), ("status", "landed successfully")])
         _archive_squad_run(project_dir, spec_id)
         sys.exit(0)
     else:
-        print(f"echelon land: {spec_id} could not be landed (PR merge blocked?)", file=sys.stderr)
+        _banner("LAND", [("spec", spec_id), ("status", "could not be landed (PR merge blocked?)")], file=sys.stderr)
         sys.exit(1)
 
 
@@ -883,37 +883,21 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             )
 
     # ── Print ──────────────────────────────────────────────────────────────
-    print(f"\n{'─' * 60}", flush=True)
-    print(f"  NEXT STEP", flush=True)
-    print(f"{'─' * 60}", flush=True)
-
+    fields: list[tuple[str, str]] = []
     if not blockers and not warnings:
         for item in ready_items:
-            print(f"  {item}", flush=True)
-        print(f"\n  ✓  Ready to build:", flush=True)
-        print(f"     echelon harness run <spec-id>", flush=True)
+            fields.append(("✓", item))
+        fields.append(("build", "echelon harness run <spec-id>"))
     else:
         if blockers:
-            print(f"\n  BUILD BLOCKED — fix in this order:", flush=True)
-            for i, b in enumerate(blockers, 1):
-                lines = b.splitlines()
-                print(f"\n  {i}. {lines[0]}", flush=True)
-                for line in lines[1:]:
-                    print(f"     {line}", flush=True)
-
+            fields.append(("blockers", "\n".join(f"{i}. {b}" for i, b in enumerate(blockers, 1))))
         if warnings:
-            print(f"\n  Note:", flush=True)
-            for w in warnings:
-                lines = w.splitlines()
-                print(f"  ⚠  {lines[0]}", flush=True)
-                for line in lines[1:]:
-                    print(f"     {line}", flush=True)
-
+            fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
         if ready_items:
-            print(f"\n  Already done: {', '.join(ready_items)}", flush=True)
+            fields.append(("already done", ", ".join(ready_items)))
 
-
-    print(f"{'─' * 60}\n", flush=True)
+    subtitle = "BUILD BLOCKED — fix blockers before running" if blockers else ""
+    _banner("NEXT STEP", fields, subtitle=subtitle)
 
 
 def _print_staging_artifacts(
@@ -952,22 +936,15 @@ def _print_staging_artifacts(
     if not names:
         return
 
-    print(f"\n{'─' * 60}", flush=True)
-    print(
-        f"  STAGING ARTIFACTS  "
-        f"({len(names)} files · {candidates[0].name})",
-        flush=True,
-    )
-    print(f"{'─' * 60}", flush=True)
-
     # Two-column layout; strip .md already done via .stem
     col_w = 28
     pairs = [names[i:i + 2] for i in range(0, len(names), 2)]
-    for pair in pairs:
-        row = "  ".join(n.ljust(col_w) for n in pair)
-        print(f"  {row.rstrip()}", flush=True)
-
-    print(f"{'─' * 60}\n", flush=True)
+    files_list = "\n".join("  ".join(n.ljust(col_w) for n in pair).rstrip() for pair in pairs)
+    _banner(
+        "STAGING ARTIFACTS",
+        [("artifacts", files_list)],
+        subtitle=f"{len(names)} files · {candidates[0].name}",
+    )
 
 
 def _print_cost_summary(project_root: Path) -> None:
@@ -995,17 +972,13 @@ def _print_cost_summary(project_root: Path) -> None:
         return
 
     total = sum(c for _, c in runs)
-    print(f"\n{'─' * 60}", flush=True)
-    print(f"  COST  ({len(runs)} runs tracked)", flush=True)
-    print(f"{'─' * 60}", flush=True)
-    for name, cost in runs[-5:]:   # last 5 runs
-        print(f"  {name}    ${cost:.4f}", flush=True)
+    fields: list[tuple[str, str]] = [(name, f"${cost:.4f}") for name, cost in runs[-5:]]
     if len(runs) > 5:
         omitted = len(runs) - 5
         earlier = sum(c for _, c in runs[:-5])
-        print(f"  … {omitted} earlier runs    ${earlier:.4f}", flush=True)
-    print(f"\n  Total    ${total:.4f}", flush=True)
-    print(f"{'─' * 60}\n", flush=True)
+        fields.append((f"… {omitted} earlier", f"${earlier:.4f}"))
+    fields.append(("total", f"${total:.4f}"))
+    _banner("COST", fields, subtitle=f"{len(runs)} runs tracked")
 
 
 def _print_prior_knowledge(project_root: Path) -> None:
@@ -1094,12 +1067,11 @@ def _print_prior_knowledge(project_root: Path) -> None:
     if not lines:
         return
 
-    print(f"\n{'─' * 60}", flush=True)
-    print(f"  PRIOR KNOWLEDGE  ({kb_dir.relative_to(project_root)})", flush=True)
-    print(f"{'─' * 60}", flush=True)
-    for line in lines:
-        print(f"  {line}", flush=True)
-    print(f"{'─' * 60}\n", flush=True)
+    _banner(
+        "PRIOR KNOWLEDGE",
+        [("summary", "\n".join(lines))],
+        subtitle=str(kb_dir.relative_to(project_root)),
+    )
 
 
 def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -> None:
@@ -1154,32 +1126,33 @@ def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -
             short = _re.sub(r"^ISS-\d+:\s*", "", title).strip()
             user_gated.append(short)
 
-    # Print the banner
+    # Build banner fields
     run_label = candidates[0].name
-    print(f"\n{'─' * 60}", flush=True)
-    print(f"  ⚠  OPEN ISSUES FROM PRIOR RUN  ({run_label})", flush=True)
-    print(f"{'─' * 60}", flush=True)
+    fields: list[tuple[str, str]] = []
 
     if criticals:
-        print(f"\n  CRITICAL ({counts.get('CRITICAL', len(criticals))})", flush=True)
-        for i, title in enumerate(criticals):
-            prefix = "└" if i == len(criticals) - 1 else "├"
-            print(f"  {prefix} {title}", flush=True)
+        tree = "\n".join(
+            f"{'└' if i == len(criticals) - 1 else '├'} {t}"
+            for i, t in enumerate(criticals)
+        )
+        fields.append((f"CRITICAL ({counts.get('CRITICAL', len(criticals))})", tree))
 
     if user_gated:
-        print(f"\n  HIGH — needs your input before squad can proceed ({len(user_gated)})", flush=True)
-        for i, title in enumerate(user_gated):
-            prefix = "└" if i == len(user_gated) - 1 else "├"
-            print(f"  {prefix} {title}", flush=True)
+        tree = "\n".join(
+            f"{'└' if i == len(user_gated) - 1 else '├'} {t}"
+            for i, t in enumerate(user_gated)
+        )
+        fields.append((f"HIGH — needs your input ({len(user_gated)})", tree))
 
     other_high = counts.get("HIGH", 0) - len(user_gated)
     if other_high > 0:
-        print(f"\n  HIGH — squad-solvable ({other_high})", flush=True)
+        fields.append(("HIGH — squad-solvable", str(other_high)))
 
-    print(f"\n  Details:  {candidates[0] / 'staging' / 'issues.md'}", flush=True)
+    fields.append(("details", str(candidates[0] / "staging" / "issues.md")))
     if user_gated:
-        print(f"  Answer:   echelon resume \"<your answers>\"", flush=True)
-    print(f"{'─' * 60}\n", flush=True)
+        fields.append(("answer", "echelon resume \"<your answers>\""))
+
+    _banner("OPEN ISSUES", fields, subtitle=f"from {run_label}")
 
 
 def _select_squad_dir(

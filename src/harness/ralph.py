@@ -1462,38 +1462,40 @@ class RalphController:
 
 def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
     """Print a formatted banner when verify_command is missing."""
-    sep = "=" * 60
-    print(f"\n{sep}", file=sys.stderr)
-    print("  ✗  HARNESS RUN BLOCKED — test runner not configured", file=sys.stderr)
-    print(sep, file=sys.stderr)
-    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
-    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
-    print(
-        "\n  The harness could not detect a test runner in the built worktree.\n"
-        "  Run 'echelon cicd' to auto-configure verification, or add\n"
-        "  verify_command manually to echelon-config.yml, for example:\n\n"
-        "    verify_command: swift test --package-path Packages/MyLib\n"
-        "    verify_command: pytest\n"
-        "    verify_command: go test ./...",
+    from echelon.ui import banner as _banner
+    _banner(
+        "HARNESS — TEST RUNNER MISSING",
+        [
+            ("spec", spec_id),
+            ("strategy", strategy_id),
+            ("problem",
+             "The harness could not detect a test runner in the built worktree.\n"
+             "Run 'echelon cicd' to auto-configure verification, or add\n"
+             "verify_command manually to echelon-config.yml, for example:\n\n"
+             "  verify_command: swift test --package-path Packages/MyLib\n"
+             "  verify_command: pytest\n"
+             "  verify_command: go test ./..."),
+            ("resume with", f"echelon harness resume {spec_id}"),
+            ("discard with", f"echelon harness run {spec_id} --reset"),
+        ],
         file=sys.stderr,
     )
-    print(f"\n  Then resume with:  echelon harness resume {spec_id}", file=sys.stderr)
-    print(f"  Discard with:     echelon harness run {spec_id} --reset\n", file=sys.stderr)
-    print(sep, file=sys.stderr)
 
 
 def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) -> None:
     """Print a formatted blocked banner to stderr."""
-    sep = "=" * 60
-    print(f"\n{sep}", file=sys.stderr)
-    print("  ✗  HARNESS RUN BLOCKED — escalation pending", file=sys.stderr)
-    print(sep, file=sys.stderr)
-    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
-    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
-    print(f"  File:      {escalation_file}", file=sys.stderr)
-    print("\n  Answer with:  /speckit-harness-resume", file=sys.stderr)
-    print(f"  Discard with: echelon harness run {spec_id} --reset\n", file=sys.stderr)
-    print(sep, file=sys.stderr)
+    from echelon.ui import banner as _banner
+    _banner(
+        "HARNESS — ESCALATION PENDING",
+        [
+            ("spec", spec_id),
+            ("strategy", strategy_id),
+            ("file", escalation_file),
+            ("answer with", "/speckit-harness-resume"),
+            ("discard with", f"echelon harness run {spec_id} --reset"),
+        ],
+        file=sys.stderr,
+    )
 
 
 def _estimate_tokens(result: ExecResult) -> int:
