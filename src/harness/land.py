@@ -86,15 +86,20 @@ def land(
             )
             return False
     else:
-        _banner(
-            "LAND — NO PR",
-            [
-                ("spec", spec_id),
-                ("reason", "run completed without a PR (gh/glab not configured)"),
-                ("branch", feature_branch),
-                ("next step", f"open a PR for {feature_branch} manually if needed"),
-            ],
-        )
+        # No PR URL — gh/glab not configured. Merge directly into the default branch.
+        merged = gitops.merge_branch_into_default(feature_branch, str(project_dir))
+        if not merged:
+            _banner(
+                "LAND — MERGE FAILED",
+                [
+                    ("spec", spec_id),
+                    ("branch", feature_branch),
+                    ("problem", "direct merge into default branch failed (conflicts?)"),
+                    ("next step", f"git merge --no-ff {feature_branch}  # resolve conflicts, then re-run"),
+                ],
+                subtitle="Resolve conflicts manually, then re-run: echelon land " + spec_id,
+            )
+            return False
 
     if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
         _banner(

@@ -775,6 +775,26 @@ class GitOpsManager:
             logger.warning("Failed to merge PR %s (may be blocked by branch protection): %s", pr_url, e)
             return False
 
+    def merge_branch_into_default(self, branch: str, project_dir: str) -> bool:
+        """Merge branch directly into the default branch in project_dir.
+
+        Used when no PR tool is available (gh/glab not configured). Switches to
+        the default branch, merges with --no-ff, leaves the working directory on
+        the default branch. Returns True on success, False on failure.
+        """
+        default = self._config.target_default_branch
+        try:
+            _run_git(["checkout", default], cwd=project_dir)
+            _run_git(
+                ["merge", "--no-ff", branch, "-m", f"Merge branch '{branch}' into {default}"],
+                cwd=project_dir,
+            )
+            logger.info("Merged %s → %s in %s", branch, default, project_dir)
+            return True
+        except GitOpsError as e:
+            logger.warning("Direct merge of %s into %s failed: %s", branch, default, e)
+            return False
+
     def delete_remote_branch(
         self, branch_name: str, *, project_dir: str, remote: str = "origin"
     ) -> bool:
