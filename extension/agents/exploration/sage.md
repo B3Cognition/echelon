@@ -694,7 +694,7 @@ After every blocking decision (PASS or FAIL verdict), append an entry to `knowle
 
 **MANDATORY — path is always `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`.**
 
-- NEVER write to `.specify/squad/staging/knowledge-base/sage-decisions.yaml`.
+- NEVER write to `${STAGING_DIR}/knowledge-base/sage-decisions.yaml`.
 - NEVER write to any staging subdirectory.
 - The `knowledge-base/` directory is project-level and persistent across runs. Writing to staging would make the decision history invisible to future runs and to speckit-echelon-auditor (AUDITOR)/speckit-echelon-internalizer (INTERNALIZER).
 

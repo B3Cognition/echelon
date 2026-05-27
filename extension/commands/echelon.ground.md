@@ -30,7 +30,7 @@ Dispatch the GROUND agent to perform a reality check on all current squad artifa
 
 ## Step 1: Validate Active Run
 
-Read `.specify/squad/state.json`.
+Read `${SQUAD_DIR}/state.json`.
 
 - If the file does not exist, report **"No active squad run. Run speckit.echelon.run first."** and stop.
 - If `status` is `"killed"`, report **"Squad run was killed. Start a new run."** and stop.
@@ -89,7 +89,7 @@ If any are missing, log a warning but do not fail.
 
 ## Step 5: Update State and Journal
 
-Update `.specify/squad/state.json`:
+Update `${SQUAD_DIR}/state.json`:
 - Update `updated_at` timestamp
 
 Verify that `reasoning-journal.json` has new GROUND entries. If not, append a MANAGER entry:

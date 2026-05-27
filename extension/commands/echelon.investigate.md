@@ -36,7 +36,7 @@ If `$ARGUMENTS` is empty or missing, report **"Please provide a question to inve
 
 ## Step 2: Check for Active Run
 
-Read `.specify/squad/state.json`.
+Read `${SQUAD_DIR}/state.json`.
 
 - If the file exists and has an active run: use that run's spec directory for context and output.
 - If no active run: create a standalone investigation directory at `.specify/specs/investigation-{timestamp}/`. The SCIENTIST can still operate without a full squad run.
@@ -90,7 +90,7 @@ If any are missing, log which outputs were not produced.
 
 ## Step 6: Update State
 
-If an active squad run exists, update `.specify/squad/state.json`:
+If an active squad run exists, update `${SQUAD_DIR}/state.json`:
 - Add `"SCIENTIST"` to `active_specialists` if not already present
 - Update `updated_at` timestamp
 

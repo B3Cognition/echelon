@@ -9,7 +9,7 @@
 
 ### 4.1 Context Pack Assembly
 
-Read and include in the subagent prompt (all from `.specify/squad/staging/`):
+Read and include in the subagent prompt (all from `${STAGING_DIR}/`):
 
 - `glossary.md` + `mental-model.md` + `boundaries.md`
 - `assumptions.md` + `unknowns.md`
@@ -27,17 +27,17 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, reasoning-journal.jsonl — all from .specify/squad/staging/, user input]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, reasoning-journal.jsonl — all from ${STAGING_DIR}/, user input]
   </context>
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `.specify/squad/staging/`. Append entries to `reasoning-journal.jsonl`.
+  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
 
   Do NOT return until ALL of the following are true:
   1. `specs/{spec_id}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
   2. `specs/{spec_id}/00-overview.md` exists (your 1–2 page human-readable summary).
-  3. All staging artifacts have been moved from `.specify/squad/staging/` to `specs/{spec_id}/`.
+  3. All staging artifacts have been moved from `${STAGING_DIR}/` to `specs/{spec_id}/`.
   Calling `speckit.specify` alone is NOT sufficient — Step 2 (spec enhancement) is mandatory before returning.
   </instructions>
   ```
@@ -122,7 +122,7 @@ sed -i '' \
   -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
   .specify/memory/constitution.md
 SCRIPTS="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
-JOURNAL="${PROJECT_ROOT}/.specify/squad/reasoning-journal.jsonl"
+JOURNAL="${PROJECT_ROOT}/${SQUAD_DIR}/reasoning-journal.jsonl"
 NEXT_ID=$(( $(wc -l < "$JOURNAL" 2>/dev/null || echo 0) + 1 ))
 TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 ENTRY=$(jq -n \
@@ -173,7 +173,7 @@ This step runs immediately after the state.json `spec_id`/`spec_dir` update abov
 
    ```bash
    grep -q '^\*\*Status\*\*: Planned' "${spec_dir}/spec.md" || { echo "ERROR: spec.md still shows Draft" >&2; exit 1; }
-   python3 -c "import json; assert json.load(open('.specify/squad/state.json'))['spec_status']=='planned'" || { echo "ERROR: state.json.spec_status not 'planned'" >&2; exit 1; }
+   python3 -c "import json; assert json.load(open('${SQUAD_DIR}/state.json'))['spec_status']=='planned'" || { echo "ERROR: state.json.spec_status not 'planned'" >&2; exit 1; }
    ```
 
    If either check fails, halt the phase and resolve before proceeding.

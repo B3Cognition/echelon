@@ -27,7 +27,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SYNTHESIZER. Read agents/exploration/synthesizer.md for your complete protocol.
-  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.jsonl`.
+  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

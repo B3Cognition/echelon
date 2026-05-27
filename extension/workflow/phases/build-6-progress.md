@@ -76,7 +76,7 @@ Write the new value to `state.json.build.tasks_completed_pct`.
 Dispatch speckit-echelon-modeler (MODELER) with:
 
 - Input: the file(s) written or modified by speckit-echelon-implementer (IMPLEMENTER) in this task (from speckit-echelon-implementer (IMPLEMENTER)'s output)
-- Existing `.specify/squad/mental-model-code.md`
+- Existing `${STAGING_DIR}/mental-model-code.md`
 - Task description and spec FR-* references for this task
 
 speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` to reflect the new code.

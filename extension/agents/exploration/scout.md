@@ -45,7 +45,7 @@ Read `state.json` to check if speckit-echelon-golddigger (GOLDDIGGER) produced a
 # WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 status = s.get('golddigger_status', 'absent')
 artifacts = s.get('golddigger_artifacts', {})
@@ -142,7 +142,7 @@ If a domain meets either trigger, write a Mode 2 request to `state.json`:
 # WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 
 s.setdefault('golddigger_requests', []).append({
@@ -152,7 +152,7 @@ s.setdefault('golddigger_requests', []).append({
     'reason': '<specific reason — e.g., auth middleware execution path not traceable from function bodies; cannot map token validation flow>'
 })
 
-with open('.specify/squad/state.json', 'w') as f:
+with open('${SQUAD_DIR}/state.json', 'w') as f:
     json.dump(s, f, indent=2)
 "
 ```

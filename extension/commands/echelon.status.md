@@ -18,7 +18,7 @@ Display the current state of the Echelon, including active run progress, quality
 
 ## Step 1: Load State
 
-Read `.specify/squad/state.json`.
+Read `${SQUAD_DIR}/state.json`.
 
 - If the file does not exist, report **"No active squad run."** and stop.
 - Parse the JSON. If malformed, report the parse error and stop.
@@ -146,7 +146,7 @@ Token Usage: ~{token_usage} tokens ({percentage}% of {budget}k budget)
 
 ## Step 8: Prior Runs
 
-Scan `.specify/squad/` for any files matching `state-*.json` or other state snapshots. Also scan `.specify/specs/` for directories to list prior completed runs:
+Scan `squad/` and `runs/` for subdirectories containing `state.json` to list prior completed runs:
 
 ```
 PRIOR RUNS:

@@ -118,7 +118,7 @@ echo "[ECHELON CODEGEN] Dependencies verified ✓ (soar=${SOAR_BIN})"
 ### A.4 Set harness state file (direct — no env file)
 
 ```bash
-HARNESS_STATE_FILE="${PROJECT_ROOT}/.specify/squad/state.json"
+HARNESS_STATE_FILE="${PROJECT_ROOT}/${SQUAD_DIR}/state.json"
 mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
 echo "[ECHELON CODEGEN] Harness state file: ${HARNESS_STATE_FILE}"
 ```

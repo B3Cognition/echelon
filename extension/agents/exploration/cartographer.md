@@ -101,7 +101,7 @@ You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT e
 4. **Move ALL staging artifacts to the new spec directory — MANDATORY:**
 
    ```bash
-   mv .specify/squad/staging/* specs/{NNN}-{feature-name}/
+   mv ${STAGING_DIR}/* specs/{NNN}-{feature-name}/
    ```
 
    **NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
@@ -299,7 +299,7 @@ speckit-echelon-golddigger (GOLDDIGGER) Mode 1 provides function bodies, busines
 # WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 
 s.setdefault('golddigger_requests', []).append({
@@ -309,7 +309,7 @@ s.setdefault('golddigger_requests', []).append({
     'reason': '<specific gap — e.g., cannot write testable AC for payment error cases without knowing full payment provider integration topology>'
 })
 
-with open('.specify/squad/state.json', 'w') as f:
+with open('${SQUAD_DIR}/state.json', 'w') as f:
     json.dump(s, f, indent=2)
 "
 ```

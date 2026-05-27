@@ -100,7 +100,7 @@ Check `state.json.golddigger_completed_domains` first — if a deep dive was alr
 # WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 
 s.setdefault('golddigger_requests', []).append({
@@ -110,7 +110,7 @@ s.setdefault('golddigger_requests', []).append({
     'reason': '<specific contradiction — e.g., code shows service A calls service B but call graph through auth middleware cannot be traced from function bodies alone>'
 })
 
-with open('.specify/squad/state.json', 'w') as f:
+with open('${SQUAD_DIR}/state.json', 'w') as f:
     json.dump(s, f, indent=2)
 "
 ```

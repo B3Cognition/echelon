@@ -17,7 +17,7 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER) du
 ## Inputs
 
 - Current run artifacts (`.specify/specs/{feature}/`)
-- Prior run artifacts (if re-run — loaded from `.specify/squad/prior-runs/`)
+- Prior run artifacts (if re-run — loaded from `${SQUAD_DIR}/prior-runs/`)
 - `knowledge-base/calibration-profile.yaml`
 - `reasoning-journal.jsonl` (current + prior if available)
 - Quality gate scores from WHY passes
@@ -33,14 +33,14 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER) du
 
 1. Record baseline quality scores from WHY quality gate results
 2. Record artifact inventory (which files were produced, their sizes, their scores)
-3. Save snapshot to `.specify/squad/prior-runs/{run-id}/`
+3. Save snapshot to `${SQUAD_DIR}/prior-runs/{run-id}/`
 4. Report: "Baseline established. No comparison possible."
 
 ### Re-runs (iteration >= 2)
 
 #### Step 1: Artifact Diff
 
-Load prior run from `.specify/squad/prior-runs/`. Compare:
+Load prior run from `${SQUAD_DIR}/prior-runs/`. Compare:
 - **Added:** artifacts that exist now but not before
 - **Removed:** artifacts that existed before but not now
 - **Changed:** artifacts that exist in both — diff content and scores

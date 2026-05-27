@@ -30,7 +30,7 @@ Manually dispatch the INNOVATE specialist to propose fundamentally different app
 
 ## Step 1: Validate Active Run
 
-Read `.specify/squad/state.json`.
+Read `${SQUAD_DIR}/state.json`.
 
 - If the file does not exist, report **"No active squad run. Run speckit.echelon.run first."** and stop.
 - If `status` is `"killed"` or `"done"`, report **"Squad run is already {status}. Start a new run first."** and stop.
@@ -81,7 +81,7 @@ If any are missing, log a warning but do not fail.
 
 ## Step 5: Update State and Journal
 
-Update `.specify/squad/state.json`:
+Update `${SQUAD_DIR}/state.json`:
 - Add `"INNOVATE"` to `active_specialists` if not already present
 - Update `updated_at` timestamp
 

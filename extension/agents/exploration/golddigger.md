@@ -220,7 +220,7 @@ rm -f .specify/extensions/echelon/local-config.yml
 python3 -c "
 import json
 
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 
 with open('.specify/echelon/re/repos-manifest.json') as f:
@@ -237,7 +237,7 @@ s['golddigger_artifacts'] = {
 }
 s['golddigger_notes'] = []
 
-with open('.specify/squad/state.json', 'w') as f:
+with open('${SQUAD_DIR}/state.json', 'w') as f:
     json.dump(s, f, indent=2)
 "
 ```
@@ -249,7 +249,7 @@ with open('.specify/squad/state.json', 'w') as f:
 python3 -c "
 import json
 
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 
 s['golddigger_status'] = 'complete'
@@ -260,7 +260,7 @@ s['golddigger_artifacts'] = {
 }
 s['golddigger_notes'] = []
 
-with open('.specify/squad/state.json', 'w') as f:
+with open('${SQUAD_DIR}/state.json', 'w') as f:
     json.dump(s, f, indent=2)
 "
 ```
@@ -282,7 +282,7 @@ You will receive the domain name and optionally a repo name from speckit-echelon
 # NOTE: sys.stdout.write used here (not print()) — output goes to agent shell, not state.json
 python3 -c "
 import json, sys
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 domains = s.get('golddigger_completed_domains', [])
 sys.stdout.write(json.dumps(domains) + '\n')
@@ -359,13 +359,13 @@ Write only your status fields — speckit-echelon-commander (COMMANDER) handles 
 # WARNING: Do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
-with open('.specify/squad/state.json', 'r') as f:
+with open('${SQUAD_DIR}/state.json', 'r') as f:
     s = json.load(f)
 
 s['golddigger_status'] = 'complete'
 s['golddigger_mode'] = 'deep-dive'
 
-with open('.specify/squad/state.json', 'w') as f:
+with open('${SQUAD_DIR}/state.json', 'w') as f:
     json.dump(s, f, indent=2)
 "
 ```

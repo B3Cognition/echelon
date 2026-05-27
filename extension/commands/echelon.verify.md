@@ -47,7 +47,7 @@ If any precondition fails, reject QA intake and keep workflow in `BUILD_IN_PROGR
 
 ### 1. Locate Artifacts
 
-Read `.specify/squad/state.json` to find the active feature.
+Read `${SQUAD_DIR}/state.json` to find the active feature.
 Load: spec.md, traceability-matrix.md, tasks.md, constitution.md
 
 ### 2. Dispatch speckit-echelon-verification (VERIFICATION) Agent

@@ -11,11 +11,11 @@ Dispatch speckit-echelon-modeler (MODELER) to build the initial queryable codeba
 
 **Input context pack:**
 
-- `.specify/squad/synthesis.md` (speckit-echelon-synthesizer (SYNTHESIZER) output)
-- `.specify/squad/staging/` (all discovery artifacts)
+- `${STAGING_DIR}/synthesis.md` (speckit-echelon-synthesizer (SYNTHESIZER) output)
+- `${STAGING_DIR}/` (all discovery artifacts)
 - Codebase file structure (from `state.json.mode`: for brownfield, also include `state.json.golddigger_artifacts`)
 
-**Output required:** `.specify/squad/mental-model-code.md` — entity graph, contract map, data flow trace, and invariants list.
+**Output required:** `${STAGING_DIR}/mental-model-code.md` — entity graph, contract map, data flow trace, and invariants list.
 
 **Verdict:** Must be `COMPLETE`. If speckit-echelon-modeler (MODELER) returns any invariant violations in its output, speckit-echelon-commander (COMMANDER) logs them as ALERT-level journal entries but does NOT block — the map is new and violations may be expected at this stage.
 

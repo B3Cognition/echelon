@@ -231,7 +231,7 @@ Update `state.json`:
    ```bash
    python3 -c "
    import json, sys
-   run_id = open('.specify/squad/state.json').read()
+   run_id = open('${SQUAD_DIR}/state.json').read()
    run_id = json.loads(run_id)['run_id']
    runs = json.load(open('${spec_dir}/run-history.json'))['runs']
    assert any(r['run_id'] == run_id for r in runs), 'run_id not found in run-history.json'
@@ -319,15 +319,15 @@ Archive the completed run artifacts, then clean staging:
 
 ```bash
 # Archive this run's artifacts
-RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
-ARCHIVE_DIR=".specify/squad/archive/${RUN_ID}"
+RUN_ID=$(python3 -c "import json; print(json.load(open('${SQUAD_DIR}/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+ARCHIVE_DIR="${SQUAD_DIR}/archive/${RUN_ID}"
 mkdir -p "$ARCHIVE_DIR"
-cp -r .specify/squad/staging/* "$ARCHIVE_DIR/" 2>/dev/null || true
-cp .specify/squad/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
+cp -r ${STAGING_DIR}/* "$ARCHIVE_DIR/" 2>/dev/null || true
+cp ${SQUAD_DIR}/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
 echo "Run archived → ${ARCHIVE_DIR}/"
 
 # Clean staging for next run
-rm -rf .specify/squad/staging
+rm -rf "${STAGING_DIR}"
 ```
 
 **What's preserved in the archive:**

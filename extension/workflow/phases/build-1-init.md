@@ -22,7 +22,7 @@ PROJECT_ROOT=$(pwd)
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 ```
 
-Read `project_root` from `.specify/squad/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. The feature directory is `${PROJECT_ROOT}/specs/{NNN}-{feature}` — never a bare relative path.
+Read `project_root` from `${SQUAD_DIR}/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. The feature directory is `${PROJECT_ROOT}/specs/{NNN}-{feature}` — never a bare relative path.
 
 ### 1.0b Validate Deploy Infrastructure
 
@@ -94,7 +94,7 @@ If user specified task IDs, filter to only those tasks. Verify dependencies are 
 
 ### 1.4 Initialize Build State
 
-Update `.specify/squad/state.json`:
+Update `${SQUAD_DIR}/state.json`:
 
 ```json
 {

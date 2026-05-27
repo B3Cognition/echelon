@@ -12,13 +12,13 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | File | Path | Notes |
 | --- | --- | --- |
 | `spec.md` | `specs/{NNN}-{feature}/spec.md` | Required |
-| `glossary.md` | `specs/{NNN}-{feature}/glossary.md` (or `.specify/squad/staging/glossary.md` if not yet moved) | Required |
+| `glossary.md` | `specs/{NNN}-{feature}/glossary.md` (or `${STAGING_DIR}/glossary.md` if not yet moved) | Required |
 | `00-overview.md` | `specs/{NNN}-{feature}/00-overview.md` | Required |
 | `assumptions.md` | `specs/{NNN}-{feature}/assumptions.md` (or staging) | Required |
 | `issues.md` | `specs/{NNN}-{feature}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
 | `estimates-log.yaml` | `knowledge-base/estimates-log.yaml` | Mark `[ABSENT]` on cold start |
-| `reasoning-journal.jsonl` | `.specify/squad/reasoning-journal.jsonl` | Required |
+| `reasoning-journal.jsonl` | `${SQUAD_DIR}/reasoning-journal.jsonl` | Required |
 
 **Verification before dispatch:** for each row, run `[ -f <path> ] && echo "OK $path" || echo "ABSENT $path"`. Absences are acceptable for `calibration-profile.yaml` and `estimates-log.yaml` only.
 

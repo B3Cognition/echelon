@@ -13,13 +13,13 @@ Read and include in the subagent prompt:
 
 | File | Path |
 |------|------|
-| `glossary.md` | `.specify/squad/staging/glossary.md` |
-| `mental-model.md` | `.specify/squad/staging/mental-model.md` |
-| `boundaries.md` | `.specify/squad/staging/boundaries.md` |
-| `assumptions.md` | `.specify/squad/staging/assumptions.md` |
-| `unknowns.md` | `.specify/squad/staging/unknowns.md` |
+| `glossary.md` | `${STAGING_DIR}/glossary.md` |
+| `mental-model.md` | `${STAGING_DIR}/mental-model.md` |
+| `boundaries.md` | `${STAGING_DIR}/boundaries.md` |
+| `assumptions.md` | `${STAGING_DIR}/assumptions.md` |
+| `unknowns.md` | `${STAGING_DIR}/unknowns.md` |
 | `calibration_map entry for speckit-echelon-sage (SAGE)` | Built by speckit-echelon-commander (COMMANDER) at init from `knowledge-base/calibration-profile.yaml`. Mark `[ABSENT]` on cold start — speckit-echelon-commander (COMMANDER) injects it via the Pre-Dispatch Calibration Injection protocol. |
-| `reasoning-journal.jsonl` | `.specify/squad/reasoning-journal.jsonl` |
+| `reasoning-journal.jsonl` | `${SQUAD_DIR}/reasoning-journal.jsonl` |
 
 **MANDATORY — verify each file before dispatch.** If a file is absent, include it in the prompt as `[ABSENT: <path>]` rather than silently omitting it. speckit-echelon-sage (SAGE) must know what's missing so it can flag related assumptions accordingly. The calibration_map entry is commonly absent on cold start — that is acceptable; mark it `[ABSENT]`.
 
@@ -31,12 +31,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.jsonl from .specify/squad/staging/; calibration_map entry for speckit-echelon-sage (SAGE) from speckit-echelon-commander (COMMANDER) init (mark [ABSENT] if cold start)]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.jsonl from ${STAGING_DIR}/; calibration_map entry for speckit-echelon-sage (SAGE) from speckit-echelon-commander (COMMANDER) init (mark [ABSENT] if cold start)]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
-  Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Produce outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.jsonl`.
+  Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Produce outputs in `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

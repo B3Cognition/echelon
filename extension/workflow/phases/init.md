@@ -59,30 +59,29 @@ The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outp
 
 ```bash
 # Archive prior staging artifacts if they exist
-if [ -d ".specify/squad/staging" ] && [ "$(ls .specify/squad/staging/ 2>/dev/null)" ]; then
+if [ -d "${STAGING_DIR}" ] && [ "$(ls ${STAGING_DIR}/ 2>/dev/null)" ]; then
   # Read prior run_id from state.json (if available)
-  PRIOR_RUN_ID=$(python3 -c "import json; print(json.load(open('.specify/squad/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
-  ARCHIVE_DIR=".specify/squad/archive/${PRIOR_RUN_ID}"
+  PRIOR_RUN_ID=$(python3 -c "import json; print(json.load(open('${SQUAD_DIR}/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
+  ARCHIVE_DIR="${SQUAD_DIR}/archive/${PRIOR_RUN_ID}"
   mkdir -p "$ARCHIVE_DIR"
-  cp -r .specify/squad/staging/* "$ARCHIVE_DIR/" 2>/dev/null || true
+  cp -r ${STAGING_DIR}/* "$ARCHIVE_DIR/" 2>/dev/null || true
   # Also archive state.json snapshot
-  cp .specify/squad/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
+  cp ${SQUAD_DIR}/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
   echo "Archived prior run ${PRIOR_RUN_ID} → ${ARCHIVE_DIR}/"
 fi
 
 # Now safe to wipe staging
-rm -rf .specify/squad/staging
-mkdir -p .specify/squad/staging
-mkdir -p .specify/squad
+rm -rf "${STAGING_DIR}"
+mkdir -p "${STAGING_DIR}"
 ```
 
-**Archive structure:** `.specify/squad/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.jsonl, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
+**Archive structure:** `${SQUAD_DIR}/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.jsonl, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
 
 **Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `speckit.specify`, which creates the branch and directory structure.
 
 ### 1.3 Initialize State
 
-Create `.specify/squad/state.json`:
+Create `${SQUAD_DIR}/state.json`:
 
 ```json
 {
@@ -131,7 +130,7 @@ Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). 
 
 ### 1.4 Initialize Staging Reasoning Journal
 
-Create `.specify/squad/reasoning-journal.jsonl`:
+Create `${SQUAD_DIR}/reasoning-journal.jsonl`:
 
 ```json
 {
@@ -152,11 +151,11 @@ If user specifies a prior spec (e.g., "continue with 012-feature"):
 - Set `spec_id` and `spec_dir` in state.json
 - Note: EVOLVE will diff against prior artifacts during FINALIZE
 
-**Load from archive (automatic):** If no explicit prior spec is given but `.specify/squad/archive/` contains prior runs:
+**Load from archive (automatic):** If no explicit prior spec is given but `${SQUAD_DIR}/archive/` contains prior runs:
 
 ```bash
 # Find the most recent archived run
-LATEST_ARCHIVE=$(ls -td .specify/squad/archive/squad-* 2>/dev/null | head -1)
+LATEST_ARCHIVE=$(ls -td ${SQUAD_DIR}/archive/squad-* 2>/dev/null | head -1)
 if [ -n "$LATEST_ARCHIVE" ]; then
   echo "Prior run found: ${LATEST_ARCHIVE}"
   # Read prior reasoning journal for continuity
@@ -231,7 +230,7 @@ For reconciliation after recovery, reference `templates/recovery-checklist.md` a
 If `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh evolution.enabled` returns `true`:
 
 ```bash
-scripts/bash/kb-validate-evolution.sh --state .specify/squad/state.json
+scripts/bash/kb-validate-evolution.sh --state ${SQUAD_DIR}/state.json
 ```
 
 - Exit 0: Continue
