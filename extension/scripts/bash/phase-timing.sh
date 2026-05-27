@@ -4,8 +4,24 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/python-detect.sh"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
-STATE_FILE_DEFAULT="$REPO_ROOT/.specify/squad/state.json"
-JOURNAL_FILE_DEFAULT="$REPO_ROOT/.specify/squad/reasoning-journal.json"
+
+# Detect the active squad run dir (CLI: squad/.current; spec-kit: runs/.current)
+_phase_timing_squad_dir() {
+  local root="$1" base run_id current_file
+  for base in squad runs; do
+    current_file="$root/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$root/$base/$run_id" ]]; then
+        echo "$root/$base/$run_id"; return 0
+      fi
+    fi
+  done
+  echo "$root/.specify/squad"
+}
+_SQUAD_DIR="$(_phase_timing_squad_dir "$REPO_ROOT")"
+STATE_FILE_DEFAULT="$_SQUAD_DIR/state.json"
+JOURNAL_FILE_DEFAULT="$_SQUAD_DIR/reasoning-journal.jsonl"
 
 usage() {
   cat >&2 <<'USAGE'

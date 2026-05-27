@@ -4,9 +4,25 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
-ERROR_LOG="$REPO_ROOT/.specify/squad/error.log"
-RECOVERY_DIR="$REPO_ROOT/.specify/squad/recovery"
-STATE_FILE="$REPO_ROOT/.specify/squad/state.json"
+
+# Detect the active squad run dir (CLI: squad/.current; spec-kit: runs/.current)
+_kb_recover_squad_dir() {
+  local root="$1" base run_id current_file
+  for base in squad runs; do
+    current_file="$root/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$root/$base/$run_id" ]]; then
+        echo "$root/$base/$run_id"; return 0
+      fi
+    fi
+  done
+  echo "$root/.specify/squad"
+}
+_SQUAD_DIR="$(_kb_recover_squad_dir "$REPO_ROOT")"
+ERROR_LOG="$_SQUAD_DIR/error.log"
+RECOVERY_DIR="$_SQUAD_DIR/recovery"
+STATE_FILE="$_SQUAD_DIR/state.json"
 SEED_DIR="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
 
 usage() {

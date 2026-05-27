@@ -62,20 +62,21 @@ _endocrine_find_repo_root() {
 }
 REPO_ROOT="${ENDOCRINE_REPO_ROOT:-$(_endocrine_find_repo_root)}"
 
-# Detect the active squad run from squad/.current.
-# Hormones are run-scoped; this avoids requiring ENDOCRINE_SQUAD_DIR to be set.
-# Falls back to the legacy .specify/squad path for backward compatibility.
+# Detect the active squad run from squad/.current (CLI runs) or runs/.current
+# (interactive spec-kit runs). Falls back to the legacy .specify/squad path.
 _endocrine_find_squad_dir() {
   local root="$1"
-  local current_file="$root/squad/.current"
-  if [[ -f "$current_file" ]]; then
-    local run_id
-    run_id=$(tr -d '[:space:]' < "$current_file")
-    if [[ -n "$run_id" && -d "$root/squad/$run_id" ]]; then
-      echo "$root/squad/$run_id"
-      return 0
+  local base run_id current_file
+  for base in squad runs; do
+    current_file="$root/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$root/$base/$run_id" ]]; then
+        echo "$root/$base/$run_id"
+        return 0
+      fi
     fi
-  fi
+  done
   echo "$root/.specify/squad"
 }
 SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$(_endocrine_find_squad_dir "$REPO_ROOT")}"
