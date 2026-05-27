@@ -1363,6 +1363,19 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     import json as _json
     import re as _re
 
+    run_dir = _find_current_run_dir(project_root)
+    if run_dir and (run_dir / "state.json").exists():
+        try:
+            state = _json.loads((run_dir / "state.json").read_text())
+            recommended = state.get("phase_recommendation")
+            if (
+                recommended
+                and (state.get("convergence_forced") or state.get("convergence_detected"))
+            ):
+                return recommended
+        except Exception:
+            pass
+
     # 0. Constitution missing or template — harness now handles it via phase1-constitution
     const_path = project_root / ".specify" / "memory" / "constitution.md"
     if not const_path.exists():
@@ -1382,7 +1395,6 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
 
     # Also check staging/ for mid-run blocked states (same as _print_next_steps)
     if quality_gates_file is None:
-        run_dir = _find_current_run_dir(project_root)
         if run_dir:
             try:
                 state = _json.loads((run_dir / "state.json").read_text())

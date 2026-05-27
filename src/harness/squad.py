@@ -232,6 +232,26 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
+        # ── Recovery: convergence already picked the next phase ─────────────
+        elif (
+            existing_status == "blocked"
+            and not existing.get("escalation_question")
+            and (existing.get("convergence_forced") or existing.get("convergence_detected"))
+            and existing.get("phase_recommendation") in self._graph.all_phase_ids()
+        ):
+            state = self._state_store.load()
+            recommended = state["phase_recommendation"]
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            state["phase"] = recommended
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] convergence recovery → advancing to {recommended!r}",
+                flush=True,
+            )
+
         # (keep all recovery blocks exactly as-is above this point)
 
         # Fresh start if no state or not resumable
@@ -256,6 +276,9 @@ class SquadController:
 
         while True:
             phase = self._state_store.current_phase()
+            guarded_phase = self._apply_phase_recommendation_guard(phase)
+            if guarded_phase != phase:
+                phase = guarded_phase
 
             if phase in TERMINAL_PHASES:
                 state = self._state_store.load()
@@ -326,6 +349,33 @@ class SquadController:
                     )
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
+
+    def _apply_phase_recommendation_guard(self, phase: str) -> str:
+        """Honor forced-convergence routing before dispatching another agent."""
+        if phase in TERMINAL_PHASES:
+            return phase
+
+        state = self._state_store.load()
+        if not (state.get("convergence_forced") or state.get("convergence_detected")):
+            return phase
+
+        recommended = state.get("phase_recommendation")
+        if not recommended or recommended == phase:
+            return phase
+        if recommended not in self._graph.all_phase_ids():
+            return phase
+
+        state["phase"] = recommended
+        if state.get("status") == "blocked" and not state.get("escalation_question"):
+            state["status"] = "running"
+            state["blocked_reason"] = None
+        self._state_store.save(state)
+        print(
+            f"[squad] convergence guard → honoring phase_recommendation "
+            f"{recommended!r} (skipping {phase!r})",
+            flush=True,
+        )
+        return recommended
 
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult

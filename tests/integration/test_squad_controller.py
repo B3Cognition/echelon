@@ -407,6 +407,47 @@ class TestHumanGate:
         assert result.verdict == "APPROVED"
 
 
+class TestConvergenceRoutingGuard:
+    def test_forced_convergence_skips_why2_dispatch(self, tmp_path):
+        provider = _mock_provider("KILL")
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update({
+            "convergence_forced": True,
+            "convergence_detected": True,
+            "phase_recommendation": "phase2-decide",
+            "why_fail_count": 13,
+        })
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+        assert store.load()["last_dispatch"]["phase_id"] == "phase2-decide"
+        assert provider.exec_agent.call_count == 1
+
+    def test_blocked_empty_escalation_with_convergence_recovers_to_recommendation(self, tmp_path):
+        provider = _mock_provider("KILL")
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        state = store.load()
+        state.update({
+            "status": "blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "escalation_question": "",
+            "convergence_forced": True,
+            "phase_recommendation": "phase2-decide",
+        })
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+        assert store.load()["last_dispatch"]["phase_id"] == "phase2-decide"
+        assert provider.exec_agent.call_count == 1
+
+
 class TestBuildPhaseRouting:
     """Regression: 12 build-phase transition conditions used lowercase 'and'
     (e.g. 'verdict = FAIL and fix_cycle < 2'). The evaluator splits only on
