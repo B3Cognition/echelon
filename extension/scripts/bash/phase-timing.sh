@@ -5,10 +5,10 @@ SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/python-detect.sh"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 
-# Detect the active squad run dir (CLI: squad/.current; spec-kit: runs/.current)
+# Detect the active spec run dir from runs/.current (primary); legacy squad/.current fallback.
 _phase_timing_squad_dir() {
   local root="$1" base run_id current_file
-  for base in squad runs; do
+  for base in runs squad; do
     current_file="$root/$base/.current"
     if [[ -f "$current_file" ]]; then
       run_id=$(tr -d '[:space:]' < "$current_file")

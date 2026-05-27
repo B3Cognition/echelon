@@ -273,7 +273,7 @@ def _cmd_init(project_dir: Path) -> None:
 # ── land (pure Python, no LLM) ────────────────────────────────────────────
 
 def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
-    """Offer to archive the active squad run into specs/<spec_id>-*/squad/."""
+    """Offer to archive the active spec run into specs/<spec_id>-*/run/."""
     import shutil
     from harness.spec_frontmatter import find_spec_dir
 
@@ -283,23 +283,26 @@ def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
 
     spec_dir = find_spec_dir(spec_id, project_dir)
     if spec_dir is None:
-        print(f"  (squad archive skipped — spec {spec_id!r} dir not found)", flush=True)
+        print(f"  (spec run archive skipped — spec {spec_id!r} dir not found)", flush=True)
         return
 
-    archive_dest = spec_dir / "squad"
+    run_id = run_dir.name
+    archive_dest = spec_dir / "run"
+    current_marker = run_dir.parent / ".current"
     try:
         spec_rel = spec_dir.resolve().relative_to(project_dir.resolve())
     except ValueError:
         spec_rel = spec_dir
     print(
-        f"\nArchive squad run {run_id!r} into "
-        f"{spec_rel}/squad/ ?"
+        f"\nArchive spec run {run_id!r} into "
+        f"{spec_rel}/run/ ?"
     )
-    choice = input("  [Y]es archive / [n]o keep in squad/ / [s]kip: ").strip().lower()
+    choice = input("  [Y]es archive / [n]o keep in runs/ / [s]kip: ").strip().lower()
 
     if choice in ("", "y", "yes"):
         shutil.move(str(run_dir), str(archive_dest))
-        current_file.unlink()
+        if current_marker.exists():
+            current_marker.unlink()
         import subprocess
         subprocess.run(["git", "add", str(archive_dest)], cwd=str(project_dir), check=False)
         subprocess.run(
@@ -314,7 +317,8 @@ def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
     elif choice in ("s", "skip"):
         print("  Skipped.", flush=True)
     else:
-        print(f"  Squad run left at squad/{run_id}/", flush=True)
+        run_rel = run_dir.relative_to(project_dir) if run_dir.is_relative_to(project_dir) else run_dir
+        print(f"  Spec run left at {run_rel}/", flush=True)
 
 
 def _cmd_land(args: list[str]) -> None:
@@ -649,25 +653,21 @@ def _cmd_harness_resume(args: list[str]) -> None:
     run(user_message, provider, gitops)
 
 
-def _make_run_id() -> str:
-    from datetime import datetime
-    return f"run-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
-
-
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
-    """Create squad/<run_id>/ + staging/, write squad/.gitignore, update .current."""
-    squad_root = project_root / "squad"
-    squad_root.mkdir(exist_ok=True)
+    """Create runs/<run_id>/ + staging/, write runs/.gitignore, update runs/.current."""
+    from harness.paths import runs_dir
+    runs_root = runs_dir(project_root)
+    runs_root.mkdir(exist_ok=True)
 
-    gitignore = squad_root / ".gitignore"
+    gitignore = runs_root / ".gitignore"
     if not gitignore.exists():
-        gitignore.write_text("*/state.json\n*/*.tmp\n.current\n")
+        gitignore.write_text("*/state.json\n*/*.tmp\n.current*\n")
 
-    run_dir = squad_root / run_id
+    run_dir = runs_root / run_id
     run_dir.mkdir(exist_ok=True)
     (run_dir / "staging").mkdir(exist_ok=True)
 
-    (squad_root / ".current").write_text(run_id)
+    (runs_root / ".current").write_text(run_id)
     return run_dir
 
 
@@ -691,13 +691,9 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
 
 
 def _iter_run_dirs(project_root: Path) -> list[Path]:
-    """Return all squad run dirs across squad/ and runs/, sorted newest-first.
-
-    Covers both CLI-created runs (squad/run-*) and interactive/spec-kit runs
-    (runs/spec-* or runs/run-*) so display helpers see the full history.
-    """
+    """Return all spec run dirs under runs/ (and legacy squad/), sorted newest-first."""
     dirs: list[Path] = []
-    for base_name in ("squad", "runs"):
+    for base_name in ("runs", "squad"):
         base = project_root / base_name
         if not base.exists():
             continue
@@ -1228,26 +1224,27 @@ def _select_squad_dir(
     is_fresh_start=False → caller should resume (existing run dir, same task).
     """
     import json as _json
+    from harness.paths import make_spec_run_id
 
     if reset:
-        return _setup_run_dir(project_root, _make_run_id()), True
+        return _setup_run_dir(project_root, make_spec_run_id()), True
 
     existing_dir = _find_current_run_dir(project_root)
     if not existing_dir:
-        return _setup_run_dir(project_root, _make_run_id()), True
+        return _setup_run_dir(project_root, make_spec_run_id()), True
 
     try:
         state = _json.loads((existing_dir / "state.json").read_text())
     except Exception:
-        return _setup_run_dir(project_root, _make_run_id()), True
+        return _setup_run_dir(project_root, make_spec_run_id()), True
 
     status = state.get("status")
     if status not in ("running", "in_progress"):
-        return _setup_run_dir(project_root, _make_run_id()), True
+        return _setup_run_dir(project_root, make_spec_run_id()), True
 
     # Different task → new run dir (preserves old one, doesn't overwrite)
     if user_message and user_message != state.get("user_message", ""):
-        return _setup_run_dir(project_root, _make_run_id()), True
+        return _setup_run_dir(project_root, make_spec_run_id()), True
 
     # Same task, resumable status → resume in existing dir
     return existing_dir, False
