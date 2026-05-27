@@ -42,6 +42,7 @@ SKILL_MAP = {
     "review":  "echelon.review",
     "change":  "echelon.change",
     "codegen": "echelon.codegen",
+    "cicd":    "echelon.cicd",
 }
 
 CLI_VERSION = "2.2.0"
@@ -97,10 +98,12 @@ Commands:
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
   change  <spec_id> <description>           Plan a scope change
   codegen <spec_id>                         Run SOAR codegen pipeline
+  cicd    <spec_id>                         Detect project type and configure verify_command
   land    <spec_id>                         Land a spec: merge PR, clean up
-  harness init [<target_repo>]              Initialize harness (no LLM)
-  harness run  <spec_id> [strategy=<s>]     Run build→verify→PR loop
-  spec target  <spec_id> <repo> [repo...]   Set target repos in spec frontmatter
+  harness init   [<target_repo>]            Initialize harness (no LLM)
+  harness run    <spec_id> [strategy=<s>]   Run build→verify→PR loop
+  harness resume <spec_id> [strategy=<s>]   Resume harness blocked on verify_command_needed
+  spec target    <spec_id> <repo> [repo...] Set target repos in spec frontmatter
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
