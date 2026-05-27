@@ -97,7 +97,8 @@ fi
 echo "▶ Installing echelon into $VENV_DIR..."
 uv venv "$VENV_DIR" -q 2>/dev/null || true
 uv pip install -q --python "$VENV_DIR" -e "$ECHELON_DIR"
-echo "  ✓ echelon installed"
+ECHELON_VER=$("$VENV_DIR/bin/echelon" --version 2>/dev/null || echo "unknown")
+echo "  ✓ echelon installed ($ECHELON_VER)"
 echo "    echelon       → $VENV_DIR/bin/echelon"
 echo "    codegen       → $VENV_DIR/bin/codegen"
 echo "    understanding → $VENV_DIR/bin/understanding"

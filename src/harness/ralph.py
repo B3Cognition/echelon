@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from harness.config import HarnessConfig
-from harness.llm_provider import ClaudeCliProvider
+from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
@@ -59,7 +59,7 @@ class RalphController:
         spec_id: str,
         strategy_id: str,
         config: HarnessConfig,
-        llm_provider: Optional[ClaudeCliProvider] = None,
+        llm_provider: Optional[AICodingCliProvider] = None,
         build_id: str = "",
     ) -> None:
         self._provider = provider
@@ -242,6 +242,20 @@ class RalphController:
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
                     tokens_used += verify_result.token_usage
+
+                    # Hard-stop: unknown project type cannot be fixed by the LLM.
+                    # Block immediately and ask the human to configure verify_command.
+                    if any(f.id == "local-verify-skipped" for f in verify_result.failures):
+                        _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
+                        return self._finalize(
+                            status="blocked",
+                            reason="verify_command_needed",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                        )
 
                     # Log verify iteration
                     self._append_iteration_log(
@@ -661,6 +675,9 @@ class RalphController:
         but no package.json), runs verify.sh if it exists, otherwise falls back
         to ``python -m pytest``.
 
+        For Swift projects (Package.swift present at root or in a subdirectory),
+        runs ``swift build`` then ``swift test``.
+
         Returns VerifyResult with structured failures when tests fail.
         """
         import subprocess
@@ -708,8 +725,22 @@ class RalphController:
         is_node = (wt / "package.json").exists() and not has_python_markers
         is_python = has_python_markers
 
+        # Swift Package Manager: root Package.swift takes priority; fall back to
+        # the shallowest Package.swift found in subdirectories (e.g. Packages/Foo/).
+        swift_package_dir: Optional[Path] = None
+        if (wt / "Package.swift").exists():
+            swift_package_dir = wt
+        else:
+            candidates = sorted(wt.glob("**/Package.swift"), key=lambda p: len(p.parts))
+            if candidates:
+                swift_package_dir = candidates[0].parent
+        is_swift = swift_package_dir is not None and not is_python and not is_node
+
         if is_python:
             return self._exec_verify_python(worktree_path, start)
+
+        if is_swift:
+            return self._exec_verify_swift(str(swift_package_dir), start)
 
         if (wt / "pnpm-lock.yaml").exists():
             commands = [
@@ -850,6 +881,73 @@ class RalphController:
                 id="pytest-error",
                 error=str(e),
             ))
+
+        duration_s = time.monotonic() - start
+        return VerifyResult(
+            passed=len(failures) == 0,
+            failures=failures,
+            duration_s=duration_s,
+        )
+
+    def _exec_verify_swift(self, package_dir: str, start: float) -> VerifyResult:
+        """Run Swift Package Manager verification: ``swift build`` then ``swift test``.
+
+        Runs from ``package_dir`` (the directory containing Package.swift).
+        Timeout is 600 s per stage to allow for initial dependency resolution and
+        compilation which can be slow on a cold cache.
+        """
+        import subprocess
+        import shutil
+        import time
+
+        failures = []
+
+        if not shutil.which("swift"):
+            duration_s = time.monotonic() - start
+            return VerifyResult(
+                passed=False,
+                failures=[FailureEntry(
+                    category=FailureCategory.BUILD,
+                    id="swift-not-found",
+                    error=(
+                        "swift toolchain not found on PATH. "
+                        "Install Xcode or the Swift toolchain and ensure 'swift' is on PATH."
+                    ),
+                )],
+                duration_s=duration_s,
+            )
+
+        for stage, cmd in [("build", "swift build"), ("test", "swift test")]:
+            try:
+                result = subprocess.run(
+                    cmd.split(),
+                    cwd=package_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=600,
+                )
+                if result.returncode != 0:
+                    output = (result.stdout + result.stderr).strip()
+                    failures.append(FailureEntry(
+                        category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
+                        id=f"swift-{stage}",
+                        error=output[-2000:] if len(output) > 2000 else output,
+                    ))
+                    break
+            except subprocess.TimeoutExpired:
+                failures.append(FailureEntry(
+                    category=FailureCategory.BUILD if stage == "build" else FailureCategory.TEST,
+                    id=f"swift-{stage}-timeout",
+                    error=f"{cmd} timed out after 600 seconds",
+                ))
+                break
+            except Exception as e:
+                failures.append(FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=f"swift-{stage}-error",
+                    error=str(e),
+                ))
+                break
 
         duration_s = time.monotonic() - start
         return VerifyResult(
@@ -1176,6 +1274,36 @@ class RalphController:
         build_prompt: str = "",
     ) -> LoopResult:
         """Handle resume from blocked state."""
+        # verify_command_needed: check if the user has now configured verify_command
+        # or if the project type is now auto-detectable, then re-run from scratch.
+        if state.get("termination_reason") == "verify_command_needed":
+            if self._config.verify_command:
+                self._state_store.transition("running")
+                print(
+                    "[harness] verify_command configured → re-running from scratch",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return self._run_loop_inner(
+                    max_outer=max_outer,
+                    max_inner=max_inner,
+                    token_budget=token_budget,
+                    build_command=build_command,
+                    strategy_context=strategy_context,
+                    build_prompt=build_prompt,
+                )
+            else:
+                _print_verify_command_needed_banner(self._spec_id, self._strategy_id)
+                return LoopResult(
+                    status="blocked",
+                    termination_reason="verify_command_needed",
+                    outer_iterations=state.get("outer_iter", 0),
+                    inner_iterations=state.get("inner_iter", 0),
+                    tokens_used=state.get("tokens_used", 0),
+                    pr_url=state.get("pr_url"),
+                    final_verify=None,
+                )
+
         # Budget-exhausted recovery: if budget was bumped, resume from current progress
         if state.get("termination_reason") == "budget_exhausted":
             stored_usage = state.get("tokens_used", 0)
@@ -1304,6 +1432,28 @@ class RalphController:
 
 
 # === Utility functions ===
+
+def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
+    """Print a formatted banner when verify_command is missing."""
+    sep = "=" * 60
+    print(f"\n{sep}", file=sys.stderr)
+    print("  ✗  HARNESS RUN BLOCKED — test runner not configured", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    print(f"\n  Spec:      {spec_id}", file=sys.stderr)
+    print(f"  Strategy:  {strategy_id}", file=sys.stderr)
+    print(
+        "\n  The harness could not detect a test runner in the built worktree.\n"
+        "  Run 'echelon cicd' to auto-configure verification, or add\n"
+        "  verify_command manually to echelon-config.yml, for example:\n\n"
+        "    verify_command: swift test --package-path Packages/MyLib\n"
+        "    verify_command: pytest\n"
+        "    verify_command: go test ./...",
+        file=sys.stderr,
+    )
+    print(f"\n  Then resume with:  echelon harness resume {spec_id}", file=sys.stderr)
+    print(f"  Discard with:     echelon harness run {spec_id} --reset\n", file=sys.stderr)
+    print(sep, file=sys.stderr)
+
 
 def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) -> None:
     """Print a formatted blocked banner to stderr."""

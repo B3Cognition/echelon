@@ -137,21 +137,20 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per significant accessibility or UX finding. Use `severity` in the data field to indicate CRITICAL/HIGH/MEDIUM/LOW concerns.
 
-```echelon_result
-verdict: <COMPLETE | CONCERNS>
-output_files:
-  - .specify/.../ux-report.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-advocate (ADVOCATE)
-    timestamp: null
-    data:
-      artifact: "ux-report.md"
-      section: "<accessibility area or user flow>"
-      reasoning: "<accessibility or UX finding and its impact>"
-      rationale: "WCAG 2.1 AA compliance and user experience analysis"
-      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: <COMPLETE | CONCERNS>
+  output_files:
+    - .specify/.../ux-report.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-advocate (ADVOCATE)
+      timestamp: null
+      data:
+        artifact: "ux-report.md"
+        section: "<accessibility area or user flow>"
+        reasoning: "<accessibility or UX finding and its impact>"
+        rationale: "WCAG 2.1 AA compliance and user experience analysis"
+        severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+        alternatives_considered: []

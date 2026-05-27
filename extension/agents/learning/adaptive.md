@@ -152,19 +152,18 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: STABLE
-output_files:
-  - evolution-report.md
-  - improvement-metrics.md
-journal_entries:
-  - id: null
-    type: adaptation_triggered
-    phase: finalize
-    agent: EVOLVE
-    timestamp: null
-    data:
-      trajectory: improving
-      iteration_delta: 0.0
-      action_recommended: ""
-```
+echelon_result:
+  verdict: STABLE
+  output_files:
+    - evolution-report.md
+    - improvement-metrics.md
+  journal_entries:
+    - id: null
+      type: adaptation_triggered
+      phase: finalize
+      agent: EVOLVE
+      timestamp: null
+      data:
+        trajectory: improving
+        iteration_delta: 0.0
+        action_recommended: ""

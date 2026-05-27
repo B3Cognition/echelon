@@ -27,7 +27,7 @@ Use the Agent tool:
   <instructions>
   You are CODE REVIEWER. Read agents/build/code-reviewer.md for your complete protocol.
   Review task {task_id} implementation.
-  Append to `code-review-report.md`. Append entries to `reasoning-journal.json`.
+  Append to `code-review-report.md`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

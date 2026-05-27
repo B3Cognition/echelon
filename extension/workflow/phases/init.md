@@ -76,7 +76,7 @@ mkdir -p .specify/squad/staging
 mkdir -p .specify/squad
 ```
 
-**Archive structure:** `.specify/squad/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.json, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
+**Archive structure:** `.specify/squad/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.jsonl, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
 
 **Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `speckit.specify`, which creates the branch and directory structure.
 
@@ -131,7 +131,7 @@ Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). 
 
 ### 1.4 Initialize Staging Reasoning Journal
 
-Create `.specify/squad/staging/reasoning-journal.json`:
+Create `.specify/squad/reasoning-journal.jsonl`:
 
 ```json
 {
@@ -146,7 +146,7 @@ This will be moved to the spec directory after `speckit.specify` creates it.
 If user specifies a prior spec (e.g., "continue with 012-feature"):
 
 - Find `specs/{NNN}-{feature}/` directory
-- Read `reasoning-journal.json` for continuity
+- Read `reasoning-journal.jsonl` for continuity
 - Read `evolution-report.md` if it exists
 - Set `iteration` to prior iteration + 1
 - Set `spec_id` and `spec_dir` in state.json
@@ -160,9 +160,9 @@ LATEST_ARCHIVE=$(ls -td .specify/squad/archive/squad-* 2>/dev/null | head -1)
 if [ -n "$LATEST_ARCHIVE" ]; then
   echo "Prior run found: ${LATEST_ARCHIVE}"
   # Read prior reasoning journal for continuity
-  if [ -f "${LATEST_ARCHIVE}/reasoning-journal.json" ]; then
+  if [ -f "${LATEST_ARCHIVE}/reasoning-journal.jsonl" ]; then
     # Include prior journal entries as context for all agents
-    PRIOR_JOURNAL="${LATEST_ARCHIVE}/reasoning-journal.json"
+    PRIOR_JOURNAL="${LATEST_ARCHIVE}/reasoning-journal.jsonl"
   fi
   # Read prior issues for regression tracking
   if [ -f "${LATEST_ARCHIVE}/issues.md" ]; then

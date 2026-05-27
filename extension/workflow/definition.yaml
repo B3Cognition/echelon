@@ -209,7 +209,7 @@ phases:
         post: >
           Build calibration_map in memory from agent-scores.yaml.
           Set state.json init_reads.completed = true.
-          Log init_knowledge_read entry to reasoning-journal.json.
+          Log init_knowledge_read entry to reasoning-journal.jsonl.
 
       - id: materialize_confidence_thresholds
         label: "Write confidence-thresholds.yaml (Step 0.5)"
@@ -282,7 +282,7 @@ phases:
     tier: exploration
     context_pack:
       - all speckit-echelon-scout (SCOUT) outputs from .specify/squad/staging/
-      - reasoning-journal.json [phase=phase1-discover]
+      - .specify/squad/reasoning-journal.jsonl [phase=phase1-discover]
     outputs:
       - glossary.md              # unified, contradictions flagged
       - mental-model.md          # unified, gaps flagged
@@ -346,7 +346,7 @@ phases:
       - boundaries.md
       - assumptions.md
       - unknowns.md
-      - reasoning-journal.json [type=routing_decision, phase=phase1-discover]
+      - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-discover]
       - calibration_map entry for speckit-echelon-sage (SAGE)
     outputs:
       - updated assumptions.md
@@ -365,14 +365,20 @@ phases:
   - id: phase1-constitution
     label: "Constitution Creation"
     spec_file: workflow/phases/phase1-constitution.md
-    type: commander_internal
+    type: agent
+    agent: speckit-echelon-chief
+    tier: control
+    context_pack:
+      - .specify/squad/staging/glossary.md
+      - .specify/squad/staging/mental-model.md
+      - .specify/squad/staging/boundaries.md
+      - .specify/squad/staging/assumptions.md
+      - .specify/squad/staging/user-intent.md
     description: >
-      speckit-echelon-commander (COMMANDER) calls the speckit.constitution Skill
-      (Skill tool invocation — not an agent dispatch) to create constitution.md.
-      COMMANDER prepares the context pack from SCOUT + SAGE artifacts, then
-      invokes the skill. Writing constitution.md via Bash directly is prohibited —
-      speckit.constitution is the only permitted creation path (it assigns version,
-      dates, and runs template sync). See phase1-constitution.md for full protocol.
+      speckit-echelon-chief (CHIEF) invokes the speckit.constitution Skill
+      to create constitution.md from UNDERSTAND artifacts. CHIEF extracts domain
+      context, calls the skill, verifies output, and fixes placeholders if needed.
+      See phase1-constitution.md for phase contract; chief.md for full protocol.
     outputs:
       - constitution.md
     transitions:
@@ -393,7 +399,7 @@ phases:
       - assumptions.md
       - unknowns.md
       - reference-architectures.md    # greenfield only, if exists
-      - reasoning-journal.json [type=routing_decision, phase=phase1-why1]
+      - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-why1]
       - calibration_map entry for speckit-echelon-cartographer (CARTOGRAPHER)
     pre_dispatch:
       - id: golddigger_mode2_queue
@@ -423,7 +429,7 @@ phases:
       - spec.md
       - constitution.md
       - assumptions.md
-      - reasoning-journal.json [type=routing_decision, phase=phase1-what]
+      - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]
       - calibration_map entry for speckit-echelon-sage (SAGE)
     outputs:
       - quality_scores[pass=N] → state.json
@@ -471,7 +477,7 @@ phases:
       - issues.md                              # from WHY2 — per-requirement failures
       - knowledge-base/calibration-profile.yaml
       - knowledge-base/estimates-log.yaml      # if exists
-      - reasoning-journal.json [phase=phase1-* summary]
+      - .specify/squad/reasoning-journal.jsonl [phase=phase1-* summary]
       - calibration_map entry for speckit-echelon-gatekeeper (GATEKEEPER)
     outputs:
       - gatekeeper_verdict: PASS | KILL | DEFER
@@ -499,7 +505,7 @@ phases:
     context_pack:
       - spec.md
       - gatekeeper output (feasibility.md, estimates.md, mvp-scope.md)
-      - reasoning-journal.json [phase=phase1-*, phase=phase2-decide]
+      - .specify/squad/reasoning-journal.jsonl [phase=phase1-*, phase=phase2-decide]
     outputs:
       - strategic-overview.md
     transitions:
@@ -544,7 +550,7 @@ phases:
       - domain-knowledge.md         # from speckit-echelon-oracle (ORACLE) (if exists)
       - research.md                 # from speckit-echelon-investigator (INVESTIGATOR) (if exists)
       - alternatives.md             # from speckit-echelon-maverick (MAVERICK) (if exists)
-      - reasoning-journal.json [phase=phase2-decide, phase=phase3-specialists]
+      - .specify/squad/reasoning-journal.jsonl [phase=phase2-decide, phase=phase3-specialists]
       - calibration_map entry for speckit-echelon-architect (ARCHITECT)
     outputs:
       - plan.md
@@ -586,7 +592,7 @@ phases:
           - spec.md
           - architecture.md
           - unknowns.md
-          - reasoning-journal.json [type=belief_gate_triggered]   # if any
+          - .specify/squad/reasoning-journal.jsonl [type=belief_gate_triggered]   # if any
         outputs:
           - research.md
           - experiment-results.json  # if prototype spike run
@@ -940,7 +946,7 @@ phases:
       - to: build-3-spec-guard
         condition: verdict in [DONE, DONE_WITH_CONCERNS]
       - to: build-2-implement
-        condition: verdict = NEEDS_CONTEXT and retry_count < 2
+        condition: verdict = NEEDS_CONTEXT AND retry_count < 2
       - to: build-2-implement
         condition: verdict = BLOCKED
         state_update:
@@ -961,9 +967,9 @@ phases:
       - to: build-4-code-review
         condition: verdict = PASS
       - to: build-2-implement
-        condition: verdict = FAIL and fix_cycle < 2
+        condition: verdict = FAIL AND fix_cycle < 2
       - to: build-4-code-review
-        condition: verdict = FAIL and fix_cycle >= 2
+        condition: verdict = FAIL AND fix_cycle >= 2
         state_update:
           task_status: DEGRADED
 
@@ -982,9 +988,9 @@ phases:
       - to: build-5-test-guard
         condition: verdict = APPROVED
       - to: build-2-implement
-        condition: verdict = CHANGES_REQUESTED and fix_cycle < 2
+        condition: verdict = CHANGES_REQUESTED AND fix_cycle < 2
       - to: build-5-test-guard
-        condition: verdict = CHANGES_REQUESTED and fix_cycle >= 2
+        condition: verdict = CHANGES_REQUESTED AND fix_cycle >= 2
         state_update:
           task_status: DEGRADED
       - to: escalate
@@ -1006,9 +1012,9 @@ phases:
       - to: build-6-progress
         condition: verdict in [PASS, WARN]
       - to: build-2-implement
-        condition: verdict = FAIL and fix_cycle < 2
+        condition: verdict = FAIL AND fix_cycle < 2
       - to: build-6-progress
-        condition: verdict = FAIL and fix_cycle >= 2
+        condition: verdict = FAIL AND fix_cycle >= 2
         state_update:
           task_status: DEGRADED
 
@@ -1036,7 +1042,7 @@ phases:
       - to: build-2-implement
         condition: more_tasks_in_phase_group
       - to: build-8-finalize
-        condition: all_tasks_complete and no_more_phase_checkpoints
+        condition: all_tasks_complete AND no_more_phase_checkpoints
 
   - id: build-7-integration
     label: "Phase Checkpoint (INTEGRATOR + VISUAL VALIDATOR)"
@@ -1056,13 +1062,13 @@ phases:
       - prior integration-report.md (if any)
     transitions:
       - to: build-2-implement
-        condition: verdict = PASS and more_phase_groups
+        condition: verdict = PASS AND more_phase_groups
       - to: build-8-finalize
-        condition: verdict = PASS and all_phase_groups_complete
+        condition: verdict = PASS AND all_phase_groups_complete
       - to: build-2-implement
-        condition: verdict = FAIL and fix_cycle < 2
+        condition: verdict = FAIL AND fix_cycle < 2
       - to: build-8-finalize
-        condition: verdict = FAIL and fix_cycle >= 2
+        condition: verdict = FAIL AND fix_cycle >= 2
         state_update:
           phase_status: DEGRADED
 
@@ -1290,3 +1296,224 @@ escalation:
     template: templates/escalation-request.md
     state: blocked
     resume_command: speckit.echelon.resume <answer>
+
+# =============================================================================
+# RE-EXTRACTION — read by speckit.echelon.re-extract COMMANDER
+# COMMANDER contract: read this section at init, read state_file for current
+# phase, execute each phase node, write results to state_file.
+# =============================================================================
+re_extraction:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-extract-0-preflight
+      label: "Brownfield Extraction Preflight"
+      spec_file: workflow/phases/re-extract-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-extract-1-analyze
+          condition: always
+
+    - id: re-extract-1-analyze
+      label: "Codebase Analysis (RE-ANALYZER)"
+      spec_file: workflow/phases/re-extract-1-analyze.md
+      type: agent
+      agent: speckit-echelon-re-analyzer
+      tier: re_extraction
+      context_pack:
+        - .specify/echelon/re/state.json
+        - echelon-config.yml (re: section)
+      outputs:
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/repos-manifest.json   # polyrepo only
+        - .specify/echelon/re/cross-repo.json        # polyrepo only
+      transitions:
+        - to: re-extract-2-specify
+          condition: verdict = DONE
+
+    - id: re-extract-2-specify
+      label: "Domain Specification (RE-SPECIFIER)"
+      spec_file: workflow/phases/re-extract-2-specify.md
+      type: agent
+      agent: speckit-echelon-re-specifier
+      tier: re_extraction
+      context_pack:
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+        - .specify/echelon/re/repos-manifest.json    # if exists
+      outputs:
+        - specs/000-re-overview/overview.md
+        - specs/NNN-re-{domain}/spec.md               # one per domain
+      transitions:
+        - to: re-extract-3-verify
+          condition: verdict = DONE
+
+    - id: re-extract-3-verify
+      label: "Coverage Verification (RE-VERIFIER)"
+      spec_file: workflow/phases/re-extract-3-verify.md
+      type: agent
+      agent: speckit-echelon-re-verifier
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/000-re-overview/coverage-report.md
+        - state.json[coverage_pct, verify_expand_iterations]
+      transitions:
+        - to: re-extract-4-expand
+          condition: "coverage_pct < coverage_threshold AND verify_expand_iterations < max_verify_expand_iterations"
+        - to: re-extract-5-validate
+          condition: "coverage_pct >= coverage_threshold OR verify_expand_iterations >= max_verify_expand_iterations"
+
+    - id: re-extract-4-expand
+      label: "Coverage Expansion (RE-EXPANDER)"
+      spec_file: workflow/phases/re-extract-4-expand.md
+      type: agent
+      agent: speckit-echelon-re-expander
+      tier: re_extraction
+      context_pack:
+        - specs/000-re-overview/coverage-report.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/NNN-re-{domain}/spec.md    # new or expanded domains
+        - state.json[verify_expand_iterations]
+      transitions:
+        - to: re-extract-3-verify
+          condition: always                  # loop back until coverage met
+
+    - id: re-extract-5-validate
+      label: "Quality Validation (RE-VALIDATOR)"
+      spec_file: workflow/phases/re-extract-5-validate.md
+      type: agent
+      agent: speckit-echelon-re-validator
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/000-re-overview/validation-report.md
+        - state.json[resolution_pct, validate_iterations]
+      transitions:
+        - to: re-extract-5-validate
+          condition: "resolution_pct < resolution_threshold AND validate_iterations < max_validate_iterations"
+        - to: re-extract-6-checklist
+          condition: "resolution_pct >= resolution_threshold OR validate_iterations >= max_validate_iterations"
+
+    - id: re-extract-6-checklist
+      label: "Quality Checklists (RE-CHECKLISTER)"
+      spec_file: workflow/phases/re-extract-6-checklist.md
+      type: agent
+      agent: speckit-echelon-re-checklister
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - specs/000-re-overview/coverage-report.md
+        - specs/000-re-overview/validation-report.md
+      outputs:
+        - specs/NNN-re-{domain}/checklist.md
+        - specs/000-re-overview/checklist.md
+      transitions:
+        - to: re-extract-7-constitute
+          condition: always
+
+    - id: re-extract-7-constitute
+      label: "Strategic Artifacts (RE-CONSTITUTER)"
+      spec_file: workflow/phases/re-extract-7-constitute.md
+      type: agent
+      agent: speckit-echelon-re-constituter
+      tier: re_extraction
+      context_pack:
+        - specs/NNN-re-*/spec.md
+        - specs/000-re-overview/checklist.md
+        - .specify/echelon/re/analysis.json
+        - .specify/echelon/re/state.json
+      outputs:
+        - constitution.md
+        - migration-strategy.md
+        - risk-matrix.md
+        - gap-analysis.md
+        - adrs/ADR-*.md
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-RETARGET — read by speckit.echelon.re-retarget COMMANDER
+# =============================================================================
+re_retarget:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-retarget-0-preflight
+      label: "Retarget Preflight"
+      spec_file: workflow/phases/re-retarget-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-retarget-1-input
+          condition: always
+
+    - id: re-retarget-1-input
+      label: "Human Decision Input"
+      spec_file: workflow/phases/re-retarget-1-input.md
+      type: commander_internal    # interactive — COMMANDER prompts user directly, no agent dispatch
+      transitions:
+        - to: DONE
+          condition: always
+
+# =============================================================================
+# RE-PLANNING — read by speckit.echelon.re-plan-all COMMANDER
+# =============================================================================
+re_planning:
+
+  state_file: .specify/echelon/re/state.json
+
+  phases:
+
+    - id: re-planning-0-preflight
+      label: "Planning Preflight"
+      spec_file: workflow/phases/re-planning-0-preflight.md
+      type: commander_internal
+      transitions:
+        - to: re-planning-1-plan
+          condition: always
+
+    - id: re-planning-1-plan
+      label: "Per-Domain Plans (RE-PLANNER)"
+      spec_file: workflow/phases/re-planning-1-plan.md
+      type: agent
+      agent: speckit-echelon-re-planner
+      tier: re_planning
+      context_pack:
+        - specs/NNN-re-{domain}/spec.md
+        - constitution.md
+        - migration-strategy.md
+        - .specify/echelon/re/state.json
+      outputs:
+        - specs/NNN-re-{domain}/plan.md
+      transitions:
+        - to: re-planning-2-tasks
+          condition: verdict = DONE
+
+    - id: re-planning-2-tasks
+      label: "Per-Domain Tasks (RE-TASKER)"
+      spec_file: workflow/phases/re-planning-2-tasks.md
+      type: agent
+      agent: speckit-echelon-re-tasker
+      tier: re_planning
+      context_pack:
+        - specs/NNN-re-{domain}/plan.md
+        - specs/NNN-re-{domain}/spec.md
+        - constitution.md
+      outputs:
+        - specs/NNN-re-{domain}/tasks.md
+      transitions:
+        - to: DONE
+          condition: always

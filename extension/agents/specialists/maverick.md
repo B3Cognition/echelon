@@ -369,7 +369,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/maverick.yaml`. Read this file to load your active calibration priors before selecting innovation methods and evaluating alternative quality.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/maverick.yaml`. Read this file to load your active calibration priors before selecting innovation methods and evaluating alternative quality.
 
 ---
 
@@ -380,20 +380,20 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per alternative generated. Reference the TRIZ principle applied in the `rationale` field.
 
-```echelon_result
-verdict: ALTERNATIVES_GENERATED
-output_files:
-  - .specify/.../alternatives.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-maverick (MAVERICK)
-    timestamp: null
-    data:
-      artifact: "alternatives.md"
-      section: "<alternative name>"
-      reasoning: "<why this alternative breaks the current assumption or constraint>"
-      rationale: "<TRIZ principle applied — e.g. Principle 1: Segmentation>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: ALTERNATIVES_GENERATED
+  output_files:
+    - .specify/.../alternatives.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-maverick (MAVERICK)
+      timestamp: null
+      data:
+        artifact: "alternatives.md"
+        section: "<alternative name>"
+        reasoning: "<why this alternative breaks the current assumption or constraint>"
+        rationale: |
+          <TRIZ principle applied — e.g. Principle 1: Segmentation>
+        alternatives_considered: []

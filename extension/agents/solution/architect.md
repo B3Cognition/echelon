@@ -109,7 +109,7 @@ This upgrades every architecture decision from Grade E to Grade B.
 - `boundaries.md` — system boundaries and integrations
 - `assumptions.md` — validated assumptions
 - Specialist outputs (if any — SCIENTIST research, SECURITY threat model, DOMAIN expert analysis, PERFORMANCE constraints, UX/A11Y requirements)
-- `reasoning-journal.json` — prior agent reasoning
+- `reasoning-journal.jsonl` — prior agent reasoning
 
 ---
 
@@ -305,7 +305,7 @@ Phases: <count> implementation phases planned
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/architect.yaml`. Read this file to load your active calibration priors before making evidence grading and architectural constraint decisions.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/architect.yaml`. Read this file to load your active calibration priors before making evidence grading and architectural constraint decisions.
 
 ---
 
@@ -316,33 +316,32 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `adr_self_check` entry per ADR written. Include one `decision` entry per major architectural decision. The `adr_self_check` type name must be preserved exactly — speckit-echelon-auditor (AUDITOR) FINALIZE parsing depends on it (FR-INH-006).
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../architecture.md
-  - .specify/.../adr/ADR-001.md
-  - .specify/.../data-model.md
-  - .specify/.../api-contracts.md
-journal_entries:
-  - id: null
-    type: adr_self_check
-    phase: phase3-how
-    agent: HOW
-    timestamp: null
-    data:
-      adr_id: "ADR-<NNN>"
-      never_rule_result: "<PASS | CONCERN>"
-      consistency_result: "<PASS | CONFLICT>"
-      concerns: ["<concern if any — omit array if none>"]
-  - id: null
-    type: decision
-    phase: phase3-how
-    agent: HOW
-    timestamp: null
-    data:
-      artifact: "architecture.md"
-      section: "<decision area>"
-      reasoning: "<why you made this architectural choice>"
-      rationale: "<principle, constraint, or ADR that drove the choice>"
-      alternatives_considered: ["<alternative>"]
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../architecture.md
+    - .specify/.../adr/ADR-001.md
+    - .specify/.../data-model.md
+    - .specify/.../api-contracts.md
+  journal_entries:
+    - id: null
+      type: adr_self_check
+      phase: phase3-how
+      agent: HOW
+      timestamp: null
+      data:
+        adr_id: "ADR-<NNN>"
+        never_rule_result: "<PASS | CONCERN>"
+        consistency_result: "<PASS | CONFLICT>"
+        concerns: ["<concern if any — omit array if none>"]
+    - id: null
+      type: decision
+      phase: phase3-how
+      agent: HOW
+      timestamp: null
+      data:
+        artifact: "architecture.md"
+        section: "<decision area>"
+        reasoning: "<why you made this architectural choice>"
+        rationale: "<principle, constraint, or ADR that drove the choice>"
+        alternatives_considered: ["<alternative>"]

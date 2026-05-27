@@ -118,20 +118,19 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Repeat one `decision` entry per significant invariant or structural finding.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../code-model.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase1-discover
-    agent: MODEL
-    timestamp: null
-    data:
-      artifact: "code-model.md"
-      section: "invariants"
-      reasoning: "<key structural findings and invariants identified in the codebase>"
-      rationale: "living code graph analysis"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../code-model.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase1-discover
+      agent: MODEL
+      timestamp: null
+      data:
+        artifact: "code-model.md"
+        section: "invariants"
+        reasoning: "<key structural findings and invariants identified in the codebase>"
+        rationale: "living code graph analysis"
+        alternatives_considered: []

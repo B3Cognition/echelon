@@ -76,18 +76,17 @@ Every N tasks (configurable, default: 5), the METACOGNITION speckit-echelon-moni
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: ON_TRACK
-output_files:
-  - metacognition-log.md
-journal_entries:
-  - id: null
-    type: quality_check
-    phase: build
-    agent: METACOGNITION-speckit-echelon-monitor (MONITOR)
-    timestamp: null
-    data:
-      pass: true
-      drift_signals: []
-      recommendation: ""
-```
+echelon_result:
+  verdict: ON_TRACK
+  output_files:
+    - metacognition-log.md
+  journal_entries:
+    - id: null
+      type: quality_check
+      phase: build
+      agent: METACOGNITION-speckit-echelon-monitor (MONITOR)
+      timestamp: null
+      data:
+        pass: true
+        drift_signals: []
+        recommendation: ""

@@ -153,15 +153,15 @@ is a no-op — the harness state file is never written.
 write_state() {
   # no-op when not running inside echelon-harness
   [ -z "${HARNESS_STATE_FILE:-}" ] && return 0
-  local phase="$1"   # e.g. "codegen_re"
-  local status="$2"  # building | build_done | blocked | escalated
+  local phase="$1"          # e.g. "codegen_re"
+  local phase_status="$2"   # building | build_done | blocked | escalated
   local completed="${3:-0}"
   local current="${4:-null}"
   local verdict="${5:-null}"
   mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
   cat > "$HARNESS_STATE_FILE" << STATEOF
 {
-  "status": "${status}",
+  "status": "${phase_status}",
   "phase": "${phase}",
   "build": {
     "total_tasks": ${TOTAL_TASKS:-0},

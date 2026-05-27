@@ -14,6 +14,19 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
+
+def _find_current_squad_dir() -> Path:
+    """Locate the active squad run via squad/.current, falling back to legacy path."""
+    cwd = Path.cwd()
+    for d in [cwd, *cwd.parents]:
+        current = d / "squad" / ".current"
+        if current.exists():
+            run_id = current.read_text().strip()
+            squad = d / "squad" / run_id
+            if run_id and squad.is_dir():
+                return squad
+    return Path(".specify/squad")
+
 from hormone_calc.config import load as load_config
 from hormone_calc.observable import build_from
 from hormone_calc.output import serialize
@@ -38,8 +51,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     c.add_argument("--agent", required=True)
     c.add_argument("--dispatch-id", required=True)
     c.add_argument("--result-file", required=True, type=Path)
-    c.add_argument("--state", type=Path, default=Path(".specify/squad/state.json"))
-    c.add_argument("--journal", type=Path, default=Path(".specify/squad/reasoning-journal.jsonl"))
+    c.add_argument("--state", type=Path, default=None,
+                   help="Path to state.json (default: auto-detected from squad/.current)")
+    c.add_argument("--journal", type=Path, default=None,
+                   help="Path to reasoning-journal.jsonl (default: auto-detected from squad/.current)")
     c.add_argument("--config", type=Path, default=None,
                    help="Override echelon-config.yml path (else uses default search)")
 
@@ -49,12 +64,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def cmd_compute(args: argparse.Namespace) -> int:
     config = load_config(args.config)
 
+    squad_dir = _find_current_squad_dir()
+    state_path = args.state or (squad_dir / "state.json")
+    journal_path = args.journal or (squad_dir / "reasoning-journal.jsonl")
+
     obs = build_from(
         agent=args.agent,
         dispatch_id=args.dispatch_id,
         result_path=args.result_file,
-        state_path=args.state,
-        journal_path=args.journal,
+        state_path=state_path,
+        journal_path=journal_path,
     )
 
     # Derive upstream now that we have the observable

@@ -31,11 +31,11 @@ TOTAL_TASKS=$(jq '(.task_queue.pending | length) + (.task_queue.completed | leng
 [ -f .codegen-harness-env ] && source .codegen-harness-env
 write_state() {
   [ -z "${HARNESS_STATE_FILE:-}" ] && return 0
-  local phase="$1" status="$2" completed="${3:-0}" current="${4:-null}" verdict="${5:-null}"
+  local phase="$1" phase_status="$2" completed="${3:-0}" current="${4:-null}" verdict="${5:-null}"
   mkdir -p "$(dirname "$HARNESS_STATE_FILE")"
   cat > "$HARNESS_STATE_FILE" << STATEOF
 {
-  "status": "${status}", "phase": "${phase}",
+  "status": "${phase_status}", "phase": "${phase}",
   "build": { "total_tasks": ${TOTAL_TASKS:-0}, "completed_tasks": ${completed}, "current_task": ${current}, "verification_verdict": ${verdict} },
   "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }

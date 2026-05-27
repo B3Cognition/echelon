@@ -296,10 +296,10 @@ class TestSignalHandling:
 class TestLlmProviderDispatch:
     def test_exec_build_uses_llm_provider_when_set(self, tmp_path: Path) -> None:
         """When llm_provider is set, _exec_build delegates to it."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         llm.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=100,
@@ -334,11 +334,11 @@ class TestLlmProviderDispatch:
 
     def test_exec_feedback_uses_llm_provider_when_set(self, tmp_path):
         """When llm_provider is set, _exec_feedback delegates to it."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
         from harness.verify_result import VerifyResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         llm.exec_feedback.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=100,
@@ -362,10 +362,10 @@ class TestLlmProviderDispatch:
 
     def test_exec_build_falls_back_when_prompt_empty(self, tmp_path: Path) -> None:
         """When prompt is empty, _exec_build falls back to sandbox even if provider set."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         controller, provider, _, _ = _make_controller(tmp_path, llm_provider=llm)
 
         result = controller._exec_build(
@@ -420,10 +420,10 @@ class TestSignalDuringBuild:
 
     def test_sigint_during_build_yields_interrupted_status(self, tmp_path: Path) -> None:
         """_interrupted set inside exec_build → status=interrupted, final_verify=None."""
-        from harness.llm_provider import ClaudeCliProvider
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         controller, provider, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
 
         def build_sets_interrupted(worktree_path: str, prompt: str) -> BuildResult:
@@ -466,12 +466,12 @@ class TestVerifyLocallyUnknownProjectType:
         assert result.failures[0].id == "local-verify-skipped"
         assert result.failures[0].category == FailureCategory.BUILD
 
-    def test_unknown_project_type_does_not_converge(self, tmp_path: Path) -> None:
-        """Build succeeds + unknown project type → status=failed, not converged."""
-        from harness.llm_provider import ClaudeCliProvider
+    def test_unknown_project_type_blocks_with_verify_command_needed(self, tmp_path: Path) -> None:
+        """Build succeeds + unknown project type → status=blocked, reason=verify_command_needed."""
+        from harness.llm_provider import AICodingCliProvider
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=ClaudeCliProvider)
+        llm = MagicMock(spec=AICodingCliProvider)
         controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
 
         worktree = tmp_path / "worktree"
@@ -485,12 +485,264 @@ class TestVerifyLocallyUnknownProjectType:
 
         result = controller.run_loop(
             max_outer=1,
-            max_inner=0,  # skip inner loop — not under test here
+            max_inner=0,
             build_command="echelon codegen",
             build_prompt="build a hello world",
         )
 
-        assert result.status == "failed"
+        assert result.status == "blocked"
+        assert result.termination_reason == "verify_command_needed"
         assert result.final_verify is not None
         assert result.final_verify.passed is False
         assert any(f.id == "local-verify-skipped" for f in result.final_verify.failures)
+
+
+@pytest.mark.unit
+class TestVerifyCommandNeeded:
+    """local-verify-skipped escalates to blocked, not silent failure."""
+
+    def test_banner_printed_to_stderr(self, tmp_path: Path, capsys) -> None:
+        """Unknown project type → escalation banner printed to stderr."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+        err = capsys.readouterr().err
+        assert "HARNESS RUN BLOCKED" in err
+        assert "verify_command" in err
+        assert "echelon harness resume" in err
+
+    def test_state_written_as_blocked(self, tmp_path: Path) -> None:
+        """Unknown project type → StateStore reflects blocked + verify_command_needed."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+        state = state_store.read()
+        assert state["status"] == "blocked"
+        assert state["termination_reason"] == "verify_command_needed"
+
+    def test_does_not_iterate_build_loop(self, tmp_path: Path) -> None:
+        """Hard-stop after first verify_command_needed — LLM not called again."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        controller.run_loop(max_outer=5, max_inner=3,
+                            build_command="echelon codegen", build_prompt="x")
+        # Build must only have been called once (hard stop, no retries)
+        assert llm.exec_build.call_count == 1
+
+    def test_resume_with_verify_command_configured_reruns(self, tmp_path: Path) -> None:
+        """After blocking, resume with verify_command set → loop re-enters."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+        from harness.config import HarnessConfig
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        # First run: blocks
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+        assert state_store.read()["termination_reason"] == "verify_command_needed"
+
+        # Now configure verify_command on the controller's config
+        controller._config = HarnessConfig(
+            **{**controller._config.__dict__, "verify_command": "pytest"}
+        )
+        llm.exec_build.reset_mock()
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        with patch("subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = controller.run_loop(max_outer=1, max_inner=0,
+                                         build_command="echelon codegen", build_prompt="x")
+
+        # Loop re-entered: build was called again
+        assert llm.exec_build.call_count == 1
+
+    def test_resume_without_verify_command_still_blocked(self, tmp_path: Path) -> None:
+        """Resume without configuring verify_command → still blocked, banner printed."""
+        from harness.llm_provider import AICodingCliProvider
+        from harness.build_result import BuildResult
+
+        llm = MagicMock(spec=AICodingCliProvider)
+        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        gitops.create_worktree.return_value = str(worktree)
+        llm.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        # First run blocks
+        controller.run_loop(max_outer=1, max_inner=0,
+                            build_command="echelon codegen", build_prompt="x")
+
+        # Resume without adding verify_command → still blocked
+        result = controller.run_loop(max_outer=1, max_inner=0,
+                                     build_command="echelon codegen", build_prompt="x")
+        assert result.status == "blocked"
+        assert result.termination_reason == "verify_command_needed"
+
+
+@pytest.mark.unit
+class TestVerifyLocallySwift:
+    """Swift project detection and verification."""
+
+    def test_root_package_swift_detected(self, tmp_path: Path) -> None:
+        """Package.swift at worktree root → swift build + swift test."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        with patch("subprocess.run") as mock_run, \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["swift", "build"] in calls
+        assert ["swift", "test"] in calls
+
+    def test_nested_package_swift_detected(self, tmp_path: Path) -> None:
+        """Package.swift in a subdirectory → detected and used as package dir."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        pkg_dir = worktree / "Packages" / "MyLib"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        with patch("subprocess.run") as mock_run, \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert mock_run.call_args_list[0].kwargs.get("cwd") == str(pkg_dir) or \
+               mock_run.call_args_list[0].args[1] == str(pkg_dir) or \
+               all(c.kwargs.get("cwd") == str(pkg_dir) for c in mock_run.call_args_list)
+
+    def test_swift_build_failure_reported(self, tmp_path: Path) -> None:
+        """swift build non-zero exit → failure with id='swift-build', test not run."""
+        from harness.verify_result import FailureCategory
+
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        def _side_effect(cmd, **kwargs):
+            if cmd == ["swift", "build"]:
+                return MagicMock(returncode=1, stdout="error: compile error", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=_side_effect), \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "swift-build"
+        assert result.failures[0].category == FailureCategory.BUILD
+
+    def test_swift_test_failure_reported(self, tmp_path: Path) -> None:
+        """swift test non-zero exit → failure with id='swift-test'."""
+        from harness.verify_result import FailureCategory
+
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        def _side_effect(cmd, **kwargs):
+            if cmd == ["swift", "test"]:
+                return MagicMock(returncode=1, stdout="", stderr="Test failed: assertion error")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch("subprocess.run", side_effect=_side_effect), \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "swift-test"
+        assert result.failures[0].category == FailureCategory.TEST
+
+    def test_swift_not_on_path_returns_clear_error(self, tmp_path: Path) -> None:
+        """swift toolchain absent → passed=False, id='swift-not-found'."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+
+        with patch("shutil.which", return_value=None):
+            result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "swift-not-found"
+        assert "swift" in result.failures[0].error.lower()
+
+    def test_python_takes_priority_over_swift(self, tmp_path: Path) -> None:
+        """pyproject.toml + Package.swift → Python path taken, not Swift."""
+        controller, _, _, _ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text('// swift-tools-version:5.9\n')
+        (worktree / "pyproject.toml").write_text('[project]\nname = "x"\n')
+
+        with patch.object(controller, "_exec_verify_python") as mock_py, \
+             patch.object(controller, "_exec_verify_swift") as mock_sw:
+            mock_py.return_value = MagicMock(passed=True, failures=[])
+            result = controller._exec_verify_locally(str(worktree))
+
+        mock_py.assert_called_once()
+        mock_sw.assert_not_called()

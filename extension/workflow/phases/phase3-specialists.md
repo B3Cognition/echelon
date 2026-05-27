@@ -43,7 +43,7 @@ Context pack:
 
 - Specific question(s) from `unknowns.md`
 - Relevant artifacts (select based on the question — do not send everything)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -51,12 +51,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include specific unknowns from unknowns.md, relevant artifacts based on the question, reasoning-journal.json]
+  [include specific unknowns from unknowns.md, relevant artifacts based on the question, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are INVESTIGATOR. Read agents/specialists/investigator.md for your complete protocol.
-  Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -72,7 +72,7 @@ Use the Agent tool:
 Context pack:
 
 - `spec.md` + `boundaries.md` + domain-relevant artifacts
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -80,12 +80,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, boundaries.md, domain-relevant artifacts, reasoning-journal.json]
+  [include spec.md, boundaries.md, domain-relevant artifacts, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are GUARDIAN. Read agents/specialists/guardian.md for your complete protocol.
-  Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -96,7 +96,7 @@ Use the Agent tool:
 Context pack:
 
 - Domain-relevant artifacts from `specs/{feature}/`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -104,12 +104,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include domain-relevant artifacts from specs/{feature}/, reasoning-journal.json]
+  [include domain-relevant artifacts from specs/{feature}/, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORACLE. Read agents/specialists/oracle.md for your complete protocol.
-  You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -120,7 +120,7 @@ Use the Agent tool:
 Context pack:
 
 - `spec.md` + `boundaries.md` + performance-relevant requirements
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -128,12 +128,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, boundaries.md, performance-relevant requirements, reasoning-journal.json]
+  [include spec.md, boundaries.md, performance-relevant requirements, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are BENCHMARK. Read agents/specialists/benchmark.md for your complete protocol.
-  Perform load modeling, capacity planning, identify bottleneck risks. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Perform load modeling, capacity planning, identify bottleneck risks. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -144,7 +144,7 @@ Use the Agent tool:
 Context pack:
 
 - `spec.md` + user-facing requirements
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -152,12 +152,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, user-facing requirements, reasoning-journal.json]
+  [include spec.md, user-facing requirements, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ADVOCATE. Read agents/specialists/advocate.md for your complete protocol.
-  Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -169,7 +169,7 @@ Context pack:
 
 - All current artifacts
 - Prior run's `evolution-report.md`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -177,12 +177,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all current artifacts, prior run's evolution-report.md, reasoning-journal.json]
+  [include all current artifacts, prior run's evolution-report.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are MAVERICK. Read agents/specialists/maverick.md for your complete protocol.
-  Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

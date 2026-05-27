@@ -169,7 +169,25 @@ Generate exactly these artifacts:
    Starts each backing service container on the speckit-deploy network.
    Idempotent: skips containers that are already running.
 
-4. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
+4. echelon-config.yml verify_command — add `verify_command: <command>` to the
+   existing echelon-config.yml based on the test runner detected in step 7.
+   Use the simplest correct invocation:
+   - Python (pytest):    `pytest`
+   - Python (uv):        `uv run pytest`  (when uv.lock is present)
+   - Node (pnpm):        `pnpm test`
+   - Node (yarn):        `yarn test`
+   - Node (npm):         `npm test`
+   - Go:                 `go test ./...`
+   - Rust:               `cargo test`
+   - Swift (SPM):        `swift test` or `swift test --package-path <subdir>`
+                          (use --package-path when Package.swift is not at root)
+   - Ruby:               `bundle exec rspec`
+   - Java/Gradle:        `./gradlew test`
+   - Java/Maven:         `./mvnw test`
+   Do NOT add verify_command if it is already set. Do NOT change other sections.
+   Do NOT write an absolute path — the harness runs the command from the project root.
+
+5. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
    Jobs: install dependencies, lint (if configured), run tests.
    No remote deploy step. echelon-deploy handles local CD via git post-merge hook.
 
@@ -202,6 +220,8 @@ Generate exactly these artifacts:
   build_env_file, services). Do NOT change the dockerfile, blue_port, green_port,
   or the app being deployed — those were set by echelon.init and are authoritative.
   Do NOT create a new echelon-config.yml or overwrite the file wholesale.
+- verify_command MUST be a top-level key in echelon-config.yml (not nested under
+  deploy: or any other section). Do not add it if it is already present.
 - The Dockerfile must build successfully with docker build from the project root.
 - The CI workflow must use the same package manager detected in step 1.
 - Do not generate a docker-compose.yml — echelon-deploy uses plain Docker + Traefik.

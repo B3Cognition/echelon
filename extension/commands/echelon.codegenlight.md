@@ -56,6 +56,36 @@ Parse `$ARGUMENTS` to determine mode:
 
 ---
 
+## Harness Exit Protocol (INV-011 — Mandatory)
+
+**INV-011:** Before this session ends for ANY reason — successful completion,
+impasse, unrecoverable error, or approaching context limit — you MUST write the
+build status to `$HARNESS_BUILD_STATUS_FILE` if that variable is set. Failure to
+write this file causes the Python harness to classify the run as `unknown` and
+retry the entire session, consuming budget unnecessarily.
+
+```bash
+# Run this last, before any final summary text.
+if [ -n "${HARNESS_BUILD_STATUS_FILE:-}" ]; then
+  if [ -f "codegen-impasse.md" ]; then
+    printf '{"status":"impasse","impasse_file":"codegen-impasse.md"}' \
+      > "$HARNESS_BUILD_STATUS_FILE"
+  elif [ "${_PIPELINE_DONE:-0}" = "1" ]; then
+    printf '{"status":"done"}' > "$HARNESS_BUILD_STATUS_FILE"
+  else
+    printf '{"status":"failed","reason":"%s"}' "${_CURRENT_PHASE:-unknown}" \
+      > "$HARNESS_BUILD_STATUS_FILE"
+  fi
+fi
+```
+
+Track these two shell variables throughout the session:
+
+- `_CURRENT_PHASE` — set to the current phase name at each transition (e.g. `"implement"`, `"test"`)
+- `_PIPELINE_DONE` — set to `1` only after Phase 7 DELIVER writes its git commit and `write_state "done"` call completes successfully
+
+---
+
 ## Phase Execution
 
 Before executing each phase, read the corresponding spec file in full.
@@ -63,6 +93,7 @@ Before executing each phase, read the corresponding spec file in full.
 On `--resume`: read `workflow/phases/codegenlight-resume.md` and jump to `current_phase`.
 
 Otherwise execute in order:
+
 1. `workflow/phases/codegenlight-0-preflight.md` — WING from config, spec detection/mining, env check, state init, SOAR bridge
 2. `workflow/phases/codegenlight-1-re.md` — Phase 1: RE lookup + brownfield speckit-echelon-golddigger (GOLDDIGGER) / greenfield research
 3. `workflow/phases/codegen-2-decompose.md` — Phase 2: DECOMPOSE (shared)

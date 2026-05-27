@@ -12,7 +12,7 @@ speckit-echelon-synthesizer (SYNTHESIZER) fuses ALL DISCOVER outputs into a unif
 Read and include in the subagent prompt:
 
 - ALL DISCOVER outputs (every .md file produced in step 2)
-- reasoning-journal.json (DISCOVER entries)
+- reasoning-journal.jsonl (DISCOVER entries)
 
 ### Dispatch
 
@@ -22,12 +22,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include all DISCOVER outputs, reasoning-journal.json (DISCOVER entries)]
+  [include all DISCOVER outputs, reasoning-journal.jsonl (DISCOVER entries)]
   </context>
 
   <instructions>
   You are SYNTHESIZER. Read agents/exploration/synthesizer.md for your complete protocol.
-  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.json`.
+  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `.specify/squad/staging/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

@@ -181,18 +181,17 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: APPROVED
-output_files:
-  - .specify/.../change-impact-report.md
-journal_entries:
-  - id: null
-    type: change_assessment
-    phase: build
-    agent: CHANGE_CONTROLLER
-    timestamp: null
-    data:
-      change_id: <CR-NNN>
-      blast_radius: <summary>
-      affected_components: []
-```
+echelon_result:
+  verdict: APPROVED
+  output_files:
+    - .specify/.../change-impact-report.md
+  journal_entries:
+    - id: null
+      type: change_assessment
+      phase: build
+      agent: CHANGE_CONTROLLER
+      timestamp: null
+      data:
+        change_id: <CR-NNN>
+        blast_radius: <summary>
+        affected_components: []

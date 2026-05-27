@@ -13,12 +13,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include user-intent.md, feasibility.md, mvp-scope.md, reasoning-journal.json]
+  [include user-intent.md, feasibility.md, mvp-scope.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **alignment-check mode**.
-  Read `user-intent.md` and speckit-echelon-gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether speckit-echelon-gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Read `user-intent.md` and speckit-echelon-gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether speckit-echelon-gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

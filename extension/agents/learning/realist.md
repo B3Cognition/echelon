@@ -140,20 +140,19 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: GROUNDED
-output_files:
-  - reality-check.md
-  - cost-analysis.md
-  - benchmark-data.md
-journal_entries:
-  - id: null
-    type: assessment
-    phase: finalize
-    agent: GROUND
-    timestamp: null
-    data:
-      historical_comparables: []
-      bias_detected: false
-      confidence: 0.0
-```
+echelon_result:
+  verdict: GROUNDED
+  output_files:
+    - reality-check.md
+    - cost-analysis.md
+    - benchmark-data.md
+  journal_entries:
+    - id: null
+      type: assessment
+      phase: finalize
+      agent: GROUND
+      timestamp: null
+      data:
+        historical_comparables: []
+        bias_detected: false
+        confidence: 0.0

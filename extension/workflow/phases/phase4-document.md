@@ -13,7 +13,7 @@ Context pack:
 
 - All artifacts in `specs/{feature}/`
 - `calibration-profile.yaml` + `estimates-log.yaml`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 Use the Agent tool:
 
@@ -21,12 +21,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, calibration-profile.yaml, estimates-log.yaml, reasoning-journal.json]
+  [include all artifacts in specs/{feature}/, calibration-profile.yaml, estimates-log.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are REALIST. Read agents/learning/realist.md for your complete protocol.
-  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -39,7 +39,7 @@ Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
 Context pack:
 
 - All artifacts in `specs/{feature}/`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
 
 Use the Agent tool:
@@ -48,12 +48,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, reasoning-journal.json, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml]
+  [include all artifacts in specs/{feature}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml]
   </context>
 
   <instructions>
   You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
-  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.json`.
+  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -67,7 +67,7 @@ Context pack:
 
 - All current artifacts
 - Prior run artifacts (for diffing)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 - `knowledge-base/` files
 
 Use the Agent tool:
@@ -76,12 +76,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.json, knowledge-base/ files]
+  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.jsonl, knowledge-base/ files]
   </context>
 
   <instructions>
   You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
-  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -106,7 +106,7 @@ Context pack:
 - All artifacts in `specs/{feature}/`
 - `knowledge-base/calibration-profile.yaml`
 - `knowledge-base/estimates-log.yaml`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 - Quality scores from all WHY passes (from state.json)
 - speckit-echelon-internalizer (INTERNALIZER) outputs (per-agent composite scores and trends)
 
@@ -116,12 +116,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.json, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores]
+  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores]
   </context>
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -169,7 +169,7 @@ reality-check.md                  | GROUND          | ...
 cost-analysis.md                  | GROUND          | ...
 benchmark-data.md                 | GROUND          | ...
 implementability-report.md        | ASSESS2         | ...
-reasoning-journal.json            | ALL             | ...
+reasoning-journal.jsonl            | ALL             | ...
 confidence-flags.md               | CALIBRATE       | ...
 ```
 
@@ -333,7 +333,7 @@ rm -rf .specify/squad/staging
 **What's preserved in the archive:**
 - `spec.md`, `tasks.md`, `plan.md` — the analysis products
 - `issues.md`, `quality-gates.md` — findings and quality scores
-- `reasoning-journal.json` — full decision log
+- `reasoning-journal.jsonl` — full decision log
 - `state.json` — run state snapshot
 - All specialist outputs (threat-model.md, etc.)
 

@@ -34,6 +34,10 @@ and test guardian passing (or explicitly flagged as DEGRADED after max fix cycle
 BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.md`
 contains open gaps.
 
+**AXIOM-1:** Every increment must be a working application. Smoke test (app starts + HTTP 200) is a hard gate — 100% passing unit tests alone is not enough.
+
+**AXIOM-3:** Unverified requirements are unshipped. BUILD_DONE is forbidden while any `coverage-map.md` entry has `coverage_type: manual|none` without explicit `deferred_risky_accepted` signed off by user.
+
 ---
 
 ## Execution Continuity — MANDATORY

@@ -36,7 +36,7 @@ Cache key = SHA-256(concatenation of all seven components) + ":" + agent_codenam
 **Cache MISS conditions (run full internalization):**
 1. No cache entry exists for this agent codename
 2. Any of the seven hash components has changed since the last cache entry
-3. A `doubt_flag` entry exists in reasoning-journal.json for this agent in the current session
+3. A `doubt_flag` entry exists in reasoning-journal.jsonl for this agent in the current session
 4. `constitution.md` has been amended since the prior PASS was recorded — invalidates ALL cache entries for ALL agents
 
 **Cache storage location:** `.specify/squad/validator-cache.json`
@@ -209,19 +209,18 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `validator_dispatch` entry. If verdict is PARTIAL, list all doubts in the `doubts` array.
 
-```echelon_result
-verdict: <INTERNALIZED | PARTIAL | FAILED>
-output_files: []
-state_updates:
-  phase: build_init
-journal_entries:
-  - id: null
-    type: validator_dispatch
+echelon_result:
+  verdict: <INTERNALIZED | PARTIAL | FAILED>
+  output_files: []
+  state_updates:
     phase: build_init
-    agent: INTERNALIZATION_GATE
-    timestamp: null
-    data:
-      verdict: "<INTERNALIZED | PARTIAL | FAILED>"
-      doubts: ["<doubt 1 if PARTIAL or FAILED — specific artifact, section, and what was unclear>"]
-      agents_assessed: ["speckit-echelon-architect (ARCHITECT)", "speckit-echelon-scout (SCOUT)", "speckit-echelon-cartographer (CARTOGRAPHER)"]
-```
+  journal_entries:
+    - id: null
+      type: validator_dispatch
+      phase: build_init
+      agent: INTERNALIZATION_GATE
+      timestamp: null
+      data:
+        verdict: "<INTERNALIZED | PARTIAL | FAILED>"
+        doubts: ["<doubt 1 if PARTIAL or FAILED — specific artifact, section, and what was unclear>"]
+        agents_assessed: ["speckit-echelon-architect (ARCHITECT)", "speckit-echelon-scout (SCOUT)", "speckit-echelon-cartographer (CARTOGRAPHER)"]

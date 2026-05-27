@@ -56,7 +56,7 @@ Evaluate whether the project should proceed to architecture and planning. This i
 - `issues.md` — remaining issues from WHY2
 - `calibration-profile.yaml` — historical accuracy data (from knowledge base)
 - `estimates-log.yaml` — prior project estimates for reference class forecasting
-- `reasoning-journal.json` — prior agent reasoning
+- `reasoning-journal.jsonl` — prior agent reasoning
 - `user-intent.md` — user intent alignment model (from speckit-echelon-tracker (TRACKER))
 
 ### Process
@@ -153,7 +153,7 @@ Re-evaluate feasibility and estimates now that concrete architecture exists. Run
 - `estimates.md` — original estimates (from first-pass ASSESS)
 - `constitution.md` — project governance and team constraints
 - `specialist outputs` — any specialist reports (security, performance, domain, etc.)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### Process
 
@@ -245,7 +245,7 @@ Implementability: <READY>/<NEEDS_CLARIFICATION>/<BLOCKED> tasks (consensus only)
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/gatekeeper.yaml`. Read this file to load your active calibration priors before applying scoring scales, feasibility thresholds, and kill criteria.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/gatekeeper.yaml`. Read this file to load your active calibration priors before applying scoring scales, feasibility thresholds, and kill criteria.
 
 ---
 
@@ -256,20 +256,19 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `assessment` entry per feasibility or implementability assessment. If verdict is KILL, `output_files` should include the kill-report path.
 
-```echelon_result
-verdict: <PASS | KILL | DEFER>
-output_files:
-  - .specify/.../kill-report.md
-journal_entries:
-  - id: null
-    type: assessment
-    phase: <phase2-decide | phase3-consensus>
-    agent: ASSESS
-    timestamp: null
-    data:
-      verdict: "<PASS | KILL | DEFER>"
-      rationale: "<why this verdict — specific evidence and reasoning>"
-      scope_notes: "<any scope adjustments if DEFER>"
-      risk_flags: ["<risk 1>"]
-      deferred_items: ["<deferred item if DEFER>"]
-```
+echelon_result:
+  verdict: <PASS | KILL | DEFER>
+  output_files:
+    - .specify/.../kill-report.md
+  journal_entries:
+    - id: null
+      type: assessment
+      phase: <phase2-decide | phase3-consensus>
+      agent: ASSESS
+      timestamp: null
+      data:
+        verdict: "<PASS | KILL | DEFER>"
+        rationale: "<why this verdict — specific evidence and reasoning>"
+        scope_notes: "<any scope adjustments if DEFER>"
+        risk_flags: ["<risk 1>"]
+        deferred_items: ["<deferred item if DEFER>"]

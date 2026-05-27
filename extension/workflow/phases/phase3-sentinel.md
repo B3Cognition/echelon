@@ -13,7 +13,7 @@ Read and include in the subagent prompt:
 - `spec.md` (acceptance criteria)
 - `contracts/`
 - `quality-gates.md` — specifically the "Testability Sub-Metrics" section (hard_constraint_ratio, constraint_density, negative_space_coverage) for testability-informed test strategy
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### Dispatch
 
@@ -23,12 +23,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include plan.md, data-model.md, spec.md, contracts/, quality-gates.md, reasoning-journal.json]
+  [include plan.md, data-model.md, spec.md, contracts/, quality-gates.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol.
-  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

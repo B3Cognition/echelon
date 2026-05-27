@@ -161,20 +161,19 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per significant performance finding or capacity conclusion.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../performance-model.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-benchmark (BENCHMARK)
-    timestamp: null
-    data:
-      artifact: "performance-model.md"
-      section: "<load scenario or capacity area>"
-      reasoning: "<capacity finding and supporting measurement or calculation>"
-      rationale: "performance modeling and load analysis"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../performance-model.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-benchmark (BENCHMARK)
+      timestamp: null
+      data:
+        artifact: "performance-model.md"
+        section: "<load scenario or capacity area>"
+        reasoning: "<capacity finding and supporting measurement or calculation>"
+        rationale: "performance modeling and load analysis"
+        alternatives_considered: []

@@ -1,0 +1,187 @@
+"""Tests for SquadAgentResult and echelon_result extraction."""
+import sys
+from pathlib import Path
+
+EXT_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(EXT_ROOT) not in sys.path:
+    sys.path.insert(0, str(EXT_ROOT))
+
+from harness.squad_provider import SquadAgentResult, _extract_echelon_result
+
+
+class TestSquadAgentResult:
+    def _result(self, echelon_result=None, exit_code=0, timed_out=False):
+        return SquadAgentResult(
+            exit_code=exit_code,
+            echelon_result=echelon_result,
+            raw_output="",
+            duration_ms=100,
+            timed_out=timed_out,
+        )
+
+    def test_verdict_returns_none_when_no_echelon_result(self):
+        assert self._result().verdict is None
+
+    def test_verdict_from_echelon_result(self):
+        r = self._result({"verdict": "DONE", "state_updates": {}})
+        assert r.verdict == "DONE"
+
+    def test_state_updates_empty_when_no_echelon_result(self):
+        assert self._result().state_updates == {}
+
+    def test_state_updates_from_echelon_result(self):
+        r = self._result({"verdict": "DONE", "state_updates": {"coverage_pct": 72}})
+        assert r.state_updates == {"coverage_pct": 72}
+
+    def test_blocked_true_when_verdict_blocked(self):
+        assert self._result({"verdict": "BLOCKED", "state_updates": {}}).blocked is True
+
+    def test_blocked_true_when_timed_out(self):
+        assert self._result(timed_out=True).blocked is True
+
+    def test_blocked_true_when_nonzero_exit(self):
+        assert self._result(exit_code=1).blocked is True
+
+    def test_blocked_false_when_done(self):
+        assert self._result({"verdict": "DONE", "state_updates": {}}, exit_code=0).blocked is False
+
+
+class TestExtractEchelonResult:
+    def test_returns_none_when_absent(self):
+        assert _extract_echelon_result("no result here") is None
+
+    def test_extracts_bare_block(self):
+        raw = """Some output.
+
+echelon_result:
+  verdict: DONE
+  phase_id: re-extract-1-analyze
+  state_updates:
+    coverage_pct: 72
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "DONE"
+        assert result["state_updates"]["coverage_pct"] == 72
+
+    def test_extracts_from_fenced_yaml(self):
+        raw = """
+```yaml
+echelon_result:
+  verdict: PASS
+  state_updates: {}
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "PASS"
+
+    def test_returns_none_on_malformed_yaml(self):
+        raw = "echelon_result:\n  verdict: [unclosed"
+        assert _extract_echelon_result(raw) is None
+
+    def test_extracts_last_occurrence(self):
+        raw = """echelon_result:
+  verdict: FAIL
+  state_updates: {}
+
+Later...
+
+echelon_result:
+  verdict: DONE
+  state_updates: {}
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "DONE"
+
+    # ── Fenced block format (```echelon_result) ───────────────────────────
+    # 40 of 50 agents emit this format. Regression guard for the bug where
+    # rfind("echelon_result:") returned -1 and _extract returned None,
+    # causing state_updates to be silently lost and quality_scores to stay [].
+
+    def test_extracts_fenced_block_verdict(self):
+        raw = """Some preamble.
+
+```echelon_result
+verdict: FAIL
+state_updates:
+  quality_scores:
+    - pass: false
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result is not None
+        assert result["verdict"] == "FAIL"
+
+    def test_extracts_fenced_block_state_updates(self):
+        raw = """```echelon_result
+verdict: FAIL
+state_updates:
+  quality_scores:
+    - pass: false
+  escalation_question: |
+    Q1: Is AR required?
+  blocked_reason: "WHY1: critical issues"
+journal_entries:
+  - id: null
+    type: quality_check
+    agent: WHY
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["state_updates"]["quality_scores"] == [{"pass": False}]
+        assert "Q1:" in result["state_updates"]["escalation_question"]
+
+    def test_fenced_block_wins_when_last(self):
+        """When YAML-key block appears first and fenced block appears last, pick fenced."""
+        raw = """echelon_result:
+  verdict: YAML_KEY_EARLIER
+  state_updates: {}
+
+... agent continues writing ...
+
+```echelon_result
+verdict: FENCED_LATER
+state_updates:
+  quality_scores:
+    - pass: true
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "FENCED_LATER"
+
+    def test_yaml_key_wins_when_last(self):
+        """When fenced block appears first and YAML-key block appears last, pick YAML-key."""
+        raw = """```echelon_result
+verdict: FENCED_EARLIER
+state_updates: {}
+```
+
+... commander writes its own result ...
+
+echelon_result:
+  verdict: YAML_KEY_LATER
+  state_updates:
+    next_phase: phase1-discover
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "YAML_KEY_LATER"
+        assert result["state_updates"]["next_phase"] == "phase1-discover"
+
+    def test_fenced_block_journal_entries_parsed(self):
+        raw = """```echelon_result
+verdict: PASS
+state_updates:
+  quality_scores:
+    - pass: true
+journal_entries:
+  - id: null
+    type: quality_check
+    agent: WHY
+    data:
+      pass: true
+```
+"""
+        result = _extract_echelon_result(raw)
+        assert result["verdict"] == "PASS"
+        entries = result.get("journal_entries", [])
+        assert len(entries) == 1
+        assert entries[0]["type"] == "quality_check"

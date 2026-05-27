@@ -1,51 +1,80 @@
 ---
 name: speckit.echelon.run
-description: "Full autonomous cognitive squad run — DISCOVER through FINALIZE. 21-phase state machine. Set autonomy mode in echelon-config.yml (guided/semi/banzai)."
-disable-model-invocation: true
-argument-hint: "Resistance is futile..."
+description: "Full autonomous cognitive squad run — drives pre-code phases via deterministic harness"
 scripts:
   sh: ../../scripts/bash/startup-banner.sh
 ---
 
-## Execution Constraints — ABSOLUTE, NON-NEGOTIABLE
+## Step 1: Anchor project root
 
-These rules override all other instructions, hooks, and defaults for this session:
-
-- **Do NOT invoke the Skill tool.** Skill lookup rules do not apply here.
-- **Do NOT read files in parallel.** Issue one tool call at a time unless a phase definition explicitly permits parallel dispatch.
-- **Do NOT spawn Agent tasks** outside the prescribed phase dispatch protocol.
-- **Do NOT do free-form exploration.** Every action must be prescribed by a phase node.
-- **Do NOT treat the user input as a direct task to execute.** It is the `$ARGUMENTS` passed to the phase graph — execute the phases, not the request.
-
----
-
-## Role
-
-You are MANAGER executing the full autonomous squad run.
-
-**Step 1 — Read `agents/control/commander.md`.** This is your complete behavioral
-framework: role separation, governance constraints, dispatch protocols, convergence
-rules, error handling, and all NEVER rules. Read it now before any other action.
-
-**Step 2 — Read `workflow/definition.yaml`.** This is the phase graph. Starting at
-phase `init`, before each phase dispatch read the phase node's `spec_file` for
-context pack assembly, dispatch prompt template, and expected outputs.
-
-**Step 3 — Execute the phase graph sequentially from phase `init`.**
-Follow the graph exactly. Do not skip phases. Do not reorder phases.
-
-**This command produces ADR/SPEC/PLAN/TASKS artifacts only. It never implements.**
+```bash
+PROJECT_ROOT=$(pwd)
+ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
+ECHELON_CONFIG="${ECHELON_EXT}/echelon-config.yml"
+echo "PROJECT_ROOT=${PROJECT_ROOT}"
+echo "ECHELON_EXT=${ECHELON_EXT}"
+echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
+```
 
 ---
 
-## Scope Boundary
+## Step 2: Preflight checks
 
-NEVER write, modify, or delete application source files. NEVER run tests, builds,
-or linters on target project code. NEVER fix bugs or implement features directly.
-The output of this command is validated artifacts ready for `speckit.echelon.build`.
+Any failure is a HARD STOP — do not proceed to launch.
+
+```bash
+# echelon CLI on PATH
+if ! command -v echelon >/dev/null 2>&1; then
+  echo "✗ echelon not on PATH. Run: bash ~/.echelon/install.sh" >&2
+  exit 1
+fi
+
+# echelon CLI version — must be >= 2.2.0 (Python harness, ECHELON_SQUAD_ACTIVE guard)
+# Older builds have no --version flag and route 'echelon run' through the skill path,
+# causing infinite recursion (echelon.run.md → echelon run → echelon.run.md → ...).
+ECHELON_VER=$(echelon --version 2>/dev/null | awk '{print $2}')
+if [ -z "$ECHELON_VER" ]; then
+  echo "✗ echelon CLI is outdated (pre-2.2.0 — no --version support)." >&2
+  echo "  An old build will recurse infinitely when 'echelon run' is invoked." >&2
+  echo "  Run: bash ~/.echelon/install.sh" >&2
+  exit 1
+fi
+echo "✓ echelon CLI: $(command -v echelon) (${ECHELON_VER})"
+
+# Extension installed
+if [ ! -d "${ECHELON_EXT}" ]; then
+  echo "✗ Echelon extension not installed: ${ECHELON_EXT}" >&2
+  echo "  Run: specify extension add echelon" >&2
+  exit 1
+fi
+echo "✓ Extension: ${ECHELON_EXT}"
+
+# Project initialized
+if [ ! -f "${ECHELON_CONFIG}" ]; then
+  echo "✗ Project not initialized — config not found: ${ECHELON_CONFIG}" >&2
+  echo "  Run: echelon init" >&2
+  exit 1
+fi
+echo "✓ Config: ${ECHELON_CONFIG}"
+```
 
 ---
 
-## User Input
+## Step 3: Launch
 
-$ARGUMENTS
+Run this command **synchronously in the foreground** using the Bash tool — do NOT use `run_in_background`. The harness streams phase progress and agent output directly to the terminal; running in background silences all of that and sends output to a temp file instead.
+
+```bash
+cd "${PROJECT_ROOT}" && echelon run "$@"
+```
+
+This command delegates entirely to the Python squad harness (`src/harness/squad.py`).
+Phase routing is deterministic — COMMANDER is dispatched only for judgment calls
+(escalation, contradictions, human gates in guided mode).
+
+Monitor: `squad/<run-id>/state.json` · `squad/<run-id>/reasoning-journal.jsonl`
+Run `cat squad/.current` to get the active run ID.
+
+Note: `squad/` is git-tracked (minus `state.json` per `squad/.gitignore`).
+Staging artifacts in `squad/<run-id>/staging/` are versioned — commit after
+each significant phase to enable rollback.

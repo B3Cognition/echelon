@@ -246,7 +246,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/sentinel.yaml`. Read this file to load your active calibration priors before applying test pyramid ratios, flakiness thresholds, and timing targets.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/sentinel.yaml`. Read this file to load your active calibration priors before applying test pyramid ratios, flakiness thresholds, and timing targets.
 
 ---
 
@@ -257,22 +257,21 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per significant test strategy decision (test layer choice, coverage mapping rationale, CI pipeline decision).
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../test-strategy.md
-  - .specify/.../test-architecture.md
-  - .specify/.../coverage-map.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-sentinel
-    agent: speckit-echelon-sentinel (SENTINEL)
-    timestamp: null
-    data:
-      artifact: "test-strategy.md"
-      section: "<test layer — unit/integration/e2e/contract>"
-      reasoning: "<why this test approach for this layer>"
-      rationale: "<risk or coverage principle that drove the decision>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../test-strategy.md
+    - .specify/.../test-architecture.md
+    - .specify/.../coverage-map.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-sentinel
+      agent: speckit-echelon-sentinel (SENTINEL)
+      timestamp: null
+      data:
+        artifact: "test-strategy.md"
+        section: "<test layer — unit/integration/e2e/contract>"
+        reasoning: "<why this test approach for this layer>"
+        rationale: "<risk or coverage principle that drove the decision>"
+        alternatives_considered: []

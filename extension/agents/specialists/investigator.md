@@ -136,27 +136,25 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 When speckit-echelon-investigator (INVESTIGATOR) encounters a counterfactual query ("What would happen if X?"), speckit-echelon-investigator (INVESTIGATOR) may delegate to speckit-echelon-consolidator (CONSOLIDATOR)'s Mental Simulation mode (Mode 3). Include a dispatch signal in your `echelon_result` block as an additional journal entry:
 
-```echelon_result
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-investigator (INVESTIGATOR)
-    timestamp: null
-    data:
-      artifact: "research.md"
-      section: "consolidator_simulation_requested"
-      reasoning: "<counterfactual query description — what scenario should be simulated>"
-      rationale: "speckit-echelon-consolidator (CONSOLIDATOR) Mental Simulation Mode 3 delegation"
-      alternatives_considered: []
-```
-
+echelon_result:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-investigator (INVESTIGATOR)
+      timestamp: null
+      data:
+        artifact: "research.md"
+        section: "consolidator_simulation_requested"
+        reasoning: "<counterfactual query description — what scenario should be simulated>"
+        rationale: "speckit-echelon-consolidator (CONSOLIDATOR) Mental Simulation Mode 3 delegation"
+        alternatives_considered: []
 speckit-echelon-commander (COMMANDER) will write this entry to the journal. speckit-echelon-consolidator (CONSOLIDATOR) reads the journal index (`by_type["decision"]` + `by_agent["speckit-echelon-investigator (INVESTIGATOR)"]`) to detect simulation requests. speckit-echelon-investigator (INVESTIGATOR) incorporates the simulation result into its counterfactual analysis, noting the source as `consolidator_simulation`.
 
 ---
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
 
 ---
 
@@ -167,41 +165,38 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../research.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-investigator (INVESTIGATOR)
-    timestamp: null
-    data:
-      artifact: "research.md"
-      section: "<investigation question>"
-      reasoning: "<finding and what evidence supports it>"
-      rationale: "scientific investigation — hypothesis tested"
-      confidence: <0.0-1.0>
-      evidence_grade: "<A|B|C|D|E>"
-      alternatives_considered: []
-```
-
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../research.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-investigator (INVESTIGATOR)
+      timestamp: null
+      data:
+        artifact: "research.md"
+        section: "<investigation question>"
+        reasoning: "<finding and what evidence supports it>"
+        rationale: "scientific investigation — hypothesis tested"
+        confidence: <0.0-1.0>
+        evidence_grade: "<A|B|C|D|E>"
+        alternatives_considered: []
 If an experiment produced measured results, add a second entry:
 
-```echelon_result
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-investigator (INVESTIGATOR)
-    timestamp: null
-    data:
-      artifact: "experiment-results.json"
-      section: "<experiment name>"
-      reasoning: "<measured result and what it proves or disproves>"
-      rationale: "prototype spike — measured reality"
-      confidence: <0.0-1.0>
-      evidence_grade: "A"
-      experiment_result: "<key measurement>"
-      alternatives_considered: []
-```
+echelon_result:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-investigator (INVESTIGATOR)
+      timestamp: null
+      data:
+        artifact: "experiment-results.json"
+        section: "<experiment name>"
+        reasoning: "<measured result and what it proves or disproves>"
+        rationale: "prototype spike — measured reality"
+        confidence: <0.0-1.0>
+        evidence_grade: "A"
+        experiment_result: "<key measurement>"
+        alternatives_considered: []

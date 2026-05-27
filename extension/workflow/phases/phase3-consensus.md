@@ -12,21 +12,21 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 - All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
 - Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `calibration-profile.yaml`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### 11.2 ASSESS2 Context Pack
 
 - `plan.md` + `data-model.md` + `contracts/`
 - `tasks.md` + `estimates.md`
 - `constitution.md` (team constraints)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### 11.3 PLAN2 Context Pack
 
 - Updated `plan.md` + `test-strategy.md`
 - All specialist outputs
 - `implementability-report.md` (from ASSESS2 — dispatch ASSESS2 first, then PLAN2 reads its output)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### Dispatch — Two Stages (see `definition.yaml` `phase3-consensus.type: staged_parallel`)
 
@@ -40,12 +40,12 @@ This phase uses `type: staged_parallel`. **NEVER dispatch all three agents in on
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.json]
+  [include all artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
-  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -57,12 +57,12 @@ This phase uses `type: staged_parallel`. **NEVER dispatch all three agents in on
 
   ```xml
   <context>
-  [include plan.md, data-model.md, contracts/, tasks.md, estimates.md, constitution.md, reasoning-journal.json]
+  [include plan.md, data-model.md, contracts/, tasks.md, estimates.md, constitution.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
-  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -80,12 +80,12 @@ This phase uses `type: staged_parallel`. **NEVER dispatch all three agents in on
 
   ```xml
   <context>
-  [include updated plan.md, test-strategy.md, all specialist outputs, implementability-report.md from ASSESS2, reasoning-journal.json]
+  [include updated plan.md, test-strategy.md, all specialist outputs, implementability-report.md from ASSESS2, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
-  Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

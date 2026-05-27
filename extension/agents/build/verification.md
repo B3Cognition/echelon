@@ -289,19 +289,18 @@ This loop ensures that requirements don't fall through the cracks between tasks.
 
 Return this entry in the `echelon_result` block at the end of your response.
 
-```echelon_result
-verdict: VERIFIED
-output_files:
-  - .specify/.../gap-report.md
-  - .specify/.../verification-summary.md
-journal_entries:
-  - id: null
-    type: verification_result
-    phase: build
-    agent: speckit-echelon-verification (VERIFICATION)
-    timestamp: null
-    data:
-      requirements_traced: <count>
-      coverage_pct: <percentage>
-      gaps: []
-```
+echelon_result:
+  verdict: VERIFIED
+  output_files:
+    - .specify/.../gap-report.md
+    - .specify/.../verification-summary.md
+  journal_entries:
+    - id: null
+      type: verification_result
+      phase: build
+      agent: speckit-echelon-verification (VERIFICATION)
+      timestamp: null
+      data:
+        requirements_traced: <count>
+        coverage_pct: <percentage>
+        gaps: []

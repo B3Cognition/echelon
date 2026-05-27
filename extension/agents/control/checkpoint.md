@@ -218,18 +218,17 @@ Gate decision: {PROCEED | RESOLVE | ROUTE BACK}
 At the end of your response, append this block exactly.
 speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
-```echelon_result
-verdict: <INTERNALIZED | PARTIAL | FAILED>
-output_files: []
-journal_entries:
-  - id: null
-    type: decision
-    phase: <current phase>
-    agent: speckit-echelon-checkpoint (CHECKPOINT)
-    timestamp: null
-    data:
-      check_type: "internalization_gate"
-      result: "<INTERNALIZED | PARTIAL | FAILED>"
-      doubts_count: <N>
-      doubts: ["<doubt 1 if PARTIAL or FAILED>"]
-```
+echelon_result:
+  verdict: <INTERNALIZED | PARTIAL | FAILED>
+  output_files: []
+  journal_entries:
+    - id: null
+      type: decision
+      phase: <current phase>
+      agent: speckit-echelon-checkpoint (CHECKPOINT)
+      timestamp: null
+      data:
+        check_type: "internalization_gate"
+        result: "<INTERNALIZED | PARTIAL | FAILED>"
+        doubts_count: <N>
+        doubts: ["<doubt 1 if PARTIAL or FAILED>"]

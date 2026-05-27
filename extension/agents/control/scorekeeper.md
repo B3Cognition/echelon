@@ -461,7 +461,7 @@ Add to the per-run Agent Scorecard output:
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/scorekeeper.yaml`. Read this file to load your active calibration priors before applying scoring thresholds and badge criteria.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/scorekeeper.yaml`. Read this file to load your active calibration priors before applying scoring thresholds and badge criteria.
 
 ---
 
@@ -470,22 +470,21 @@ Calibration beliefs are in `config/belief-registers/scorekeeper.yaml`. Read this
 At the end of your response, append this block exactly.
 speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
 
-```echelon_result
-verdict: SCORED
-output_files:
-  - .specify/.../squad-scorecard.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: <current phase>
-    agent: SCORE
-    timestamp: null
-    data:
-      artifact: "squad-scorecard.md"
-      section: "summary"
-      reasoning: "<overall scoring rationale>"
-      rationale: "post-run performance tracking"
-      agents_scored: <N>
-      top_performers: ["<agent codename>"]
-      improvement_candidates: ["<agent codename>"]
-```
+echelon_result:
+  verdict: SCORED
+  output_files:
+    - .specify/.../squad-scorecard.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: <current phase>
+      agent: SCORE
+      timestamp: null
+      data:
+        artifact: "squad-scorecard.md"
+        section: "summary"
+        reasoning: "<overall scoring rationale>"
+        rationale: "post-run performance tracking"
+        agents_scored: <N>
+        top_performers: ["<agent codename>"]
+        improvement_candidates: ["<agent codename>"]

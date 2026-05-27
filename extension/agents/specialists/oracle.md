@@ -125,20 +125,19 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `decision` entry per significant domain-specific insight or knowledge contribution.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../domain-knowledge.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase3-specialists
-    agent: speckit-echelon-oracle (ORACLE)
-    timestamp: null
-    data:
-      artifact: "domain-knowledge.md"
-      section: "<domain area>"
-      reasoning: "<domain-specific insight and why it matters for this project>"
-      rationale: "domain expertise injection"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../domain-knowledge.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase3-specialists
+      agent: speckit-echelon-oracle (ORACLE)
+      timestamp: null
+      data:
+        artifact: "domain-knowledge.md"
+        section: "<domain area>"
+        reasoning: "<domain-specific insight and why it matters for this project>"
+        rationale: "domain expertise injection"
+        alternatives_considered: []

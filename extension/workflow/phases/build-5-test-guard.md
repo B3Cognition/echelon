@@ -28,7 +28,7 @@ Use the Agent tool:
   <instructions>
   You are TEST GUARDIAN. Read agents/build/test-guardian.md for your complete protocol.
   Validate test quality for task {task_id}.
-  Append to `test-quality-report.md`. Update `coverage-map.md`. Append entries to `reasoning-journal.json`.
+  Append to `test-quality-report.md`. Update `coverage-map.md`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 

@@ -37,7 +37,7 @@ ALL DISCOVER outputs, which may include any combination of:
 - Existing glossary fragments
 - Any other discovery artifacts
 
-Plus the reasoning-journal.json entries from DISCOVER.
+Plus the reasoning-journal.jsonl entries from DISCOVER.
 
 ## Process
 
@@ -229,20 +229,19 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Repeat one `decision` entry per significant synthesis decision or contradiction resolution.
 
-```echelon_result
-verdict: COMPLETE
-output_files:
-  - .specify/.../synthesis.md
-journal_entries:
-  - id: null
-    type: decision
-    phase: phase1-discover
-    agent: DISCOVER
-    timestamp: null
-    data:
-      artifact: "synthesis.md"
-      section: "contradictions"
-      reasoning: "<what contradictions were found and how they were resolved>"
-      rationale: "<synthesis approach — what evidence hierarchy or principle governed resolution>"
-      alternatives_considered: []
-```
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - .specify/.../synthesis.md
+  journal_entries:
+    - id: null
+      type: decision
+      phase: phase1-discover
+      agent: DISCOVER
+      timestamp: null
+      data:
+        artifact: "synthesis.md"
+        section: "contradictions"
+        reasoning: "<what contradictions were found and how they were resolved>"
+        rationale: "<synthesis approach — what evidence hierarchy or principle governed resolution>"
+        alternatives_considered: []

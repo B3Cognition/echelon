@@ -1,4 +1,4 @@
-"""ClaudeCliProvider — invokes an LLM CLI (claude, copilot, or opencode) via subprocess."""
+"""AICodingCliProvider — invokes an LLM CLI (claude, copilot, or opencode) via subprocess."""
 from __future__ import annotations
 
 import json as _json
@@ -14,7 +14,7 @@ from harness.config import HarnessConfig
 from harness.skill_loader import StreamEventPrinter
 
 
-class ClaudeCliProvider:
+class AICodingCliProvider:
     """Runs LLM build and feedback steps via subprocess.
 
     Supports claude (default), copilot, and opencode. Configured via config.llm.cli

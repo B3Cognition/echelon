@@ -54,7 +54,7 @@ Read and include in the subagent prompt:
 - All current artifacts in `specs/{feature}/`
 - Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `calibration-profile.yaml`
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 
 ### Dispatch
 
@@ -64,12 +64,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include all current artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.json]
+  [include all current artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY2 — post-WHAT).
-  Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.json`.
+  Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -106,4 +106,48 @@ Read WHY2 outputs:
 4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
+### WHY2 iteration stop conditions
+
+COMMANDER evaluates these in priority order after each WHY2 pass. Execute the **first matching condition** and stop evaluating further.
+
+| Priority | Condition | Transition | State fields to write |
+|---|---|---|---|
+| 1 | `iteration >= max_squad_iterations` (from `echelon-config.yml convergence:`) | → phase2-decide | `convergence_forced: true`, `convergence_reason: "max_iterations_reached"` |
+| 2 | `token_usage >= token_budget_k * 1000` (from `echelon-config.yml budget:`) | → phase2-decide | `convergence_forced: true`, `convergence_reason: "token_budget_exhausted"` |
+| 3 | `iteration >= 4` AND cumulative improvement in `overall` score (iteration 1 → now) < `0.05` | → phase2-decide | `convergence_forced: true`, `convergence_reason: "hard_plateau"` |
+| 4 | MAX(abs(delta)) across all 7 score categories < `convergence_delta` for 2 consecutive passes | → phase2-decide | `convergence_detected: true`, `convergence_reason: "delta_converged"` |
+| 5 | Quality gates pass AND no CRITICAL issues | → phase2-decide | `convergence_detected: true` |
+| 6 | All other cases (gates fail or CRITICAL issues present) | → phase1-what (increment iteration) | — |
+
+When transitioning on conditions 1–3 (`convergence_forced: true`), write a quality report noting what was not completed and why, and flag artifacts as "forced convergence."
+
 **Transition:** `phases[phase2-decide]` — see `workflow/definition.yaml`
+
+### User-gated CRITICAL issues
+
+When CRITICAL issues are **user-gated** — they require information only the user holds
+(legal rights, product positioning decisions, audience policy, cost envelope) and cannot
+be resolved by any squad agent — include in `echelon_result.state_updates`:
+
+```yaml
+escalation_question: |
+  Q1: <compact blocking question — one line, state the stakes>
+  Q2: <compact blocking question>
+blocked_reason: |
+  WHY2: CRITICAL user-gated issues — squad-internal iteration cannot substitute for user input
+```
+
+**Criteria — ALL must be true to set escalation_question:**
+
+1. Cannot be resolved by any squad agent (DISCOVER, SYNTHESIZER, MODELER, TRACKER, INVESTIGATOR)
+2. Requires information only the user holds (legal rights, positioning decisions, audience policy)
+3. Proceeding without it requires an arbitrary coin-flip that binds all downstream phases
+
+**Do NOT set escalation_question for squad-solvable CRITICAL issues** (missing boundaries,
+glossary gaps, unread manual pages, contradictions resolvable by ORACLE/INVESTIGATOR).
+Those keep routing to DISCOVER as normal.
+
+The harness reads `escalation_question` and either:
+
+- **banzai mode** → dispatches COMMANDER for best-judgment answers, run continues
+- **semi/guided mode** → stops the run; user answers via `echelon resume "<answers>"`

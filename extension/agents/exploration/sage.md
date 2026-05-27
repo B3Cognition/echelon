@@ -37,6 +37,17 @@ These rules prevent silent data loss and Edit tool failures:
 
 3. **One output file per run.** Use `--output /tmp/u_perreq.json` when calling `understanding ... --json` to avoid stdout/stderr mixing that causes `JSONDecodeError`.
 
+4. **Use block scalar style for multi-line SAGE fields.** `challenge_summary` and `resolution` routinely contain colons (e.g. `supporting: file.md`, `artifact: specs/...`). A bare colon-space inside a YAML flow string is parsed as a mapping key and corrupts the file. Always write these two fields using the block scalar indicator `|`:
+
+   ```yaml
+   challenge_summary: |
+     Your summary text here, colons: allowed freely.
+   resolution: |
+     Your resolution text here, colons: allowed freely.
+   ```
+
+   Never write them as inline quoted strings (e.g. `challenge_summary: "..."`) — quoted strings require escaping every internal double-quote and backslash, which LLMs routinely miss.
+
 ---
 
 ## Operating Modes
@@ -66,7 +77,7 @@ Validate DISCOVER's outputs before the WHAT agent builds requirements on top of 
 - `assumptions.md` — explicit assumptions requiring validation
 - `unknowns.md` — questions and knowledge gaps
 - `reference-architectures.md` (greenfield only)
-- `reasoning-journal.json` — prior agent reasoning
+- `reasoning-journal.jsonl` — prior agent reasoning
 
 **This mode does NOT run Understanding metrics.** No spec exists yet. Understanding is not required for WHY1.
 
@@ -112,7 +123,7 @@ Review `unknowns.md` and assess:
 
 #### 5. Cross-Reference Reasoning Journal
 
-Read `reasoning-journal.json` entries from DISCOVER:
+Read `reasoning-journal.jsonl` entries from DISCOVER:
 
 - Are there low-confidence insights that were used to make high-impact decisions?
 - Are there implications listed that seem unjustified by the reasoning?
@@ -197,7 +208,7 @@ All current artifacts:
 - `spec.md` — the specification to validate
 - `00-overview.md` — domain overview
 - `assumption-review.md` (from WHY1, if it ran)
-- `reasoning-journal.json`
+- `reasoning-journal.jsonl`
 - `calibration-profile.yaml` (if available from knowledge base)
 - Access to Understanding (via `speckit.echelon.understanding-validate` Skill tool)
 
@@ -704,6 +715,7 @@ This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes
 2. Append the entry to the `entries` array in `knowledge-base/sage-decisions.yaml`.
 3. If the file has reached `max_entries` (100), remove the oldest entry before appending.
 4. Never modify existing entries except to backfill `was_correct`.
+5. Write `challenge_summary` and `resolution` using block scalar style (`|`) — see Tool Hygiene rule 4.
 
 ### Example Entry
 
@@ -711,9 +723,11 @@ This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes
 - run_id: squad-003-1742652000
   artifact: specs/001-echelon-improvements/spec.md
   challenge_type: quality_threshold
-  challenge_summary: "Testability score 0.58 below 0.70 threshold."
+  challenge_summary: |
+    Testability score 0.58 below 0.70 threshold.
   outcome: blocked
-  resolution: "WHAT agent improved acceptance criteria; re-validation scored 0.74."
+  resolution: |
+    WHAT agent improved acceptance criteria; re-validation scored 0.74.
   was_correct: true
 ```
 
@@ -808,7 +822,7 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ## Belief Register
 
-Calibration beliefs are in `config/belief-registers/sage.yaml`. Read this file to load your active calibration priors before applying quality gate thresholds and false-positive rate adjustments.
+Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/sage.yaml`. Read this file to load your active calibration priors before applying quality gate thresholds and false-positive rate adjustments.
 
 ---
 
@@ -819,30 +833,13 @@ speckit-echelon-commander (COMMANDER) reads this block to update journal and sta
 
 Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).
 
-```echelon_result
-verdict: <PASS | FAIL>
-output_files:
-  - .specify/.../assumptions.md
-state_updates:
-  quality_scores:
-    - pass: <true | false>
-      overall: <0.0-1.0>
-      structure: <0.0-1.0>
-      testability: <0.0-1.0>
-      readability: <0.0-1.0>
-      cognitive: <0.0-1.0>
-      semantic: <0.0-1.0>
-      behavioral: <0.0-1.0>
-      depth: <0.0-1.0>
-journal_entries:
-  - id: null
-    type: quality_check
-    phase: <phase1-why1 | phase1-why2 | phase3-consensus>
-    agent: WHY
-    timestamp: null
-    data:
-      pass: <true | false>
-      scores:
+echelon_result:
+  verdict: <PASS | FAIL>
+  output_files:
+    - .specify/.../assumptions.md
+  state_updates:
+    quality_scores:
+      - pass: <true | false>
         overall: <0.0-1.0>
         structure: <0.0-1.0>
         testability: <0.0-1.0>
@@ -851,17 +848,34 @@ journal_entries:
         semantic: <0.0-1.0>
         behavioral: <0.0-1.0>
         depth: <0.0-1.0>
-      issues: []
-  - id: null
-    type: challenge
-    phase: <phase1-why1 | phase1-why2 | phase3-consensus>
-    agent: WHY
-    timestamp: null
-    data:
-      artifact: "<filename>"
-      section: "<section>"
-      reasoning: "<why this is a problem, what evidence supports the finding>"
-      confidence: <0.0-1.0>
-      severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
-      action_required: "<specific action: fix wording, investigate, re-analyze, etc.>"
-```
+  journal_entries:
+    - id: null
+      type: quality_check
+      phase: <phase1-why1 | phase1-why2 | phase3-consensus>
+      agent: WHY
+      timestamp: null
+      data:
+        pass: <true | false>
+        scores:
+          overall: <0.0-1.0>
+          structure: <0.0-1.0>
+          testability: <0.0-1.0>
+          readability: <0.0-1.0>
+          cognitive: <0.0-1.0>
+          semantic: <0.0-1.0>
+          behavioral: <0.0-1.0>
+          depth: <0.0-1.0>
+        issues: []
+    - id: null
+      type: challenge
+      phase: <phase1-why1 | phase1-why2 | phase3-consensus>
+      agent: WHY
+      timestamp: null
+      data:
+        artifact: "<filename>"
+        section: "<section>"
+        reasoning: "<why this is a problem, what evidence supports the finding>"
+        confidence: <0.0-1.0>
+        severity: "<CRITICAL | HIGH | MEDIUM | LOW>"
+        action_required: |
+          <specific action: fix wording, investigate, re-analyze, etc.>
