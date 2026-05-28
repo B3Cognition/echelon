@@ -336,7 +336,7 @@ speckit-echelon-golddigger (GOLDDIGGER) Mode 1 provides function bodies, busines
 **Before requesting:** Check `state.json.golddigger_completed_domains` — if a deep dive was already completed by a prior agent's request, read the cached result at `.specify/squad/golddigger-cache/<domain>.md`.
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('${SQUAD_DIR}/state.json', 'r') as f:
