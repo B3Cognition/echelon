@@ -57,7 +57,7 @@ echo "STACK=${STACK_DETECTED}"
 echo "TEST_RUNNER=${TEST_RUNNER_BIN}"
 ```
 
-If no test runner binary found: print warning and record `tier1_gate: "unavailable"`. Do NOT block pipeline start.
+If no test runner binary found: always print a warning and record `tier1_gate: "unavailable"`. Do NOT block pipeline start.
 
 ### 0.4 Initialize pipeline state
 
