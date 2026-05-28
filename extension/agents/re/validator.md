@@ -47,7 +47,7 @@ Load all domain specs (`specs/[0-9][0-9][0-9]-re-*/spec.md`), overview, and anal
 
 Check whether `.specify/echelon/re/codegraph-analysis.json` exists.
 
-**If it exists — read it now. Do not defer.**
+**If it exists — always read it now. Do not defer.**
 
 Extract:
 ```
