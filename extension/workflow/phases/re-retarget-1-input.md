@@ -2,7 +2,7 @@
 # Read by: speckit-echelon-commander (COMMANDER)
 # Type: commander_internal — COMMANDER prompts the user directly, no agent dispatch
 
-> **Bash Command Guidelines**: Never use multi-line bash. Chain commands with `&&`. Do NOT use bash `ls`, `find`, `cat`, `echo`, or `grep` for file exploration — use Glob, Read, and Grep tools. Reserve bash only for git commands, `mkdir`, and system operations.
+> **Bash Command Guidelines**: Always chain commands with `&&`; never use multi-line bash. Always use Glob, Read, and Grep tools for file exploration. Do NOT use bash `ls`, `find`, `cat`, `echo`, or `grep` for file exploration. Reserve bash only for git commands, `mkdir`, and system operations.
 
 Guided walkthrough to fill in `[REQUIRES INPUT]` sections in strategic artifacts.
 
