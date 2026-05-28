@@ -37,7 +37,7 @@ Use the Agent tool:
 
 - **PASS** — Run `endocrine.sh on_gate_pass speckit-echelon-implementer (IMPLEMENTER)`. Proceed to speckit-echelon-code-reviewer (CODE REVIEWER).
 - **FAIL** — Run `endocrine.sh on_gate_fail speckit-echelon-implementer (IMPLEMENTER)` + `endocrine.sh on_rework speckit-echelon-implementer (IMPLEMENTER)`. Route back to speckit-echelon-implementer (IMPLEMENTER) with the specific gaps. speckit-echelon-implementer (IMPLEMENTER) fixes and re-submits. Max 2 fix cycles per gate. If still failing after 2 cycles, flag as DEGRADED and proceed.
-- **WARN** — Proceed to speckit-echelon-code-reviewer (CODE REVIEWER). Warnings are logged but do not block.
+- **WARN** — Always log warnings and proceed to speckit-echelon-code-reviewer (CODE REVIEWER); warnings do not block.
 
 ### On Non-Obvious FAIL
 
