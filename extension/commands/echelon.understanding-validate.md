@@ -77,7 +77,7 @@ The `--validate` flag enforces quality gates and exits with code 1 if any gate f
 - List each failed gate with its score vs threshold
 - For each failure, provide specific improvement suggestions
 - Offer to help rewrite the worst-scoring requirements
-- Do NOT suggest skipping validation or lowering thresholds
+- Always preserve validation thresholds; do NOT suggest skipping validation or lowering thresholds
 
 ### 5. For CI/CD Integration
 
