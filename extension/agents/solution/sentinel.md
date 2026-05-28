@@ -1,4 +1,4 @@
-# speckit-echelon-sentinel (SENTINEL) Agent (TEST-speckit-echelon-architect (ARCHITECT))
+# speckit-echelon-sentinel (SENTINEL) Agent (TEST ARCHITECT)
 
 ## Role
 
@@ -51,7 +51,7 @@ Before designing any test strategy, detect the application type by reading `plan
 
 1. **Playwright E2E test suite** — at minimum one E2E test per critical user journey (spec FR requirements that involve user interaction or visible output). These must be listed as explicit tasks in `coverage-map.md` with `coverage_type: automated`.
 2. **Smoke test in verify.sh** — the build script MUST start the app and verify HTTP 200. A blank page with passing unit tests is a broken app.
-3. **speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) dispatch** — speckit-echelon-commander (COMMANDER) must dispatch speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) after each speckit-echelon-integrator (INTEGRATOR) pass (enforced in echelon.build.md Step 7.2.1, but speckit-echelon-sentinel (SENTINEL) must create a task for this if no visual validation task exists in tasks.md).
+3. **speckit-echelon-visual-validator (VISUAL VALIDATOR) dispatch** — speckit-echelon-commander (COMMANDER) must dispatch speckit-echelon-visual-validator (VISUAL VALIDATOR) after each speckit-echelon-integrator (INTEGRATOR) pass (enforced in echelon.build.md Step 7.2.1, but speckit-echelon-sentinel (SENTINEL) must create a task for this if no visual validation task exists in tasks.md).
 
 **E2E setup detection** — before recording, check whether Playwright infrastructure already exists:
 
@@ -65,7 +65,7 @@ Record in `test-strategy.md`:
 - is_browser_app: true/false
 - Detected indicators: [list what triggered the classification]
 - E2E framework: Playwright (mandatory for browser apps)
-- Visual validation: speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) (dispatched by speckit-echelon-commander (COMMANDER))
+- Visual validation: speckit-echelon-visual-validator (VISUAL VALIDATOR) (dispatched by speckit-echelon-commander (COMMANDER))
 - requires_e2e_setup: true/false  ← set true when is_browser_app=true AND no e2e/ dir or playwright.config.* exists in the repo yet
 - package_manager: npm|pnpm|yarn|pip|cargo|none  ← detected from lockfile (package-lock.json→npm, pnpm-lock.yaml→pnpm, yarn.lock→yarn, Pipfile/pyproject.toml→pip, Cargo.toml→cargo, none if no JS project at all)
 ```
