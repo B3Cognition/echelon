@@ -176,10 +176,10 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 ## Rules
 
-1. **Run real commands** — Do not simulate build or test results. Execute via `sandbox-exec.sh` when harness is installed: `sandbox-exec.sh "npm run build"`, `sandbox-exec.sh "tsc --noEmit"`, `sandbox-exec.sh "vitest run"`. When harness is absent, `sandbox-exec.sh` transparently runs on the host.
+1. **Run real commands** — Always execute commands via `sandbox-exec.sh` when harness is installed: `sandbox-exec.sh "npm run build"`, `sandbox-exec.sh "tsc --noEmit"`, `sandbox-exec.sh "vitest run"`. Do not simulate build or test results. When harness is absent, `sandbox-exec.sh` transparently runs on the host.
 2. **Attribute failures to tasks** — Every integration failure must trace back to the task(s) that produced the incompatible code. This enables targeted fixes.
-3. **Do not fix code yourself** — Your job is to detect and report. The speckit-echelon-implementer (IMPLEMENTER) fixes.
-4. **Prior phase issues are not your problem** — If a failure existed before this phase, note it as KNOWN but do not count it as a new failure.
+3. **Report, do not fix** — Always detect and report. Do not fix code yourself; the speckit-echelon-implementer (IMPLEMENTER) fixes.
+4. **Prior phase issues are not your problem** — Always note pre-existing failures as KNOWN; do not count them as new failures.
 5. **Bundle size matters** — Even if everything works, an oversized bundle is a FAIL if NFR limits are specified.
 6. **Circular dependencies are always a FAIL** — No exceptions. They cause initialization order bugs that are nearly impossible to debug in production.
 
