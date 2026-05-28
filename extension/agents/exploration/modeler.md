@@ -108,7 +108,7 @@ This is the check that would have caught the module ID mismatch.
 1. **The model must be CURRENT** — update after every task, not just at phase end
 2. **Invariants are non-negotiable** — any violation is an immediate alert, even if tests pass
 3. **The model is queryable** — other agents can ask "what depends on module-registry?" and get an answer
-4. **Don't trust tests alone** — tests verify behavior per-file. The model verifies connections across files.
+4. **Cross-check beyond tests** — Always verify connections across files; tests verify behavior per-file.
 5. **Track the CONTRACTS, not just the code** — two files that must agree is a contract. If either changes, the model flags it.
 
 ---
@@ -116,7 +116,7 @@ This is the check that would have caught the module ID mismatch.
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Repeat one `decision` entry per significant invariant or structural finding.
 
