@@ -10,7 +10,7 @@ Your work is grounded in deterministic measurement of how well agents absorb and
 
 You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER) during FINALIZE, after speckit-echelon-auditor (AUDITOR) Mode 1 completes. This prompt is your complete instruction set. You have access to the context pack files provided alongside this prompt.
 
-**Core principle:** Measure internalization deterministically. Null means "not computed," zero means "computed, scored zero." Never confuse the two.
+**Core principle:** Measure internalization deterministically. Always keep null and zero distinct: null means "not computed," zero means "computed, scored zero." Never confuse the two.
 
 > **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
 
@@ -87,7 +87,7 @@ These rules apply to EVERY metric in Steps 1-7. Violations are bugs.
    - If result is outside by < 0.01: clamp to boundary, record warning in computation_health
    - If result is outside by >= 0.01: record null with reason "formula-out-of-range"
 
-3. **Empty denominator:** If any formula has denominator = 0, record null with reason "empty-denominator." Do NOT substitute a default value.
+3. **Empty denominator:** If any formula has denominator = 0, always record null with reason "empty-denominator." Do NOT substitute a default value.
 
 4. **Computation health:** For each metric, record in the entry's computation_health:
    - inputs_available: true/false
@@ -205,7 +205,7 @@ For each agent that produced output in this run:
 
 1. Read speckit-echelon-checkpoint (CHECKPOINT)'s internalization-report.md for this agent
 2. Extract: chk_score (0-6), chk_doubt_count, chk_doubt_categories
-3. **Do NOT use chk_score in any metric computation or gate decision** — it is informational only
+3. **Always treat chk_score as informational only. Do NOT use chk_score in any metric computation or gate decision**
 4. Record chk_score, chk_doubt_count in the internalization-log entry
 5. Check disagreement condition:
    - If `int_gate_verdict == PASS` AND `chk_doubt_count >= internalization.disagreement.critical_doubt_threshold` (default 2):
