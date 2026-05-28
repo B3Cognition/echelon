@@ -53,7 +53,7 @@ If the output is `missing`, report:
 
 **"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop immediately.
 
-**ABSOLUTE RULE: Do NOT create, recreate, or bootstrap `echelon-config.yml` (harness: section) yourself.** Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The only valid action when the config is absent is to stop with the message above. The config is owned by `harness.init` — any other path corrupts harness state.
+**ABSOLUTE RULE: Always stop with the message above when config is absent.** Do NOT create, recreate, or bootstrap `echelon-config.yml` (harness: section) yourself. Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The config is owned by `harness.init` — any other path corrupts harness state.
 
 ---
 
@@ -103,7 +103,7 @@ PYTHONPATH=.specify/extensions/echelon python -m harness gitops create-worktree 
 
 If this fails, report the error and stop.
 
-The worktree is a checkout of the feature branch. All build output goes into the worktree. The project working directory (CWD) is read-only from this point forward — **never run git commands against CWD, never cherry-pick, never merge, never commit in CWD**. All git operations use the worktree path or the Python gitops API.
+The worktree is a checkout of the feature branch. All build output goes into the worktree. The project working directory (CWD) is read-only from this point forward — **always use the worktree path or the Python gitops API for git operations; never run git commands against CWD, never cherry-pick, never merge, never commit in CWD**.
 
 After creating the worktree, sync any spec files present in CWD but missing from the worktree (e.g., `coverage-map.md` written by echelon but not yet committed to the branch):
 
@@ -198,9 +198,9 @@ Read from the **worktree path** (synced in Step 4 — this is the single source 
 
 **Dispatch on `strategy`:**
 
-**`strategy = default`** — follow the `echelon.build` instructions directly (you are the LLM, reasoning on the host). Write all implementation files to the **worktree path** — never to CWD.
+**`strategy = default`** — follow the `echelon.build` instructions directly (you are the LLM, reasoning on the host). Always write implementation files to the **worktree path** — never to CWD.
 
-**`strategy = codegen`** — invoke the `speckit-echelon-codegen` skill with argument `{spec_id}-{spec_name}`. The codegen pipeline manages its own quality gates (SOAR CQ-ISC, Ψ ≥ 0.70, Tier 1 tests). Write all implementation files to the **worktree path** — never to CWD. On impasse (`codegen-impasse.md` written), stop and report the impasse to the human instead of entering the feedback loop.
+**`strategy = codegen`** — invoke the `speckit-echelon-codegen` skill with argument `{spec_id}-{spec_name}`. The codegen pipeline manages its own quality gates (SOAR CQ-ISC, Ψ ≥ 0.70, Tier 1 tests). Always write implementation files to the **worktree path** — never to CWD. On impasse (`codegen-impasse.md` written), stop and report the impasse to the human instead of entering the feedback loop.
 
 **ABSOLUTE RULE — codegen skill failures are HARD STOPS. No fallback, no substitution:**
 
@@ -215,11 +215,11 @@ If the `speckit-echelon-codegen` skill invocation fails for any reason — `disa
     2. Fix the codegen skill configuration and retry
 ```
 
-Do NOT fall back to `strategy=default`. Do NOT implement directly. Do NOT continue to Step 6.
+Always stop and report codegen invocation failure before Step 6. Do NOT fall back to `strategy=default`, implement directly, or continue to Step 6.
 
 On subsequent outer iterations (`outer_iter > 0`) after a failed Docker verify, **both strategies** fix failures by analysing the Docker verify output and editing the relevant files directly in the worktree — there is no need to re-run the full build pipeline to fix targeted test failures.
 
-**If any step fails with a git error:** report the exact error and stop. Do not attempt alternative git commands (cherry-pick, rebase, merge) to work around it.
+**If any step fails with a git error:** always report the exact error and stop. Do not attempt alternative git commands (cherry-pick, rebase, merge) to work around it.
 
 Track the outer iteration count (`outer_iter`, starting at 0). After each build, proceed to Step 6.
 
@@ -280,7 +280,7 @@ Look for `specs/{spec_id}-*/coverage-map.md` in the current working directory.
 **If coverage-map.md exists**, read it and classify each row:
 
 - **`coverage_type = automated`**: fully verified — no action needed.
-- **`coverage_type = manual`**: intentionally manual — auto-accepted. speckit-echelon-sentinel (SENTINEL) marked these "manual only" by design (Canvas rendering, frame rates, visual checks). They do not block the run.
+- **`coverage_type = manual`**: intentionally manual — auto-accepted. speckit-echelon-sentinel (SENTINEL) marked these "manual only" by design (Canvas rendering, frame rates, visual checks). Always allow them to pass; they do not block the run.
 - **`coverage_type = none` or empty**: genuinely missing automation — these are gaps.
 
 Decision logic:
@@ -289,7 +289,7 @@ Decision logic:
   - If all `none`/empty rows are for Canvas rendering, frame rates, visual output, or browser-only behaviour: auto-accept them as manual-by-nature, set `verified = full`, proceed to Step 8.
   - If any `none`/empty rows are for logic, API, or state that *can* be unit/integration tested: set `verified = partial`, and proceed to Step 7 (feedback loop) to add the missing tests.
 
-> `verified = partial` from logic gaps DOES trigger feedback (Step 7). `manual` coverage and browser-only gaps do NOT — they are auto-accepted. Do not surface manual-by-design gaps to the human.
+> Logic gaps always trigger feedback (Step 7). Manual coverage and browser-only gaps are auto-accepted; they do NOT trigger feedback. Always keep manual-by-design gaps internal; do not surface them to the human.
 
 ---
 
@@ -317,7 +317,7 @@ For each distinct failure encountered during this run, append an entry:
 
 **Trigger**: {what went wrong — one sentence}
 **Root cause**: {why — specific file/line/mechanism}
-**Invariant**: {the rule that must never be violated again — imperative sentence starting with NEVER or ALWAYS}
+**Invariant**: {the rule that must hold from now on — imperative sentence starting with ALWAYS or NEVER}
 **Applies to**: {default | codegen | both}
 ```
 
@@ -381,7 +381,7 @@ PYTHONPATH=.specify/extensions/echelon python -m harness gitops local-merge \
   '{push_branch}' '{spec_id}' '{spec_name}'
 ```
 
-If merge fails (branch protection, conflicts), report the error and stop — do not retry or ask the user for a workaround.
+If merge fails (branch protection, conflicts), always report the error and stop — do not retry or ask the user for a workaround.
 
 `auto_merge=false` skips this step entirely and leaves the branch open for manual review.
 
@@ -405,7 +405,7 @@ Otherwise, invoke the `speckit-echelon-deploy` skill now. This will:
 1. Check the CI/CD fingerprint — if the project changed, auto-regenerate CI/CD artifacts via `speckit-echelon-cicd` first
 2. Run the blue/green (HTTP) or tag-pointer (CLI) deploy
 
-If `speckit.echelon.deploy` exits with an error, report it clearly but **do not fail the harness run** — the build and merge succeeded. The user can re-run `speckit.echelon.deploy` manually to retry the deploy.
+If `speckit.echelon.deploy` exits with an error, always report it clearly and continue; **do not fail the harness run** — the build and merge succeeded. The user can re-run `speckit.echelon.deploy` manually to retry the deploy.
 
 If `auto_merge=false`: skip this step entirely. The PR is open for review; deploy will happen when the user is ready.
 
@@ -448,10 +448,10 @@ If `verified = PARTIAL` (logic gaps triggered a feedback loop), replace Status:
               See PR for details: {pr_url}
 ```
 
-If `verified = NO` (max iterations, never passed Docker), replace Status:
+If `verified = NO` (max iterations, Docker did not pass), replace Status:
 ```
   Status:     DID NOT CONVERGE — {max_outer} iterations exhausted
               Last build state is on branch {feature_branch}
 ```
 
-> Never ask the human to choose between options or approve deferrals. Manual-by-design gaps are automatically accepted. Logic gaps automatically trigger another build iteration.
+> Always auto-accept manual-by-design gaps and trigger another build iteration for logic gaps. Never ask the human to choose between options or approve deferrals.
