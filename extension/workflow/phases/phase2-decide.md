@@ -64,7 +64,7 @@ Read ASSESS outputs:
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase2-decide 1800
 ```
 
-Do NOT close phase2-decide here — it spans through phase2-strategic-overview and phase2-tracker-alignment. It closes in phase3-specialists.
+Always leave phase2-decide open here — it spans through phase2-strategic-overview and phase2-tracker-alignment. Do NOT close it until phase3-specialists.
 
 Phase budget map for consistency across all transitions:
 
