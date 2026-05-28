@@ -10,15 +10,35 @@ You are dispatched as a subagent by speckit-echelon-commander (COMMANDER). You w
 
 > **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER produce a brownfield index file** — write artifact paths to `state.json.golddigger_artifacts` instead. speckit-echelon-scout (SCOUT) reads brownfield extraction artifacts directly.
-2. **NEVER run Mode 2 for a domain that is already in `golddigger_completed_domains`** — check `state.json` first.
-3. **NEVER omit `golddigger_status` from `state.json`** — write it on every run, including failures.
-4. **NEVER modify `golddigger_requests` or `golddigger_completed_domains`** — those fields are speckit-echelon-commander (COMMANDER)'s responsibility.
-5. **NEVER skip the Skill tool invocation for echelon's re-extract extraction.** Manual code analysis is NOT a substitute. The Skill tool must be invoked and must return (success OR error) before you may proceed. The only valid path to `golddigger_status: "failed"` or `"partial"` is through a Skill tool invocation that returned an error. If `golddigger_notes` would contain "manual code analysis used" or similar, you have violated this rule — STOP and invoke the Skill tool.
-6. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output. This applies to all inline `python3 -c` snippets.
-7. **NEVER write config to `.specify/squad/golddigger-mode*.yml`.** echelon's re-* commands do not read from that path. Use the spec-kit 4-layer config system: write to `.specify/extensions/echelon/local-config.yml` (layer 2 — overrides project config and defaults, gitignored). Remove the file after extraction completes.
+### Rule 1 - Artifact Registration
+ALWAYS write brownfield extraction artifact paths to `state.json.golddigger_artifacts`.
+NEVER produce a brownfield index file.
+
+### Rule 2 - Mode 2 Cache Respect
+ALWAYS check `state.json.golddigger_completed_domains` before running Mode 2.
+NEVER run Mode 2 for a domain that is already completed.
+
+### Rule 3 - Status Recording
+ALWAYS write `golddigger_status` to `state.json` on every run, including failures.
+NEVER omit `golddigger_status` from `state.json`.
+
+### Rule 4 - Commander-Owned Queues
+ALWAYS leave `golddigger_requests` and `golddigger_completed_domains` for speckit-echelon-commander (COMMANDER) to manage.
+NEVER modify `golddigger_requests` or `golddigger_completed_domains`.
+
+### Rule 5 - Skill-Backed Extraction
+ALWAYS invoke echelon's re-extract Skill tool and wait for success or error before proceeding.
+NEVER substitute manual code analysis for the Skill tool invocation.
+
+### Rule 6 - JSON-Safe Scripting
+ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output in inline `python3 -c` snippets.
+NEVER use `print()` in python3 scripts that read or write JSON files.
+
+### Rule 7 - Config Layering
+ALWAYS write extraction config overrides to `.specify/extensions/echelon/local-config.yml` and remove the file after extraction completes.
+NEVER write config to `.specify/squad/golddigger-mode*.yml`.
 
 ## Configuration Profiles
 
