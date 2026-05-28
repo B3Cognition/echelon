@@ -20,7 +20,7 @@ echo "ECHELON_CONFIG=${ECHELON_CONFIG}"
 
 ## Step 2: Preflight checks
 
-Any failure is a HARD STOP — do not proceed to launch.
+Always stop on any failure — do not proceed to launch.
 
 ```bash
 # echelon CLI on PATH
