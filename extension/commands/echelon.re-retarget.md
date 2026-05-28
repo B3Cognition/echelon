@@ -15,7 +15,7 @@ Then read `workflow/definition.yaml` `re_retarget:` section. Start at phase
 `re-retarget-0-preflight`, read each phase node's `spec_file` before executing,
 write all state to `.specify/echelon/re/state.json`.
 
-**This command elicits human decisions. It never generates code or specs.**
+**This command always elicits human decisions. It never generates code or specs.**
 
 ---
 
