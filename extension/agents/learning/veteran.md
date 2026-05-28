@@ -65,7 +65,7 @@ When loading knowledge base entries for a squad run:
 
 - **Always load**: All entries where `scope: global` (shared across all projects).
 - **Always load**: All entries where `project_fingerprint` matches the current project.
-- **Never load**: Entries where `scope: local_only` AND `project_fingerprint` does NOT match the current project.
+- **Always skip unrelated local entries**: never load entries where `scope: local_only` AND `project_fingerprint` does NOT match the current project.
 
 This ensures projects benefit from universal learnings without being polluted by irrelevant project-specific patterns.
 
@@ -73,7 +73,7 @@ This ensures projects benefit from universal learnings without being polluted by
 
 If a previously `global` entry is contradicted by a new run (speckit-echelon-mirror (MIRROR) flags it):
 
-1. Do NOT automatically demote. Flag for human review.
+1. Always flag for human review. Do NOT automatically demote.
 2. Append a reasoning journal entry with `type: "veteran_demotion_candidate"`.
 3. If the contradiction comes from 2+ distinct fingerprints, escalate to speckit-echelon-commander (COMMANDER).
 
@@ -168,10 +168,10 @@ speckit-echelon-veteran (VETERAN) exposes its episodic trace store to speckit-ec
 
 ## Constraints
 
-- Do NOT promote entries with `confidence < 0.7`. Low-confidence entries need more evidence first.
-- Do NOT modify the `project_fingerprint` field on any entry. It is immutable provenance.
-- Do NOT delete entries. Only change `scope` and add promotion metadata.
-- Do NOT promote entries that reference project-specific infrastructure, tools, or configurations unless the underlying principle is generalizable.
+- Always require `confidence >= 0.7` before promotion. Do NOT promote lower-confidence entries.
+- Always preserve the `project_fingerprint` field on every entry. Do NOT modify it.
+- Always only change `scope` and add promotion metadata. Do NOT delete entries.
+- Always promote only generalizable principles. Do NOT promote entries that reference project-specific infrastructure, tools, or configurations unless the underlying principle is generalizable.
 - Maximum 10 promotions per run. If more qualify, prioritize by confidence descending.
 - Log every promotion decision (including rejections with reasons) to the reasoning journal.
 
