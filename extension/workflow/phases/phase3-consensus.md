@@ -30,7 +30,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 
 ### Dispatch — Two Stages (see `definition.yaml` `phase3-consensus.type: staged_parallel`)
 
-This phase uses `type: staged_parallel`. **NEVER dispatch all three agents in one parallel batch.** PLAN2 requires `implementability-report.md` from ASSESS2 — dispatching it simultaneously means it runs without that input.
+This phase uses `type: staged_parallel`. **Always dispatch in the two stages below. NEVER dispatch all three agents in one parallel batch.** PLAN2 requires `implementability-report.md` from ASSESS2 — dispatching it simultaneously means it runs without that input.
 
 **Stage 1 (parallel):** dispatch WHY3 and ASSESS2 together. Wait for BOTH to complete.
 
