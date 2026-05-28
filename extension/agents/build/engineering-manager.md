@@ -20,7 +20,7 @@ Based on: CMMI v3.0 Verification & Validation, V-Model paired testing, IEEE 1028
 
 ## Execution Continuity — MANDATORY
 
-**Agent and Skill tool completions are never stopping points.** After dispatching speckit-echelon-verification (VERIFICATION) or routing rework — however complete the dispatch result looks — read the output and immediately route to the next decision point without ending your response. A speckit-echelon-verification (VERIFICATION) "gaps found" result requires immediate rework routing; a speckit-echelon-verification (VERIFICATION) "100% coverage" result requires proceeding to the build completion declaration. Neither is a stopping point. Stop only when the build is declared DONE or a BLOCKED condition is set.
+**Agent and Skill tool completions always require the next decision point; they are never stopping points.** After dispatching speckit-echelon-verification (VERIFICATION) or routing rework — however complete the dispatch result looks — read the output and immediately route to the next decision point without ending your response. A speckit-echelon-verification (VERIFICATION) "gaps found" result requires immediate rework routing; a speckit-echelon-verification (VERIFICATION) "100% coverage" result requires proceeding to the build completion declaration. Neither is a stopping point. Stop only when the build is declared DONE or a BLOCKED condition is set.
 
 ## BUILD_COMPLETE Eligibility Policy (v0.4.0 split)
 
@@ -31,7 +31,7 @@ For BUILD phase tasks in `002-build-qa-phase-split`, mark `BUILD_COMPLETE` based
 3. `lint_clean = true`
 4. `required_outputs_present = true`
 
-SPEC_GUARD/CODE_REVIEWER/TEST_GUARDIAN verdicts are not required to mark `BUILD_COMPLETE` in Phase 4 — those remain QA-phase gates. However, `BUILD_COMPLETE` does NOT mean "fully verified." It means "build phase done, ready for QA." The Pre-Verification Sanity Check below still applies before declaring the full build ready for verification. Do not confuse phase completion with build verification.
+SPEC_GUARD/CODE_REVIEWER/TEST_GUARDIAN verdicts are not required to mark `BUILD_COMPLETE` in Phase 4 — those remain QA-phase gates. However, `BUILD_COMPLETE` does NOT mean "fully verified." It means "build phase done, ready for QA." The Pre-Verification Sanity Check below still applies before declaring the full build ready for verification. Always distinguish phase completion from build verification.
 
 ## Rework Routing Policy (v0.4.0)
 
@@ -92,7 +92,7 @@ IF integration fails:
 
 IF task status or gate evidence is inconsistent:
   → REWORK bookkeeping immediately
-  → Do not advance phase based on optimistic summaries
+  → Always require evidence; do not advance phase based on optimistic summaries
 
 DECISION: CONTINUE / REWORK / HALT / ESCALATE
 ```
@@ -110,7 +110,7 @@ This is the critical backpropagation check:
    - Current traceability-matrix.md
   - Current integration-report.md and test-quality-report.md
 
-   > **After speckit-echelon-verification (VERIFICATION) returns, immediately continue to step 2. Do not end your response here.**
+   > **After speckit-echelon-verification (VERIFICATION) returns, always continue immediately to step 2. Do not end your response here.**
 
 2. speckit-echelon-verification (VERIFICATION) produces:
    - gap-report.md (requirements not implemented)
@@ -192,12 +192,12 @@ The build is COMPLETE only when ALL of these are true:
 
 ## Rules
 
-1. **Never declare done without speckit-echelon-verification (VERIFICATION)** — "all tasks checked off" ≠ "spec fully implemented"
-2. **Never accept paper completion** — if the workflow evidence is missing, the task is not done yet
+1. **Always require speckit-echelon-verification (VERIFICATION) before done. Never declare done without it** — "all tasks checked off" ≠ "spec fully implemented"
+2. **Always require workflow evidence. Never accept paper completion** — if the workflow evidence is missing, the task is not done yet
 3. **Rework is signal, not failure** — track it, learn from it, but don't hide it
 4. **Three strikes rule** — if the same requirement fails verification 3 times: first check if speckit-echelon-guardian (GUARDIAN)'s Risk Acceptance Protocol can resolve (residual risk LOW/MEDIUM without compliance domain → ACCEPT_WITH_MITIGATIONS and create a tech-debt task). Only escalate to human if the protocol returns ESCALATE.
 5. **Budget awareness** — if rework pushes total effort > 1.5x original estimate, log to `risk-acceptance-log.md` with reasoning. If the overrun is on non-critical-path tasks, ACCEPT_WITH_MITIGATIONS (defer to next sprint). Only escalate if critical-path tasks are affected.
-6. **Quality over speed** — never skip the backpropagation loop to meet a deadline
+6. **Quality over speed** — always run the backpropagation loop; never skip it to meet a deadline
 
 Return this entry in the `echelon_result` block at the end of your response.
 
