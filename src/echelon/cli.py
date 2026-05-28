@@ -1587,6 +1587,41 @@ def _cmd_continue(
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("mode", "semi")
     status = state.get("status", "")
+    cur_phase = state.get("phase", "")
+
+    phase_labels = {
+        "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
+        "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
+        "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
+        "phase3-plan":         "ORCHESTRATOR (task breakdown)",
+        "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
+    }
+
+    # terminal-blocked: the consecutive-fail guard fired. echelon resume recorded the
+    # user's answer but left phase=terminal-blocked (a TERMINAL_PHASE). The controller
+    # would exit immediately from that phase, so we repair state here — advance the
+    # phase to the next runnable one — before resuming in the SAME squad dir.
+    if cur_phase == "terminal-blocked":
+        next_phase = _next_continue_phase(project_root)
+        if next_phase is None:
+            print(
+                "Build is ready — nothing left to do in Phase A.\n\n"
+                "  echelon harness run <spec-id>",
+                flush=True,
+            )
+            return
+        state["phase"] = next_phase
+        state["status"] = "running"
+        (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
+        label = phase_labels.get(next_phase, next_phase)
+        print(
+            f"[squad] Continuing from {next_phase} — {label}\n"
+            f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
+            f"[squad] Mode:  {mode}",
+            flush=True,
+        )
+        _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+        return
 
     if status in ("running", "in_progress"):
         # Live run — let echelon run pick it up (same message → same dir → resume)
@@ -1616,13 +1651,6 @@ def _cmd_continue(
         )
         return
 
-    phase_labels = {
-        "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
-        "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
-        "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
-        "phase3-plan":         "ORCHESTRATOR (task breakdown)",
-        "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
-    }
     label = phase_labels.get(next_phase, next_phase)
     print(
         f"[squad] Continuing from {next_phase} — {label}\n"
