@@ -94,7 +94,9 @@ If exit code is non-zero, stop. User must fix `${ECHELON_CONFIG}` before proceed
 
 ## Step 3b: Provision MemPalace wing
 
-The wing is this project's stable identity in the shared MemPalace memory store. Once set, it should never change — all clones of this repo share the same wing so they share memory.
+The wing is this project's stable identity in the shared MemPalace memory store.
+Always keep the existing wing once set; it should never change because all clones
+of this repo share the same wing so they share memory.
 
 ```bash
 python3 -c "
