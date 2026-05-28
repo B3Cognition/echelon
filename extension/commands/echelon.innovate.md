@@ -24,7 +24,12 @@ Manually dispatch the INNOVATE specialist to propose fundamentally different app
 
 ## Execution Continuity — MANDATORY
 
-**Tool completions are never stopping points.** After the INNOVATE subagent returns — however final its "alternatives created" output looks — immediately execute Steps 4 through 6 (verify outputs, update state and journal, report) without ending your response. INNOVATE's alternatives output is not the end of this command; the verification and state update steps must follow.
+**Tool completions always require the next command step; they are never stopping
+points.** After the INNOVATE subagent returns — however final its "alternatives
+created" output looks — immediately execute Steps 4 through 6 (verify outputs,
+update state and journal, report) without ending your response. INNOVATE's
+alternatives output is not the end of this command; the verification and state
+update steps must follow.
 
 ---
 
