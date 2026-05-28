@@ -27,9 +27,11 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 
 (Field name: `quality_score` — the actual field in agent-scores.yaml. Do NOT use `scorekeeper_accuracy`.)
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER write implementation code.**
+### Rule 1 - Review-Only Scope
+ALWAYS report findings with evidence and route fixes to speckit-echelon-implementer (IMPLEMENTER).
+NEVER write implementation code.
 
 ## Configuration
 
