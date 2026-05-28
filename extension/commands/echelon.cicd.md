@@ -118,7 +118,7 @@ before generating a Dockerfile.
    git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'
 
    Fall back to `git symbolic-ref --short HEAD` if the remote check fails.
-   Use the detected branch name in the CI workflow triggers. Do not hardcode `main`.
+   Always use the detected branch name in the CI workflow triggers. Do not hardcode `main`.
 
 9. Container listen port — detect the port the application actually listens on
    inside the container. Read the Dockerfile EXPOSE directive first; if absent or
@@ -135,8 +135,8 @@ before generating a Dockerfile.
     equivalent) is typically NOT at the project root but inside the app directory
     (e.g. apps/web/.env.local). If such a file exists, set
     `build_env_file: <relative-path>` in the echelon-config.yml deploy block so deploy.sh
-    passes the correct build args to docker build. Do not commit secrets — only
-    document the path; the file itself is gitignored. If the env file is at the
+    passes the correct build args to docker build. Always document only the path;
+    do not commit secrets. The file itself is gitignored. If the env file is at the
     project root, omit build_env_file (deploy.sh finds .env.local automatically).
 
 11. Health check path — determine whether the app exposes a dedicated health
@@ -160,7 +160,8 @@ Generate exactly these artifacts:
 2. echelon-config.yml deploy block — update the existing deploy: section in-place.
    Set type, dockerfile (path relative to project root), blue_port / green_port
    (HTTP) or health_check / install_path (CLI), and container_port (detected in
-   step 9). If databases were detected, add a services: block. Do not touch other
+   step 9). If databases were detected, add a services: block. Always preserve
+   other sections; do not touch other
    sections. If `echelon-config.yml` does not exist, create it with a minimal skeleton
    containing only the `deploy:` block with detected values.
 
