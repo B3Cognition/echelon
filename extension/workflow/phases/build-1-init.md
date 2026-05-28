@@ -22,7 +22,7 @@ PROJECT_ROOT=$(pwd)
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 ```
 
-Read `project_root` from `${SQUAD_DIR}/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. The feature directory is `${PROJECT_ROOT}/specs/{NNN}-{feature}` — never a bare relative path.
+Read `project_root` from `${SQUAD_DIR}/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. Always use `${PROJECT_ROOT}/specs/{NNN}-{feature}` for the feature directory — never a bare relative path.
 
 ### 1.0b Validate Deploy Infrastructure
 
@@ -33,7 +33,7 @@ ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
 bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${PROJECT_ROOT}"
 ```
 
-If exit code is non-zero, HARD STOP. Do not proceed with the build. The error output contains the fix instructions.
+If exit code is non-zero, HARD STOP. Always stop and follow the error output fix instructions. Do not proceed with the build.
 
 ### 1.1 Validate Phase A Artifacts
 
