@@ -15,7 +15,7 @@ Then read `workflow/definition.yaml` `re_planning:` section. Start at phase
 `re-planning-0-preflight`, read each phase node's `spec_file` before dispatching,
 write all state to `.specify/echelon/re/state.json`.
 
-**This command generates plans and tasks. It never writes implementation code.**
+**This command always generates plans and tasks. It never writes implementation code.**
 
 ---
 
