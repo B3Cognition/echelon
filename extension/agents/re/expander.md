@@ -36,7 +36,7 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Read:
 - `specs/000-re-overview/coverage-report.md` — orphan file list and cluster suggestions.
-- All existing `specs/[0-9][0-9][0-9]-re-*/spec.md` — current domain specs (do not regenerate).
+- All existing `specs/[0-9][0-9][0-9]-re-*/spec.md` — always treat current domain specs as source inputs; do not regenerate them.
 
 If `coverage-report.md` does not exist, report BLOCKED.
 
@@ -54,7 +54,7 @@ From the coverage report, identify:
 - Add to the existing reference-data domain if one exists.
 
 **Remaining orphans**:
-- Files that do not fit any cluster — add to the closest existing domain based on imports or naming patterns.
+- Files that do not fit any cluster — always add to the closest existing domain based on imports or naming patterns.
 
 ### Step 3: Create New Domains
 
