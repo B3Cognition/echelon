@@ -36,7 +36,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
-  Do NOT run Understanding metrics (no specs exist yet). Challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Produce outputs in `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
+  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
   </instructions>
   ```
 
@@ -77,7 +77,7 @@ blocked_reason: |
 2. Requires information only the user holds (legal rights, positioning decisions, audience policy)
 3. Proceeding without it requires an arbitrary coin-flip that binds all downstream phases
 
-**Do NOT set escalation_question for squad-solvable CRITICAL issues** (missing boundaries,
+**Always route squad-solvable CRITICAL issues back to DISCOVER. Do NOT set escalation_question for them** (missing boundaries,
 glossary gaps, unread manual pages, contradictions resolvable by ORACLE/INVESTIGATOR).
 Those keep routing to DISCOVER as normal.
 
