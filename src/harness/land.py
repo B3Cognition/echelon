@@ -111,6 +111,7 @@ def land(
                 ("manual cleanup", f"git push origin --delete {feature_branch}"),
             ],
         )
+    _delete_local_branch(feature_branch, str(project_dir))
     _cleanup_worktrees(spec_id, project_dir, gitops)
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
@@ -142,6 +143,33 @@ def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:
                         logger.info("land: removed worktree %s", iter_dir)
                     except Exception as e:  # noqa: BLE001
                         logger.warning("land: could not remove worktree %s: %s", iter_dir, e)
+
+
+def _delete_local_branch(branch: str, project_dir: str) -> None:
+    """Delete the local feature branch after a successful merge.
+
+    Uses -d (safe delete) so git refuses if the branch is somehow not merged —
+    this is a second safety net on top of the merge-success gate in land().
+    For PR-merged branches where local main hasn't been pulled yet, -d will
+    refuse; we log a notice and leave the branch rather than force-deleting.
+    """
+    try:
+        subprocess.run(
+            ["git", "branch", "-d", branch],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+            cwd=project_dir,
+        )
+        logger.info("land: deleted local branch %s", branch)
+    except subprocess.CalledProcessError:
+        # Most likely: PR was merged remotely but local main hasn't been pulled.
+        # Branch is merged — just not visible to local git yet. Leave it.
+        logger.info(
+            "land: local branch %s not deleted (not yet in local history — run 'git pull' to clean up)",
+            branch,
+        )
 
 
 def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:

@@ -166,13 +166,17 @@ class TestDeleteHarnessBranches:
         list_result = MagicMock(returncode=0, stdout="  harness/042/codegen/iter-0\n  harness/042/codegen/iter-1\n")
         delete_result = MagicMock(returncode=0, stdout="")
         with patch("harness.land.subprocess.run") as mock_run:
-            mock_run.side_effect = [list_result, delete_result, delete_result]
+            # 4 calls: _delete_local_branch, then --list, then 2x -D for harness branches
+            mock_run.side_effect = [delete_result, list_result, delete_result, delete_result]
             land("042", project_dir=tmp_path, gitops=gitops)
-        # First call: git branch --list harness/042/*
-        first_call = mock_run.call_args_list[0]
-        assert first_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
-        # Subsequent calls: git branch -D <branch>
-        delete_calls = mock_run.call_args_list[1:]
+        # First call: git branch -d <feature-branch> (safe local cleanup)
+        local_delete_call = mock_run.call_args_list[0]
+        assert local_delete_call[0][0] == ["git", "branch", "-d", "042-my-feature"]
+        # Second call: git branch --list harness/042/*
+        list_call = mock_run.call_args_list[1]
+        assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
+        # Remaining calls: git branch -D <harness-branch>
+        delete_calls = mock_run.call_args_list[2:]
         deleted_branches = [c[0][0][3] for c in delete_calls]
         assert "harness/042/codegen/iter-0" in deleted_branches
         assert "harness/042/codegen/iter-1" in deleted_branches
