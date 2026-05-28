@@ -1694,6 +1694,9 @@ def _cmd_resume(
 
     _preserve_active_spec_context(project_root, state)
 
+    # Capture blocked phase before clearing — needed to decide resume path.
+    blocked_phase = state.get("phase", "")
+
     # Write user's answer to staging so the re-dispatched phase can read it.
     staging_dir = Path(state.get("staging_dir", str(squad_dir / "staging")))
     clarifications_file = staging_dir / "user-clarifications.md"
@@ -1713,6 +1716,20 @@ def _cmd_resume(
     state["blocked_reason"] = None
     state["status"] = "running"
     store.save(state)
+
+    # terminal-blocked is a TERMINAL_PHASE in the squad controller — running the
+    # controller from there is always a silent no-op that returns "done" immediately.
+    # Instead, record the answer and tell the user to run `echelon continue`.
+    if blocked_phase == "terminal-blocked":
+        _banner("SQUAD RESUMED", [
+            ("answer", (answer[:60] + "…") if len(answer) > 60 else answer),
+            ("status", "unblocked — answer recorded"),
+            ("next", "echelon continue"),
+            ("note", "CARTOGRAPHER will apply your fix, then WHY2 re-validates"),
+            ("artifacts", str(squad_dir)),
+        ])
+        _print_next_steps(project_root, "done")
+        return
 
     # Re-run from the current phase (same mode, same task).
     config = load_config(project_root, squad_only=True)
