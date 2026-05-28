@@ -5,7 +5,7 @@
 
 ## 2c. speckit-echelon-tracker (TRACKER) — Intent Model Capture
 
-> **Note:** speckit-echelon-tracker (TRACKER) captures the user's stated intent before requirements formalization. This produces `user-intent.md` which speckit-echelon-gatekeeper (GATEKEEPER) needs to honor NEVER rule #3 ("NEVER override user intent").
+> **Note:** speckit-echelon-tracker (TRACKER) captures the user's stated intent before requirements formalization. This produces `user-intent.md` which speckit-echelon-gatekeeper (GATEKEEPER) needs to honor rule #3 ("ALWAYS preserve user intent; NEVER override user intent").
 
 ### Context Pack Assembly
 
