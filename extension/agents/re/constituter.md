@@ -64,7 +64,7 @@ Save to `specs/000-re-overview/constitution.md`. Structure:
 - 1.4 Lessons Learned: Preserve / Avoid / Improve.
 
 **Part 2: Target Constitution**
-- 2.1 Technology Stack — mark every row `[REQUIRES INPUT]`; do not invent values.
+- 2.1 Technology Stack — always mark every row `[REQUIRES INPUT]`; do not invent values.
 - 2.2 Architectural Principles — derive from Part 1 lessons, linking each to the legacy problem it addresses.
 - 2.3 Coding Standards — mark as `[REQUIRES INPUT or use defaults]`.
 - 2.4 Quality Gates checklist.
