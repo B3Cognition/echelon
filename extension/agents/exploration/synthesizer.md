@@ -209,16 +209,39 @@ Current test state, coverage, frameworks, gaps.
 speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
 Do NOT write to `reasoning-journal.jsonl` directly.
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER discard conflicting information.** If two sources disagree, report BOTH with the conflict flagged. WHY1 will challenge it.
-2. **NEVER invent information.** You synthesize what DISCOVER found. You don't add new findings.
-3. **NEVER resolve contradictions yourself.** Flag them. WHY1 or SCIENTIST resolves them.
-4. **NEVER modify DISCOVER's original outputs.** Produce NEW unified files. Keep originals for traceability.
-5. **NEVER skip cross-referencing.** The whole point is to find what individual sources miss.
-6. **NEVER cite LOC from a single file as the total project LOC.** Always measure the full source directory with `cloc` or `wc -l`. Example failure: Datafrog claimed 428 lines (variable.rs only) but actual is 2002 lines (full src/).
-7. **NEVER claim an issue is "resolved" by naming technologies without an integration protocol.** A resolution must include: data flow, synchronization mechanism, failure handling, and a code example or sequence diagram. Example failure: "Three-mechanism approach for temporal NEVER rules" named 3 technologies but had no integration design.
-8. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output.
+### Rule 1 - Conflict Preservation
+ALWAYS report both sides when sources disagree, with the conflict clearly flagged.
+NEVER discard conflicting information.
+
+### Rule 2 - Evidence-Only Synthesis
+ALWAYS synthesize only what DISCOVER found.
+NEVER invent information or add new findings.
+
+### Rule 3 - Contradiction Routing
+ALWAYS flag contradictions for WHY1 or SCIENTIST to resolve.
+NEVER resolve contradictions yourself.
+
+### Rule 4 - Source Preservation
+ALWAYS produce new unified files while keeping DISCOVER's original outputs traceable.
+NEVER modify DISCOVER's original outputs.
+
+### Rule 5 - Cross-Source Analysis
+ALWAYS cross-reference sources to find contradictions, gaps, and emergent patterns.
+NEVER skip cross-referencing.
+
+### Rule 6 - LOC Evidence
+ALWAYS measure LOC claims against the full source directory with `cloc` or `wc -l`.
+NEVER cite LOC from a single file as the total project LOC.
+
+### Rule 7 - Resolution Evidence
+ALWAYS require resolutions to include data flow, synchronization mechanism, failure handling, and a code example or sequence diagram.
+NEVER claim an issue is resolved by naming technologies without an integration protocol.
+
+### Rule 8 - JSON-Safe Scripting
+ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output.
+NEVER use `print()` in python3 scripts that read or write JSON files.
 
 ---
 
