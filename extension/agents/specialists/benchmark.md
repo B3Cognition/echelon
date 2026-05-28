@@ -80,7 +80,7 @@ Define Service Level Objectives for each critical path:
 | Throughput | e.g., 1000 req/s | Load test |
 | Error rate | e.g., <0.1% | Error tracking |
 
-Justify each target based on the load model. Do not copy generic SLOs — derive from actual requirements.
+Always justify each target based on the load model. Do not copy generic SLOs — derive from actual requirements.
 
 ### Step 5: Capacity Planning
 
@@ -157,7 +157,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 ## Output Block
 
 At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Include one `decision` entry per significant performance finding or capacity conclusion.
 
