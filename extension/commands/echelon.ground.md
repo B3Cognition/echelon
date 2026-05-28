@@ -24,7 +24,11 @@ Dispatch the GROUND agent to perform a reality check on all current squad artifa
 
 ## Execution Continuity — MANDATORY
 
-**Tool completions are never stopping points.** After the GROUND subagent returns — however complete its reality-check output looks — immediately execute Steps 4 through 6 (verify outputs, update state and journal, report) without ending your response. GROUND's report is not the end of this command; the state update and report steps must follow.
+**Tool completions always require the next command step; they are never stopping
+points.** After the GROUND subagent returns — however complete its reality-check
+output looks — immediately execute Steps 4 through 6 (verify outputs, update
+state and journal, report) without ending your response. GROUND's report is not
+the end of this command; the state update and report steps must follow.
 
 ---
 
@@ -83,7 +87,7 @@ After the subagent completes, verify these files were created or updated:
 2. **`cost-analysis.md`** -- infrastructure and operational cost estimates grounded in real pricing
 3. **`benchmark-data.md`** -- real-world benchmarks for performance claims in the spec
 
-If any are missing, log a warning but do not fail.
+Always log a warning for missing outputs. Do not fail the command for missing outputs.
 
 ---
 
