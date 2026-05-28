@@ -187,8 +187,9 @@ Generate exactly these artifacts:
    - Java/Gradle:        `./gradlew test`
    - Java/Maven:         `./mvnw test`
    Always leave an existing verify_command unchanged. Do NOT add verify_command if
-   it is already set. Do NOT change other sections. Do NOT write an absolute path
-   — the harness runs the command from the project root.
+   it is already set. Always preserve other sections. Do NOT change them. Always
+   write a project-root-relative command. Do NOT write an absolute path — the
+   harness runs the command from the project root.
 
 5. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
    Jobs: install dependencies, lint (if configured), run tests.
@@ -223,7 +224,8 @@ Generate exactly these artifacts:
   build_env_file, services). Always preserve echelon.init-owned deploy fields.
   Do NOT change the dockerfile, blue_port, green_port,
   or the app being deployed — those were set by echelon.init and are authoritative.
-  Do NOT create a new echelon-config.yml or overwrite the file wholesale.
+  Always patch the existing file when present. Do NOT create a new
+  echelon-config.yml or overwrite the file wholesale.
 - verify_command MUST be a top-level key in echelon-config.yml (not nested under
   deploy: or any other section). Always preserve an existing verify_command; do
   not add it if it is already present.
