@@ -42,7 +42,7 @@ NEVER write config to `.specify/squad/golddigger-mode*.yml`.
 
 ## Configuration Profiles
 
-Do NOT let agents or users pass arbitrary re-extraction config. Use exactly these named profiles, written to `.specify/extensions/echelon/local-config.yml` (spec-kit config layer 2 — overrides project config and extension defaults, gitignored).
+Always use exactly these named profiles, written to `.specify/extensions/echelon/local-config.yml` (spec-kit config layer 2 — overrides project config and extension defaults, gitignored). Do NOT let agents or users pass arbitrary re-extraction config.
 
 **Config lifecycle:** Write `local-config.yml` → invoke extract → remove `local-config.yml`. This ensures the override is temporary and does not persist to subsequent runs.
 
@@ -132,7 +132,7 @@ THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh 
 ```
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json, os, yaml
 
@@ -236,7 +236,7 @@ rm -f .specify/extensions/echelon/local-config.yml
 **Polyrepo mode — write to state.json:**
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 
@@ -265,7 +265,7 @@ with open('${SQUAD_DIR}/state.json', 'w') as f:
 **Single-repo mode — write to state.json:**
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 
@@ -376,7 +376,7 @@ rm -f .specify/extensions/echelon/local-config.yml
 Write only your status fields — speckit-echelon-commander (COMMANDER) handles the queue and completed-domains list:
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('${SQUAD_DIR}/state.json', 'r') as f:
@@ -394,13 +394,13 @@ with open('${SQUAD_DIR}/state.json', 'w') as f:
 
 ## Failure Handling
 
-**Precondition:** You may only enter this path if the Skill tool was invoked and returned an error. If the Skill tool was never invoked, you are NOT in a failure state — go back and invoke it.
+**Precondition:** You may only enter this path if the Skill tool was invoked and returned an error. Always invoke the Skill tool before treating the path as failed. If the Skill tool was never invoked, you are NOT in a failure state — go back and invoke it.
 
 If a step fails **after the Skill tool was invoked:**
 
 1. Write `"golddigger_status": "failed"` (or `"partial"` if artifacts were produced) to `state.json`
 2. Include `"golddigger_notes": ["<what failed and why — include the verbatim error from the Skill tool>"]`
-3. Exit cleanly — do not throw
+3. Always exit cleanly — do not throw
 
 speckit-echelon-scout (SCOUT) will detect `golddigger_status: "failed"` in state.json and fall back to manual structural analysis. The run continues in degraded-brownfield mode.
 
@@ -443,7 +443,7 @@ Cached at: .specify/squad/golddigger-cache/<cache-key>.md
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 echelon_result:
   verdict: <COMPLETE | PARTIAL | FAILED>
