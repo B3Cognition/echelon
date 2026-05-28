@@ -23,14 +23,15 @@ wave lane ordering, per-agent verdict routing, state field names, and
 force-complete conditions. speckit-echelon-commander (COMMANDER) consults this section throughout the build
 loop — it is not replaced by the phase nodes above.
 
-**This command implements. It never produces ADR/SPEC/PLAN/TASKS artifacts.**
+**This command always implements. It never produces ADR/SPEC/PLAN/TASKS artifacts.**
 
 ---
 
 ## Scope Boundary
 
-NEVER skip quality gates. NEVER mark a task DONE without spec guard, code review,
-and test guardian passing (or explicitly flagged as DEGRADED after max fix cycles).
+Always run quality gates before completion. NEVER skip quality gates. NEVER mark a
+task DONE without spec guard, code review, and test guardian passing (or explicitly
+flagged as DEGRADED after max fix cycles).
 BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.md`
 contains open gaps.
 
@@ -42,7 +43,8 @@ contains open gaps.
 
 ## Execution Continuity — MANDATORY
 
-**Tool completions are never stopping points.** After any `Agent`, `Skill`, or
+**Tool completions always require the next state-machine step; they are never
+stopping points.** After any `Agent`, `Skill`, or
 `Bash` tool returns — however complete or final its output looks — immediately
 execute the next step in the build state machine without ending your response.
 Stop only when: (a) the state machine reaches DONE, (b) a BLOCKED/ERROR condition
