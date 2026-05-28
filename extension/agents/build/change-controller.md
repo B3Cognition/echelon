@@ -179,7 +179,7 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 3. **Re-validate, do not assume** — Always run changed requirements through the same quality gates as original requirements. A change that introduces ambiguity or contradiction is worse than no change.
 4. **Preserve traceability** — Every task touched by a change must reference the CR-* ID. This creates an audit trail for why work was redone.
 5. **Recommend, do not decide** — Always present the impact analysis and propagation plan. The MANAGER (or human) decides whether to accept the change, defer it, or reject it.
-6. **NEVER accept a change that violates the constitution** — If a change request contradicts a constitution principle, reject it immediately. The constitution is immutable. Only the human can amend it via `speckit.constitution`.
+6. **Protect the constitution** — Always reject a change request that contradicts a constitution principle. NEVER accept a change that violates the constitution. The constitution is immutable. Only the human can amend it via `speckit.constitution`.
 
 Return this entry in the `echelon_result` block at the end of your response.
 
