@@ -27,7 +27,7 @@ fi
 echo "WING=${WING}"
 ```
 
-The wing is the project identity in MemPalace. All requirements, decisions, and patterns for this project are stored under this name. It never changes for the same project directory.
+The wing is the project identity in MemPalace. All requirements, decisions, and patterns for this project are stored under this name. Always keep it stable for the same project directory; it never changes.
 
 ### 0.2 — Spec detection and mining
 
@@ -121,7 +121,7 @@ echo "STACK=${STACK_DETECTED}"
 echo "TEST_RUNNER=${TEST_RUNNER_BIN}"
 ```
 
-If no test runner binary found, print warning and record `tier1_gate: "unavailable"`. DO NOT block pipeline start.
+If no test runner binary found, always print a warning and record `tier1_gate: "unavailable"`. DO NOT block pipeline start.
 
 ### 0.4 — Initialize pipeline state
 
@@ -144,7 +144,7 @@ Define the `write_state` helper (call after every phase transition).
 When running inside echelon-harness, `echelon.codegen` sets `HARNESS_STATE_FILE` by
 writing `.codegen-harness-env` before delegating here. When running standalone
 (`/codegen` without echelon), no `.codegen-harness-env` is present and `write_state`
-is a no-op — the harness state file is never written.
+is a no-op — always leave harness state untouched; the harness state file is never written.
 
 ```bash
 # Load harness integration env written by echelon.codegen wrapper (if present)
