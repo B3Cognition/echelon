@@ -90,14 +90,14 @@ speckit-echelon-golddigger (GOLDDIGGER) Mode 1 now provides function bodies, bus
 - A contradiction that requires tracing an actual call graph or data flow path through middleware, interceptors, or async chains — function bodies are visible but the execution topology is not
 - A suspicious finding (stale code, abandoned module) where only test assertions or full source reading can confirm whether the code is live or dead
 
-**Do NOT request Mode 2 for:**
+**Always resolve from existing artifacts when sufficient. Do NOT request Mode 2 for:**
 - Contradictions resolvable from existing function bodies, docs, or git history
 - Boundary ambiguity — Mode 1 `logic` depth provides sufficient signal for domain boundary detection
 
 Check `state.json.golddigger_completed_domains` first — if a deep dive was already completed for this domain, read the cached result at `.specify/squad/golddigger-cache/<domain>.md` instead of requesting again.
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('${SQUAD_DIR}/state.json', 'r') as f:
@@ -207,7 +207,7 @@ Current test state, coverage, frameworks, gaps.
 ## Reasoning Journal
 
 speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
-Do NOT write to `reasoning-journal.jsonl` directly.
+Always return journal entries in the `echelon_result` block. Do NOT write to `reasoning-journal.jsonl` directly.
 
 ## ALWAYS / NEVER Rules
 
@@ -248,7 +248,7 @@ NEVER use `print()` in python3 scripts that read or write JSON files.
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Repeat one `decision` entry per significant synthesis decision or contradiction resolution.
 
