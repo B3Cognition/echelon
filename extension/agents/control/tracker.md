@@ -80,7 +80,7 @@ After each significant squad decision — scope inclusion/exclusion by speckit-e
 
 **Cold-start rule (FR-PSC-005):** Set `prediction_confidence = 0.0` until N=3 runs have been accumulated in prediction-model.json with outcome data. After N=3, compute `prediction_confidence` from historical match scores.
 
-**Security (W-003):** `prediction_statement` must always be agent-generated prose summarizing inferred user intent. Never include verbatim user input in any prediction field.
+**Security (W-003):** `prediction_statement` must always be agent-generated prose summarizing inferred user intent. Always summarize; never include verbatim user input in any prediction field.
 
 ### Subsection 2 — Prediction Match Scoring (FR-PSC-002, FR-PSC-003)
 
@@ -106,9 +106,9 @@ If `prediction_match_score < 0.3` (divergence threshold) — record a social pre
 When a social prediction error is recorded AND `prediction_confidence >= 0.5` (active learning mode):
 
 speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
-Do NOT write to `reasoning-journal.jsonl` directly.
+Always return journal entries in the `echelon_result` block. Do NOT write to `reasoning-journal.jsonl` directly.
 
-**Learning mode gate (FR-PSC-005):** When `prediction_confidence < 0.5` — record the error in prediction-model.json for accumulation. Do NOT include the `tracker_model_update_requested` signal in your `echelon_result` journal entries. Accumulate errors silently until the N=3 threshold is reached.
+**Learning mode gate (FR-PSC-005):** When `prediction_confidence < 0.5` — always record the error in prediction-model.json for accumulation and accumulate errors silently until the N=3 threshold is reached. Do NOT include the `tracker_model_update_requested` signal in your `echelon_result` journal entries.
 
 ## Output
 
@@ -135,7 +135,7 @@ Place `drift_severity: {ALIGNED|MINOR_DRIFT|MAJOR_DRIFT}` on the second line of 
 - User's explicit words override ALL agent reasoning
 - "Best" means best, not "pragmatic subset"
 - "All" means all, not "MVP first"
-- If in doubt about intent, ask the user — don't assume
+- If in doubt about intent, always ask the user — don't assume
 - Intent corrections are the HIGHEST priority change (even above constitution)
 
 ## Stakeholder Model
@@ -173,7 +173,7 @@ Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 echelon_result:
   verdict: <ALIGNED | DRIFTING | ESCALATE>
