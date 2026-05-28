@@ -169,44 +169,7 @@ For every claim that a prior issue is "resolved", verify: (a) is there an integr
 
 ### Output: assumption-review.md
 
-```markdown
-# Assumption Review — WHY1
-
-## Verdict: <PASS | FAIL>
-
-## Summary
-<2-3 sentence summary of findings>
-
-## Assumption Analysis
-
-### A-001: <Assumption title>
-- **DISCOVER's classification:** <Critical | Standard | Low-Risk>
-- **WHY's classification:** <Critical | Standard | Low-Risk> (change reason if reclassified)
-- **Evidence strength:** <strong | moderate | weak | none>
-- **Contradictions found:** <none | list>
-- **Verdict:** <validated | needs-investigation | refuted>
-- **Action required:** <none | SCIENTIST investigation | user clarification | DISCOVER re-analysis>
-
-### A-002: ...
-
-## Domain Model Issues
-
-| ID | Finding | Severity | Affected Artifact | Section |
-|----|---------|----------|-------------------|---------|
-
-## Pre-Mortem Findings
-
-| Risk Area | Most Likely Failure | Confidence | Mitigation |
-|-----------|-------------------|------------|------------|
-
-## SCIENTIST Referrals
-
-| Unknown | Question for SCIENTIST | Priority | Justification |
-|---------|----------------------|----------|---------------|
-
-## Missing Unknowns
-<!-- Unknowns that DISCOVER did not identify but WHY has found -->
-```
+Must follow the structure in `agents/exploration/templates/sage-assumption-review-template.md` exactly.
 
 ---
 
@@ -559,79 +522,11 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 
 ## Output: quality-gates.md (Spec-Validation Mode Only)
 
-```markdown
-# Quality Gates — WHY<2|3>
-
-## Verdict: <PASS | FAIL>
-## Mode: understanding-cli
-
-## Quality Scores
-
-| Metric | Score | Threshold | Status | Notes |
-|--------|-------|-----------|--------|-------|
-| Overall | <score> | <load: quality_gates.overall> | PASS or FAIL | |
-| Structure | <score> | <load: quality_gates.structure> | PASS or FAIL | |
-| Testability | <score> | <load: quality_gates.testability> | PASS or FAIL | |
-| Semantic | <score> | <load: quality_gates.semantic> | PASS or FAIL | |
-| Cognitive | <score> | <load: quality_gates.cognitive> | PASS or FAIL | |
-| Readability | <score> | <load: quality_gates.readability> | PASS or FAIL | |
-| Depth | <score> | <load: quality_gates.depth> | PASS or FAIL | Understanding v3.6+ |
-| Behavioral | <score> | <load: quality_gates.behavioral> | PASS or FAIL | |
-
-<!-- STATUS COLUMN: write the literal word PASS or FAIL only. No bold, no asterisks, no markdown. -->
-
-## Metric Improvement Recommendations
-<!-- For each failing metric, specific changes to improve the score -->
-
-### <Metric Name> (<current> → target <threshold>)
-- **Problem sections:** <list sections pulling score down>
-- **Specific fixes:**
-  - Before: "<current wording>"
-  - After: "<improved wording>"
-```
+Must follow the structure in `agents/exploration/templates/sage-quality-gates-template.md` exactly.
 
 ## Output: issues.md (Both Modes)
 
-```markdown
-# Issues — WHY<1|2|3>
-
-## Summary
-- **CRITICAL:** <count>
-- **HIGH:** <count>
-- **MEDIUM:** <count>
-- **LOW:** <count>
-- **Verdict:** <PASS | FAIL>
-
-## Issues
-
-### ISS-001: <Issue title>
-- **Severity:** CRITICAL | HIGH | MEDIUM | LOW
-- **Type:** ambiguity | incompleteness | inconsistency | untestability | missing-requirement | contradiction
-- **Description:** <what is wrong>
-- **Affected artifact:** <filename>
-- **Affected section:** <section reference>
-- **Evidence:** <quote or specific finding>
-- **Recommendation:** <specific fix>
-- **Responsible agent:** <DISCOVER | WHAT | HOW>
-
-### ISS-002: ...
-
-## Pre-Mortem Findings
-
-| Risk | Likelihood | Impact | Affected Requirements |
-|------|-----------|--------|----------------------|
-
-## Cross-Artifact Consistency
-
-| Check | Status | Notes |
-|-------|--------|-------|
-| Entities in spec match mental-model | <PASS/FAIL> | |
-| Dependencies in spec match boundaries | <PASS/FAIL> | |
-| Terms match glossary | <PASS/FAIL> | |
-| Scope aligns with boundaries | <PASS/FAIL> | |
-| Assumptions match assumptions.md | <PASS/FAIL> | |
-| Open questions reference unknowns.md | <PASS/FAIL> | |
-```
+Must follow the structure in `agents/exploration/templates/sage-issues-template.md` exactly.
 
 ---
 
@@ -733,17 +628,7 @@ This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes
 
 ### Example Entry
 
-```yaml
-- run_id: squad-003-1742652000
-  artifact: specs/001-echelon-improvements/spec.md
-  challenge_type: quality_threshold
-  challenge_summary: |
-    Testability score 0.58 below 0.70 threshold.
-  outcome: blocked
-  resolution: |
-    WHAT agent improved acceptance criteria; re-validation scored 0.74.
-  was_correct: true
-```
+Use `agents/exploration/templates/sage-decision-entry-template.yaml` as the example structure.
 
 ---
 
