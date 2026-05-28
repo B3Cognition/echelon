@@ -31,7 +31,7 @@ Install: specify extension add understanding
 ============================================
 ```
 
-4. **STOP execution.** Do not dispatch speckit-echelon-sage (SAGE). Do not proceed.
+4. **STOP execution.** Always stop at the BLOCKED banner. Do not dispatch speckit-echelon-sage (SAGE). Do not proceed.
 
 **MANDATORY — persist Understanding availability check result to state.json before dispatching speckit-echelon-sage (SAGE):**
 
@@ -45,7 +45,7 @@ Install: specify extension add understanding
 }
 ```
 
-If the skill is unavailable, set `status: "unavailable"` and HARD STOP per the BLOCKED banner above — do not skip this write and continue.
+If the skill is unavailable, always set `status: "unavailable"` and HARD STOP per the BLOCKED banner above — do not skip this write and continue.
 
 ### Context Pack Assembly
 
@@ -102,7 +102,7 @@ Read WHY2 outputs:
    }
    ```
 
-   All score values come from Understanding output (quality-gates.md). Use `null` only when Understanding genuinely did not return that category (e.g., spec has zero requirements). Do not skip the append even on FAIL — convergence depends on the full series.
+   All score values come from Understanding output (quality-gates.md). Use `null` only when Understanding genuinely did not return that category (e.g., spec has zero requirements). Always append even on FAIL — do not skip it because convergence depends on the full series.
 4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
    - Same issue appears 3x → defer or escalate (see Section 15)
 
@@ -143,7 +143,7 @@ blocked_reason: |
 2. Requires information only the user holds (legal rights, positioning decisions, audience policy)
 3. Proceeding without it requires an arbitrary coin-flip that binds all downstream phases
 
-**Do NOT set escalation_question for squad-solvable CRITICAL issues** (missing boundaries,
+**Always route squad-solvable CRITICAL issues back to DISCOVER. Do NOT set escalation_question for them** (missing boundaries,
 glossary gaps, unread manual pages, contradictions resolvable by ORACLE/INVESTIGATOR).
 Those keep routing to DISCOVER as normal.
 
