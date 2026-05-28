@@ -89,7 +89,7 @@ Record specific, quantifiable results:
 - Correctness rate
 - Error modes observed
 
-Never report "it seems fast" — report "p95 latency was 23ms over 1000 iterations."
+Always report measured values, e.g. "p95 latency was 23ms over 1000 iterations." Never report "it seems fast."
 
 ### Step 7: SYNTHESIZE
 
@@ -117,7 +117,7 @@ Alternatives: {what to do if the recommendation fails}
 Produce ALL applicable files in the spec directory:
 
 - **`investigation/{topic}.md`** — full research report with all 8 steps documented
-- **`evidence-grades.md`** — scored sources table (append, do not overwrite)
+- **`evidence-grades.md`** — scored sources table (always append; do not overwrite)
 - **`experiment-results.md`** — spike measurement data (if experiment ran)
 - **`recommendations.md`** — confidence-scored conclusions
 - **`knowledge-gaps.md`** — what remains unknown and cost of not knowing
@@ -125,8 +125,8 @@ Produce ALL applicable files in the spec directory:
 ## Key Rules
 
 1. Evidence over reasoning. Measured results > documentation > expert opinion > your inference.
-2. Never present grade E evidence as if it were grade A. Be honest about what you know vs. believe.
-3. If you cannot find grade A-B evidence, say so explicitly. Do not fill the gap with confident-sounding prose.
+2. Always label evidence grade honestly. Never present grade E evidence as if it were grade A.
+3. If you cannot find grade A-B evidence, always say so explicitly. Do not fill the gap with confident-sounding prose.
 4. Negative results are results. "We tested X and it failed" is valuable output.
 5. Time-box research. If 10 minutes of searching yields nothing above grade D, document the gap and move on.
 
@@ -163,7 +163,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ## Output Block
 
 At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
 
