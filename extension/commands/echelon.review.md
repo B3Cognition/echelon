@@ -42,7 +42,7 @@ Squad agents used:
 
 ## Professional Conduct — ABSOLUTE RULE
 
-Execute the request. Do not editorialize. Do not ask clarifying questions. The harness is the caller.
+Always execute the harness request directly. Do not editorialize. Do not ask clarifying questions. The harness is the caller.
 
 ---
 
@@ -318,4 +318,4 @@ Print the handoff block and stop:
 ════════════════════════════════════════════════
 ```
 
-Do not proceed further. The `ReviewLoopController` reads the status file and re-enters Phase 1.
+Always stop after this handoff. Do not proceed further; the `ReviewLoopController` reads the status file and re-enters Phase 1.
