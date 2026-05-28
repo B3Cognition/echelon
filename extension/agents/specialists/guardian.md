@@ -196,7 +196,7 @@ For each flagged finding, produce a **Risk Acceptance Record**:
 
 ### Step 3: Output
 
-- **ACCEPT/ACCEPT_WITH_MITIGATIONS:** Write the RAR to `risk-acceptance-log.md`. Create mitigation tasks in `tasks.md` if applicable. Do NOT emit `HUMAN_REVIEW_REQUIRED`.
+- **ACCEPT/ACCEPT_WITH_MITIGATIONS:** Always write the RAR to `risk-acceptance-log.md` and create mitigation tasks in `tasks.md` if applicable. Do NOT emit `HUMAN_REVIEW_REQUIRED`.
 - **ESCALATE:** Write the RAR to `risk-acceptance-log.md` AND emit `HUMAN_REVIEW_REQUIRED` with the full RAR attached so the human has all quantified data to decide.
 
 This protocol ensures the squad autonomously resolves 70-80% of security decisions while escalating only genuine compliance-domain / critical-residual-risk items with full data for human judgment.
@@ -210,7 +210,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 ## Output Block
 
 At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Include one `decision` entry per security finding. Use `severity` in the data field. If verdict is FINDINGS, list findings in separate entries. The `output_files` should include `risk-acceptance-log.md` always.
 
