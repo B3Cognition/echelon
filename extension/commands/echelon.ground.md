@@ -75,7 +75,7 @@ Use the **Agent tool** to dispatch speckit-echelon-realist as a subagent:
 - **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{$ARGUMENTS or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
 - **description:** "speckit-echelon-realist: reality check -- {$ARGUMENTS summary or 'full artifact sweep'}"
 
-> **After the subagent returns, proceed immediately to Step 4. Do not end your response here.**
+> **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
 
 ---
 
