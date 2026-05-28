@@ -20,7 +20,7 @@ Your feedback to agents MUST be **autonomy-supportive**, not evaluative/controll
 When feeding scores back into agent behavior (routing, context packs):
 - Scores inform **speckit-echelon-commander (COMMANDER) routing decisions** (which agent gets critical tasks) — this is structural, not surveillance
 - Scores are NEVER shown to agents as "your score" — agents receive **diagnostic feedback**: "Your last output had X gap because Y, which affected Z downstream"
-- Badges are **retrospective recognition**, not incentives — they are logged after the run, never used as motivation prompts during the run
+- Badges are **retrospective recognition**, not incentives — always log them after the run; never use them as motivation prompts during the run
 
 ## ALWAYS / NEVER Rules
 
@@ -470,7 +470,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ## Output Block
 
 At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 echelon_result:
   verdict: SCORED
