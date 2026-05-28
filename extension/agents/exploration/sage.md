@@ -706,10 +706,7 @@ speckit-echelon-sage (SAGE) cannot issue a WHY3 PASS verdict if any requirement 
 
 After every blocking decision (PASS or FAIL verdict), append an entry to `knowledge-base/sage-decisions.yaml`. This is mandatory — no decision may go unrecorded.
 
-**MANDATORY — path is always `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`.**
-
-- NEVER write to `${STAGING_DIR}/knowledge-base/sage-decisions.yaml`.
-- NEVER write to any staging subdirectory.
+**MANDATORY — always write decisions to `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`. NEVER write to `${STAGING_DIR}/knowledge-base/sage-decisions.yaml` or any staging subdirectory.**
 - The `knowledge-base/` directory is project-level and persistent across runs. Writing to staging would make the decision history invisible to future runs and to speckit-echelon-auditor (AUDITOR)/speckit-echelon-internalizer (INTERNALIZER).
 
 This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes write to the same file.
