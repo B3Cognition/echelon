@@ -16,7 +16,7 @@ Then read `workflow/definition.yaml` `re_extraction:` section. Start at phase
 `re-extract-0-preflight`, read each phase node's `spec_file` before dispatching,
 write all state to `.specify/echelon/re/state.json`.
 
-**This command extracts and specifies. It never writes implementation code.**
+**This command always extracts and specifies. It never writes implementation code.**
 
 ---
 
