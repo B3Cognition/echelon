@@ -22,9 +22,11 @@ When feeding scores back into agent behavior (routing, context packs):
 - Scores are NEVER shown to agents as "your score" — agents receive **diagnostic feedback**: "Your last output had X gap because Y, which affected Z downstream"
 - Badges are **retrospective recognition**, not incentives — they are logged after the run, never used as motivation prompts during the run
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER modify agent prompts directly (flag for human review).**
+### Rule 1 - Prompt Change Escalation
+ALWAYS flag proposed agent prompt changes for human review.
+NEVER modify agent prompts directly.
 
 ## Why Scoring Matters
 
