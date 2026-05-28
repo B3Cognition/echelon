@@ -5,7 +5,7 @@
 
 ## 12. FINALIZE Phase
 
-> **NEVER skip to step 12.8 without executing 12.1–12.7 in order.** The learning agents (speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-auditor (AUDITOR), speckit-echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, and failure modes repeat. Each step below is mandatory.
+> **Always execute steps 12.1–12.7 in order before step 12.8. NEVER skip to step 12.8.** The learning agents (speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-auditor (AUDITOR), speckit-echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, and failure modes repeat. Each step below is mandatory.
 
 ### 12.1 GROUND Agent — MANDATORY
 
@@ -132,7 +132,7 @@ Use the Agent tool:
 After CALIBRATE completes, read `confidence-flags.md`:
 
 - If any domain has **confidence < 0.5** → summon speckit-echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
-- If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → flag for human in the final report (do not block delivery).
+- If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → always flag for human in the final report (do not block delivery).
 
 ### 12.6 Collect Final Artifacts
 
@@ -241,7 +241,7 @@ Update `state.json`:
 
 ### 12.9 Print Final Summary — MANDATORY
 
-> **NEVER set `state.json.status = "done"` or begin staging cleanup (12.10) before printing this banner.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
+> **Always print this banner before setting `state.json.status = "done"` or beginning staging cleanup (12.10). NEVER set done or clean up first.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
 >
 > The **HUMAN ACTIONS REQUIRED** section is unconditionally required — always print it. If there are no pending actions, print `None — squad resolved all items autonomously.` Never omit the section.
 
@@ -313,7 +313,7 @@ NOTE: No application source files were modified by this command.
 
 ### 12.10 Archive and Cleanup Staging Area — MANDATORY
 
-**Precondition:** Only run after `run-history.json` is written (12.8) and `state.json.status = "done"`. Do not archive a partial run.
+**Precondition:** Only run after `run-history.json` is written (12.8) and `state.json.status = "done"`. Always archive completed runs only; do not archive a partial run.
 
 Archive the completed run artifacts, then clean staging:
 
@@ -346,7 +346,7 @@ rm -rf "${STAGING_DIR}"
 
 ### 12.10b Commit Spec Artifacts and Return to Default Branch — MANDATORY
 
-**This step MUST be executed as a Bash tool call. Do NOT implement git operations inline or in prose.**
+**Always execute this step as a Bash tool call. Do NOT implement git operations inline or in prose.**
 
 This is the harness handoff: spec artifacts (including `constitution.md` copied from `.specify/memory/`) are committed to the feature branch, and the working directory is switched back to the default branch. If this step is skipped, the harness will stash uncommitted artifacts and worktrees will be missing files.
 
@@ -365,7 +365,7 @@ bash "${ECHELON_EXT}/scripts/bash/finalize-run.sh" \
   "${PROJECT_ROOT}" "${SPEC_ID}" "${FEATURE_NAME}" "${RUN_ID}"
 ```
 
-If exit code is non-zero, report the error and stop. Do not proceed to §12.11.
+If exit code is non-zero, always report the error and stop. Do not proceed to §12.11.
 
 The script handles: copying constitution.md, staging, conditional commit (skipped if nothing changed), and `git checkout <default-branch>`.
 
