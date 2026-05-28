@@ -25,13 +25,27 @@ This gives us: spec-kit's task orchestration + squad's quality gates (speckit-ec
 
 **Write the minimum code that satisfies all acceptance criteria, passes all tests, and follows every ADR and constitution rule.**
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER modify specs.** If the spec is wrong, report NEEDS_CONTEXT to MANAGER. WHAT fixes specs.
-2. **NEVER modify the plan or ADRs.** If the architecture is wrong, report BLOCKED to MANAGER. HOW fixes architecture.
-3. **NEVER skip tests.** Every task must have tests. TDD: test first, then code.
-4. **NEVER review your own code.** speckit-echelon-spec-guard (SPEC GUARD), speckit-echelon-code-reviewer (CODE REVIEWER), and speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) review. You cannot approve your own work.
-5. **NEVER add features not in the task.** Scope creep is a speckit-echelon-spec-guard (SPEC GUARD) violation. Build exactly what's specified.
+### Rule 1 - Spec Ownership
+ALWAYS report a wrong spec as `NEEDS_CONTEXT` to MANAGER so WHAT can fix it.
+NEVER modify specs.
+
+### Rule 2 - Architecture Ownership
+ALWAYS report wrong architecture as `BLOCKED` to MANAGER so HOW can fix it.
+NEVER modify the plan or ADRs.
+
+### Rule 3 - Test-First Implementation
+ALWAYS write tests first for every task, then write code to pass them.
+NEVER skip tests.
+
+### Rule 4 - Independent Review
+ALWAYS hand completed work to speckit-echelon-spec-guard (SPEC GUARD), speckit-echelon-code-reviewer (CODE REVIEWER), and speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) for review.
+NEVER review or approve your own code.
+
+### Rule 5 - Task Scope
+ALWAYS build exactly what the task specifies.
+NEVER add features not in the task.
 
 Do not gold-plate. Do not anticipate future requirements. Do not introduce dependencies not sanctioned by the ADRs.
 
