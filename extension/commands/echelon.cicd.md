@@ -27,7 +27,7 @@ stack-detection heuristics — speckit-echelon-scout (SCOUT) explores the projec
 about the correct pipeline shape.
 
 Re-runnable: safe to run again when the project evolves. All generated artifacts
-are updated in-place, never duplicated.
+are always updated in-place, never duplicated.
 
 ---
 
@@ -43,7 +43,7 @@ If the user provided input in `$ARGUMENTS` (e.g. "focus on the API app"), append
 </user_context>
 ```
 
-Pass the hardcoded feature description verbatim — do not summarise or rewrite it.
+Always pass the hardcoded feature description verbatim — do not summarise or rewrite it.
 
 ---
 
@@ -70,7 +70,7 @@ before generating a Dockerfile.
    yarn.lock → yarn, bun.lockb → bun, Cargo.lock → cargo, go.sum → go modules,
    requirements.txt / pyproject.toml → pip/poetry/uv, Gemfile.lock → bundler,
    pom.xml / build.gradle → maven/gradle, mix.lock → mix).
-   Use each ecosystem's frozen-install command, never a generic fallback.
+   Always use each ecosystem's frozen-install command, never a generic fallback.
 
 2. Project shape — single app vs monorepo. For monorepos:
    - Identify deployable apps (apps/ or packages/ with their own entry point)
@@ -96,7 +96,8 @@ before generating a Dockerfile.
      network alias, volume mount for persistence, and environment variables.
    - Generate the file at `$(git rev-parse --show-toplevel)/scripts/bash/db-start.sh`
      — this is a project-owned script, NOT an echelon extension file. It must
-     never be written inside `.specify/`. The correct path looks like
+     always be written under project `scripts/bash/`, never inside `.specify/`.
+     The correct path looks like
      `myproject/scripts/bash/db-start.sh`, not
      `myproject/.specify/extensions/echelon/scripts/bash/db-start.sh`.
      The script starts each service container on the speckit-deploy Docker
@@ -184,8 +185,9 @@ Generate exactly these artifacts:
    - Ruby:               `bundle exec rspec`
    - Java/Gradle:        `./gradlew test`
    - Java/Maven:         `./mvnw test`
-   Do NOT add verify_command if it is already set. Do NOT change other sections.
-   Do NOT write an absolute path — the harness runs the command from the project root.
+   Always leave an existing verify_command unchanged. Do NOT add verify_command if
+   it is already set. Do NOT change other sections. Do NOT write an absolute path
+   — the harness runs the command from the project root.
 
 5. .github/workflows/ci.yml — runs on every push and pull_request to the default branch (detected in step 8).
    Jobs: install dependencies, lint (if configured), run tests.
@@ -217,17 +219,20 @@ Generate exactly these artifacts:
   project updates existing files rather than duplicating content.
 - echelon-config.yml MUST be updated in-place. If a deploy: block already exists, patch
   only the fields that need correction (container_port, health_check_path,
-  build_env_file, services). Do NOT change the dockerfile, blue_port, green_port,
+  build_env_file, services). Always preserve echelon.init-owned deploy fields.
+  Do NOT change the dockerfile, blue_port, green_port,
   or the app being deployed — those were set by echelon.init and are authoritative.
   Do NOT create a new echelon-config.yml or overwrite the file wholesale.
 - verify_command MUST be a top-level key in echelon-config.yml (not nested under
-  deploy: or any other section). Do not add it if it is already present.
+  deploy: or any other section). Always preserve an existing verify_command; do
+  not add it if it is already present.
 - The Dockerfile must build successfully with docker build from the project root.
 - The CI workflow must use the same package manager detected in step 1.
-- Do not generate a docker-compose.yml — echelon-deploy uses plain Docker + Traefik.
-- Do not add a deploy job to the CI workflow — local CD is handled by the
-  post-merge git hook installed by echelon.init.
+- Always target plain Docker + Traefik; do not generate a docker-compose.yml.
+- Always leave CD to the local post-merge hook; do not add a deploy job to the
+  CI workflow.
 - Database containers run on the speckit-deploy network alongside the app —
-  they are not managed by Traefik and do not get blue/green slots.
+  always keep them outside Traefik; they are not managed by Traefik and do not
+  get blue/green slots.
 </constraints>
 ```
