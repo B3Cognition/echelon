@@ -41,7 +41,7 @@ If speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER))
 
 - Log the alert in `state.json`
 - Print a warning to terminal
-- Continue building (do not stop unless MANAGER decides to re-scope)
+- Always continue building unless MANAGER decides to re-scope; do not stop on the alert alone.
 
 ### 6.3 Update Task Result (speckit-echelon-commander (COMMANDER) — mandatory after every task)
 
@@ -85,4 +85,4 @@ speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` t
 
 - Log each violation as a journal entry with `type: "alert"` and `severity: "HIGH"`
 - Emit warning in build log: `[speckit-echelon-modeler (MODELER) ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
-- Do NOT block task progression — violations are tracked for speckit-echelon-integrator (INTEGRATOR) to resolve at phase boundaries.
+- Always track violations for speckit-echelon-integrator (INTEGRATOR) to resolve at phase boundaries. Do NOT block task progression.
