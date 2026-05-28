@@ -184,7 +184,7 @@ cat ".specify/knowledge-base/pitfalls.yaml" 2>/dev/null || echo "(no pitfalls ye
 - For `strategy = default`: include in the speckit-echelon-implementer (IMPLEMENTER) dispatch prompt under a `## Mandatory Constraints (Lessons)` header
 - For `strategy = codegen`: write the lessons as additional SOAR prohibit preferences before the pipeline starts (see codegen Phase A.7)
 
-Do not skip this step even if lessons seem obvious. Lessons exist because these invariants were violated at least once.
+Always pass lessons through even if they seem obvious. Do not skip this step; lessons exist because these invariants were violated at least once.
 
 ---
 
