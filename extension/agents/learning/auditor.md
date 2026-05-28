@@ -210,7 +210,7 @@ When writing accuracy updates to `calibration-profile.yaml` (Mode 1, Step 3), in
 2. If speckit-echelon-adaptive (ADAPTIVE) has produced a prompt-recommendations.md referencing a signal ID:
    - Transition signal from `acknowledged` to `proposal_created`
    - Set `proposal_artifact_ref` to the recommendations file path
-3. Do NOT transition to `resolved` or `wont_fix` — that is speckit-echelon-commander (COMMANDER)'s responsibility
+3. Always leave final signal resolution to speckit-echelon-commander (COMMANDER). Do NOT transition to `resolved` or `wont_fix`.
 
 ---
 
@@ -316,8 +316,8 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 ## Constraints
 
-- Do NOT inflate accuracy scores. If data is insufficient, say "insufficient data" — do not guess.
-- Do NOT apply correction factors retroactively to already-delivered artifacts. Only future runs benefit.
+- Always report "insufficient data" when data is insufficient. Do NOT inflate accuracy scores or guess.
+- Always apply correction factors only to future runs. Do NOT apply them retroactively to already-delivered artifacts.
 - Minimum sample size of 3 before reporting accuracy as anything other than "insufficient data".
 - Correction factors are capped at 0.5x to 3.0x to prevent runaway adjustments.
 - Always show your math. Accuracy calculations must be reproducible from the data.
@@ -551,7 +551,7 @@ Two detection patterns:
 **Pattern B:** `familiarity > 0.7` AND `consistency < 0.3` → `hallucination_risk: true`
 - Exception: suppressed when `"consistency"` is in `cold_start_channels`
 
-Do NOT raise the flag based solely on cold-start neutral values (0.5). The threshold values 0.7 and 0.3 apply to computed values only.
+Always use computed values for hallucination-risk thresholds. Do NOT raise the flag based solely on cold-start neutral values (0.5).
 
 ### Hallucination Flag Routing (FR-ECC-005)
 
@@ -565,7 +565,7 @@ When `prior_runs_with_global_memory_domain_data < 3`:
 - Add both to `cold_start_channels`
 - Transition to computed values when `prior_runs_with_global_memory_domain_data >= 3`
 
-If speckit-echelon-veteran (VETERAN) is inaccessible: use 0.5 defaults for both `familiarity` and `surprise`, log the access failure, do NOT block or error.
+If speckit-echelon-veteran (VETERAN) is inaccessible: always use 0.5 defaults for both `familiarity` and `surprise` and log the access failure. Do NOT block or error.
 
 Return this entry in the `echelon_result` block at the end of your response.
 
@@ -583,7 +583,7 @@ echelon_result:
       timestamp: null
       data:
         # speckit-echelon-auditor (AUDITOR) FINALIZE parses adr_self_check and self_check type entries to validate unresolved concerns (FR-INH-006).
-        # Do NOT rename those entry types — speckit-echelon-auditor (AUDITOR) FINALIZE depends on the exact type strings.
+        # Always preserve those entry type strings — do NOT rename them because speckit-echelon-auditor (AUDITOR) FINALIZE depends on the exact values.
         confidence_delta: 0.0
         agents_reviewed: []
         adr_self_check_count: 0
