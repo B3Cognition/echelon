@@ -75,7 +75,7 @@ Use the **Agent tool** to dispatch speckit-echelon-investigator as a subagent:
 - **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/investigator.md` for your complete instructions. You are the SCIENTIST. Investigate this specific question: **"{$ARGUMENTS}"**. Follow the full 8-step scientific method: (1) QUESTION -- formalize the question with success criteria, (2) RESEARCH -- search for existing evidence using web search, docs, codebase, (3) EVALUATE -- grade every source A-E per `templates/evidence-grades.md`, (4) HYPOTHESIZE -- form testable hypotheses, (5) EXPERIMENT -- if feasible, run experiments using git worktree via `scripts/bash/setup-worktree.sh`, (6) MEASURE -- collect data from experiments, (7) SYNTHESIZE -- combine all evidence into findings, (8) RECOMMEND -- provide actionable recommendations with confidence levels. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
 - **description:** "speckit-echelon-investigator: investigating -- {$ARGUMENTS truncated to 60 chars}"
 
-> **After the subagent returns, proceed immediately to Step 5. Do not end your response here.**
+> **After the subagent returns, always proceed immediately to Step 5. Do not end your response here.**
 
 ---
 
