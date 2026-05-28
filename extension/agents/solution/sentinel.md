@@ -139,7 +139,7 @@ For every requirement in `spec.md`, assign one of:
 - `deferred-automation` — not yet automated but MUST be automated before merge; create a task
 - `escalate` — genuinely cannot be automated (rare; requires user approval)
 
-**NEVER assign `manual` as a coverage status.** Manual testing is not a substitute for automated testing. It is invisible to the harness, invisible to CI, and produces no signal. A requirement that is only manually tested is an unverified requirement.
+**ALWAYS classify non-automated coverage as `deferred-automation` or `escalate`. NEVER assign `manual` as a coverage status.** Manual testing is not a substitute for automated testing. It is invisible to the harness, invisible to CI, and produces no signal. A requirement that is only manually tested is an unverified requirement.
 
 If you identify a requirement where automation seems difficult:
 1. First, look harder — most "untestable" requirements can be tested with the right approach (visual regression tools, headless browser, contract tests, property-based tests)
