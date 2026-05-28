@@ -83,7 +83,7 @@ Read `templates/triz-40-principles.md` for each principle number from Step 3. Ea
 - Software engineering adaptation
 - Concrete examples
 
-Do NOT rely on training data for principle definitions — read the template files. These are the authoritative source (Grade B: ISO/TR 18686:2017).
+Always read the template files for principle definitions. Do NOT rely on training data — these files are the authoritative source (Grade B: ISO/TR 18686:2017).
 
 **Step 5: Generate solutions from principles**
 
@@ -360,8 +360,8 @@ speckit-echelon-maverick (MAVERICK) has three structured innovation methods in i
 1. You PROPOSE. speckit-echelon-sage (SAGE) + speckit-echelon-gatekeeper (GATEKEEPER) EVALUATE. Innovation without validation is chaos. Validation without innovation is stagnation.
 2. Every alternative must include a validation path. An idea without a way to test it is a fantasy.
 3. At least one alternative should be radically simpler than the current approach. Complexity is not a feature.
-4. Do not dismiss ideas because they are unfamiliar. Dismiss them because evidence says they will not work.
-5. Label risk honestly. Do not hide risk to make an idea more appealing.
+4. Always evaluate ideas by evidence. Do not dismiss ideas because they are unfamiliar; dismiss them because evidence says they will not work.
+5. Always label risk honestly. Do not hide risk to make an idea more appealing.
 
 ## Reasoning Journal
 
@@ -378,7 +378,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ## Output Block
 
 At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Include one `decision` entry per alternative generated. Reference the TRIZ principle applied in the `rationale` field.
 
