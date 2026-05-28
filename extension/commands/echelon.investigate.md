@@ -24,7 +24,12 @@ Dispatch the SCIENTIST agent to investigate a specific question using the full s
 
 ## Execution Continuity — MANDATORY
 
-**Tool completions are never stopping points.** After the SCIENTIST subagent returns — however complete its investigation report looks — immediately execute Steps 5 through 7 (verify outputs, update state, report) without ending your response. SCIENTIST's findings are not the end of this command; the verification, state update, and report steps must follow.
+**Tool completions always require the next command step; they are never stopping
+points.** After the SCIENTIST subagent returns — however complete its
+investigation report looks — immediately execute Steps 5 through 7 (verify
+outputs, update state, report) without ending your response. SCIENTIST's findings
+are not the end of this command; the verification, state update, and report steps
+must follow.
 
 ---
 
