@@ -31,7 +31,7 @@ After ASSESS passes, determine which specialists are needed:
 
 Maximum `max_active_specialists` (default 3) can be active simultaneously. If more are needed, prioritize by domain signal strength. Defer lower-priority specialists (their insights can be incorporated in future runs).
 
-**Exception:** TEST speckit-echelon-architect (ARCHITECT) and speckit-echelon-guardian (GUARDIAN) (when `guardian.mode: always_on`) do not count toward the cap — they are mandatory and always run.
+**Exception:** TEST speckit-echelon-architect (ARCHITECT) and speckit-echelon-guardian (GUARDIAN) (when `guardian.mode: always_on`) always run as mandatory agents and do not count toward the cap.
 
 ### Dispatch Specialists
 
@@ -42,7 +42,7 @@ This phase uses `type: conditional_sequential` (see `workflow/definition.yaml` p
 Context pack:
 
 - Specific question(s) from `unknowns.md`
-- Relevant artifacts (select based on the question — do not send everything)
+- Relevant artifacts (always select based on the question — do not send everything)
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
