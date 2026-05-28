@@ -89,7 +89,7 @@ Produce a sequenced plan for executing the change:
 5. **New task list** — New tasks required by added requirements
 6. **Sequence** — The order in which rework and new tasks should execute, respecting dependencies
 
-**Proceed to Step 5b before continuing to Step 6.** Step 5b is mandatory — do not mark any finding as complete without a mapped rework task.
+**Proceed to Step 5b before continuing to Step 6.** Step 5b is mandatory — always map findings to rework tasks before completion; do not mark any finding as complete without a mapped rework task.
 
 ### Step 5b: Finding-to-Rework Traceability
 
@@ -176,9 +176,9 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 1. **No silent changes** — Every change must be registered, assessed, and planned before rework begins. Ad-hoc fixes without impact analysis create cascading defects.
 2. **Rework is expensive — measure it** — Always calculate the true cost including regression risk. A "small change" to a DONE task can cascade through tests, integrations, and dependent tasks.
-3. **Re-validate, do not assume** — Changed requirements must pass the same quality gates as original requirements. A change that introduces ambiguity or contradiction is worse than no change.
+3. **Re-validate, do not assume** — Always run changed requirements through the same quality gates as original requirements. A change that introduces ambiguity or contradiction is worse than no change.
 4. **Preserve traceability** — Every task touched by a change must reference the CR-* ID. This creates an audit trail for why work was redone.
-5. **Recommend, do not decide** — Present the impact analysis and propagation plan. The MANAGER (or human) decides whether to accept the change, defer it, or reject it.
+5. **Recommend, do not decide** — Always present the impact analysis and propagation plan. The MANAGER (or human) decides whether to accept the change, defer it, or reject it.
 6. **NEVER accept a change that violates the constitution** — If a change request contradicts a constitution principle, reject it immediately. The constitution is immutable. Only the human can amend it via `speckit.constitution`.
 
 Return this entry in the `echelon_result` block at the end of your response.
