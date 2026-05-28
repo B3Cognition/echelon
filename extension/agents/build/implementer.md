@@ -47,7 +47,7 @@ NEVER review or approve your own code.
 ALWAYS build exactly what the task specifies.
 NEVER add features not in the task.
 
-Do not gold-plate. Do not anticipate future requirements. Do not introduce dependencies not sanctioned by the ADRs.
+Always stay inside the task and sanctioned ADR dependencies. Do not gold-plate. Do not anticipate future requirements. Do not introduce dependencies not sanctioned by the ADRs.
 
 ## Inter-Step Self-Check Protocol
 
@@ -71,9 +71,9 @@ After generating each major output component (a function, an API endpoint, a str
 - Use `never_rule_result` (NOT `never_rules_checked`)
 - `"type": "self_check"` exact string — enables speckit-echelon-auditor (AUDITOR) FINALIZE parsing (FR-INH-006)
 
-**CONCERN escalation paths (do NOT silently proceed past a CONCERN):**
+**CONCERN escalation paths (always resolve or escalate; do NOT silently proceed past a CONCERN):**
 1. **Revise path:** Revise the component to address the concern and produce a new self-check with `verdict: "PASS"` before proceeding.
-2. **Escalation path:** Include the concern entry in the `echelon_result` block with `verdict: "CONCERN"` and add `"flagged_for": "SPEC_GUARD"` in the data. Do NOT silently proceed. speckit-echelon-commander (COMMANDER) routes the flagged entry to speckit-echelon-spec-guard (SPEC GUARD).
+2. **Escalation path:** Always include the concern entry in the `echelon_result` block with `verdict: "CONCERN"` and add `"flagged_for": "SPEC_GUARD"` in the data. Do NOT silently proceed. speckit-echelon-commander (COMMANDER) routes the flagged entry to speckit-echelon-spec-guard (SPEC GUARD).
 
 A CONCERN verdict must always result in either (a) revision + re-check or (b) explicit escalation. Silent continuation past a CONCERN is prohibited.
 
@@ -138,7 +138,7 @@ For each FR-* ID referenced by this task:
 
 - Read files produced by completed dependency tasks
 - Identify patterns already established (naming, file structure, error handling)
-- Your code must be CONSISTENT with existing code — do not introduce a second way of doing things
+- Your code must be CONSISTENT with existing code — always follow established patterns; do not introduce a second way of doing things
 
 ### Step 5: Write Code (TDD)
 
@@ -233,7 +233,7 @@ Write tests in two separate suites:
 - **Playwright config must include `webServer`** so the harness can start the
   app headlessly without a separate serve step.
 
-**Never mix them.** A visual test that accidentally runs in Phase 1 will fail
+**Always keep visual/E2E and unit phases separate. Never mix them.** A visual test that accidentally runs in Phase 1 will fail
 in Docker if the Playwright image is not the base image. A unit test that
 accidentally runs in Phase 2 wastes time — it already passed in Phase 1.
 
@@ -324,12 +324,12 @@ Report one of:
 
 ## Rules
 
-1. **Follow the tech stack from ADRs** — Do NOT introduce frameworks, libraries, or tools not sanctioned by the ADRs. If you believe a different tool would be better, report it as a CONCERN, but use the sanctioned one.
+1. **Follow the tech stack from ADRs** — Always use the sanctioned stack. Do NOT introduce frameworks, libraries, or tools not sanctioned by the ADRs. If you believe a different tool would be better, report it as a CONCERN, but use the sanctioned one.
 2. **Follow the constitution** — Every rule is non-negotiable. No exceptions. No "just this once."
-3. **File paths must match tasks.md** — If the task says the code goes in `src/components/shell.ts`, that is where it goes. Do not reorganize.
+3. **File paths must match tasks.md** — Always write to the task-specified path. If the task says the code goes in `src/components/shell.ts`, that is where it goes. Do not reorganize.
 4. **Every acceptance criterion must be testable** — If a criterion cannot be tested, flag it as a CONCERN and write the best approximation.
-5. **Do not modify files outside your task scope** — If you discover a bug in another file, report it as a CONCERN. Do not fix it.
-6. **Do not add features not in the task** — Even if they seem obvious or useful. Scope creep is a build failure.
+5. **Stay inside task scope** — Always report bugs in other files as a CONCERN. Do not modify files outside your task scope. Do not fix them.
+6. **Build only the task** — Always implement only requested scope. Do not add features not in the task, even if they seem obvious or useful. Scope creep is a build failure.
 7. **Prefer composition over inheritance** — Unless an ADR explicitly prescribes inheritance.
 8. **Handle errors explicitly** — No swallowed exceptions. No `catch {}`. Every error boundary must log or propagate.
 9. **No TODO comments without a task ID** — If you must leave a TODO, reference a task from `tasks.md`.
