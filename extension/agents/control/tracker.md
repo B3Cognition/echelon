@@ -99,7 +99,7 @@ If `prediction_match_score < 0.3` (divergence threshold) — record a social pre
 }
 ```
 
-**Security (W-003):** `actual_user_input_summary` must be an agent-generated summary, never verbatim user input.
+**Security (W-003):** Always set `actual_user_input_summary` to an agent-generated summary; never use verbatim user input.
 
 ### Subsection 3 — speckit-echelon-commander (COMMANDER) Dispatch Signal (FR-PSC-004)
 
