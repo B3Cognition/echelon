@@ -45,7 +45,7 @@ write_state "codegen_${RESUME_PHASE}" "building" $RESUME_COMPLETED null null
 echo "[CODEGEN RESUME] state.json restored — phase=codegen_${RESUME_PHASE}"
 ```
 
-4. Jump to `current_phase`. Do NOT re-mine specs on resume — MemPalace already has them.
+4. Always jump to `current_phase`. Do NOT re-mine specs on resume — MemPalace already has them.
 
 ---
 
