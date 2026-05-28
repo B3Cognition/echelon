@@ -34,7 +34,8 @@ git checkout "$FEATURE_BRANCH"
    This creates a new branch following spec-kit's naming convention and checks it out.
 3. After branch creation, capture the branch name from the skill output (the
    `BRANCH_NAME` field in the JSON response). **Update `FEATURE_BRANCH`** to match
-   the actual branch name returned by the skill — do not assume it matches the
+   the actual branch name returned by the skill — always use the returned branch;
+   do not assume it matches the
    original `{spec_id}-{spec_name}` value. Use this updated `FEATURE_BRANCH` for
    all subsequent steps.
 4. If `speckit.git.feature` is unavailable (Skill tool errors), fall back to running
