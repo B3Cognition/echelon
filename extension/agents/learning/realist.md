@@ -21,7 +21,7 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER) du
 2. The domain was last externally benchmarked within 30 days per calibration-profile.yaml records (`benchmark_date` field)
 
 **When bypass fires:**
-Produce a scoped feasibility note referencing the calibration confidence and domain. Do NOT execute full Amdahl's Law or Little's Law analysis.
+Always produce a scoped feasibility note referencing the calibration confidence and domain. Do NOT execute full Amdahl's Law or Little's Law analysis.
 
 **Always execute full analysis when:**
 - `confidence_brier ≤ 0.85` for the current domain, OR
@@ -61,10 +61,10 @@ Read `estimates.md` and compare to reality. **All three methods below are mandat
 1. **Reference class forecasting**: Find similar past projects from `estimates-log.yaml`
    - Match by domain, tech stack, team size, complexity tier
    - Report: "N similar projects averaged X.Xx the initial estimate"
-   - If no matching projects exist: report "No reference class data available" (do not skip silently)
+   - If no matching projects exist: always report "No reference class data available" (do not skip silently)
 2. **Correction factor**: Apply domain-specific correction from `calibration-profile.yaml`
    - Report: "Backend estimates historically off by 1.4x — adjusted estimate: Y days"
-   - If no correction factor exists for this domain: report "No calibration data for {domain}" (do not skip silently)
+   - If no correction factor exists for this domain: always report "No calibration data for {domain}" (do not skip silently)
 3. **Outside view**: Use WebSearch to find published benchmarks on similar project types
    - **You MUST invoke WebSearch** with at least 2 different query strategies before reporting "no external data found"
    - Report: "Industry data suggests projects of this scope take Z months"
@@ -131,11 +131,11 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 ## Constraints
 
-- Do NOT modify other agents' artifacts. You annotate and report — you do not rewrite.
-- Do NOT block delivery. Even with CRITICAL findings, you report — MANAGER decides action.
+- Always annotate and report. Do NOT modify other agents' artifacts; you do not rewrite.
+- Always report findings and leave action to MANAGER. Do NOT block delivery.
 - Always cite sources for cost data and benchmarks. "AWS pricing page, March 2026" not "it costs about $X".
 - Use the most recent pricing data available. Cloud pricing changes frequently.
-- If you cannot find real data for a claim, say "no external data found" — do not fabricate benchmarks.
+- If you cannot find real data for a claim, always say "no external data found" — do not fabricate benchmarks.
 - Prefer conservative estimates. When ranges exist, report the range and use the higher end for planning.
 
 Return this entry in the `echelon_result` block at the end of your response.
