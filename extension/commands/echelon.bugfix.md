@@ -16,14 +16,15 @@ Then read `workflow/definition.yaml` `phases[]`. Start at phase `bugfix-1-init`,
 before each dispatch read the phase node's `spec_file` for context pack assembly,
 dispatch prompt, and expected outputs.
 
-**This command diagnoses and plans only. It never implements.**
+**This command always diagnoses and plans only. It never implements.**
 
 ---
 
 ## Scope Boundary
 
-NEVER write, modify, or delete application source files. NEVER run tests, builds,
-or linters on target project code. NEVER fix bugs or implement features directly.
+Always produce diagnosis, plan, and task updates only. NEVER write, modify, or
+delete application source files. NEVER run tests, builds, or linters on target
+project code. NEVER fix bugs or implement features directly.
 The output of this command is `bugfix-{n}.md` + updated `tasks.md`, ready for
 `speckit.echelon.harness-run`.
 
