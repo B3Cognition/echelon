@@ -44,11 +44,11 @@ speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `specs/
 | `risk-matrix.md` | Per-task risk scoring |
 | `dependencies.md` | Task dependency map |
 
-**NEVER** substitute or omit:
+**Always** produce the exact required filenames. **NEVER** substitute or omit:
 
-- NEVER write `dependency-graph.md` instead of `dependencies.md`.
-- NEVER omit `risk-matrix.md` (some risk content may also live in tasks.md, but the standalone file is required).
-- NEVER rename to `task-list.md`, `plan.md`, or any other variant.
+- Always write `dependencies.md`; NEVER write `dependency-graph.md` instead.
+- Always include standalone `risk-matrix.md`; NEVER omit it (some risk content may also live in tasks.md, but the standalone file is required).
+- Always keep the specified filenames; NEVER rename to `task-list.md`, `plan.md`, or any other variant.
 
 **Verification (run before transition to phase3-consensus):**
 
