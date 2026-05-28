@@ -45,7 +45,7 @@ Use the Agent tool to dispatch a subagent with:
   {"type": "degraded_input", "agent": "speckit-echelon-sentinel (SENTINEL)", "missing_artifact": "plan.md", "fallback": "architecture.md", "phase": "phase3-sentinel"}
   ```
 
-  Do not block. Proceed with reduced confidence. A future hardening will route back to phase3-how when this happens; for now speckit-echelon-sentinel (SENTINEL) falls back gracefully.
+  Always proceed with reduced confidence. Do not block. A future hardening will route back to phase3-how when this happens; for now speckit-echelon-sentinel (SENTINEL) falls back gracefully.
 
 ### Expected Outputs — ALL THREE REQUIRED
 
