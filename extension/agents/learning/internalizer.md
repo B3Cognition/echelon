@@ -81,7 +81,7 @@ This protocol applies to `internalization-log.yaml`, `agent-scores.yaml`, and `e
 
 These rules apply to EVERY metric in Steps 1-7. Violations are bugs.
 
-1. **Null vs zero:** `null` means "not computed" (missing inputs, insufficient data, formula error). `0.0` means "computed, scored zero." NEVER substitute zero for null.
+1. **Null vs zero:** `null` means "not computed" (missing inputs, insufficient data, formula error). `0.0` means "computed, scored zero." Always preserve `null` when a metric was not computed. NEVER substitute zero for null.
 
 2. **Value range:** All metrics produce values in [0.0, 1.0].
    - If result is outside by < 0.01: clamp to boundary, record warning in computation_health
