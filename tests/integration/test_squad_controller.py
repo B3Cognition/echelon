@@ -101,6 +101,26 @@ class TestConsensusCannotBeSkipped:
         assert ev.evaluate("always", {}) is not None
 
 
+class TestSolutionPhaseOrdering:
+    def test_specialists_feed_architect_before_sentinel(self):
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+
+        specialists_node = graph.get("phase3-specialists")
+        specialist_targets = [t["to"] for t in specialists_node.transitions]
+        assert specialist_targets == ["phase3-how"]
+
+        how_node = graph.get("phase3-how")
+        how_targets = [t["to"] for t in how_node.transitions]
+        assert how_targets == ["phase3-sentinel"]
+
+    def test_sentinel_runs_before_plan_so_tests_become_tasks(self):
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+
+        sentinel_node = graph.get("phase3-sentinel")
+        sentinel_targets = [t["to"] for t in sentinel_node.transitions]
+        assert sentinel_targets == ["phase3-plan"]
+
+
 class TestSquadControllerBasics:
     def test_starts_at_entry_phase(self, tmp_path):
         ctrl, store = _controller(tmp_path)

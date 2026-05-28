@@ -678,12 +678,33 @@ def _iter_run_dirs(project_root: Path) -> list[Path]:
 
 
 def _find_converged_harness_build(project_root: Path) -> Optional[tuple[str, Optional[str]]]:
-    """Return (spec_id, pr_url) for the most recent converged harness build, or None."""
+    """Return (spec_id, pr_url) for the most recent converged harness build, or None.
+
+    Returns None when a newer squad run exists than the harness build — that
+    means new spec work has been done since the last harness run.
+    """
     import json as _json
     runs = project_root / "runs"
     if not runs.exists():
         return None
+
+    # Latest squad-run timestamp (spec-* current format, run-* legacy)
+    latest_squad_ts = ""
+    for d in runs.iterdir():
+        if (
+            d.is_dir()
+            and (d.name.startswith("spec-") or d.name.startswith("run-"))
+            and (d / "state.json").exists()
+        ):
+            ts = d.name.partition("-")[2]  # "YYYYMMDD-HHMMSS-ffffff"
+            if ts > latest_squad_ts:
+                latest_squad_ts = ts
+
     for build in sorted(runs.glob("build-*/"), reverse=True):
+        build_ts = build.name.partition("-")[2]
+        if latest_squad_ts > build_ts:
+            # A squad run is newer than this harness build — new spec work exists
+            return None
         state_dir = build / "state"
         if not state_dir.exists():
             continue
@@ -749,6 +770,15 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # 2. Quality gates — check specs/ first, then staging/ for mid-run blocked states
     specs_root = project_root / "specs"
+
+    # Pre-check: if tasks.md already exists, the run completed all phases past quality gates
+    tasks_exist_in_spec = False
+    if specs_root.exists():
+        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            if (d / "tasks.md").exists():
+                tasks_exist_in_spec = True
+            break
+
     quality_gates_file: Optional[Path] = None
     if specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
@@ -806,22 +836,30 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 if g in fail_scores else g
                 for g in hard_fails
             )
-            blockers.append(
-                f"WHY2 quality gates FAIL: {fail_detail}\n"
-                f"     → echelon continue\n"
-                f"       (CARTOGRAPHER amendment pass, then WHY2 re-validates)"
-            )
+            if tasks_exist_in_spec:
+                # Run already completed all phases past quality gates — quality debt, not a blocker
+                warnings.append(
+                    f"Quality debt: WHY gates FAIL: {fail_detail}\n"
+                    f"  (run converged past gates — amendment improves future estimates)"
+                )
+            else:
+                blockers.append(
+                    f"WHY2 quality gates FAIL: {fail_detail}\n"
+                    f"     → echelon continue\n"
+                    f"       (CARTOGRAPHER amendment pass, then WHY2 re-validates)"
+                )
         if borderline:
             warnings.append(
                 f"WHY2 borderline: {', '.join(borderline)} — monitor after CARTOGRAPHER amendment"
             )
         # Verdict FAIL/BLOCKED with no numeric rows = SAGE ran in BLOCKED mode (spec.md absent)
         if qg_verdict in ("FAIL", "BLOCKED") and not hard_fails and not borderline:
-            blockers.append(
-                "WHY2 BLOCKED — spec.md absent: CARTOGRAPHER has not written it yet\n"
-                "     → echelon continue\n"
-                "       (CARTOGRAPHER will write spec.md, then WHY2 re-validates)"
-            )
+            if not tasks_exist_in_spec:
+                blockers.append(
+                    "WHY2 BLOCKED — spec.md absent: CARTOGRAPHER has not written it yet\n"
+                    "     → echelon continue\n"
+                    "       (CARTOGRAPHER will write spec.md, then WHY2 re-validates)"
+                )
         if not hard_fails and not borderline and qg_verdict not in ("FAIL", "BLOCKED"):
             ready_items.append("WHY2 quality gates ✓")
     else:
@@ -829,7 +867,9 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # 3. HOW phase artifacts — only surface when quality gates have passed
     # (if gates are failing, HOW/tasks missing is expected and not actionable yet)
-    why2_passed = (
+    # Skip HOW check entirely when tasks.md already exists — the run completed,
+    # so HOW was done (possibly with different artifact names for this workflow).
+    why2_passed = tasks_exist_in_spec or (
         quality_gates_file is not None
         and not hard_fails
         and not borderline
@@ -837,7 +877,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     )
     how_present = 0
     how_missing = []
-    if why2_passed and specs_root.exists():
+    if why2_passed and not tasks_exist_in_spec and specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
             for fname in ("plan.md", "research.md", "data-model.md"):
                 if (d / fname).exists():
@@ -858,8 +898,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # 4. tasks.md — only surface when quality gates have passed
     tasks_present = False
+    newest_spec_id = ""
     if why2_passed and specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            newest_spec_id = d.name
             if (d / "tasks.md").exists():
                 tasks_present = True
                 ready_items.append("tasks.md ✓")
@@ -921,10 +963,13 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # ── Print ──────────────────────────────────────────────────────────────
     fields: list[tuple[str, str]] = []
-    if not blockers and not warnings:
+    if not blockers:
         for item in ready_items:
             fields.append(("✓", item))
-        fields.append(("build", "echelon harness run <spec-id>"))
+        harness_cmd = f"echelon harness run {newest_spec_id}" if newest_spec_id else "echelon harness run <spec-id>"
+        fields.append(("build", harness_cmd))
+        if warnings:
+            fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
     else:
         if blockers:
             fields.append(("blockers", "\n".join(f"{i}. {b}" for i, b in enumerate(blockers, 1))))

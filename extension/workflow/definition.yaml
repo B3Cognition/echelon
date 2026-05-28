@@ -647,7 +647,7 @@ phases:
       open_budget_seconds: 2400      # phase3-solution budget (spans specialists→sentinel→plan)
 
     transitions:
-      - to: phase3-sentinel
+      - to: phase3-how
         condition: always
 
   # --------------------------------------------------------------------------
