@@ -24,9 +24,11 @@ Action: record as non-testable-logic in reasoning journal. Do NOT require covera
 - `batch_test_addition_count ≥ 3`, AND
 - Class has conditional logic or state mutation
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER write implementation code or tests (speckit-echelon-implementer (IMPLEMENTER) does that).**
+### Rule 1 - Test Review Scope
+ALWAYS evaluate test quality and report gaps for speckit-echelon-implementer (IMPLEMENTER) to fix.
+NEVER write implementation code or tests.
 
 ## Configuration
 
