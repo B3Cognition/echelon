@@ -35,10 +35,10 @@ Use the Agent tool to dispatch a subagent with:
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
   If this is a first WHAT pass with no existing spec_dir, call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights.
-  If this is a resumed/amendment pass and an existing spec_dir is present in state or prompt context, skip `speckit.specify` and enhance that existing spec in place. Do not create or switch to a new numbered branch.
+  If this is a resumed/amendment pass and an existing spec_dir is present in state or prompt context, skip `speckit.specify` and enhance that existing spec in place. Always keep the existing branch and spec directory; do not create or switch to a new numbered branch.
   Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
 
-  Do NOT return until ALL of the following are true:
+  Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `specs/{spec_id}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
   2. `specs/{spec_id}/00-overview.md` exists (your 1–2 page human-readable summary).
   3. All staging artifacts have been moved from `${STAGING_DIR}/` to `specs/{spec_id}/`.
@@ -54,10 +54,10 @@ If speckit-echelon-cartographer (CARTOGRAPHER) returns `speckit-echelon-cartogra
 
 1. speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly (via Skill tool) with the same feature description speckit-echelon-cartographer (CARTOGRAPHER) would have used (derive from DISCOVER staging artifacts)
 2. After the Skill returns (success or error):
-   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with the spec directory already created (add `spec_dir` to the context pack prompt). Continue to 4.3 immediately — **do not stop**.
+   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with the spec directory already created (add `spec_dir` to the context pack prompt). Always continue to 4.3 immediately — **do not stop**.
    - **Error:** Set `state.json.status = "blocked"`, set `blocked_reason = "speckit.specify unavailable"`, print the BLOCKED banner, stop.
 
-This is the only case where speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly. Do NOT use this path pre-emptively.
+This is the only case where speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly. Always reserve this path for the explicit BLOCKED fallback. Do NOT use it pre-emptively.
 
 ### 4.3 Post-speckit-echelon-cartographer (CARTOGRAPHER)
 
@@ -138,7 +138,7 @@ bash "${SCRIPTS}/journal-append.sh" --entry "$ENTRY" --journal-path "$JOURNAL"
 echo "[CONSTITUTION] Placeholder fix applied at §4.3 catch — constitution.md was not created via speckit.constitution"
 ```
 
-Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+Always resolve constitution placeholders before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
 
 **Enhancement-only re-dispatch prompt:**
 
@@ -149,9 +149,9 @@ spec_dir: specs/{spec_id}
 </context>
 
 <instructions>
-You are CARTOGRAPHER in enhancement-only mode. The spec directory already exists at `{spec_dir}`. Skip Step 1 (do NOT call speckit.specify again). Go directly to Step 2: enhance spec.md with Given/When/Then acceptance criteria and cross-references, then produce 00-overview.md. Read cartographer.md §"Step 2: Enhance Spec with Squad Intelligence" for the full protocol.
+You are CARTOGRAPHER in enhancement-only mode. The spec directory already exists at `{spec_dir}`. Always go directly to Step 2: enhance spec.md with Given/When/Then acceptance criteria and cross-references, then produce 00-overview.md. Skip Step 1 (do NOT call speckit.specify again). Read cartographer.md §"Step 2: Enhance Spec with Squad Intelligence" for the full protocol.
 
-Do NOT return until:
+Always complete these outputs before returning. Do NOT return until:
 1. `{spec_dir}/spec.md` contains Given/When/Then acceptance criteria for every user story.
 2. `{spec_dir}/00-overview.md` exists.
 </instructions>
