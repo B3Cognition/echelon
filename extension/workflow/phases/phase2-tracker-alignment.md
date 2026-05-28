@@ -31,7 +31,7 @@ If speckit-echelon-tracker (TRACKER) reports MISALIGNED:
 
 ### Output Filename — MANDATORY
 
-The output file MUST be named exactly `intent-alignment-check.md`. **NEVER** produce `alignment-report.md`, `alignment.md`, `tracker-alignment.md`, or any other variant — downstream phases (and any future automated checks) look up this file by exact name.
+Always name the output file exactly `intent-alignment-check.md`. **NEVER** produce `alignment-report.md`, `alignment.md`, `tracker-alignment.md`, or any other variant — downstream phases (and any future automated checks) look up this file by exact name.
 
 Verification before transitioning to phase3-specialists:
 
