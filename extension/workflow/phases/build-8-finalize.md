@@ -50,7 +50,7 @@ speckit-echelon-engineering-manager (ENGINEERING MANAGER) must confirm:
 3. The build is ready for full speckit-echelon-verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
 
-If any of these fail, do not proceed to BUILD_DONE. Route to rework first.
+If any of these fail, always route to rework first. Do not proceed to BUILD_DONE.
 
 ### 8.1b.1 verify.sh Smoke Test Requirement (MANDATORY)
 
@@ -158,7 +158,7 @@ fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
 If a security vulnerability or non-permissive license is found:
 
 - Print the finding clearly
-- Exit 1 — do not suppress or work around the failure
+- Always exit 1 — do not suppress or work around the failure
 - The squad must address the finding (update dependency, get license exception
   documented in `specs/{NNN}-{feature}/license-exceptions.md`) before the
   build can proceed
@@ -484,11 +484,11 @@ Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) i
    **Category:** {category}
    ```
 
-5. Append each candidate as a `[PROPOSED: ...]` block to `.specify/memory/constitution.md` (the existing file). Append after the last existing section — never edit existing content.
+5. Append each candidate as a `[PROPOSED: ...]` block to `.specify/memory/constitution.md` (the existing file). Always append after the last existing section — never edit existing content.
 6. Set `state.json.constitution_amendments_pending` to the count of candidates appended.
 7. If `constitution_amendments_pending > 0`: add to the final run summary: `{N} constitution amendment candidate(s) pending human review — see {spec_dir}/constitution-amendment-candidates.md. Run speckit.constitution to approve or reject.`
 
-**Important:** speckit-echelon-commander (COMMANDER) never auto-amends constitution content. Only humans can promote `[PROPOSED]` blocks to permanent principles via `speckit.constitution`. Human review is required.
+**Important:** Always leave constitution promotion to humans. speckit-echelon-commander (COMMANDER) never auto-amends constitution content. Only humans can promote `[PROPOSED]` blocks to permanent principles via `speckit.constitution`. Human review is required.
 
 ---
 
