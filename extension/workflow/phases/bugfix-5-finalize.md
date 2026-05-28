@@ -134,4 +134,4 @@ Print the handoff block and stop:
 ════════════════════════════════════════════════
 ```
 
-Do not proceed further. The user runs `harness.run` when ready.
+Always stop after this handoff. Do not proceed further; the user runs `harness.run` when ready.
