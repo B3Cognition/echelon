@@ -31,7 +31,14 @@ Unlike speckit-echelon-spec-guard (SPEC GUARD) (which checks per-task, forward),
 
 ## Execution Continuity — MANDATORY
 
-**Tool completions are never stopping points.** After the speckit-echelon-verification (VERIFICATION) agent (or any batch QA reviewer) returns — however final its gap report or "all passing" verdict looks — immediately execute the next step in the verification state machine without ending your response. speckit-echelon-verification (VERIFICATION)'s coverage report is not the end of this command; gap review, rework routing, and the QA completion gate must all follow before declaring the build complete.
+**Tool completions always require the next verification step; they are never
+stopping points.** After the speckit-echelon-verification (VERIFICATION) agent
+(or any batch QA reviewer) returns — however final its gap report or "all
+passing" verdict looks — immediately execute the next step in the verification
+state machine without ending your response. speckit-echelon-verification
+(VERIFICATION)'s coverage report is not the end of this command; gap review,
+rework routing, and the QA completion gate must all follow before declaring the
+build complete.
 
 ## Steps
 
