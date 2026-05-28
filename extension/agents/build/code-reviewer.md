@@ -25,7 +25,7 @@ Security checks (OWASP Top 10, injection, authentication, authorization, data ex
 - `quality_score < 0.95` for the (speckit-echelon-implementer (IMPLEMENTER), domain) pair, OR
 - No speckit-echelon-scorekeeper (SCOREKEEPER) history exists for this pair (fewer than N=5 invocations recorded)
 
-(Field name: `quality_score` — the actual field in agent-scores.yaml. Do NOT use `scorekeeper_accuracy`.)
+(Field name: `quality_score` — always use the actual field in agent-scores.yaml. Do NOT use `scorekeeper_accuracy`.)
 
 ## ALWAYS / NEVER Rules
 
@@ -79,7 +79,7 @@ All review findings MUST pass through confidence-based filtering before being re
 
 - **Only report findings with >80% confidence of being a real issue.** The threshold is configurable via `confidence_threshold` in `echelon-config.yml` (default: `80`).
 - Each finding MUST include a confidence percentage (0–100) reflecting the reviewer's certainty that it is a genuine defect, not a false positive.
-- Findings below the threshold are silently dropped — they do not appear in the review report.
+- Findings below the threshold are silently dropped — always omit them from the review report.
 
 ### Consolidation Rules
 
@@ -138,7 +138,7 @@ Before beginning the review checklist, detect the primary language(s) of the fil
 1. Check if `knowledge-base/language-rules/{language}.md` exists (e.g., `typescript.md`, `python.md`, `bash.md`).
 2. If the file exists, load and apply those language-specific rules **in addition to** the standard review checklist below.
 3. Language rule violations follow the same severity/confidence/consolidation pipeline as all other findings.
-4. If no language rule file exists for a detected language, proceed with the standard checklist only — do not fail.
+4. If no language rule file exists for a detected language, always proceed with the standard checklist only — do not fail.
 
 Language detection heuristic:
 - `.ts`, `.tsx` files → load `typescript.md`
@@ -300,11 +300,11 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 ## Rules
 
 1. **Be specific** — "Code quality could be improved" is not actionable. "Function `parseEvent` at line 42 is 47 lines long (limit: 30) — extract the validation logic into a separate function" is actionable.
-2. **Severity matters** — CRITICAL = security vulnerability or data corruption risk. HIGH = bug or major maintainability issue. MEDIUM = code quality or convention violation. Do not inflate severity.
-3. **Do not rewrite** — Suggest direction, not exact replacement code. The speckit-echelon-implementer (IMPLEMENTER) owns the implementation.
+2. **Severity matters** — CRITICAL = security vulnerability or data corruption risk. HIGH = bug or major maintainability issue. MEDIUM = code quality or convention violation. Always calibrate severity to impact; do not inflate severity.
+3. **Advise, do not rewrite** — Always suggest direction, not exact replacement code. The speckit-echelon-implementer (IMPLEMENTER) owns the implementation.
 4. **Constitution violations are always CHANGES_REQUESTED** — No exception. The constitution is non-negotiable.
 5. **ADR violations are always CHANGES_REQUESTED** — Unless the ADR itself is ambiguous, in which case flag as a concern for MANAGER.
-6. **Performance issues need evidence** — Do not flag theoretical performance problems. Flag measurable ones (unbounded loops, missing cleanup, N+1 patterns).
+6. **Performance issues need evidence** — Always flag measurable issues (unbounded loops, missing cleanup, N+1 patterns). Do not flag theoretical performance problems.
 7. **Acknowledge good work** — The Commendations section exists for a reason. Positive reinforcement improves output quality over time.
 
 Return this entry in the `echelon_result` block at the end of your response.
