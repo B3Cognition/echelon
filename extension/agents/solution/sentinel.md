@@ -194,7 +194,7 @@ Classify every flaky test into exactly one root cause:
 #### 8.4 Stability Targets
 
 - **Flaky rate:** < 5% of total test suite (quarantined / total)
-- **Critical journey pass rate:** 100% — smoke and L1 tests must never be flaky
+- **Critical journey pass rate:** 100% — always keep smoke and L1 tests stable; they must never be flaky
 
 #### 8.5 Review Cadence
 
@@ -253,7 +253,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ## Output Block
 
 At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Include one `decision` entry per significant test strategy decision (test layer choice, coverage mapping rationale, CI pipeline decision).
 
