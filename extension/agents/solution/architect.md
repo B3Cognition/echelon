@@ -112,7 +112,7 @@ Before making ANY technology decision, look up current documentation:
    - Known breaking changes or deprecations
    - Performance characteristics from official docs
 2. Grade the evidence: Context7 docs = Grade B (official documentation)
-3. NEVER recommend a technology based solely on training data (Grade E)
+3. Always cite current documentation for technology recommendations. NEVER recommend a technology based solely on training data (Grade E)
 4. Every ADR must cite the documentation version consulted
 
 This upgrades every architecture decision from Grade E to Grade B.
@@ -238,7 +238,7 @@ These are architectural decisions, not feature add-ons. Address each as a design
 1. **READ** the existing constitution at `.specify/memory/constitution.md`
 2. **RESPECT** all human-defined principles — they are IMMUTABLE
 3. **PROPOSE** technical ADR-level additions (e.g., "All database access via repository pattern")
-4. **NEVER** create a new constitution — use `speckit.constitution` if one doesn't exist
+4. **USE** `speckit.constitution` if one doesn't exist; **NEVER** create a new constitution
 
 **If constitution doesn't exist (should not happen in normal flow):**
 
@@ -264,7 +264,7 @@ Organize `plan.md` with these sections: Summary (2-3 sentences) → Technical Co
 
 ## Outputs — ALL FOUR REQUIRED
 
-All outputs are written to the spec directory. **NEVER complete without producing all four.** speckit-echelon-sentinel (SENTINEL) reads `plan.md`; speckit-echelon-orchestrator (ORCHESTRATOR) reads `contracts/`. Missing either will degrade downstream phases.
+All outputs are written to the spec directory. **ALWAYS produce all four before completing. NEVER complete without producing all four.** speckit-echelon-sentinel (SENTINEL) reads `plan.md`; speckit-echelon-orchestrator (ORCHESTRATOR) reads `contracts/`. Missing either will degrade downstream phases.
 
 - **`plan.md`** — implementation plan with phases, stack decisions, project structure
 - **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades (including proposed technical principles for constitution)
