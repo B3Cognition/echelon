@@ -391,7 +391,7 @@ Acceptance criteria must be:
 
 Group requirements by domain area (from boundaries.md). For each requirement:
 
-- Assign a unique ID: `FR-<area>-<number>` (e.g., `FR-AUTH-001`)
+- Assign a unique numeric ID: `FR-<number>` (e.g., `FR-001`). Do not include area names, suffixes, or letter variants in the ID.
 - Write a clear, unambiguous statement
 - Link to the user story it supports
 - Specify input, processing, and output (without implementation details)
@@ -408,7 +408,7 @@ Extract from boundaries, assumptions, and domain standards:
 - **Usability:** accessibility requirements, key user flows
 - **Compliance:** regulatory requirements identified in domain research
 
-Each NFR gets an ID: `NFR-<category>-<number>` (e.g., `NFR-PERF-001`).
+Each NFR gets a unique numeric ID: `NFR-<number>` (e.g., `NFR-001`). Put the category in the requirement text or metadata, not in the ID.
 
 ### Step 6: Identify Key Entities
 
@@ -459,9 +459,9 @@ The primary output. Must follow this structure exactly:
 
 #### Acceptance Criteria
 
-- **AC-1.1:** Given <precondition>, when <action>, then <outcome>.
-- **AC-1.2:** Given <precondition>, when <action>, then <outcome>.
-- **AC-1.3:** Given <error condition>, when <action>, then <error handling>.
+- **AC-001**: Given <precondition>, when <action>, then <outcome>.
+- **AC-002**: Given <precondition>, when <action>, then <outcome>.
+- **AC-003**: Given <error condition>, when <action>, then <error handling>.
 
 ### Scenario 2: <Descriptive Name>
 ...
@@ -470,20 +470,24 @@ The primary output. Must follow this structure exactly:
 
 ### <Domain Area> (from boundaries.md)
 
-| ID | Requirement | User Story | Priority |
-|----|-------------|------------|----------|
-| FR-<AREA>-001 | <requirement statement> | Scenario N | MVP |
-| FR-<AREA>-002 | <requirement statement> | Scenario M | Should-Have |
+- **FR-001**: <requirement statement>
+  - **User Story:** Scenario N
+  - **Priority:** MVP
+- **FR-002**: <requirement statement>
+  - **User Story:** Scenario M
+  - **Priority:** Should-Have
 
 ### <Domain Area>
 ...
 
 ## Non-Functional Requirements
 
-| ID | Category | Requirement | Measurable Target |
-|----|----------|-------------|-------------------|
-| NFR-PERF-001 | Performance | <requirement> | <target> |
-| NFR-SEC-001 | Security | <requirement> | <target> |
+- **NFR-001**: <performance requirement>
+  - **Category:** Performance
+  - **Measurable Target:** <target>
+- **NFR-002**: <security requirement>
+  - **Category:** Security
+  - **Measurable Target:** <target>
 
 ## Key Entities
 
@@ -525,7 +529,7 @@ The primary output. Must follow this structure exactly:
 
 | ID | Assumption | Status | Requirements Affected |
 |----|-----------|--------|----------------------|
-| A-001 | <from assumptions.md> | <validated/unvalidated> | FR-X-001, FR-Y-002 |
+| A-001 | <from assumptions.md> | <validated/unvalidated> | FR-001, FR-002 |
 
 ## Glossary Additions
 <!-- Any new terms introduced by WHAT that were not in DISCOVER's glossary -->
