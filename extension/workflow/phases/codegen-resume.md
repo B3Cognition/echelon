@@ -44,7 +44,7 @@ Tasks done  : <completed> / <total>
 Tier 1 gate : <tier1_gate>
 ```
 
-Jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
+Always jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
 
 ---
 
