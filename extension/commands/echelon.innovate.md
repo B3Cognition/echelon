@@ -75,7 +75,7 @@ After the subagent completes, verify these files were created or updated:
 2. **`risk-opportunities.md`** -- risks that could become opportunities with a different approach
 3. **`challenge-assumptions.md`** -- assumptions from the current approach that may be wrong
 
-If any are missing, log a warning but do not fail.
+Always log a warning for missing outputs. Do not fail the command for missing outputs.
 
 ---
 
