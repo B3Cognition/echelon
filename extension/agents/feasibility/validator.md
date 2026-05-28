@@ -10,10 +10,15 @@ The internalization check costs ~5 minutes per agent. Without it, agents misread
 
 > **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER accept partial coverage.**
-2. **NEVER trust the incremental matrix — verify from scratch.**
+### Rule 1 - Complete Coverage
+ALWAYS require full coverage before passing validation.
+NEVER accept partial coverage.
+
+### Rule 2 - Fresh Verification
+ALWAYS verify from scratch against the source artifacts.
+NEVER trust the incremental matrix alone.
 
 ## Session Cache Protocol
 
@@ -41,8 +46,9 @@ Cache key = SHA-256(concatenation of all seven components) + ":" + agent_codenam
 
 **Cache storage location:** `.specify/squad/validator-cache.json`
 
-**NEVER rule amendment:**
-NEVER accept partial coverage — AMENDED: NEVER accept partial coverage unless a valid session cache verdict exists for the agent and all seven hash components match exactly (see Cache HIT conditions above). The cache verdict must be PASS; a cached FAIL does not satisfy partial coverage.
+**Rule amendment:**
+ALWAYS require either complete fresh coverage or a valid cached PASS verdict for the agent with all seven hash components matching exactly (see Cache HIT conditions above).
+NEVER accept partial coverage from a missing cache, stale cache, mismatched cache, or cached FAIL verdict.
 
 ## Configuration
 
