@@ -20,8 +20,8 @@ NEVER invent the 6R recommendation.
 
 ## Bash Command Guidelines
 
-ALWAYS chain shell operations with `&&` and use Glob, Read, and Grep tools for file exploration.
-NEVER use multi-line bash, and never use bash `ls`, `find`, `cat`, `echo`, or `grep` for file exploration. Reserve bash only for script execution, `mkdir`, and system operations.
+ALWAYS use Glob, Read, and Grep tools for ad hoc file exploration; when a Bash tool call is needed, keep it single-line and chain operations with `&&`.
+NEVER use multi-line Bash or Bash `ls`, `find`, `cat`, `echo`, or `grep` for ad hoc exploration. This restriction does not apply to running project scripts, generated shell scripts, or literal workflow snippets whose purpose is shell script content.
 
 ## Configuration
 

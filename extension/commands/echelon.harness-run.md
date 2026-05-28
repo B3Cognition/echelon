@@ -109,12 +109,16 @@ After creating the worktree, sync any spec files present in CWD but missing from
 
 ```bash
 SPEC_DIR="specs/{spec_id}-{spec_name}"
-for f in $(ls "${SPEC_DIR}/" 2>/dev/null); do
-  if [ ! -f "{worktree_path}/${SPEC_DIR}/${f}" ]; then
-    mkdir -p "{worktree_path}/${SPEC_DIR}"
-    cp "${SPEC_DIR}/${f}" "{worktree_path}/${SPEC_DIR}/${f}"
-  fi
-done
+if [ -d "${SPEC_DIR}" ]; then
+  mkdir -p "{worktree_path}/${SPEC_DIR}"
+  for f in "${SPEC_DIR}"/*; do
+    [ -f "${f}" ] || continue
+    base="${f##*/}"
+    if [ ! -f "{worktree_path}/${SPEC_DIR}/${base}" ]; then
+      cp "${f}" "{worktree_path}/${SPEC_DIR}/${base}"
+    fi
+  done
+fi
 ```
 
 This ensures the worktree has the full spec context without any git cherry-pick.
@@ -167,17 +171,10 @@ This makes the fix durable — it is now in the worktree's git history and canno
 
 ## Step 4c: Inject Build Constraints (Lessons)
 
-Read the lessons file for this spec — it records invariants learned from previous failed runs:
+Read the lessons file for this spec and the project-wide pitfalls with the Read tool. The lessons file records invariants learned from previous failed runs.
 
-```bash
-cat "specs/{spec_id}-{spec_name}/lessons.md" 2>/dev/null || echo "(no lessons yet)"
-```
-
-Also read the project-wide pitfalls:
-
-```bash
-cat ".specify/knowledge-base/pitfalls.yaml" 2>/dev/null || echo "(no pitfalls yet)"
-```
+- `specs/{spec_id}-{spec_name}/lessons.md` (if missing, treat as `(no lessons yet)`)
+- `.specify/knowledge-base/pitfalls.yaml` (if missing, treat as `(no pitfalls yet)`)
 
 **If either file has content:** these are HARD constraints for the build step. Every lesson is an invariant that MUST NOT be violated by any implementation. Pass them verbatim to the strategy:
 
