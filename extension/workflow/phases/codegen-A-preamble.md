@@ -160,7 +160,7 @@ fi
 bash "${ECHELON_EXT}/scripts/bash/validate-deploy.sh" "${_DEPLOY_ROOT}"
 ```
 
-If exit code is non-zero, HARD STOP. Do not launch harness. The error output contains the fix instructions.
+If exit code is non-zero, HARD STOP. Always follow the error output fix instructions. Do not launch harness.
 
 ### A.6 Register harness strategy file (idempotent, skip on resume)
 
