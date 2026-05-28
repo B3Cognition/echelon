@@ -50,7 +50,7 @@ You are analyzing an existing codebase. Your goal is to extract understanding th
 Read `state.json` to check if speckit-echelon-golddigger (GOLDDIGGER) produced artifacts:
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('${SQUAD_DIR}/state.json', 'r') as f:
@@ -89,7 +89,7 @@ Use the data to seed your output artifacts:
 
 **If `golddigger_status` is `failed` or absent:** Proceed with manual analysis (Steps 2-4). Log in your reasoning journal: "speckit-echelon-golddigger (GOLDDIGGER) artifacts not available — proceeding with manual structural analysis."
 
-Treat extraction artifacts as a validated head-start, not as a complete answer. Enrich, validate, and extend every section — do not copy blindly.
+Treat extraction artifacts as a validated head-start, not as a complete answer. Always enrich, validate, and extend every section — do not copy blindly.
 
 ### Step 2: Structural Analysis
 
@@ -139,7 +139,7 @@ For each domain, assess:
 - **Unresolvable entry points:** Does the domain have execution flows you cannot trace from function bodies alone — e.g., async chains, middleware stacks, or interceptors where the actual runtime path is not visible in the logic layer?
 - **Integration opacity:** Does the domain have external integrations (auth provider, message queue, third-party API) where the full interaction topology cannot be determined from function bodies, making it impossible to map failure modes and boundary conditions?
 
-**Do NOT request Mode 2 for:**
+**Always answer from existing artifacts when sufficient. Do NOT request Mode 2 for:**
 - Boundary ambiguity — `logic` depth provides sufficient signal for domain boundary detection
 - Hotspot complexity — function bodies and git history already expose complexity patterns
 - General uncertainty — if you can answer the question from existing artifacts, do so
@@ -147,7 +147,7 @@ For each domain, assess:
 If a domain meets either trigger, write a Mode 2 request to `state.json`:
 
 ```bash
-# WARNING: Do NOT add print() statements — they corrupt state.json
+# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
 python3 -c "
 import json
 with open('${SQUAD_DIR}/state.json', 'r') as f:
@@ -376,7 +376,7 @@ You MUST produce ALL of the following files in the spec directory provided by th
 ## Reasoning Journal
 
 speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
-Do NOT write to `reasoning-journal.jsonl` directly.
+Always return journal entries in the `echelon_result` block. Do NOT write to `reasoning-journal.jsonl` directly.
 
 ---
 
@@ -415,7 +415,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.
 
