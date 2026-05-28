@@ -127,7 +127,7 @@ For each requirement and each completed task that claims to satisfy it:
 3. Confirm the claimed code and test artifacts actually exist **by reading them** (not just checking file existence).
 4. If a task is marked done but evidence is missing, classify it as `UNVERIFIED_WORKFLOW_GAP`.
 
-**`UNVERIFIED_WORKFLOW_GAP` is a blocking classification.** It counts the same as `NOT_IMPLEMENTED` for coverage scoring and blocks build completion. Do NOT treat it as a provisional or informational tag — it represents a gap that must be resolved.
+**`UNVERIFIED_WORKFLOW_GAP` is a blocking classification.** Always count it the same as `NOT_IMPLEMENTED` for coverage scoring and build completion. Do NOT treat it as a provisional or informational tag — it represents a gap that must be resolved.
 
 This prevents report-only completion from counting as implementation. A task marked "done" without verifiable code, tests, and gate evidence is not done.
 
