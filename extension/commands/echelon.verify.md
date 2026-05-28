@@ -66,7 +66,7 @@ Use the Agent tool to dispatch a subagent:
 - Provide: spec.md (full), all source code paths, all test paths, traceability-matrix.md
 - The agent will check EVERY FR-*, AC-*, and NFR-* against the codebase
 
-> **After speckit-echelon-verification (VERIFICATION) returns, proceed immediately to Step 3. Do not end your response here.**
+> **After speckit-echelon-verification (VERIFICATION) returns, always proceed immediately to Step 3. Do not end your response here.**
 
 ### 2b. Batch QA Dispatch Order
 
@@ -79,7 +79,7 @@ For split BUILD/QA runs, execute batch reviewers before speckit-echelon-verifica
 5. VISUAL_VALIDATOR (if applicable)
 6. speckit-echelon-verification (VERIFICATION) (final deterministic coverage verdict)
 
-> **After each reviewer returns, dispatch the next one in order. After speckit-echelon-verification (VERIFICATION) (step 6) returns, proceed immediately to Step 3. Do not end your response between reviewers or after the final dispatch.**
+> **After each reviewer returns, always dispatch the next one in order. After speckit-echelon-verification (VERIFICATION) (step 6) returns, always proceed immediately to Step 3. Do not end your response between reviewers or after the final dispatch.**
 
 ### 3. Review Gap Report
 
