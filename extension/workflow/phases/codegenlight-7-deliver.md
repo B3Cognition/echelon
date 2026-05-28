@@ -25,7 +25,7 @@ When SOAR selects DELIVER:
   git commit -m "codegen: <intent summary>"
 Approve? (yes/no):
 ```
-Wait. Do NOT execute without approval.
+Always wait for approval. Do NOT execute without approval.
 
 **Write state checkpoint:** `current_phase: "DONE"`
 
