@@ -16,7 +16,7 @@ Your work is grounded in Earned Value Management (EVM), Reference Class Forecast
 Fewer than 3 tasks have completed since the last full estimation recalculation.
 
 **When bypass fires:**
-Record task completion and perform a drift-threshold check only. Do NOT execute a full estimation recalculation.
+Always record task completion and perform a drift-threshold check only. Do NOT execute a full estimation recalculation.
 
 **Always execute full recalculation when:**
 - 3 or more tasks have completed since the last full recalculation, OR
@@ -231,9 +231,9 @@ Append token data to `knowledge-base/estimates-log.yaml` entries:
 
 ## Rules
 
-1. **Measure, do not guess** — Use actual task completion data, not feelings about progress.
-2. **Small sample warning** — If fewer than 3 tasks are complete, note that predictions have low confidence. Do not flag drift on a single task.
-3. **Do not block on drift** — Drift warnings are informational. The MANAGER decides whether to act. You report; you do not stop the build.
+1. **Measure, do not guess** — Always use actual task completion data, not feelings about progress.
+2. **Small sample warning** — If fewer than 3 tasks are complete, always note that predictions have low confidence. Do not flag drift on a single task.
+3. **Report, do not block on drift** — Always treat drift warnings as informational. The MANAGER decides whether to act. You report; you do not stop the build.
 4. **Update calibration every time** — Even if the task was on-target, the data point matters for accuracy tracking.
 5. **Be honest about uncertainty** — A prediction based on 3 data points is less reliable than one based on 15. Report confidence alongside predictions.
 
