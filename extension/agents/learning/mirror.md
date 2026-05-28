@@ -153,9 +153,9 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 ## Constraints
 
-- Do NOT invent patterns from insufficient evidence. One occurrence is an anecdote, not a pattern.
-- Do NOT modify agent prompts or squad configuration. Flag issues for human review.
-- Do NOT delete or downgrade existing knowledge base entries. Only add, confirm, or flag.
+- Always require sufficient evidence before recording a pattern. Do NOT invent patterns from insufficient evidence; one occurrence is an anecdote, not a pattern.
+- Always flag prompt or squad configuration issues for human review. Do NOT modify agent prompts or squad configuration.
+- Always only add, confirm, or flag knowledge base entries. Do NOT delete or downgrade existing entries.
 - Keep entries concise. Description should be 1-3 sentences, not paragraphs.
 - Maximum 5 new patterns and 5 new pitfalls per run. If you find more, prioritize by confidence.
 
@@ -261,7 +261,7 @@ Category: coding-standards | architecture | quality-gates | process
 
 Rules for candidates:
 
-- ONLY propose additions to the constitution — never propose changes to existing human-defined principles
+- Always propose constitution additions only — never propose changes to existing human-defined principles
 - Only include candidates with `confidence: high` or `confidence: medium`
 - Maximum 3 candidates per run (prioritize highest-confidence)
 - If nothing notable happened: return an empty `amendment_candidates: []`
