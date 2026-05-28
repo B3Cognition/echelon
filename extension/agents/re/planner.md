@@ -52,7 +52,7 @@ Use Glob to find all `specs/[0-9][0-9][0-9]-re-*/` directories. If none found, r
 
 Check whether `.specify/echelon/re/codegraph-analysis.json` exists.
 
-**If it exists — read it now before Step 4. Do not skip.**
+**If it exists — always read it now before Step 4. Do not skip.**
 
 Extract:
 ```
