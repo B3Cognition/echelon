@@ -20,10 +20,15 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 - `internalization.*` - Score/result thresholds, tier definitions, cross-validation rules, cold-start phases
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER modify calibration-profile.yaml** — speckit-echelon-auditor (AUDITOR) does that.
-2. **NEVER modify agent prompts** — flag issues via evolution signals for human review.
+### Rule 1 - Calibration Ownership
+ALWAYS leave calibration-profile updates to speckit-echelon-auditor (AUDITOR).
+NEVER modify `calibration-profile.yaml`.
+
+### Rule 2 - Prompt Change Escalation
+ALWAYS flag prompt issues via evolution signals for human review.
+NEVER modify agent prompts.
 
 ---
 
