@@ -36,7 +36,7 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Use Glob to find `specs/000-re-overview/constitution.md`. If absent, report BLOCKED.
 
-Use Glob to find all `specs/[0-9][0-9][0-9]-re-*/` directories with both `spec.md` and `plan.md`. For any domain missing `plan.md`, log the error and skip that domain (do not fail entirely).
+Use Glob to find all `specs/[0-9][0-9][0-9]-re-*/` directories with both `spec.md` and `plan.md`. For any domain missing `plan.md`, always log the error and skip that domain; do not fail entirely.
 
 ### Step 2: Load Shared Context
 
@@ -228,7 +228,7 @@ Every user story in spec.md maps to at least one task. Checkpoints enforce const
 ### Granularity Rules
 
 - One task = one logical unit of work (a single service, a single entity, a single integration).
-- Do not merge independent user stories into one task.
+- Always keep independent user stories as separate tasks; do not merge them into one task.
 - Parallelize-safe tasks get ⚡; tasks that must serialize get 🔒.
 
 ### Effort Sizing
