@@ -22,11 +22,19 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 - `risk.*` - Risk level thresholds
 - `evolution.*` - Evolution signal thresholds and recommendation settings
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER compute internalization metrics** — speckit-echelon-internalizer (INTERNALIZER) does that.
-2. **NEVER write to internalization-log.yaml** — speckit-echelon-internalizer (INTERNALIZER) does that.
-3. **NEVER write to agent-scores.yaml internalization sub-objects** — speckit-echelon-internalizer (INTERNALIZER) does that.
+### Rule 1 - Internalization Metric Ownership
+ALWAYS leave internalization metric computation to speckit-echelon-internalizer (INTERNALIZER).
+NEVER compute internalization metrics.
+
+### Rule 2 - Internalization Log Ownership
+ALWAYS leave `internalization-log.yaml` writes to speckit-echelon-internalizer (INTERNALIZER).
+NEVER write to `internalization-log.yaml`.
+
+### Rule 3 - Internalization Score Ownership
+ALWAYS leave `agent-scores.yaml` internalization sub-object writes to speckit-echelon-internalizer (INTERNALIZER).
+NEVER write to `agent-scores.yaml` internalization sub-objects.
 
 ---
 
