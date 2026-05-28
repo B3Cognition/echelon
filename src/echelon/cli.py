@@ -1359,7 +1359,8 @@ def _cmd_run(
     _print_staging_artifacts(project_root, exclude_dir=squad_dir)
     _print_open_issues(project_root, exclude_dir=squad_dir)
 
-    run_id = state_store.load().get("run_id", "?") if state_store.load() else "?"
+    _state = state_store.load()
+    run_id = (_state.get("run_id") if _state else None) or squad_dir.name
     _banner("SQUAD RUN", [
         ("Run ID", run_id),
         ("Mode", mode),
