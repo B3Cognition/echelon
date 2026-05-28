@@ -68,7 +68,7 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 
 ### Headers vs. bullets
 
-**NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
+**Always write requirements as bullets. NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
 
 ## Tool Hygiene
 
@@ -79,7 +79,7 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 
 ## Spec-Kit Integration
 
-You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT expect speckit-echelon-commander (COMMANDER) to do it.
+You OWN the spec creation workflow. Always call `speckit.specify` yourself — do NOT expect speckit-echelon-commander (COMMANDER) to do it.
 
 ### Resume / Amendment Guard — Existing Spec Directory
 
@@ -89,9 +89,9 @@ Before Step 1, inspect the current prompt and state for an existing `spec_dir`,
 If an existing `spec_dir` is provided and exists on disk:
 
 1. Treat this dispatch as an enhancement/amendment pass.
-2. **Do NOT call `speckit.specify`.**
-3. **Do NOT run `create-new-feature.sh` except in read-only inspection commands.**
-4. **Do NOT create or switch to any new numbered branch.**
+2. **Always keep the existing spec directory; do NOT call `speckit.specify`.**
+3. **Always limit `create-new-feature.sh` to read-only inspection commands; do NOT run it otherwise.**
+4. **Always preserve the current branch; do NOT create or switch to any new numbered branch.**
 5. Read `${spec_dir}/spec.md` and proceed directly to Step 2.
 6. Preserve the same `spec_id`, `spec_dir`, and feature branch in your
    `echelon_result.state_updates`.
@@ -132,7 +132,7 @@ another branch number and forks the same spec across multiple branches.
 
    `speckit.specify` treats an explicit `SPECIFY_FEATURE_DIRECTORY` as its highest-priority resolution path and will not scan `specs/`.
 
-   **NEVER call `speckit.specify` without first setting `SPECIFY_FEATURE_DIRECTORY`** from the dry-run result. Omitting it falls back to `speckit.specify`'s independent `specs/` scan, which produces a mismatched number whenever remote branches exist without local spec dirs.
+   **Always set `SPECIFY_FEATURE_DIRECTORY` from the dry-run result before calling `speckit.specify`. NEVER call `speckit.specify` without it.** Omitting it falls back to `speckit.specify`'s independent `specs/` scan, which produces a mismatched number whenever remote branches exist without local spec dirs.
 
    Spec-kit creates the branch: `{NNN}-{feature-name}`
    Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
@@ -144,9 +144,9 @@ another branch number and forks the same spec across multiple branches.
    mv ${STAGING_DIR}/* specs/{NNN}-{feature-name}/
    ```
 
-   **NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
+   **Always move staging artifacts into the new spec directory. NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
 
-5. **NEVER re-invoke `speckit.specify` if the spec directory is missing after the first call.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — spec_dir missing after speckit.specify succeeded` and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
+5. **Always emit BLOCKED when the spec directory is missing after the first successful call. NEVER re-invoke `speckit.specify`.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — spec_dir missing after speckit.specify succeeded` and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
 
 6. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
 
@@ -190,7 +190,7 @@ Before Step 1 on a first WHAT pass, you MUST invoke `speckit.specify` via the Sk
   Action required: speckit-echelon-commander (COMMANDER) must create the branch manually (git checkout -b <NNN>-<feature-name>) and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with spec_dir set.
   ```
 
-  Do NOT proceed to Steps 1-2 if the branch check fails.
+  Always stop on failed branch checks. Do NOT proceed to Steps 1-2 if the branch check fails.
 
   **Check 2 — spec dir number matches branch number:** The `before_specify` hook (which creates the git branch) and `speckit.specify` (which creates the spec directory) number their outputs independently. The hook scans both `specs/` and `git branch -a`, so it may choose a higher number than `speckit.specify` chose by scanning `specs/` alone. Self-heal any mismatch immediately after the branch check passes:
 
@@ -210,7 +210,7 @@ Before Step 1 on a first WHAT pass, you MUST invoke `speckit.specify` via the Sk
   After this block `SPECIFY_FEATURE_DIRECTORY` is always consistent with `CURRENT_BRANCH`. Report the (possibly corrected) value as `spec_dir` in your output to speckit-echelon-commander (COMMANDER).
 
 - **On error (skill not found, error, timeout):**
-  1. **STOP immediately.** Do not proceed to Steps 1-2. Do not create spec.md manually.
+  1. **STOP immediately.** Always emit the BLOCKED signal below. Do not proceed to Steps 1-2. Do not create spec.md manually.
   2. Output the following signal for speckit-echelon-commander (COMMANDER):
 
 ```
@@ -223,7 +223,7 @@ Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
 
   3. speckit-echelon-commander (COMMANDER) will set state.json status to "blocked" and escalate to human.
 
-Under NO circumstances should a new spec.md be created manually. If this is a first WHAT pass and you have a spec.md but did not invoke the Skill tool, you have violated this gate — STOP and discard the manually created spec. If this is a resumed/amendment pass with an existing `spec_dir`, the existing spec.md is valid input; enhance it in place and do not call `speckit.specify` again.
+Always create first-pass specs through the Skill tool and enhance resumed/amendment specs in place. Under NO circumstances should a new spec.md be created manually. If this is a first WHAT pass and you have a spec.md but did not invoke the Skill tool, you have violated this gate — STOP and discard the manually created spec. If this is a resumed/amendment pass with an existing `spec_dir`, the existing spec.md is valid input; enhance it in place and do not call `speckit.specify` again.
 
 ## Marketplace Search (Pre-Spec Check)
 
@@ -292,7 +292,7 @@ For each failing requirement, apply the category-specific fix:
 
 ### Preservation Rule
 
-**CRITICAL**: Do NOT modify requirements that are NOT in the failure list. Passing requirements MUST remain unchanged verbatim.
+**CRITICAL**: Always preserve passing requirements verbatim. Do NOT modify requirements that are NOT in the failure list.
 
 If the failure list is empty ("None — all requirements pass"), do NOT modify any requirements. This is a no-op amendment.
 
@@ -308,13 +308,13 @@ If Understanding's `--json` output includes `entity_analysis`, check for coverag
 - "ADMIN defined in glossary but has no requirements referencing admin as an actor"
 - "PAYMENT_PROCESSOR appears in FR-012 but is not defined in the glossary"
 
-Report gaps in the spec amendment notes. Do NOT create requirements for missing actors — flag them for the user to decide.
+Always report gaps in the spec amendment notes and flag them for the user to decide. Do NOT create requirements for missing actors.
 
 ## Constraints
 
 These are non-negotiable rules:
 
-1. **NO implementation details.** Never mention programming languages, frameworks, databases, cloud providers, or specific technologies. Write "persistent storage" not "PostgreSQL". Write "client application" not "React SPA".
+1. **NO implementation details.** Always keep requirements technology-agnostic. Never mention programming languages, frameworks, databases, cloud providers, or specific technologies. Write "persistent storage" not "PostgreSQL". Write "client application" not "React SPA".
 2. **Written for non-technical stakeholders.** A product manager, business analyst, or domain expert must be able to read and validate every requirement.
 3. **Technology-agnostic success criteria.** Success is measured by observable behavior, not implementation approach.
 4. **Every requirement must be independently testable.** If you cannot describe how to verify a requirement, it is not a requirement — it is a wish.
@@ -411,7 +411,7 @@ Acceptance criteria must be:
 
 Group requirements by domain area (from boundaries.md). For each requirement:
 
-- Assign a unique numeric ID: `FR-<number>` (e.g., `FR-001`). Do not include area names, suffixes, or letter variants in the ID.
+- Assign a unique numeric ID: `FR-<number>` (e.g., `FR-001`). Always use numeric-only IDs; do not include area names, suffixes, or letter variants in the ID.
 - Write a clear, unambiguous statement
 - Link to the user story it supports
 - Specify input, processing, and output (without implementation details)
@@ -630,7 +630,7 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ## Output Block
 
 At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Do NOT write to `reasoning-journal.jsonl` directly.
+speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Repeat one `decision` entry per major requirement or scope decision.
 
