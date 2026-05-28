@@ -13,7 +13,7 @@ PROJECT_ROOT=$(pwd)
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 ```
 
-Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Never use bare relative paths like `specs/003-...` — always `${PROJECT_ROOT}/specs/003-...`.
+Store `PROJECT_ROOT` in your context. All paths written to state.json, passed to agents, or used in file operations **must be absolute paths** derived from `${PROJECT_ROOT}`. Always use `${PROJECT_ROOT}/specs/003-...` paths — never bare relative paths like `specs/003-...`.
 
 **MANDATORY — Run this check with the Bash tool before any other init step:**
 
@@ -27,20 +27,20 @@ fi
 echo "✓ echelon-config.yml found at ${ECHELON_EXT}/echelon-config.yml"
 ```
 
-If this exits non-zero: **HARD STOP**. Do not proceed. Print:
+If this exits non-zero: **HARD STOP**. Always print the message below. Do not proceed.
 
 ```text
 ✗ echelon-config.yml not found.
   Run speckit.echelon.init first, then re-run speckit.echelon.run.
 ```
 
-> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon init`). Do NOT call it from `echelon.run` — it will fail on fresh projects that have not yet run a build.
+> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon init`). Always leave `echelon.run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon.run` — it will fail on fresh projects that have not yet run a build.
 
 ### 1.1 Detect Greenfield vs Brownfield
 
 The `startup-banner.sh` frontmatter script chains to `detect-project.sh` and its output (`"greenfield"` or `"brownfield"`) is available as `$SH_OUTPUT`.
 
-**MANDATORY — use `$SH_OUTPUT` as the authoritative mode signal. Do NOT detect mode ad hoc by examining file counts or directory structure yourself.**
+**MANDATORY — always use `$SH_OUTPUT` as the authoritative mode signal. Do NOT detect mode ad hoc by examining file counts or directory structure yourself.**
 
 ```bash
 mode = $SH_OUTPUT        # "greenfield" | "brownfield"
@@ -77,7 +77,7 @@ mkdir -p "${STAGING_DIR}"
 
 **Archive structure:** `${SQUAD_DIR}/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.jsonl, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
 
-**Important:** Do NOT create `specs/{NNN}-{feature}/` yet. That happens in the WHAT phase when we call `speckit.specify`, which creates the branch and directory structure.
+**Important:** Always let the WHAT phase create `specs/{NNN}-{feature}/` via `speckit.specify`. Do NOT create it yet.
 
 ### 1.3 Initialize State
 
@@ -118,7 +118,7 @@ Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). 
 
 ### Run History Check — MANDATORY STEP
 
-> **Do not skip this check.** Skipping it breaks Phase A → Phase B continuity: future runs cannot detect that Phase A is already complete, causing duplicate work.
+> **Always run this check. Do not skip it.** Skipping it breaks Phase A → Phase B continuity: future runs cannot detect that Phase A is already complete, causing duplicate work.
 
 1. Check if `{spec_dir}/run-history.json` exists (only possible if `spec_dir` was specified as an argument — if starting fresh with no spec_dir yet, proceed to step 3).
 2. If `run-history.json` exists:
@@ -214,14 +214,14 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 **If MISSING:**
 
 - Set `state.json.constitution_status` to `"pending"`
-- **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
+- Always continue with `constitution_status: "pending"`. **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
 - Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
 
 ### Spec-kit Availability
 
 spec-kit skill availability is validated at install time (`specify extension add echelon`). speckit-echelon-commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, speckit-echelon-commander (COMMANDER) sets `state.json.fallback_mode = true` and `execution_mode = manual_specification` at that point.
 
-speckit-echelon-cartographer (CARTOGRAPHER) dispatch must never be blocked by fallback detection. Continue routing in both available and fallback paths (AC-001a-4).
+Always continue routing in both available and fallback paths (AC-001a-4). speckit-echelon-cartographer (CARTOGRAPHER) dispatch must never be blocked by fallback detection.
 
 For reconciliation after recovery, reference `templates/recovery-checklist.md` and operational guidance in `docs/fallback-mode.md`.
 
@@ -240,7 +240,7 @@ scripts/bash/kb-validate-evolution.sh --state ${SQUAD_DIR}/state.json
 
 If `detected_mode` is `brownfield`:
 
-**NEVER do your own filesystem exploration before dispatching GOLDDIGGER.** Do not run `ls`, `find`, or any directory listing to understand the polyrepo structure before this dispatch — that is GOLDDIGGER's job. Dispatch immediately.
+**Always dispatch GOLDDIGGER immediately for brownfield structure discovery.** NEVER do your own filesystem exploration before dispatching GOLDDIGGER. Do not run `ls`, `find`, or any directory listing to understand the polyrepo structure before this dispatch — that is GOLDDIGGER's job.
 
 First, verify the echelon re-* commands are available (they are bundled with echelon):
 
@@ -248,7 +248,7 @@ First, verify the echelon re-* commands are available (they are bundled with ech
 specify extension info echelon
 ```
 
-If this command exits non-zero (extension not installed): skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER. Do NOT check `extensions.yml`'s `installed:` field — that file tracks hooks, not installed extensions. The authoritative source is `specify extension info <id>`.
+If this command exits non-zero (extension not installed): skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER. Always use `specify extension info <id>` as the authoritative source. Do NOT check `extensions.yml`'s `installed:` field — that file tracks hooks, not installed extensions.
 
 If echelon (with re-* commands) is installed:
 
