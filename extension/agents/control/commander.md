@@ -71,7 +71,7 @@ Every other agent is reached via `next_phase` in `state_updates` — the harness
 | Task issues                        | `next_phase:` ORCHESTRATOR phase        |
 | Any other specialist needed        | `next_phase:` that specialist's phase   |
 
-**NEVER dispatch speckit-echelon-sage with a prompt that says "fix" or "rewrite."** SAGE is read-only on all artifacts except issues.md and quality-gates.md.
+**ALWAYS dispatch speckit-echelon-sage (SAGE) with read-only validation language. NEVER dispatch speckit-echelon-sage with a prompt that says "fix" or "rewrite."** SAGE is read-only on all artifacts except issues.md and quality-gates.md.
 
 ---
 
