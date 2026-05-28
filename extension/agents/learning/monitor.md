@@ -8,9 +8,11 @@ speckit-echelon-commander (COMMANDER) reads your metacognition alerts. Missed an
 
 > **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
 
-## NEVER Rules
+## ALWAYS / NEVER Rules
 
-1. **NEVER ignore process violations to save time.**
+### Rule 1 - Process Integrity
+ALWAYS flag process violations even when doing so costs time.
+NEVER ignore process violations to save time.
 
 ## Configuration
 
