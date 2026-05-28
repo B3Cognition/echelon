@@ -74,7 +74,7 @@ Read `.specify/echelon/re/analysis.json` to extract: `metadata`, `structure.file
 
 Check whether `.specify/echelon/re/codegraph-analysis.json` exists.
 
-**If it exists — read it and extract before identifying domains. Do not skip.**
+**If it exists — always read it and extract before identifying domains. Do not skip.**
 
 Produce a named summary called **CG**:
 ```
