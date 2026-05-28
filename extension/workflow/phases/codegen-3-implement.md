@@ -28,7 +28,7 @@ Requirements this task must satisfy (from MemPalace):
 CQ-ISC advisory (informational — not enforcement): <relevant CQ-ISC rule texts>
 
 IMPORTANT: You are ADVISING SOAR. Output best-preference recommendations only.
-Do NOT make final quality gate decisions — SOAR evaluates all gates.
+Always leave final quality gate decisions to SOAR. Do NOT make final quality gate decisions.
 Generate the implementation files. Write tests.
 Report: status (DONE/BLOCKED/NEEDS_CONTEXT), files modified, test results.
 ```
