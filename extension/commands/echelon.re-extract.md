@@ -30,8 +30,9 @@ before advancing.
 
 ## Execution Continuity
 
-**Tool completions are never stopping points.** After any Agent or Skill tool returns,
-immediately execute the next transition in the graph without ending your response.
+**Tool completions always require the next graph transition; they are never
+stopping points.** After any Agent or Skill tool returns, immediately execute the
+next transition in the graph without ending your response.
 Stop only when: (a) the graph reaches DONE, (b) a BLOCKED condition cannot be
 self-resolved.
 
