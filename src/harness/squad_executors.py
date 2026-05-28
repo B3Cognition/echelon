@@ -179,6 +179,19 @@ class PhaseExecutor(ABC):
             f"STAGING_DIR={staging_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
         )
+        if node.id == "phase1-what" and state.get("cartographer_resume_existing_spec"):
+            spec_dir = state.get("spec_dir", "")
+            feature_branch = state.get("feature_branch", "")
+            context_preamble += (
+                "## CARTOGRAPHER Resume Guard\n"
+                "This is a resumed/amendment pass for an existing spec-kit spec.\n"
+                f"Existing spec_dir: {spec_dir}\n"
+                f"Existing feature_branch: {feature_branch}\n"
+                "Do NOT call speckit.specify. Do NOT run create-new-feature.sh. "
+                "Do NOT create or switch to a new numbered branch. Reuse the "
+                "existing spec_dir and proceed directly to Step 2 enhancement/"
+                "amendment of spec.md and 00-overview.md.\n\n"
+            )
 
         # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")

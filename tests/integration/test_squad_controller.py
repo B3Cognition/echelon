@@ -16,6 +16,7 @@ if str(EXT_ROOT) not in sys.path:
 
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.squad import SquadController, SquadResult
+from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
@@ -119,6 +120,37 @@ class TestSolutionPhaseOrdering:
         sentinel_node = graph.get("phase3-sentinel")
         sentinel_targets = [t["to"] for t in sentinel_node.transitions]
         assert sentinel_targets == ["phase3-plan"]
+
+
+class TestCartographerResumeGuard:
+    def test_phase1_what_prompt_blocks_duplicate_specify_on_resume(self, tmp_path):
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        squad_dir = tmp_path / "runs" / "spec-test"
+        staging_dir = squad_dir / "staging"
+        staging_dir.mkdir(parents=True)
+        executor = AgentExecutor(
+            _mock_provider(),
+            graph,
+            EXT_ROOT / "extension",
+            tmp_path,
+            squad_dir,
+        )
+
+        prompt = executor._assemble_prompt(
+            graph.get("phase1-what"),
+            {
+                "squad_dir": str(squad_dir),
+                "staging_dir": str(staging_dir),
+                "cartographer_resume_existing_spec": True,
+                "spec_dir": "specs/072-pr-pipeline-fix",
+                "feature_branch": "072-pr-pipeline-fix",
+            },
+        )
+
+        assert "## CARTOGRAPHER Resume Guard" in prompt
+        assert "Do NOT call speckit.specify" in prompt
+        assert "Existing spec_dir: specs/072-pr-pipeline-fix" in prompt
+        assert "Existing feature_branch: 072-pr-pipeline-fix" in prompt
 
 
 class TestSquadControllerBasics:

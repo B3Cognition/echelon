@@ -1692,6 +1692,8 @@ def _cmd_resume(
         ("Your answer", answer),
     ])
 
+    _preserve_active_spec_context(project_root, state)
+
     # Write user's answer to staging so the re-dispatched phase can read it.
     staging_dir = Path(state.get("staging_dir", str(squad_dir / "staging")))
     clarifications_file = staging_dir / "user-clarifications.md"
@@ -1753,6 +1755,57 @@ def _cmd_resume(
         ("Artifacts", str(squad_dir)),
     ])
     _print_next_steps(project_root, result.status)
+
+
+def _preserve_active_spec_context(project_root: Path, state: dict) -> None:
+    """Record the current spec branch/dir before resume re-dispatch.
+
+    CARTOGRAPHER may be re-dispatched after a human escalation. If the first
+    pass already created the spec-kit branch and spec directory, resume must
+    continue enhancing that spec, not call speckit.specify again and allocate a
+    new branch number.
+    """
+    if state.get("phase") != "phase1-what":
+        return
+
+    spec_dir = state.get("spec_dir")
+    if spec_dir:
+        candidate = Path(spec_dir)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        if candidate.exists():
+            state["cartographer_resume_existing_spec"] = True
+            return
+
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return
+
+    branch = result.stdout.strip()
+    if not branch or not _is_spec_feature_branch(branch):
+        return
+
+    candidate = project_root / "specs" / branch
+    if not candidate.exists():
+        return
+
+    state["spec_id"] = state.get("spec_id") or branch
+    state["spec_dir"] = str(candidate.relative_to(project_root))
+    state["feature_branch"] = state.get("feature_branch") or branch
+    state["cartographer_resume_existing_spec"] = True
+
+
+def _is_spec_feature_branch(branch: str) -> bool:
+    import re
+    return re.match(r"^[0-9]{3,4}-[A-Za-z0-9][A-Za-z0-9._-]*$", branch) is not None
 
 
 # ── Skill resolution ──────────────────────────────────────────────────────

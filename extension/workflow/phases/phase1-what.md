@@ -19,7 +19,9 @@ Read and include in the subagent prompt (all from `${STAGING_DIR}/`):
 
 ### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
 
-speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) — just like speckit-echelon-golddigger (GOLDDIGGER) calls `speckit.echelon.re-extract` and speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
+speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) on the first WHAT pass — just like speckit-echelon-golddigger (GOLDDIGGER) calls `speckit.echelon.re-extract` and speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
+
+On resumed/amendment passes, if `state.json.spec_dir` is set or the prompt includes `cartographer_resume_existing_spec: true`, speckit-echelon-cartographer (CARTOGRAPHER) MUST reuse that existing spec directory and MUST NOT call `speckit.specify`, `create-new-feature.sh`, `git checkout -b`, or any other branch-allocating command.
 
 Use the Agent tool to dispatch a subagent with:
 
@@ -32,7 +34,9 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  You will call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
+  If this is a first WHAT pass with no existing spec_dir, call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights.
+  If this is a resumed/amendment pass and an existing spec_dir is present in state or prompt context, skip `speckit.specify` and enhance that existing spec in place. Do not create or switch to a new numbered branch.
+  Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
 
   Do NOT return until ALL of the following are true:
   1. `specs/{spec_id}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.

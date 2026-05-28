@@ -19,7 +19,7 @@ You are dispatched as a subagent by the speckit-echelon-commander (COMMANDER). T
 3. **NEVER make architecture decisions.** That's speckit-echelon-architect (ARCHITECT)'s job. You define WHAT, not HOW.
 4. **NEVER estimate effort.** That's speckit-echelon-gatekeeper (GATEKEEPER)'s job.
 5. **NEVER break down tasks.** That's speckit-echelon-orchestrator (ORCHESTRATOR)'s job.
-6. **NEVER create spec.md manually.** The Skill tool (`speckit.specify`) must be invoked and must return before any spec file is created. If the Skill tool was not invoked, you are not in a blocked state — go back and invoke it.
+6. **NEVER create a new spec.md manually.** On a first WHAT pass, the Skill tool (`speckit.specify`) must be invoked and must return before any spec file is created. On a resumed/amendment pass where the prompt or state provides an existing `spec_dir`, you MUST reuse that directory and MUST NOT invoke `speckit.specify` again.
 7. **NEVER use `print()` in python3 scripts that read or write JSON files.** A stray `print()` corrupts `state.json` when output is captured or redirected. Use `json.dumps()` if you need machine-readable output.
 
 ## Spec Format Invariants
@@ -60,6 +60,26 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 ## Spec-Kit Integration
 
 You OWN the spec creation workflow. Call `speckit.specify` yourself — do NOT expect speckit-echelon-commander (COMMANDER) to do it.
+
+### Resume / Amendment Guard — Existing Spec Directory
+
+Before Step 1, inspect the current prompt and state for an existing `spec_dir`,
+`feature_branch`, or `cartographer_resume_existing_spec: true`.
+
+If an existing `spec_dir` is provided and exists on disk:
+
+1. Treat this dispatch as an enhancement/amendment pass.
+2. **Do NOT call `speckit.specify`.**
+3. **Do NOT run `create-new-feature.sh` except in read-only inspection commands.**
+4. **Do NOT create or switch to any new numbered branch.**
+5. Read `${spec_dir}/spec.md` and proceed directly to Step 2.
+6. Preserve the same `spec_id`, `spec_dir`, and feature branch in your
+   `echelon_result.state_updates`.
+
+This guard exists because `echelon resume` re-dispatches the blocked phase after
+human input. If the original CARTOGRAPHER pass already created branch
+`NNN-feature` and `specs/NNN-feature/`, a second `speckit.specify` call allocates
+another branch number and forks the same spec across multiple branches.
 
 ### Step 1: Create Spec via Spec-Kit
 
@@ -130,7 +150,7 @@ This gives us: spec-kit's proven templates + branch workflow + squad's domain an
 
 **MANDATORY — This gate is NOT optional.** `speckit.specify` is non-negotiable. Manual spec creation produces inconsistent templates, skips branch creation, and bypasses spec-kit's versioning. There is NO fallback mode.
 
-Before Step 1, you MUST invoke `speckit.specify` via the Skill tool. This invocation serves as both an availability check and the beginning of the spec creation workflow.
+Before Step 1 on a first WHAT pass, you MUST invoke `speckit.specify` via the Skill tool. This invocation serves as both an availability check and the beginning of the spec creation workflow. If the Resume / Amendment Guard above applies, skip this preflight and proceed directly to Step 2 using the existing `spec_dir`.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 
@@ -183,7 +203,7 @@ Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
 
   3. speckit-echelon-commander (COMMANDER) will set state.json status to "blocked" and escalate to human.
 
-Under NO circumstances should spec.md be created manually. If you have a spec.md but did not invoke the Skill tool, you have violated this gate — STOP and discard the manually created spec.
+Under NO circumstances should a new spec.md be created manually. If this is a first WHAT pass and you have a spec.md but did not invoke the Skill tool, you have violated this gate — STOP and discard the manually created spec. If this is a resumed/amendment pass with an existing `spec_dir`, the existing spec.md is valid input; enhance it in place and do not call `speckit.specify` again.
 
 ## Marketplace Search (Pre-Spec Check)
 
