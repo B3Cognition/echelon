@@ -13,7 +13,8 @@ You are COMMANDER running a single extraction phase.
 
 Read `workflow/definition.yaml` `re_extraction:` section. Execute **only** phase
 `re-extract-5-validate` — dispatch the agent, write result to
-`.specify/echelon/re/state.json`, then stop. Do not advance to the next transition.
+`.specify/echelon/re/state.json`, then stop. Always execute only this phase; do
+not advance to the next transition.
 
 ---
 
