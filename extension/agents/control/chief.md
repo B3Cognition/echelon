@@ -137,13 +137,6 @@ Placeholders fixed: <yes | no | n/a>
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/chief.yaml`.
-Read this file before proceeding if it exists. If absent, proceed with defaults.
-
----
-
 ## Output Block
 
 echelon_result:

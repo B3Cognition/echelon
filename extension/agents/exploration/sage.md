@@ -717,12 +717,6 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/sage.yaml`. Read this file to load your active calibration priors before applying quality gate thresholds and false-positive rate adjustments.
-
----
-
 ## Output Block
 
 Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).

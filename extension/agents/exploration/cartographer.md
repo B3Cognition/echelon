@@ -504,12 +504,6 @@ Open questions: <count>
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/cartographer.yaml`. Read this file to load your active calibration priors before making requirements quality and amendment decisions.
-
----
-
 ## Output Block
 
 Repeat one `decision` entry per major requirement or scope decision.

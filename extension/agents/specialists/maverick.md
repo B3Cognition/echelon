@@ -367,12 +367,6 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/maverick.yaml`. Read this file to load your active calibration priors before selecting innovation methods and evaluating alternative quality.
-
----
-
 ## Output Block
 
 Include one `decision` entry per alternative generated. Reference the TRIZ principle applied in the `rationale` field.

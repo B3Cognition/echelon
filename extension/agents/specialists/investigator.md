@@ -152,12 +152,6 @@ speckit-echelon-commander (COMMANDER) will write this entry to the journal. spec
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/investigator.yaml`. Read this file to load your active calibration priors before applying evidence grade weights and time-boxing rules.
-
----
-
 ## Output Block
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.

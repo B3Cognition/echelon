@@ -31,6 +31,13 @@ def _shared_agent_contract() -> str:
         "- ALWAYS put journal entries and state updates in `echelon_result`; the "
         "commander/harness reads that block and performs the writes.\n"
         "- NEVER write to `reasoning-journal.jsonl` directly.\n\n"
+        "### Belief Registers\n"
+        "- ALWAYS read your agent-specific belief register when present at "
+        "`${PROJECT_ROOT}/.specify/extensions/echelon/config/"
+        "belief-registers/<agent-slug>.yaml` before threshold, scoring, "
+        "quality, or confidence decisions.\n"
+        "- NEVER treat calibration priors as optional when a matching belief "
+        "register exists.\n\n"
     )
 
 

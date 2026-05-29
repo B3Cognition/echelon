@@ -242,12 +242,6 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/sentinel.yaml`. Read this file to load your active calibration priors before applying test pyramid ratios, flakiness thresholds, and timing targets.
-
----
-
 ## Output Block
 
 Include one `decision` entry per significant test strategy decision (test layer choice, coverage mapping rationale, CI pipeline decision).

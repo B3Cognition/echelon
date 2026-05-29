@@ -263,12 +263,6 @@ Include the internalization trend section from `agents/control/appendices/scorek
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/scorekeeper.yaml`. Read this file to load your active calibration priors before applying scoring thresholds and badge criteria.
-
----
-
 ## Output Block
 
 echelon_result:

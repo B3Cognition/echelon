@@ -321,12 +321,6 @@ Phases: <count> implementation phases planned
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/architect.yaml`. Read this file to load your active calibration priors before making evidence grading and architectural constraint decisions.
-
----
-
 ## Output Block
 
 Include one `adr_self_check` entry per ADR written. Include one `decision` entry per major architectural decision. The `adr_self_check` type name must be preserved exactly — speckit-echelon-auditor (AUDITOR) FINALIZE parsing depends on it (FR-INH-006).

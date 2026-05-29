@@ -258,12 +258,6 @@ Implementability: <READY>/<NEEDS_CLARIFICATION>/<BLOCKED> tasks (consensus only)
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/gatekeeper.yaml`. Read this file to load your active calibration priors before applying scoring scales, feasibility thresholds, and kill criteria.
-
----
-
 ## Output Block
 
 Include one `assessment` entry per feasibility or implementability assessment. If verdict is KILL, `output_files` should include the kill-report path.

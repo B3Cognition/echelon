@@ -397,12 +397,6 @@ Artifacts: glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns
 
 ---
 
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/scout.yaml`. Read this file to load your active calibration priors before making mode-detection and discovery depth decisions.
-
----
-
 ## Output Block
 
 Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.

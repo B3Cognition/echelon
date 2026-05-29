@@ -374,12 +374,6 @@ Every task report must include an eval summary block:
 
 If any regression eval fails, the task status is **BLOCKED** until the regression is resolved. If any instability flag is raised, the task status is **DONE_WITH_CONCERNS** at best.
 
----
-
-## Belief Register
-
-Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/belief-registers/implementer.yaml`. Read this file to load your active calibration priors before making threshold decisions.
-
 Return this entry in the `echelon_result` block at the end of your response.
 
 echelon_result:
