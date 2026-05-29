@@ -101,7 +101,7 @@ Update `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
 
 If the human corrected any values that differ from auto-assessment:
 - Re-run calibration-profile.yaml update with corrected values
-- Log the auto-assessment error in `reasoning-journal.json` so speckit-echelon-auditor (AUDITOR) can learn where its self-assessment was wrong
+- Log the auto-assessment error in `reasoning-journal.jsonl` so speckit-echelon-auditor (AUDITOR) can learn where its self-assessment was wrong
 
 ---
 
@@ -113,7 +113,7 @@ Full human questionnaire. This is the original behavior, used when:
 
 Read the original artifacts:
 - `estimates.md`, `research.md`, `risk-matrix.md`, `test-strategy.md`, `spec.md`
-- `recommendations.md` (if exists), `reasoning-journal.json`
+- `recommendations.md` (if exists), `reasoning-journal.jsonl`
 
 ### 4b.1 Effort Accuracy
 

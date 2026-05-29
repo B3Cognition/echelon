@@ -70,3 +70,14 @@ def test_cartographer_uses_appendix_for_brownfield_deep_dive_reference():
         "agents/exploration/appendices/cartographer-golddigger-deep-dive-reference.md"
         in text
     )
+
+
+def test_commands_use_jsonl_reasoning_journal_name():
+    stale = []
+
+    for prompt in (EXTENSION_ROOT / "commands").rglob("*.md"):
+        for lineno, line in enumerate(prompt.read_text().splitlines(), start=1):
+            if "reasoning-journal.json" in line and "reasoning-journal.jsonl" not in line:
+                stale.append(f"{prompt.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+
+    assert not stale, "\n".join(stale)

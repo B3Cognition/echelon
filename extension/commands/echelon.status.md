@@ -127,7 +127,7 @@ ARTIFACTS:
   CALIBRATE:      confidence-flags.md
   EVOLVE:         evolution-report.md, improvement-metrics.md
   REFLECT:        (updates knowledge-base/)
-  Journal:        reasoning-journal.json
+  Journal:        reasoning-journal.jsonl
 ```
 
 Mark each as `OK` (exists) or `--` (not yet produced). Count total files.

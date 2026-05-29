@@ -51,7 +51,7 @@ Read all current artifacts from the spec directory:
 - `plan.md` (current architecture approach, if exists)
 - `research.md` (current technology decisions, if exists)
 - `assumptions.md` (assumptions to challenge)
-- `reasoning-journal.json` (decision history)
+- `reasoning-journal.jsonl` (decision history)
 - `evolution-report.md` (if exists -- prior run stagnation data)
 
 If `$ARGUMENTS` is provided, use it as the focus area for innovation. Otherwise, INNOVATE will perform a broad sweep.
@@ -65,7 +65,7 @@ Read the INNOVATE agent prompt from `.specify/extensions/echelon/agents/speciali
 Use the **Agent tool** to dispatch speckit-echelon-maverick as a subagent:
 
 - **subagent_type:** `speckit-echelon-maverick`
-- **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts]. Produce outputs in `.specify/specs/{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
 - **description:** "speckit-echelon-maverick: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
@@ -90,7 +90,7 @@ Update `${SQUAD_DIR}/state.json`:
 - Add `"INNOVATE"` to `active_specialists` if not already present
 - Update `updated_at` timestamp
 
-Verify that `reasoning-journal.json` has new entries from INNOVATE. If not, append a MANAGER entry:
+Verify that `reasoning-journal.jsonl` has new entries from INNOVATE. If not, append a MANAGER entry:
 
 ```json
 {

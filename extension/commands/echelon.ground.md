@@ -54,7 +54,7 @@ Read all current artifacts from the spec directory:
 - `tasks.md` -- task breakdown to validate durations
 - `risk-matrix.md` -- risks to check against real-world occurrence rates
 - `test-strategy.md` -- test plan to check against real-world coverage norms
-- `reasoning-journal.json` -- decision history
+- `reasoning-journal.jsonl` -- decision history
 
 Read knowledge base files:
 - `knowledge-base/estimates-log.yaml` -- past project estimates vs actuals
@@ -72,7 +72,7 @@ Read the GROUND agent prompt from `.specify/extensions/echelon/agents/learning/r
 Use the **Agent tool** to dispatch speckit-echelon-realist as a subagent:
 
 - **subagent_type:** `speckit-echelon-realist`
-- **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{$ARGUMENTS or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `.specify/specs/{spec_dir}/`. Append entries to `reasoning-journal.json`.
+- **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{$ARGUMENTS or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `.specify/specs/{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
 - **description:** "speckit-echelon-realist: reality check -- {$ARGUMENTS summary or 'full artifact sweep'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
@@ -96,7 +96,7 @@ Always log a warning for missing outputs. Do not fail the command for missing ou
 Update `${SQUAD_DIR}/state.json`:
 - Update `updated_at` timestamp
 
-Verify that `reasoning-journal.json` has new GROUND entries. If not, append a MANAGER entry:
+Verify that `reasoning-journal.jsonl` has new GROUND entries. If not, append a MANAGER entry:
 
 ```json
 {

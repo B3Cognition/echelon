@@ -97,7 +97,7 @@ If ACCEPTED:
 1. Update `spec.md` with the changed requirements
 2. Update `tasks.md` with new statuses and change references
 3. Update `estimates.md` with revised effort figures
-4. Log the change to `reasoning-journal.json`
+4. Record the change in `reasoning-journal.jsonl`
 5. Resume build with the propagation plan's task sequence
 6. Notify speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) of the re-baseline
 
