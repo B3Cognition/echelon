@@ -48,6 +48,20 @@ def test_sage_uses_appendix_for_decision_calibration_reference():
     assert "agents/exploration/appendices/sage-decision-calibration-reference.md" in text
 
 
+def test_sage_uses_appendix_for_understanding_followup_reference():
+    prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
+    text = prompt.read_text()
+
+    assert "agents/exploration/appendices/sage-understanding-followup-reference.md" in text
+
+
+def test_sage_uses_appendix_for_contradiction_detection_reference():
+    prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
+    text = prompt.read_text()
+
+    assert "agents/exploration/appendices/sage-contradiction-detection-reference.md" in text
+
+
 def test_cartographer_uses_appendix_for_brownfield_deep_dive_reference():
     prompt = EXTENSION_ROOT / "agents" / "exploration" / "cartographer.md"
     text = prompt.read_text()

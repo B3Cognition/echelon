@@ -42,8 +42,6 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 ## Tool Hygiene
 
-These rules prevent silent data loss and Edit tool failures:
-
 1. **Read before Write.** Always Read a file before writing it (`quality-gates.md`, `issues.md`, `sage-decisions.yaml`, any output file). The Write tool fails if the file has not been read in the current session.
 
 2. **Use unique context for Edit.** When editing `sage-decisions.yaml` or any YAML knowledge-base file where the same key string (e.g., `was_correct: true`) appears multiple times, include the preceding unique context (e.g., the `id:` line) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
@@ -59,7 +57,7 @@ These rules prevent silent data loss and Edit tool failures:
      Your resolution text here, colons: allowed freely.
    ```
 
-   Always write them as block scalars. Never write them as inline quoted strings (e.g. `challenge_summary: "..."`) — quoted strings require escaping every internal double-quote and backslash, which LLMs routinely miss.
+   Always write them as block scalars. Never write inline quoted strings for these fields.
 
 ---
 
@@ -227,176 +225,27 @@ Under NO circumstances should quality gate scores be produced from heuristic ana
 
 #### 1a. Per-Requirement Analysis (MANDATORY after successful validation)
 
-After Understanding validate succeeds, invoke Understanding with per-requirement mode. **Always write to a temp file** to avoid stdout/stderr mixing:
-
-```bash
-understanding "$SPEC_PATH" --enhanced --per-req --json --output /tmp/u_perreq.json
-```
-
-**Understanding JSON schema** — the output is a **JSON LIST** (array). The first element `[0]` contains all data:
-
-```
-[0].metrics.overall_weighted_average     → float — overall weighted score
-[0].metrics.category_averages            → {readability, structure, testability, semantic, cognitive, behavioral, depth}
-[0].requirement_count                    → int  — 0 means speckit-echelon-cartographer (CARTOGRAPHER) broke bullet format (see warning below)
-[0].per_requirement[]                    → array of per-req objects; absent/empty when requirement_count==0
-  .requirement_id                        → "FR-001"
-  .requirement_text                      → the requirement text
-  .metrics.category_averages             → per-req category scores (same keys as above)
-  .ears_pattern                          → EARS classification string
-  .constraint_diagnostics.hard_constraints → int (0 = untestable)
-  .constraint_diagnostics.soft_words     → string[]
-  .constraint_diagnostics.diagnosis      → string
-```
-
-**There is NO top-level `quality_gates`, `category_scores`, or `requirements` key.** Always use the documented JSON paths below; do not try to access nonexistent keys.
-
-Extract scores with jq:
-
-```bash
-jq -r '.[0].metrics.overall_weighted_average' /tmp/u_perreq.json
-jq -r '.[0].metrics.category_averages' /tmp/u_perreq.json
-jq -r '.[0].requirement_count' /tmp/u_perreq.json
-```
-
-**WARNING — if `requirement_count == 0`:** `_parse_requirements` found no bullet-form requirements. This almost always means speckit-echelon-cartographer (CARTOGRAPHER) edited requirements into non-bullet form (e.g. `**FR-001-N:**` with no leading `- `). The CLI silently falls back to whole-spec analysis — per-req scores from that fallback are **unreliable**. Flag this as a CRITICAL issue in issues.md with action: "speckit-echelon-cartographer (CARTOGRAPHER) must restore the `- **ID**: text` bullet form for all requirements." Include it in the `echelon_result` block as severity CRITICAL.
-
-Load gate thresholds (do NOT hardcode — use the config as the single source of truth):
-
-```bash
-bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh quality_gates
-```
-
-Parse the per-requirement results:
-1. Extract `[0].per_requirement[]` — each element has `requirement_id`, `requirement_text`, `metrics.category_averages`, `ears_pattern`, `constraint_diagnostics`
-2. For each requirement, compare each category score against the corresponding gate threshold from config
-3. Filter to requirements where ANY category score falls below its gate threshold
-4. Write the filtered failure list to issues.md under a new section:
-
-```markdown
-## Per-Requirement Failures
-
-| Requirement | Category | Score | Gate | Verdict |
-|------------|----------|-------|------|---------|
-| FR-003 | testability | 0.30 | <threshold from config> | FAIL |
-```
-
-5. If all requirements pass all gates: write "## Per-Requirement Failures\n\nNone — all requirements pass all category gates."
-6. Only include FAILING requirements and their FAILING metrics (context optimization: O(failing) not O(n*34)).
-
-For each failing requirement, also include constraint diagnostics from Understanding:
-- `hard_constraints`: number of numeric thresholds found (0 = untestable)
-- `soft_words`: list of subjective words found (e.g., ["fast", "appropriate"])
-- `diagnosis`: human-readable fix suggestion (e.g., "Replace 'fast' with 'within 200ms'")
-
-speckit-echelon-cartographer (CARTOGRAPHER) uses these diagnostics for targeted amendments — see cartographer.md "Per-Requirement Failure Consumption" section.
-
-This data is consumed by speckit-echelon-cartographer (CARTOGRAPHER) when speckit-echelon-commander (COMMANDER) routes amendments — see FR-003.
+After Understanding validate succeeds, load `agents/exploration/appendices/sage-understanding-followup-reference.md` and run the per-requirement analysis. Always write Understanding JSON to a temp file, use the documented `[0]` JSON paths, and emit a CRITICAL issue if `requirement_count == 0`.
 
 #### 1b. Generate Behavioral Diagram
 
-Use the Skill tool to generate the entity relationship diagram:
-
-```text
-speckit.echelon.understanding-diagram <spec_directory>/spec.md
-```
-
-Pass these output paths to the skill (one path per invocation). The skill uses `--diagram <path>` — format is inferred from the file extension:
-
-- `<spec_directory>/spec-diagram.svg`
-- `<spec_directory>/spec-diagram.png`
-
-**Always pass diagram output through `--diagram <path.ext>`. Never pass `--png`, `--svg`, or similar standalone format flags** — they don't exist.
-
-This diagram visualizes the spec's entity model — actors, actions, objects, and their relationships — extracted from the requirements. Use it to:
-
-- **Verify completeness:** Are there orphan actors or objects with no actions? Are there actions without a clear subject?
-- **Verify testability:** Can every relationship be verified by a test scenario?
-- **Share with other agents:** speckit-echelon-verification (VERIFICATION) uses this diagram to check if the code implements all entities/relationships. speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) includes it in reports. REFLECT includes it in knowledge transfer assessment.
-
-**If diagram generation fails** (but validate succeeded): always log a `diagram_skipped` journal entry and continue — diagram is useful but never blocking. Common reasons to handle gracefully:
-
-- Graphviz `dot` binary is not on PATH — skip silently, log entry. Do **not** fail the speckit-echelon-sage (SAGE) dispatch over a missing system tool.
-
-```json
-{"type": "diagram_skipped", "agent": "speckit-echelon-sage (SAGE)", "reason": "<brief reason>", "phase": "<current phase>"}
-```
+Generate the entity relationship diagram via the Understanding diagram Skill. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for exact output paths, flags, and the non-blocking `diagram_skipped` handling.
 
 #### 2. Check Quality Gate Thresholds
 
-Load thresholds from config — **do NOT use hardcoded values**. `echelon-config.yml` is the single source of truth:
-
-```bash
-bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh quality_gates
-```
-
-Metrics covered (ISO/standard references):
-- `overall` — overall weighted score (ISO 29148:2018)
-- `structure` — atomicity and completeness (IEEE 830 section 4.3.6)
-- `testability` — verifiability (ISO 29148, mandatory)
-- `semantic` — actor-action-object extraction (Lucassen 2017)
-- `cognitive` — cognitive load (Sweller 1988)
-- `readability` — Flesch readability (Flesch 1948)
-- `depth` — cross-reference density (B3 Benchmark v0.1, Understanding v3.6+)
-- `behavioral` — observable outcomes (Harel 2003/2005)
-
-For each metric:
-- Record the actual score
-- If below threshold: identify which sections of `spec.md` are pulling the score down
-- Suggest specific improvements with before/after examples
+Load thresholds from config; `echelon-config.yml` is the single source of truth. Record actual scores for all Understanding quality metrics and identify spec sections pulling any metric below threshold. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the metric list and follow-up handling.
 
 #### 2d. EARS Pattern Gap Detection
 
-If Understanding's `--per-req --json` output includes `ears_pattern` per requirement, scan for requirements classified as `unclassified`:
-
-- Count requirements per EARS category: ubiquitous, event_driven, state_driven, optional, unwanted, unclassified
-- If any requirements are `unclassified`, flag them in issues.md:
-
-```markdown
-## EARS Pattern Gaps
-
-{N} of {total} requirements match no EARS pattern (Mavin et al., 2009).
-Unclassified requirements may have unclear intent — review for clarity.
-
-| Requirement | Text Preview | Suggested Pattern |
-|------------|-------------|-------------------|
-| FR-007 | "The system should handle..." | Consider: ubiquitous (add SHALL) or event_driven (add WHEN trigger) |
-```
-
-Requirements matching no EARS pattern are not automatically failures — but they correlate with ambiguity. Flag for review, don't block.
+If Understanding returns `ears_pattern`, scan for `unclassified` requirements and flag them for review without automatically blocking. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the output section format.
 
 #### 2b. Extract Testability Sub-Metrics for speckit-echelon-sentinel (SENTINEL)
 
-From the Understanding JSON output (or quality-gates.md), extract and prominently display these testability sub-metrics:
-
-```markdown
-## Testability Sub-Metrics (for speckit-echelon-sentinel (SENTINEL) consumption)
-
-| Sub-Metric | Score | Interpretation |
-|-----------|-------|---------------|
-| hard_constraint_ratio | {score} | Proportion of requirements with numeric/quantitative thresholds |
-| constraint_density | {score} | Average measurable constraints per requirement |
-| negative_space_coverage | {score} | Proportion of requirements specifying error/edge/boundary cases |
-```
-
-These sub-metrics are consumed by speckit-echelon-sentinel (SENTINEL) (TEST speckit-echelon-architect (ARCHITECT)) to inform test strategy design. speckit-echelon-sentinel (SENTINEL) uses them to identify which testability dimension is weakest and prioritize test effort accordingly.
+Extract and display testability sub-metrics for speckit-echelon-sentinel (SENTINEL). Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the table format and interpretations.
 
 #### 2c. Extract Behavioral Transitions for speckit-echelon-sentinel (SENTINEL)
 
-From Understanding's `--json --enhanced` output, extract the `behavioral_analysis.transitions[]` array. Include in quality-gates.md:
-
-```markdown
-## Behavioral Transitions (for speckit-echelon-sentinel (SENTINEL) consumption)
-
-| # | Guard | Action | Outcome | Complete | Requirement |
-|---|-------|--------|---------|----------|-------------|
-| 1 | when  | validate | display | true    | FR-003      |
-```
-
-speckit-echelon-sentinel (SENTINEL) uses these transitions to auto-generate Given/When/Then test case templates:
-- guard → Given [guard condition]
-- action → When [action is performed]
-- outcome → Then [outcome is observed]
+Extract `behavioral_analysis.transitions[]` for speckit-echelon-sentinel (SENTINEL). Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the table format and Given/When/Then mapping.
 
 #### 3. Challenge Requirements
 
@@ -457,41 +306,7 @@ For every claim that a prior issue is "resolved", verify: (a) is there an integr
 
 Perform a structured sweep across all artifacts to detect contradictions. This step is MANDATORY — it must always execute and always produce a result (even if that result is zero contradictions). Silent skipping is forbidden.
 
-**Five contradiction types to check:**
-
-1. **Requirement conflicts** — Two `FR-*` requirements that cannot both be satisfied simultaneously. Example: FR-01 says "all data is encrypted at rest" while FR-14 says "search indexes operate on plaintext fields". Scan all FR-* pairs for logical incompatibility.
-
-2. **Assumption-requirement misalignment** — `assumptions.md` states X, but `spec.md` requires behavior that contradicts X. Example: assumption says "users always have network connectivity" but spec requires offline-first data sync. Cross-reference each assumption against the requirements it relates to.
-
-3. **Boundary violations** — `spec.md` requires feature Y, but `boundaries.md` explicitly declares Y as out of scope. Example: spec includes an admin dashboard, but boundaries say "admin functionality is out of scope for V1". Compare every requirement's domain against the declared boundary exclusions.
-
-4. **Priority inversions** — A P0 (critical) requirement depends on a P2 (low priority) requirement that may not be implemented. Example: P0 "user can complete checkout" depends on P2 "loyalty points calculation". Trace dependency chains across priority levels.
-
-5. **Acceptance criteria conflicts** — Two Given/When/Then blocks that describe contradictory outcomes for the same or overlapping conditions. Example: one AC says "Given a free user, When they upload, Then max file size is 5MB" while another says "Given any user, When they upload, Then max file size is 10MB". Scan all acceptance criteria for overlapping preconditions with divergent outcomes.
-
-**Report format:**
-
-For each contradiction found, produce a structured entry:
-
-| Field | Description |
-|-------|-------------|
-| `contradiction_type` | One of: `requirement_conflict`, `assumption_requirement_misalignment`, `boundary_violation`, `priority_inversion`, `acceptance_criteria_conflict` |
-| `artifact_a` | First artifact (filename + section/ID) |
-| `artifact_b` | Second artifact (filename + section/ID) |
-| `description` | Plain-language description of the contradiction |
-| `severity` | `BLOCKING` (cannot proceed until resolved) or `WARNING` (proceed with caution, document risk) |
-| `suggested_resolution` | Concrete action to resolve the contradiction |
-
-**When zero contradictions are found:**
-
-Always include the contradiction section. Do NOT silently skip or omit it. Explicitly state:
-
-```
-No contradictions detected across [N] artifacts ([list artifact filenames]).
-Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict.
-```
-
-**Logging requirement:** Always log that the contradiction check was performed, including the number of artifacts scanned and the number of contradictions found (including zero). This entry goes into `issues.md` (as a section). Return this entry in the `echelon_result` block at the end of your response.
+Load `agents/exploration/appendices/sage-contradiction-detection-reference.md` for the five contradiction types, structured report fields, zero-contradiction statement, and logging requirements.
 
 #### 9. Pre-Mortem on the Spec
 
