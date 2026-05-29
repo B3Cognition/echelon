@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from harness.build_result import BuildResult
+from harness.build_result import BUILD_STATUS_FILENAME, BuildResult
 from harness.config import HarnessConfig
 from harness.skill_loader import StreamEventPrinter
 
@@ -121,13 +121,10 @@ class AICodingCliProvider:
             return None
 
     def _status_file_path(self, worktree_path: str) -> Path:
-        return Path(worktree_path) / ".harness-build-status.json"
+        return Path(worktree_path) / BUILD_STATUS_FILENAME
 
     def _build_env(self, status_file: str) -> dict:
         env = {**os.environ, "HARNESS_BUILD_STATUS_FILE": status_file}
         if self._config_dir and self._cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
-        # Let agents navigate directly to harness source for debugging/fix sessions
-        # rather than spending turns on filesystem searches.
-        env["HARNESS_SOURCE_DIR"] = str(Path(__file__).parent)
         return env

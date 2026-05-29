@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+# Filename written by build-8-finalize (and codegen-7-deliver) to signal build outcome.
+BUILD_STATUS_FILENAME = ".harness-build-status.json"
+
 
 @dataclass
 class BuildResult:

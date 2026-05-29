@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from harness.build_result import BUILD_STATUS_FILENAME
 from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
@@ -1537,7 +1538,7 @@ def _clear_build_status(worktree_path: str) -> None:
     being read back as a successful completion of the current build.
     """
     try:
-        (Path(worktree_path) / ".harness-build-status.json").unlink(missing_ok=True)
+        (Path(worktree_path) / BUILD_STATUS_FILENAME).unlink(missing_ok=True)
     except Exception:
         pass
 
