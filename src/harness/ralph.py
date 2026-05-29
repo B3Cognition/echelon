@@ -220,6 +220,11 @@ class RalphController:
                 handle = self._provider.create(sandbox_spec)
 
                 try:
+                    # Clear stale build status before each iteration so a
+                    # status file committed from a prior build on this branch
+                    # cannot be mistaken for this build completing successfully.
+                    _clear_build_status(worktree_path)
+
                     # Run build
                     iter_prompt = self._make_iter_prompt(build_prompt, outer_iter, last_verify_failures_text)
                     build_result = self._exec_build(
@@ -1523,6 +1528,18 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
         ],
         file=sys.stderr,
     )
+
+
+def _clear_build_status(worktree_path: str) -> None:
+    """Remove .harness-build-status.json before a build iteration.
+
+    Prevents a status file committed from a prior build on this branch from
+    being read back as a successful completion of the current build.
+    """
+    try:
+        (Path(worktree_path) / ".harness-build-status.json").unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _estimate_tokens(result: ExecResult) -> int:
