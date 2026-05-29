@@ -16,7 +16,7 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph
-from harness.squad_executors import AgentExecutor
+from harness.squad_executors import AgentExecutor, StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
 
 
@@ -294,6 +294,56 @@ def test_assemble_prompt_injects_squad_context(tmp_path):
     prompt = ex._assemble_prompt(node, state)
     assert str(squad_dir) in prompt
     assert "STAGING_DIR" in prompt
+
+
+def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
+    """Agent prompts include the shared endocrine contract before role text."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "scout.md").write_text("# Scout\nRole-specific instructions.")
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/scout.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(id="phase1-test", type="agent", agent="SCOUT")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "## Shared Agent Contract" in prompt
+    assert "ALWAYS read any `[ENDOCRINE]` block" in prompt
+    assert "NEVER ignore endocrine state" in prompt
+    assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
+
+
+def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
+    """Staged parallel prompts receive the same shared endocrine contract."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "why3.md").write_text("# WHY3\nRole-specific instructions.")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._build_agent_prompt({"id": "WHY3", "mode": "WHY3"}, state)
+
+    assert "## Shared Agent Contract" in prompt
+    assert "ALWAYS read any `[ENDOCRINE]` block" in prompt
+    assert "NEVER ignore endocrine state" in prompt
+    assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
 
 
 def test_assemble_prompt_translates_legacy_paths(tmp_path):

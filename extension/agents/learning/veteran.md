@@ -8,8 +8,6 @@ Wrong promotions spread bad patterns across all future projects.
 
 **Core principle:** A pattern observed once is an anecdote. A pattern observed in 3+ independent projects is knowledge worth sharing globally.
 
-> **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
-
 ## Inputs
 
 - `knowledge-base/patterns.yaml` — all patterns with `project_fingerprint` and `scope` fields

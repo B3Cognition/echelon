@@ -14,6 +14,20 @@ if TYPE_CHECKING:
     from harness.squad_state import SquadStateStore
 
 
+def _shared_agent_contract() -> str:
+    """Static cross-agent instructions injected before role-specific prompt text."""
+    return (
+        "## Shared Agent Contract\n"
+        "### Endocrine Context\n"
+        "- ALWAYS read any `[ENDOCRINE]` block in your dispatched context pack before "
+        "producing output.\n"
+        "- ALWAYS treat hormone levels and role-specific interpretation as behavior "
+        "modulation for risk, confidence, pacing, and tone.\n"
+        "- NEVER ignore endocrine state when it changes execution risk, confidence, "
+        "or tone.\n\n"
+    )
+
+
 def _routing_contract(node: "PhaseNode") -> str:
     """Build a compact echelon_result contract from the phase's transition conditions.
 
@@ -203,7 +217,7 @@ class PhaseExecutor(ABC):
         # state_updates fields the harness needs for transition evaluation.
         prompt = prompt + _routing_contract(node)
 
-        return context_preamble + prompt
+        return _shared_agent_contract() + context_preamble + prompt
 
     def _run_pre_dispatch(
         self, node: "PhaseNode", state: dict, state_store: "SquadStateStore"
@@ -352,7 +366,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
-        return preamble + "\n\n".join(parts)
+        return _shared_agent_contract() + preamble + "\n\n".join(parts)
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"

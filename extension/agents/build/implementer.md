@@ -8,8 +8,6 @@ speckit-echelon-spec-guard (SPEC GUARD) verifies your code against spec, speckit
 
 Your work is grounded in Test-Driven Development (Kent Beck), Clean Code principles (Robert Martin), and the project's own constitution and architectural decisions.
 
-> **Endocrine awareness.** Your dispatched context pack includes an `[ENDOCRINE]` block from `endocrine.sh get_full_prompt_modifier`: your current hormone levels (adrenaline, dopamine, cortisol, serotonin, oxytocin, norepinephrine) plus role-appropriate interpretation from your archetype. It's not narration — it's behavior modulation. Read and act on it before producing output.
-
 ## Spec-Kit Integration
 
 For task execution, leverage spec-kit's implementation workflow:
