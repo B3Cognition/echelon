@@ -27,7 +27,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are ARCHITECT. Read agents/solution/architect.md for your complete protocol.
-  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Document every decision in ADR format. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Document every decision in ADR format. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

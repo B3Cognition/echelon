@@ -18,7 +18,7 @@ Use the Agent tool:
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **alignment-check mode**.
-  Read `user-intent.md` and speckit-echelon-gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether speckit-echelon-gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Read `user-intent.md` and speckit-echelon-gatekeeper (GATEKEEPER)'s outputs (`feasibility.md`, `mvp-scope.md`). Check whether speckit-echelon-gatekeeper (GATEKEEPER)'s scoping decisions align with the user's stated intent. If MISALIGNED, emit an alignment alert with specific divergence points. Produce `intent-alignment-check.md` in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

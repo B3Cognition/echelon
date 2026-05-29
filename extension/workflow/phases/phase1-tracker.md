@@ -28,7 +28,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol.
-  Read the user's original request and speckit-echelon-scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
+  Read the user's original request and speckit-echelon-scout (SCOUT)'s discovery outputs. Capture the user's stated intent, scope preferences, and explicit constraints into `user-intent.md`. Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

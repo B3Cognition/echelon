@@ -26,7 +26,7 @@ Use the Agent tool:
 
   <instructions>
   You are REALIST. Read agents/learning/realist.md for your complete protocol.
-  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -53,7 +53,7 @@ Use the Agent tool:
 
   <instructions>
   You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
-  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Append entries to `reasoning-journal.jsonl`.
+  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -81,7 +81,7 @@ Use the Agent tool:
 
   <instructions>
   You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
-  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -121,7 +121,7 @@ Use the Agent tool:
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

@@ -27,7 +27,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
-  Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

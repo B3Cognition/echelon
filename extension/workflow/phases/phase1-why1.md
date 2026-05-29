@@ -36,7 +36,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
-  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/`. Append entries to `reasoning-journal.jsonl`.
+  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

@@ -251,6 +251,10 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
 # ── Structural: no direct >> reasoning-journal.jsonl appends in spec files ───
 
 _DIRECT_APPEND_RE = re.compile(r">>\s*.*reasoning-journal\.jsonl")
+_DIRECT_JOURNAL_INSTRUCTION_RE = re.compile(
+    r"\bAppend entries to `reasoning-journal\.jsonl`"
+    r"|\bThen append .* to `reasoning-journal\.jsonl`"
+)
 _PHASES_DIR = EXT_ROOT / "extension/workflow/phases"
 
 
@@ -268,6 +272,20 @@ def test_no_direct_journal_appends_in_phase_specs():
     assert not violations, (
         "Direct >> reasoning-journal.jsonl appends found in phase specs "
         "(use journal-append.sh instead):\n" + "\n".join(violations)
+    )
+
+
+def test_phase_specs_do_not_instruct_agents_to_append_to_journal():
+    """Agents should return journal_entries; the harness writes the JSONL file."""
+    violations = []
+    for md_file in _PHASES_DIR.glob("*.md"):
+        for lineno, line in enumerate(md_file.read_text().splitlines(), start=1):
+            if _DIRECT_JOURNAL_INSTRUCTION_RE.search(line):
+                violations.append(f"{md_file.name}:{lineno}: {line.strip()}")
+
+    assert not violations, (
+        "Phase specs must instruct agents to return echelon_result.journal_entries, "
+        "not append directly to reasoning-journal.jsonl:\n" + "\n".join(violations)
     )
 
 

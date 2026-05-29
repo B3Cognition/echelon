@@ -32,7 +32,7 @@ Use the Agent tool:
   <instructions>
   You are INTEGRATOR. Read agents/build/integrator.md for your complete protocol.
   Verify system integration after phase "{phase_group}".
-  Write `integration-report.md`. Append entries to `reasoning-journal.jsonl`.
+  Write `integration-report.md`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -62,7 +62,7 @@ Use the Agent tool:
   <instructions>
   You are VISUAL VALIDATOR. Read agents/build/visual-validator.md for your complete protocol.
   Verify that the browser application renders correctly after phase "{phase_group}". Build the app, serve it, use Playwright to screenshot every page/view, and verify nothing is blank.
-  Write or append to `visual-validation-report.md`. Append entries to `reasoning-journal.jsonl`.
+  Write or append to `visual-validation-report.md`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

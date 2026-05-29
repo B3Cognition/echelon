@@ -64,7 +64,7 @@ Use the Agent tool:
   <instructions>
   You are IMPLEMENTER. Read agents/build/implementer.md for your complete protocol.
   Build task {task_id}: {task_description}
-  Write code and tests. Append entries to `reasoning-journal.jsonl`.
+  Write code and tests. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

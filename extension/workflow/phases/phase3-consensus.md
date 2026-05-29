@@ -45,7 +45,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
-  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -62,7 +62,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
-  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -85,7 +85,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
-  Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Produce outputs in `specs/{NNN}-{feature}/`. Append entries to `reasoning-journal.jsonl`.
+  Re-evaluate task dependencies with specialist-added tasks. Update critical path if specialist work changed sequencing. Validate all specialist outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -118,6 +118,6 @@ phase4-build stays open through FINALIZE. Close it in phase4-document §12 befor
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase4-build
 ```
 
-Then append one `timing_summary` journal entry per phase to `reasoning-journal.jsonl`. The anomaly reason enum value for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
+Then return one `timing_summary` journal entry per phase in `echelon_result.journal_entries`. The anomaly reason enum value for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
 
 **Transition:** `phases[phase4-document]` — see `workflow/definition.yaml`
