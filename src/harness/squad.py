@@ -22,7 +22,8 @@ from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore
 
 
-TERMINAL_PHASES = {"DONE", "done", "terminal-blocked"}
+PHASE_TERMINAL_BLOCKED = "terminal-blocked"
+TERMINAL_PHASES = {"DONE", "done", PHASE_TERMINAL_BLOCKED}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 
 # Max times the convergence guard may redirect to the same recommended phase before
@@ -333,7 +334,10 @@ class SquadController:
                     f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
                     flush=True,
                 )
-                return "terminal-blocked"
+                s = self._state_store.load()
+                s["phase"] = PHASE_TERMINAL_BLOCKED
+                self._state_store.save(s)
+                return SquadResult.from_state(self._state_store.load())
 
             print(f"\n[squad] ▶ {node.id}  {label}", flush=True)
 
@@ -400,6 +404,7 @@ class SquadController:
                     )
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
+                continue
 
     def _apply_phase_recommendation_guard(self, phase: str) -> str:
         """Honor forced-convergence routing before dispatching another agent.
@@ -515,7 +520,7 @@ class SquadController:
                         s["blocked_reason"] = "consecutive_why_fails"
                         s["status"] = "blocked"
                         self._state_store.save(s)
-                        return "terminal-blocked"
+                        return PHASE_TERMINAL_BLOCKED
             else:
                 self._state_store.reset_why_fail_count()
         # ── end WHY tracking ─────────────────────────────────────────────────
@@ -549,7 +554,7 @@ class SquadController:
                     self._state_store.set_blocked(
                         f"judgment returned invalid next_phase {next_phase!r}"
                     )
-                    return "terminal-blocked"
+                    return PHASE_TERMINAL_BLOCKED
                 # Apply judgment state_updates (e.g. iteration increment) now —
                 # advance() only applies the executor result's state_updates.
                 routing_keys = {"next_phase", "phase"}
