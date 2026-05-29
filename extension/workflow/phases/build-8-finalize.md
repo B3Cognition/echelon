@@ -54,114 +54,19 @@ If any of these fail, always route to rework first. Do not proceed to BUILD_DONE
 
 ### 8.1b.1 verify.sh Smoke Test Requirement (MANDATORY)
 
-Every build must produce a `verify.sh` in the repo root. This script is what the harness runs in Docker to verify the build.
+Every build must produce a repo-root `verify.sh` that starts the produced application or artifact and proves it responds. Unit tests alone are not sufficient.
 
-**`verify.sh` MUST include a smoke test that starts the application and verifies it responds.** "All unit tests pass" is not sufficient — a blank page with passing unit tests is a failed build.
-
-Minimum smoke test pattern for web applications:
-
-```sh
-# After npm test passes:
-npm run build
-npx vite preview --port 4173 &
-PREVIEW_PID=$!
-sleep 3
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4173)
-kill $PREVIEW_PID 2>/dev/null || true
-if [ "$STATUS" != "200" ]; then
-  echo "Smoke test FAILED: app returned HTTP $STATUS (expected 200)"
-  exit 1
-fi
-echo "Smoke test PASSED: app served HTTP 200"
-```
-
-Adapt for other stacks:
-- **Node/Express:** `node server.js & sleep 2 && curl -s http://localhost:3000`
-- **Python/FastAPI:** `uvicorn main:app & sleep 2 && curl -s http://localhost:8000/health`
-- **Static site:** `npx serve dist & sleep 2 && curl -s http://localhost:3000`
-- **No HTTP server (CLI tool, library):** smoke test = `node dist/index.js --version` or equivalent invocation that proves the artifact runs
-
-**Next.js apps require stricter smoke testing.** `next build` can exit 0 while producing a broken production bundle — pages that use modules requiring runtime initialization (auth providers, i18n, database clients, React context) crash during SSG with errors like `TypeError: (0, t) is not a function`. The bundle looks built but every page returns 500 at runtime.
-
-For Next.js, `verify.sh` MUST:
-
-1. **Capture build output and check for SSG errors** — `next build` prints these to stdout even when it exits 0:
-
-```sh
-# Capture build output; fail if Next.js emitted SSG errors
-next build 2>&1 | tee /tmp/nextbuild.log
-if grep -qE "(TypeError|ReferenceError|Error:.*is not a function|Error:.*Cannot read)" /tmp/nextbuild.log; then
-  echo "✗ Next.js build contains SSG errors — pages will crash at runtime"
-  echo "  Fix: add 'export const dynamic = \"force-dynamic\"' to affected pages"
-  cat /tmp/nextbuild.log >&2
-  exit 1
-fi
-```
-
-1. **Start the server and test a health endpoint with strict 2xx** — a permissive "server responded" check misses broken bundles. The app MUST expose a health endpoint (e.g. `app/api/health/route.ts`) that returns 2xx only when the app initialised correctly:
-
-```sh
-PORT=3099 node server.js &
-SERVER_PID=$!
-sleep 4
-STATUS=$(curl -so /dev/null -w '%{http_code}' http://localhost:3099/api/health 2>/dev/null)
-kill $SERVER_PID 2>/dev/null || true
-if [[ ! "$STATUS" =~ ^2 ]]; then
-  echo "✗ Health check failed: /api/health returned HTTP $STATUS (expected 2xx)"
-  exit 1
-fi
-echo "Smoke test PASSED: /api/health returned HTTP $STATUS"
-```
-
-**Pages that use provider-dependent modules must be `force-dynamic`.** The general rule: if a page imports from an auth provider, i18n library, ORM, or any module that reads from React context or makes async calls at module scope — it cannot be statically generated. Add `export const dynamic = 'force-dynamic'` to the page file. speckit-echelon-implementer (IMPLEMENTER) must audit pages for this pattern during implementation and flag any that need it. speckit-echelon-sentinel (SENTINEL) must include a render test for each such page.
+For complete smoke-test patterns, Next.js-specific checks, and stack-specific examples, load `workflow/phases/appendices/build-8-verify-gates.md` before ENGINEERING MANAGER sign-off or when IMPLEMENTER needs to create or repair `verify.sh`.
 
 If `verify.sh` does not contain a smoke test, speckit-echelon-engineering-manager (ENGINEERING MANAGER) must request speckit-echelon-implementer (IMPLEMENTER) add one before sign-off. This is not optional.
 
 ### 8.1b.2 verify.sh Security and License Gate (MANDATORY)
 
-Every `verify.sh` must also run a security scan and dependency license check
-after the smoke test. These run inside the same Docker sandbox — no extra
-infrastructure required.
+Every `verify.sh` must run security and dependency license checks after the smoke test, inside the same Docker sandbox.
 
-**Security scan** — detect known vulnerabilities in dependencies:
+speckit-echelon-implementer (IMPLEMENTER) must select commands for every detected ecosystem and add them to `verify.sh` after the smoke test block. If an audit or license check fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
 
-| Ecosystem | Command |
-| --- | --- |
-| Node.js (npm/pnpm/yarn/bun) | `npm audit --audit-level=high 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ Security audit failed — see /tmp/audit.txt"; exit 1; }` |
-| Python | `pip install pip-audit --quiet && pip-audit 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ pip-audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
-| Go | `go install golang.org/x/vuln/cmd/govulncheck@latest 2>/dev/null && govulncheck ./... 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ govulncheck found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
-| Rust | `cargo install cargo-audit --quiet 2>/dev/null && cargo audit 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ cargo audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
-| Ruby | `gem install bundler-audit --quiet 2>/dev/null && bundle-audit check --update 2>&1 \| tee /tmp/audit.txt \|\| { echo "✗ bundle-audit found vulnerabilities — see /tmp/audit.txt"; exit 1; }` |
-
-**License check** — verify all dependencies use permissive licenses:
-
-Permitted: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`,
-`Unlicense`, `CC0-1.0`, `Python-2.0`, `BlueOak-1.0.0`.
-
-| Ecosystem | Command |
-| --- | --- |
-| Node.js | `npx --yes license-checker --onlyAllow "MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;Unlicense;CC0-1.0;BlueOak-1.0.0" 2>&1 \| tee /tmp/licenses.txt \|\| { echo "✗ License check failed — review /tmp/licenses.txt"; exit 1; }` |
-| Python | `pip install pip-licenses --quiet && pip-licenses --allow-only="MIT;Apache Software License;BSD License;ISC License (ISCL);Public Domain;Python Software Foundation License" 2>&1 \|\| { echo "✗ pip-licenses check failed"; exit 1; }` |
-| Go | `go install github.com/google/go-licenses@latest 2>/dev/null && go-licenses check --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,Unlicense,CC0-1.0 ./... 2>&1 \| tee /tmp/licenses.txt \|\| { echo "✗ go-licenses check failed — see /tmp/licenses.txt"; exit 1; }` |
-| Rust | `cargo install cargo-license --quiet 2>/dev/null; cargo license 2>&1 \| grep -vE "^(name\|MIT\|Apache-2.0\|BSD-2-Clause\|BSD-3-Clause\|ISC\|Unlicense\|CC0-1.0)" \| grep -v "^$" > /tmp/licenses.txt; [ ! -s /tmp/licenses.txt ] \|\| { echo "✗ Non-permissive license detected — see /tmp/licenses.txt"; exit 1; }` |
-| Ruby | `gem install license_finder --quiet 2>/dev/null && license_finder 2>&1 \| tee /tmp/licenses.txt \|\| { echo "✗ License check failed — see /tmp/licenses.txt"; exit 1; }` |
-
-> Note: `pip-licenses` reports license names in its own format (e.g. "Apache Software License", "BSD License") rather than SPDX identifiers. The `--allow-only` list must use pip-licenses' display names, not SPDX IDs.
-
-For polyglot projects (e.g., both `package.json` and `requirements.txt` present),
-run the checks for every detected ecosystem — not just the primary one.
-
-speckit-echelon-implementer (IMPLEMENTER) must select the correct commands for the detected ecosystem and add
-them to `verify.sh` after the smoke test block. If the audit or license check
-fails, `verify.sh` must exit non-zero so the harness marks the build as failed.
-
-If a security vulnerability or non-permissive license is found:
-
-- Print the finding clearly
-- Always exit 1 — do not suppress or work around the failure
-- The squad must address the finding (update dependency, get license exception
-  documented in `specs/{NNN}-{feature}/license-exceptions.md`) before the
-  build can proceed
+For exact commands, permitted licenses, and polyglot handling, load `workflow/phases/appendices/build-8-verify-gates.md`.
 
 ### 8.1c Final Verification
 
@@ -494,179 +399,33 @@ Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) i
 
 ### 8.7 Print Summary
 
-```
-============================================
-  ECHELON BUILD COMPLETE
-============================================
+Print the final build summary after BUILD_DONE. Always include quality gates, effort, auto-feedback, reports, agent scorecard, warnings, autonomous risk acceptances, and the HUMAN ACTIONS REQUIRED section.
 
-Feature:    {NNN}-{feature}
-Tasks:      {completed}/{total} ({degraded} degraded, {blocked} blocked)
-
-QUALITY GATES:
-  Spec Guard:     {passed}/{total} PASS
-  Code Review:    {approved}/{total} APPROVED
-  Test Guardian:  {passed}/{total} PASS
-  Integration:    {checkpoints_passed}/{total_checkpoints} PASS
-  Verification:   PASS ({coverage_score} coverage, {gap_count} gaps)
-
-EFFORT:
-  Estimated total: {sum}
-  Actual total:    {sum}
-  Burn rate:       {ratio}x
-  Drift status:    {ON_TRACK | DRIFT_WARNING | OVERRUN}
-
-AUTO-FEEDBACK (closed loop):
-  Effort accuracy:      {ratio}x
-  Architecture held:    {count}/{total} decisions
-  Requirements correct: {count}/{total}
-  Risk predictions:     {count}/{total} accurate
-  Test coverage:        {actual}% (planned {planned}%)
-  Critical findings:    {count} ({investigated} expert-investigated)
-  Post-build validation:{PASS|REGRESSION|N/A}
-  Intent alignment:     {ALIGNED|MISALIGNED|N/A}
-  KB entries updated:   {count}
-
-REPORTS:
-  spec-compliance-report.md
-  code-review-report.md
-  test-quality-report.md
-  integration-report.md
-  progress-report.md
-  gap-report.md
-  verification-summary.md
-  feedback-report.md          (NEW — auto-generated)
-  post-build-validation.md    (NEW — if enabled)
-  intent-alignment-final.md   (NEW — if enabled)
-
-AGENT SCORECARD:
-  Top performer: {agent} (+{score}) — {highlight}
-  Badges earned: {list}
-  Self-healing: {recommendations}
-
-WARNINGS:
-  {any DEGRADED tasks}
-  {any BLOCKED tasks}
-  {any drift alerts}
-
-RISKS ACCEPTED AUTONOMOUSLY:
-  {count from risk-acceptance-log.md, or "None"}
-  {for each ACCEPT_WITH_MITIGATIONS: one-line summary + mitigation status}
-
-──────────────────────────────────────────
-  HUMAN ACTIONS REQUIRED
-──────────────────────────────────────────
-  {This section is MANDATORY. ALWAYS print it, even if empty.}
-  {If no human actions: "None — build completed autonomously."}
-  {For each ESCALATE item from risk-acceptance-log.md:}
-    [ ] {RAR-ID}: {one-line description} — {reason human must decide}
-  {For each BLOCKED task that needs external input:}
-    [ ] {task ID}: {what is blocked} — {who/what can unblock}
-  {For each HUMAN_REVIEW_REQUIRED flag:}
-    [ ] {source agent}: {what needs review}
-  {For each manual verification needed:}
-    [ ] {what to verify} — {how to verify it}
-  {For each deployment/release action:}
-    [ ] {action}: {command or step}
-──────────────────────────────────────────
-
-============================================
-```
+For the complete summary template, load `workflow/phases/appendices/build-8-summary-reference.md`.
 
 ---
 
 ## 9. Error Handling
 
-### Task-Level Failures
+Retry transient task and review-agent timeouts once. Flag persistent task failures as BLOCKED or UNVALIDATED according to the gate. Pause when blockers accumulate or phase failures indicate bad task ordering.
 
-| Situation | Action |
-|-----------|--------|
-| speckit-echelon-implementer (IMPLEMENTER) timeout (> 5 min) | Retry once. If still timeout, skip task as BLOCKED. |
-| Review agent timeout | Retry once. If still timeout, skip gate (flag as UNVALIDATED). |
-| speckit-echelon-implementer (IMPLEMENTER) produces no files | Flag as BLOCKED. Move to next task. |
-| 3+ tasks BLOCKED | Pause. MANAGER assesses whether build can continue or needs re-planning. |
-
-### Phase-Level Failures
-
-| Situation | Action |
-|-----------|--------|
-| speckit-echelon-integrator (INTEGRATOR) finds > 5 failures | Pause phase. Assess whether tasks need re-ordering or re-specification. |
-| Build command fails completely | Check if `package.json` has the expected scripts. Flag as BLOCKED if not. |
-| All tasks in a phase BLOCKED | Skip phase. Flag as PHASE_SKIPPED. Continue to next phase (may also fail). |
-| `validate-deploy.sh` fails at 1.0b | HARD STOP. Deploy infrastructure not ready. Follow error output to fix, then re-run build. |
+For the complete task-level and phase-level handling table, load `workflow/phases/appendices/build-8-summary-reference.md`.
 
 ### Degraded Mode
 
-Tasks or gates flagged as DEGRADED must have this banner in their report section:
-
-```markdown
-> **DEGRADED** — This task passed with known issues after maximum fix cycles ({N} cycles). The following gates were not fully satisfied: {list}. Review before deployment.
-```
+Tasks or gates flagged as DEGRADED must include the degraded banner in their report section. Use `workflow/phases/appendices/build-8-summary-reference.md` for the exact banner.
 
 ---
 
 ## 10. Convergence Rules
 
-- **Max fix cycles per gate:** 2 (speckit-echelon-implementer (IMPLEMENTER) gets 2 chances to fix issues per quality gate)
-- **Max total speckit-echelon-implementer (IMPLEMENTER) dispatches per task:** 7 (1 initial + 2 per gate for 3 gates)
-- **Max BLOCKED tasks before pause:** 3
-- **Max DEGRADED tasks before warning:** 30% of total tasks
-- **Token budget for build phase:** Configurable in `echelon-config.yml`. Default: 2M tokens.
-- **Wall-clock time limit:** 60 minutes. Force complete with whatever is done.
+Enforce the build phase convergence limits for gate fix cycles, IMPLEMENTER dispatches, blocked tasks, degraded tasks, token budget, and wall-clock time. Load `workflow/phases/appendices/build-8-summary-reference.md` for the exact limits.
 
 ---
 
 ## 11. Quick Reference: Build Flow
 
-```
-BUILD_INIT
-  │ validate Phase A artifacts, parse tasks, order by dependencies
-  │
-  ▼
-FOR EACH task (ordered by phase, then dependencies):
-  │
-  speckit-echelon-implementer (IMPLEMENTER) → writes code + tests
-    │
-    ├─ DONE → continue
-    ├─ NEEDS_CONTEXT → MANAGER provides, re-dispatch (max 2)
-    └─ BLOCKED → skip task, log
-    │
-  speckit-echelon-spec-guard (SPEC GUARD) → verifies code vs FR-* requirements
-    │
-    ├─ PASS → continue
-    └─ FAIL → speckit-echelon-implementer (IMPLEMENTER) fixes (max 2 cycles)
-    │
-  speckit-echelon-code-reviewer (CODE REVIEWER) → checks quality + ADR + constitution
-    │
-    ├─ APPROVED → continue
-    └─ CHANGES_REQUESTED → speckit-echelon-implementer (IMPLEMENTER) fixes (max 2 cycles)
-    │
-  speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) → validates test quality + coverage
-    │
-    ├─ PASS → continue
-    └─ FAIL → speckit-echelon-implementer (IMPLEMENTER) adds tests (max 2 cycles)
-    │
-  speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) → records effort, checks drift
-  │
-END FOR
-  │
-speckit-echelon-integrator (INTEGRATOR) → runs after each phase checkpoint
-  │
-  ├─ PASS → next phase
-  └─ FAIL → speckit-echelon-implementer (IMPLEMENTER) fixes integration issues
-  │
-FINAL INTEGRATION → whole-system integration pass
-  │
-speckit-echelon-engineering-manager (ENGINEERING MANAGER) → workflow compliance + readiness sign-off
-  │
-speckit-echelon-verification (VERIFICATION) → full backpropagation check against spec
-  │
-  ├─ PASS → BUILD_DONE
-  └─ FAIL → RW-* tasks + rework loop
-
-Before BUILD_DONE can succeed:
-  speckit-echelon-engineering-manager (ENGINEERING MANAGER) → verifies workflow compliance and readiness
-  speckit-echelon-verification (VERIFICATION) → proves 100% implemented coverage with zero open gaps
-```
+For the condensed build flow reference, load `workflow/phases/appendices/build-8-summary-reference.md`.
 
 ---
 

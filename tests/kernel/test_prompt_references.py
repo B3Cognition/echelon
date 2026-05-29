@@ -11,7 +11,8 @@ PROMPT_ROOTS = [
 ]
 
 REFERENCE_RE = re.compile(
-    r"`(agents/(?:[^`]+/(?:templates|appendices)/[^`]+))`"
+    r"`((?:agents/(?:[^`]+/(?:templates|appendices)/[^`]+))|"
+    r"(?:workflow/phases/appendices/[^`]+))`"
 )
 
 
@@ -30,3 +31,11 @@ def test_prompt_template_and_appendix_references_exist():
                     )
 
     assert not missing, "\n".join(missing)
+
+
+def test_build_finalize_uses_appendices_for_large_reference_sections():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "build-8-finalize.md"
+    text = prompt.read_text()
+
+    assert "workflow/phases/appendices/build-8-verify-gates.md" in text
+    assert "workflow/phases/appendices/build-8-summary-reference.md" in text
