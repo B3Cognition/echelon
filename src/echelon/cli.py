@@ -771,10 +771,13 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     # 2. Quality gates — check specs/ first, then staging/ for mid-run blocked states
     specs_root = project_root / "specs"
 
-    # Pre-check: if tasks.md already exists, the run completed all phases past quality gates
+    # Pre-check: if tasks.md already exists, the run completed all phases past quality gates.
+    # Also capture newest_spec_id here so the build command always has the actual spec name.
     tasks_exist_in_spec = False
+    newest_spec_id = ""
     if specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+            newest_spec_id = d.name
             if (d / "tasks.md").exists():
                 tasks_exist_in_spec = True
             break
@@ -866,14 +869,13 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         warnings.append("WHY2 not yet run — spec validation pending")
 
     # 3. HOW phase artifacts — only surface when quality gates have passed
-    # (if gates are failing, HOW/tasks missing is expected and not actionable yet)
+    # (if gates are hard-failing, HOW/tasks missing is expected and not actionable yet)
+    # Borderline-only quality gates still allow Phase 3 to proceed.
     # Skip HOW check entirely when tasks.md already exists — the run completed,
     # so HOW was done (possibly with different artifact names for this workflow).
     why2_passed = tasks_exist_in_spec or (
         quality_gates_file is not None
-        and not hard_fails
-        and not borderline
-        and qg_verdict not in ("FAIL", "BLOCKED")
+        and not hard_fails  # borderline-only is fine — only hard fails block Phase 3
     )
     how_present = 0
     how_missing = []
@@ -898,10 +900,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # 4. tasks.md — only surface when quality gates have passed
     tasks_present = False
-    newest_spec_id = ""
     if why2_passed and specs_root.exists():
         for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            newest_spec_id = d.name
             if (d / "tasks.md").exists():
                 tasks_present = True
                 ready_items.append("tasks.md ✓")
