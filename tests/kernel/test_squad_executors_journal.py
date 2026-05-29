@@ -342,6 +342,7 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "ALWAYS read your agent-specific belief register when present" in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
+    assert prompt.index("# Scout") < prompt.index("# Squad Run Context")
 
 
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
@@ -370,6 +371,7 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "ALWAYS read your agent-specific belief register when present" in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
+    assert prompt.index("# WHY3") < prompt.index("# Squad Run Context")
 
 
 def test_assemble_prompt_translates_legacy_paths(tmp_path):

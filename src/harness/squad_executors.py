@@ -150,7 +150,8 @@ class PhaseExecutor(ABC):
                 next_id += 1
 
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
-        parts: list[str] = []
+        static_parts: list[str] = []
+        dynamic_parts: list[str] = []
 
         # Resolve run dirs early — needed for both context pack file reads and
         # the text-level translation applied to agent/spec file content below.
@@ -171,13 +172,13 @@ class PhaseExecutor(ABC):
             if rel:
                 agent_path = self._ext_dir / rel
                 if agent_path.exists():
-                    parts.append(agent_path.read_text())
+                    static_parts.append(agent_path.read_text())
 
         # 2. Phase spec file (context pack assembly instructions + echelon_result schema)
         if node.spec_file:
             spec_path = self._ext_dir / node.spec_file
             if spec_path.exists():
-                parts.append(spec_path.read_text())
+                static_parts.append(spec_path.read_text())
 
         # 3. Context pack files (read each that exists on disk).
         # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
@@ -190,14 +191,12 @@ class PhaseExecutor(ABC):
             resolved = _translate_squad_path(file_ref)
             candidate = Path(resolved) if resolved.startswith("/") else self._project_root / resolved
             if candidate.exists():
-                parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
         if state_path.exists():
-            parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
-
-        prompt = "\n\n".join(parts)
+            dynamic_parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
 
         # Inject squad run context so agents know where to write
         context_preamble = (
@@ -220,6 +219,8 @@ class PhaseExecutor(ABC):
                 "amendment of spec.md and 00-overview.md.\n\n"
             )
 
+        prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)
+
         # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
         prompt = prompt.replace(".specify/squad/staging", staging_dir_str)
@@ -230,7 +231,7 @@ class PhaseExecutor(ABC):
         # state_updates fields the harness needs for transition evaluation.
         prompt = prompt + _routing_contract(node)
 
-        return _shared_agent_contract() + context_preamble + prompt
+        return _shared_agent_contract() + prompt
 
     def _run_pre_dispatch(
         self, node: "PhaseNode", state: dict, state_store: "SquadStateStore"
@@ -331,14 +332,15 @@ class StagedParallelExecutor(PhaseExecutor):
         ).split(" ")[0]
         mode_label = str(agent_entry.get("mode", agent_id))
 
-        parts: list[str] = []
+        static_parts: list[str] = []
+        dynamic_parts: list[str] = []
 
         # 1. Agent role file (protocol + identity)
         rel = self._graph.agent_file(agent_id)
         if rel:
             agent_path = self._ext_dir / rel
             if agent_path.exists():
-                parts.append(agent_path.read_text())
+                static_parts.append(agent_path.read_text())
 
         # 2. Per-agent context_pack files.
         # Try spec dirs (specs/*/) first, then project root, then squad staging.
@@ -360,13 +362,13 @@ class StagedParallelExecutor(PhaseExecutor):
             for base in search_bases:
                 candidate = base / file_ref
                 if candidate.exists():
-                    parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                    dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
                     break
 
         # 3. Any extra files (e.g. implementability-report.md for PLAN2)
         for extra_path in (extra_files or []):
             if extra_path and extra_path.exists():
-                parts.append(
+                dynamic_parts.append(
                     f"\n---\n# {extra_path.name}\n{extra_path.read_text()}"
                 )
 
@@ -379,7 +381,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
-        return _shared_agent_contract() + preamble + "\n\n".join(parts)
+        return _shared_agent_contract() + "\n\n".join(static_parts + [preamble] + dynamic_parts)
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
