@@ -267,24 +267,26 @@ class RalphController:
                             final_verify=None,
                         )
 
-                    # Hard-stop: if COMMANDER blocked (e.g. Phase A artifacts missing),
-                    # do not run verify — a blocked build cannot converge regardless of
-                    # whether the existing test suite passes.
-                    commander_blocked_reason = _commander_blocked_reason(worktree_path)
-                    if commander_blocked_reason:
+                    # Hard-stop: if the build did not complete (COMMANDER blocked
+                    # early without reaching build-8-finalize, or hit an impasse),
+                    # the status file was not written this iteration.
+                    # llm_provider clears the file before each build so a missing
+                    # or non-"done" status always means this build didn't complete.
+                    if not build_result.get("passed", True):
                         from echelon.ui import banner as _ui_banner
                         _ui_banner(
-                            "HARNESS — BUILD BLOCKED BY COMMANDER",
+                            "HARNESS — BUILD DID NOT COMPLETE",
                             [
                                 ("spec", self._spec_id),
-                                ("reason", commander_blocked_reason),
-                                ("next", f"echelon run  (complete Phase A first)"),
+                                ("strategy", self._strategy_id),
+                                ("hint", "COMMANDER may have blocked on missing Phase A artifacts"),
+                                ("next", "echelon run  (complete Phase A first, then re-run harness)"),
                             ],
                             file=sys.stderr,
                         )
                         return self._finalize(
                             status="blocked",
-                            reason="commander_blocked",
+                            reason="build_incomplete",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -1521,31 +1523,6 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
         ],
         file=sys.stderr,
     )
-
-
-def _commander_blocked_reason(worktree_path: str) -> Optional[str]:
-    """Return blocked_reason if COMMANDER's squad state shows status=blocked, else None.
-
-    When COMMANDER hits a hard stop (e.g. Phase A artifacts missing), it writes
-    status=blocked to .specify/squad/state.json. The harness must detect this
-    before running verify — a blocked build should never converge on a passing
-    test suite that was already passing before the build ran.
-    """
-    import json as _json
-    try:
-        state_file = Path(worktree_path) / ".specify" / "squad" / "state.json"
-        if not state_file.exists():
-            return None
-        data = _json.loads(state_file.read_text(encoding="utf-8"))
-        if data.get("status") == "blocked":
-            return str(
-                data.get("blocked_reason")
-                or data.get("escalation_question")
-                or "COMMANDER blocked (no reason recorded)"
-            )
-    except Exception:
-        pass
-    return None
 
 
 def _estimate_tokens(result: ExecResult) -> int:

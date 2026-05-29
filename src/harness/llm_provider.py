@@ -50,6 +50,9 @@ class AICodingCliProvider:
     def exec_build(self, worktree_path: str, prompt: str) -> BuildResult:
         """Run `<cli> -p <prompt>` in worktree_path, return BuildResult."""
         status_file = self._status_file_path(worktree_path)
+        # Clear any stale status file from a prior build committed to this branch.
+        # After the build, a missing/non-"done" file means COMMANDER did not complete.
+        status_file.unlink(missing_ok=True)
         env = self._build_env(str(status_file))
         start = time.monotonic()
 
