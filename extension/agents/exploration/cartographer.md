@@ -322,37 +322,9 @@ These are non-negotiable rules:
 
 ## speckit-echelon-golddigger (GOLDDIGGER) Mode 2 Deep Dive Requests (brownfield only)
 
-speckit-echelon-golddigger (GOLDDIGGER) Mode 1 provides function bodies, business logic, and error handling patterns at 99% coverage — enough to write precise acceptance criteria for the vast majority of domains. Mode 2 adds complete source file reading, deep data flow analysis, and test assertion extraction. Request it only when those specific capabilities are needed.
+Request GOLDDIGGER Mode 2 only for brownfield domains where complete source-file or integration-topology analysis is required to write testable acceptance criteria.
 
-**Appropriate when:**
-- The domain has external integrations where the full topology (e.g., auth provider flow, message queue routing, third-party API error surface) cannot be determined from function bodies alone, making it impossible to write complete error case requirements
-
-**Not appropriate for:**
-- Domains where internal behavior is unclear at signature level — `logic` depth already provides function bodies and business logic
-- General uncertainty about a domain — if the answer is in the existing artifacts, use it
-
-**Before requesting:** Check `state.json.golddigger_completed_domains` — if a deep dive was already completed by a prior agent's request, read the cached result at `.specify/squad/golddigger-cache/<domain>.md`.
-
-```bash
-# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
-python3 -c "
-import json
-with open('${SQUAD_DIR}/state.json', 'r') as f:
-    s = json.load(f)
-
-s.setdefault('golddigger_requests', []).append({
-    'domain': '<domain-name>',
-    'repo': '<repo-name-or-null>',
-    'requester': 'speckit-echelon-cartographer (CARTOGRAPHER)',
-    'reason': '<specific gap — e.g., cannot write testable AC for payment error cases without knowing full payment provider integration topology>'
-})
-
-with open('${SQUAD_DIR}/state.json', 'w') as f:
-    json.dump(s, f, indent=2)
-"
-```
-
-speckit-echelon-commander (COMMANDER) will process the queue after your dispatch completes.
+Load `agents/exploration/appendices/cartographer-golddigger-deep-dive-reference.md` before requesting Mode 2. Do not request it for general uncertainty or when Mode 1 artifacts already answer the question.
 
 ---
 

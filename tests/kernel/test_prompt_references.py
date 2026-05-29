@@ -46,3 +46,13 @@ def test_sage_uses_appendix_for_decision_calibration_reference():
     text = prompt.read_text()
 
     assert "agents/exploration/appendices/sage-decision-calibration-reference.md" in text
+
+
+def test_cartographer_uses_appendix_for_brownfield_deep_dive_reference():
+    prompt = EXTENSION_ROOT / "agents" / "exploration" / "cartographer.md"
+    text = prompt.read_text()
+
+    assert (
+        "agents/exploration/appendices/cartographer-golddigger-deep-dive-reference.md"
+        in text
+    )
