@@ -226,31 +226,13 @@ Generate the calibration dashboard during FINALIZE, after Mode 1 and Mode 3 are 
 
 #### Section 1: Domain Calibration Overview
 
-For each domain in `calibration-profile.yaml`, summarize:
-
-```markdown
-## Domain Calibration Overview
-
-| Domain | Accuracy | Trend | Correction Factor | Sample Size | Risk Level |
-|--------|----------|-------|-------------------|-------------|------------|
-| backend | 0.82 | improving | 1.05 | 12 | LOW |
-| frontend | 0.61 | declining | 0.85 | 8 | MEDIUM |
-| security | 0.45 | stable | 1.30 | 4 | HIGH |
-```
-
-Risk levels: HIGH (accuracy < 0.5), MEDIUM (0.5-0.75), LOW (> 0.75).
+For each domain in `calibration-profile.yaml`, summarize using `agents/learning/appendices/auditor-dashboard-template.md`.
 
 #### Section 2: Evolution Signals Status
 
 Summarize open and acknowledged evolution signals:
 
-```markdown
-## Evolution Signals
-
-| Signal ID | Trigger | Severity | Status | Affected Domain |
-|-----------|---------|----------|--------|-----------------|
-| evo-sig-012 | declining_trend | HIGH | open | frontend |
-```
+Use the Evolution Signals section in `agents/learning/appendices/auditor-dashboard-template.md`.
 
 #### Section 3: Calibration Health Score
 
@@ -280,16 +262,7 @@ Save as `.specify/specs/{feature}/calibration-dashboard.md`
 
 Entry format:
 
-```yaml
-domains:
-  {domain-name}:
-    accuracy: {0.0-1.0}
-    sample_size: {N}
-    trend: "{stable|improving|declining}"
-    correction_factor: {float}
-    last_updated: "{YYYY-MM-DD}"
-    notes: "{explanation of current state}"
-```
+Use the calibration profile entry format in `agents/learning/appendices/auditor-output-formats.md`.
 
 - **`confidence-flags.md`** — per-artifact confidence scores for the current run
 - **`knowledge-base/evolution-signals.yaml`** — evolution signals when regression thresholds met (Mode 3)
@@ -326,29 +299,7 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 When calibration data grows (5+ data points per domain), CALIBRATE should produce or update an analytics summary:
 
-```markdown
-# Calibration Analytics
-
-## Accuracy Trend
-| Run | Date | Domain | Predicted | Actual | Accuracy | Correction |
-|-----|------|--------|-----------|--------|----------|-----------|
-| 001 | ... | ... | ... | ... | ... | ... |
-
-## Domain Performance
-| Domain | Avg Accuracy | Trend | Sample Size | Confidence |
-|--------|-------------|-------|-------------|-----------|
-| ... | ... | improving/stable/declining | ... | high/medium/low |
-
-## Agent Performance Over Time
-| Agent | Run 1 | Run 2 | Run 3 | Trend |
-|-------|-------|-------|-------|-------|
-| ... | ... | ... | ... | improving/stable/declining |
-
-## Key Insights
-- {what's getting better}
-- {what's getting worse}
-- {recommended adjustments}
-```
+Use the Calibration Analytics section in `agents/learning/appendices/auditor-dashboard-template.md`.
 
 Save as `.specify/specs/{feature}/calibration-analytics.md`
 This makes learning VISIBLE, not just stored in YAML.
@@ -404,50 +355,7 @@ Dispatched by speckit-echelon-commander (COMMANDER) after build completes. Uses 
 
 Write to `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
 
-```yaml
-spec_id: "{spec-id}"
-project_name: "{project-name}"
-feedback_date: "{ISO-8601}"
-feedback_source: "auto"
-run_id: "{run_id}"
-
-effort:
-  estimated_total_hours: {N}
-  actual_build_duration_minutes: {N}
-  tasks_completed: {N}
-  tasks_blocked: {N}
-  tasks_degraded: {N}
-  rework_cycles: {N}
-  accuracy_ratio: {N}
-  severity: "{severity}"
-
-architecture_decisions:
-  - decision: "{from plan.md}"
-    held: "{yes|no|partially}"
-    evidence: "{file path or reasoning-journal entry}"
-    severity: "{severity}"
-
-requirements:
-  total_in_spec: {N}
-  implemented_as_written: {N}
-  needed_clarification: {N}
-  missing_discovered_during_build: {N}
-  unnecessary: {N}
-  severity: "{severity}"
-
-risks:
-  predicted_count: {N}
-  materialized_count: {N}
-  unpredicted_blockers: {N}
-  severity: "{severity}"
-
-tests:
-  planned_coverage: {0.0-1.0}
-  actual_coverage: {0.0-1.0}
-  severity: "{severity}"
-
-critical_findings: []
-```
+Use the auto feedback schema in `agents/learning/appendices/auditor-output-formats.md`.
 
 ### Step 7: Identify Critical Findings
 
@@ -464,12 +372,7 @@ Scan all sections. For any finding with severity CRITICAL:
 ### Step 8: Produce feedback-report.md
 
 Write a human-readable summary to `specs/{feature}/feedback-report.md` with:
-- Effort accuracy summary
-- Architecture decision outcomes table
-- Requirements coverage matrix
-- Risk prediction accuracy
-- Test strategy effectiveness
-- Critical findings list (for speckit-echelon-commander (COMMANDER) triage)
+Use the feedback report sections in `agents/learning/appendices/auditor-output-formats.md`.
 
 ### Output
 
