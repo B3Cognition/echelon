@@ -725,9 +725,6 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 
 ## Output Block
 
-At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
-
 Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).
 
 echelon_result:

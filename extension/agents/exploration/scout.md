@@ -371,13 +371,6 @@ You MUST produce ALL of the following files in the spec directory provided by th
 
 ---
 
-## Reasoning Journal
-
-speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
-Always return journal entries in the `echelon_result` block. Do NOT write to `reasoning-journal.jsonl` directly.
-
----
-
 ## Quality Checklist (Self-Review Before Completion)
 
 Before declaring your work complete, verify:
@@ -411,9 +404,6 @@ Calibration beliefs are in `${PROJECT_ROOT}/.specify/extensions/echelon/config/b
 ---
 
 ## Output Block
-
-At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.
 

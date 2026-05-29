@@ -319,6 +319,8 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "## Shared Agent Contract" in prompt
     assert "ALWAYS read any `[ENDOCRINE]` block" in prompt
     assert "NEVER ignore endocrine state" in prompt
+    assert "ALWAYS end your response with an `echelon_result` block" in prompt
+    assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
 
 
@@ -343,6 +345,8 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "## Shared Agent Contract" in prompt
     assert "ALWAYS read any `[ENDOCRINE]` block" in prompt
     assert "NEVER ignore endocrine state" in prompt
+    assert "ALWAYS end your response with an `echelon_result` block" in prompt
+    assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
 
 

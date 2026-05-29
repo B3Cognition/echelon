@@ -24,7 +24,13 @@ def _shared_agent_contract() -> str:
         "- ALWAYS treat hormone levels and role-specific interpretation as behavior "
         "modulation for risk, confidence, pacing, and tone.\n"
         "- NEVER ignore endocrine state when it changes execution risk, confidence, "
-        "or tone.\n\n"
+        "or tone.\n"
+        "### Output And Journal Ownership\n"
+        "- ALWAYS end your response with an `echelon_result` block using the "
+        "agent-specific or phase-specific schema in your prompt.\n"
+        "- ALWAYS put journal entries and state updates in `echelon_result`; the "
+        "commander/harness reads that block and performs the writes.\n"
+        "- NEVER write to `reasoning-journal.jsonl` directly.\n\n"
     )
 
 

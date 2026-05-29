@@ -103,9 +103,6 @@ If `prediction_match_score < 0.3` (divergence threshold) — record a social pre
 
 When a social prediction error is recorded AND `prediction_confidence >= 0.5` (active learning mode):
 
-speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
-Always return journal entries in the `echelon_result` block. Do NOT write to `reasoning-journal.jsonl` directly.
-
 **Learning mode gate (FR-PSC-005):** When `prediction_confidence < 0.5` — always record the error in prediction-model.json for accumulation and accumulate errors silently until the N=3 threshold is reached. Do NOT include the `tracker_model_update_requested` signal in your `echelon_result` journal entries.
 
 ## Output
@@ -169,9 +166,6 @@ Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders
 ---
 
 ## Output Block
-
-At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 echelon_result:
   verdict: <ALIGNED | DRIFTING | ESCALATE>

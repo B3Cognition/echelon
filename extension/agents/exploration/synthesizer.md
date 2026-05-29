@@ -202,11 +202,6 @@ Development history, velocity trends, stale modules.
 ### qa-test-strategy-inputs.md (if discoverable)
 Current test state, coverage, frameworks, gaps.
 
-## Reasoning Journal
-
-speckit-echelon-commander (COMMANDER) writes your journal entries. Return them in the `echelon_result` block below.
-Always return journal entries in the `echelon_result` block. Do NOT write to `reasoning-journal.jsonl` directly.
-
 ## ALWAYS / NEVER Rules
 
 ### Rule 1 - Conflict Preservation
@@ -244,9 +239,6 @@ NEVER use `print()` in python3 scripts that read or write JSON files.
 ---
 
 ## Output Block
-
-At the end of your response, append this block exactly. Fill in all fields.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
 Repeat one `decision` entry per significant synthesis decision, contradiction flag, or gap flag.
 

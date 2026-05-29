@@ -190,9 +190,6 @@ Top recommendation: {one-line summary}
 
 ## Output Block
 
-At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
-
 echelon_result:
   verdict: COMPLETE
   output_files:

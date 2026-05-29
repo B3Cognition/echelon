@@ -154,9 +154,6 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Output Block
 
-At the end of your response, append this block exactly.
-speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
-
 Include one `decision` entry per significant performance finding or capacity conclusion.
 
 echelon_result:
