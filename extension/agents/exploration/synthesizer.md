@@ -250,21 +250,27 @@ NEVER use `print()` in python3 scripts that read or write JSON files.
 At the end of your response, append this block exactly. Fill in all fields.
 speckit-echelon-commander (COMMANDER) reads this block to update journal and state. Always use this output block for journal/state updates. Do NOT write to `reasoning-journal.jsonl` directly.
 
-Repeat one `decision` entry per significant synthesis decision or contradiction resolution.
+Repeat one `decision` entry per significant synthesis decision, contradiction flag, or gap flag.
 
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../synthesis.md
+    - .specify/.../glossary.md
+    - .specify/.../mental-model.md
+    - .specify/.../boundaries.md
+    - .specify/.../assumptions.md
+    - .specify/.../unknowns.md
+    - .specify/.../contradictions-and-gaps.md
+    - .specify/.../risks.md
   journal_entries:
     - id: null
       type: decision
       phase: phase1-discover
-      agent: DISCOVER
+      agent: SYNTHESIZER
       timestamp: null
       data:
-        artifact: "synthesis.md"
+        artifact: "contradictions-and-gaps.md"
         section: "contradictions"
-        reasoning: "<what contradictions were found and how they were resolved>"
-        rationale: "<synthesis approach — what evidence hierarchy or principle governed resolution>"
+        reasoning: "<what contradictions or gaps were found and where they are flagged>"
+        rationale: "<synthesis approach — what evidence hierarchy or principle governed flagging without resolving>"
         alternatives_considered: []
