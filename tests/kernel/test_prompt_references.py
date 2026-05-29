@@ -39,3 +39,10 @@ def test_build_finalize_uses_appendices_for_large_reference_sections():
 
     assert "workflow/phases/appendices/build-8-verify-gates.md" in text
     assert "workflow/phases/appendices/build-8-summary-reference.md" in text
+
+
+def test_sage_uses_appendix_for_decision_calibration_reference():
+    prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
+    text = prompt.read_text()
+
+    assert "agents/exploration/appendices/sage-decision-calibration-reference.md" in text

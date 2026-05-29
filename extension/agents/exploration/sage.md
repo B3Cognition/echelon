@@ -597,108 +597,23 @@ speckit-echelon-sage (SAGE) cannot issue a WHY3 PASS verdict if any requirement 
 
 ## Decision Recording
 
-After every blocking decision (PASS or FAIL verdict), append an entry to `knowledge-base/sage-decisions.yaml`. This is mandatory — no decision may go unrecorded.
+After every blocking decision, append an entry to `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`. Always use the project-level knowledge base, never a staging subdirectory.
 
-**MANDATORY — always write decisions to `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`. NEVER write to `${STAGING_DIR}/knowledge-base/sage-decisions.yaml` or any staging subdirectory.**
-- The `knowledge-base/` directory is project-level and persistent across runs. Writing to staging would make the decision history invisible to future runs and to speckit-echelon-auditor (AUDITOR)/speckit-echelon-internalizer (INTERNALIZER).
-
-This path is the same regardless of WHY mode (WHY1, WHY2, WHY3). All three modes write to the same file.
-
-### Required Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `run_id` | string | Current squad run ID (e.g., `squad-003-1742652000`) |
-| `artifact` | string | Path to the artifact under review (e.g., `specs/001/spec.md`) |
-| `challenge_type` | enum | One of: `logical_inconsistency`, `missing_evidence`, `assumption_violation`, `quality_threshold`, `specification_gap` |
-| `challenge_summary` | string | Concise description of the challenge raised |
-| `outcome` | enum | One of: `blocked`, `passed_with_warnings`, `passed` |
-| `resolution` | string | How the challenge was resolved or why it blocked |
-| `was_correct` | boolean | Initially `true`; backfilled to `false` if the decision is later overturned |
-
-### Recording Process
-
-1. Before writing the completion signal, construct the decision entry from your verdict and findings.
-2. Append the entry to the `entries` array in `knowledge-base/sage-decisions.yaml`.
-3. If the file has reached `max_entries` (100), remove the oldest entry before appending.
-4. Always preserve existing entries except to backfill `was_correct`; never modify them otherwise.
-5. Write `challenge_summary` and `resolution` using block scalar style (`|`) — see Tool Hygiene rule 4.
-
-### Example Entry
-
-Use `agents/exploration/templates/sage-decision-entry-template.yaml` as the example structure.
+Load `agents/exploration/appendices/sage-decision-calibration-reference.md` before recording the decision. Use `agents/exploration/templates/sage-decision-entry-template.yaml` as the example structure.
 
 ---
 
 ## Internalization-Weighted Scrutiny
 
-Before running validation, speckit-echelon-sage (SAGE) reads per-agent internalization scores from `knowledge-base/agent-scores.yaml` to calibrate the depth of scrutiny applied to each agent's output.
+Before running validation, read per-agent internalization scores from `knowledge-base/agent-scores.yaml` to calibrate scrutiny depth. Scores are advisory only; they adjust review depth but never predetermine PASS/FAIL.
 
-### Process
-
-1. **Read internalization scores**: For each agent whose output is under review, read:
-   - `agents.{AGENT_NAME}.internalization.composite_score`
-   - `agents.{AGENT_NAME}.internalization.category_scores` (absorption, accuracy, calibration, transfer)
-   - `agents.{AGENT_NAME}.internalization.trend`
-
-2. **Classify scrutiny level** based on composite score:
-
-   | Composite Score | Scrutiny Level | Action |
-   |-----------------|----------------|--------|
-   | >= 0.85 | **Light** | Standard validation — no extra checks |
-   | 0.70 - 0.84 | **Normal** | Standard validation (default) |
-   | 0.50 - 0.69 | **Elevated** | Extra checks: verify all requirement citations, check for uncited decisions, cross-reference 100% of spec constraints |
-   | < 0.50 | **Deep** | Full deep-dive: challenge every claim, require evidence for all assertions, pre-mortem specifically targeting this agent's known weak categories |
-   | null / missing | **Normal** | Default — no data available (cold-start) |
-
-3. **Category-specific targeting**: If any individual category score is below 0.50, apply targeted scrutiny:
-   - Low **Absorption** (< 0.50): Check for missing requirement references, undefined terms, missed dependencies
-   - Low **Accuracy** (< 0.50): Check for numeric contradictions, uncited decisions, invalid cross-references
-   - Low **Calibration** (< 0.50): Discount the agent's confidence claims — treat stated "high confidence" as medium
-   - Low **Transfer** (< 0.50): Expect rework — flag outputs for additional review by CODE_REVIEWER
-
-4. **Trend-based adjustment**:
-   - `declining` trend: Escalate scrutiny one level (e.g., Normal → Elevated)
-   - `improving` trend: No change (trust must be earned through sustained improvement)
-
-5. **Log scrutiny decisions**: Return this entry in the `echelon_result` block at the end of your response.
-
-### Constraints
-
-- Internalization scores are **advisory** — they adjust scrutiny depth but do NOT pre-determine PASS/FAIL verdicts. An agent with a low score can still produce passing output.
-- Always keep internalization scores in internal calibration data only. Never reveal them in issues.md or quality-gates.md.
-- If `agent-scores.yaml` is missing or corrupt, proceed with Normal scrutiny for all agents.
+Load `agents/exploration/appendices/sage-decision-calibration-reference.md` for scrutiny thresholds, targeted category checks, and logging requirements.
 
 ---
 
 ## Self-Calibration
 
-Before issuing a blocking decision, review your recent decision history to check for false-positive bias.
-
-### Process
-
-1. Read the last 10 entries from `knowledge-base/sage-decisions.yaml`.
-2. Count entries where `was_correct` is `false` (overturned decisions).
-3. Compute the false-positive rate: `overturned_count / total_reviewed`.
-
-### Threshold Adjustment Rules
-
-| False-Positive Rate | Action |
-|---------------------|--------|
-| <= 20% (0-2 of 10) | No adjustment. Current blocking threshold is well-calibrated. |
-| 21-30% (3 of 10) | **Warning zone.** Log a calibration warning in the reasoning journal. Review the current challenge with extra scrutiny before blocking. |
-| > 30% (4+ of 10) | **Adjustment required.** Raise the blocking threshold: only block on CRITICAL issues (not compounding HIGH issues). Log the adjustment in the reasoning journal with entry: `"speckit-echelon-sage (SAGE) self-calibration: false-positive rate {rate}% exceeds 30% — raising blocking threshold for this run."` |
-
-### Heuristic
-
-"3 of the last 10 decisions were wrong — raise the blocking threshold." This means:
-- Issues that would normally compound to a FAIL (e.g., 3+ HIGH) are downgraded to PASS with warnings.
-- Only standalone CRITICAL issues trigger a block.
-- The adjustment applies to the current run only. It resets for the next run.
-
-### Insufficient History
-
-If fewer than 10 entries exist in `sage-decisions.yaml`, skip self-calibration and proceed with default thresholds. Log: `"speckit-echelon-sage (SAGE) self-calibration: insufficient history ({N} entries, need 10). Using default thresholds."`
+Before issuing a blocking decision, review recent `knowledge-base/sage-decisions.yaml` entries for false-positive bias. Load `agents/exploration/appendices/sage-decision-calibration-reference.md` for thresholds and exact log messages.
 
 ---
 
