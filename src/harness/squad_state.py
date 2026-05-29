@@ -106,6 +106,8 @@ class SquadStateStore:
             "quality_scores": [],
             "issues_log": [],
             "why_fail_count": 0,
+            "phase_dispatch_counts": {},
+            "convergence_guard_fire_count": 0,
             "squad_dir": str(self._squad_dir),
             "staging_dir": str(self._staging_dir),
         })
@@ -193,6 +195,30 @@ class SquadStateStore:
     def reset_why_fail_count(self) -> None:
         state = self.load()
         state["why_fail_count"] = 0
+        self.save(state)
+
+    def increment_phase_dispatch_count(self, phase: str) -> int:
+        state = self.load()
+        counts = state.get("phase_dispatch_counts") or {}
+        counts[phase] = counts.get(phase, 0) + 1
+        state["phase_dispatch_counts"] = counts
+        self.save(state)
+        return counts[phase]
+
+    def get_phase_dispatch_count(self, phase: str) -> int:
+        state = self.load()
+        return (state.get("phase_dispatch_counts") or {}).get(phase, 0)
+
+    def increment_convergence_guard_fires(self) -> int:
+        state = self.load()
+        count = state.get("convergence_guard_fire_count", 0) + 1
+        state["convergence_guard_fire_count"] = count
+        self.save(state)
+        return count
+
+    def reset_convergence_guard_fires(self) -> None:
+        state = self.load()
+        state["convergence_guard_fire_count"] = 0
         self.save(state)
 
     def increment_cost(self, amount: float) -> None:

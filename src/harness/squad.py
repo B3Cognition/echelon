@@ -25,6 +25,14 @@ from harness.squad_state import SquadStateStore
 TERMINAL_PHASES = {"DONE", "done", "terminal-blocked"}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 
+# Max times the convergence guard may redirect to the same recommended phase before
+# force-advancing. Protects against agents that re-assert convergence on every dispatch.
+MAX_CONVERGENCE_GUARD_FIRES = 3
+
+# Max dispatches of any single phase per run before forcing escalation.
+# WHY phases are governed separately by why_fail_count; this cap applies to all others.
+MAX_PHASE_DISPATCHES = 5
+
 def _blocked_banner(phase: str, reason: str, question: str) -> None:
     from echelon.ui import banner as _banner
     _banner(
@@ -301,6 +309,29 @@ class SquadController:
 
             node = self._graph.get(phase)
             label = node.label or node.id
+
+            # Per-phase dispatch cap — prevents runaway loops on any phase.
+            # WHY phases are governed by why_fail_count; skip double-counting them.
+            if phase not in WHY_PHASES:
+                dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
+                if dispatch_count > MAX_PHASE_DISPATCHES:
+                    escalation_q = (
+                        f"Phase {phase!r} has been dispatched {dispatch_count} times "
+                        f"(limit {MAX_PHASE_DISPATCHES}) without converging or advancing. "
+                        f"Possible routing loop. How should I proceed?"
+                    )
+                    s = self._state_store.load()
+                    s["escalation_question"] = escalation_q
+                    s["blocked_reason"] = "phase_dispatch_limit"
+                    s["status"] = "blocked"
+                    self._state_store.save(s)
+                    print(
+                        f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
+                        f"{dispatch_count}× — forcing escalation",
+                        flush=True,
+                    )
+                    return "terminal-blocked"
+
             print(f"\n[squad] ▶ {node.id}  {label}", flush=True)
 
             executor = self._executors.get(node.type)
@@ -371,11 +402,30 @@ class SquadController:
             state["convergence_forced"] = False
             state["convergence_detected"] = False
             state["phase_recommendation"] = None
+            state["convergence_guard_fire_count"] = 0
             self._state_store.save(state)
             return phase
         if recommended not in self._graph.all_phase_ids():
             return phase
 
+        fire_count = self._state_store.increment_convergence_guard_fires()
+        if fire_count > MAX_CONVERGENCE_GUARD_FIRES:
+            # Agent keeps re-asserting convergence on every dispatch — infinite loop.
+            # Force-advance by clearing the recommendation.
+            state = self._state_store.load()
+            state["convergence_forced"] = False
+            state["convergence_detected"] = False
+            state["phase_recommendation"] = None
+            state["convergence_guard_fire_count"] = 0
+            self._state_store.save(state)
+            print(
+                f"[squad] convergence guard → force-advancing from {phase!r} "
+                f"(guard fired {fire_count}× on {recommended!r} — agent re-assertion loop)",
+                flush=True,
+            )
+            return phase
+
+        state = self._state_store.load()
         state["phase"] = recommended
         if state.get("status") == "blocked" and not state.get("escalation_question"):
             state["status"] = "running"
@@ -383,7 +433,7 @@ class SquadController:
         self._state_store.save(state)
         print(
             f"[squad] convergence guard → honoring phase_recommendation "
-            f"{recommended!r} (skipping {phase!r})",
+            f"{recommended!r} (skipping {phase!r}) [{fire_count}/{MAX_CONVERGENCE_GUARD_FIRES}]",
             flush=True,
         )
         return recommended
