@@ -311,26 +311,29 @@ class SquadController:
             label = node.label or node.id
 
             # Per-phase dispatch cap — prevents runaway loops on any phase.
-            # WHY phases are governed by why_fail_count; skip double-counting them.
-            if phase not in WHY_PHASES:
-                dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
-                if dispatch_count > MAX_PHASE_DISPATCHES:
-                    escalation_q = (
-                        f"Phase {phase!r} has been dispatched {dispatch_count} times "
-                        f"(limit {MAX_PHASE_DISPATCHES}) without converging or advancing. "
-                        f"Possible routing loop. How should I proceed?"
-                    )
-                    s = self._state_store.load()
-                    s["escalation_question"] = escalation_q
-                    s["blocked_reason"] = "phase_dispatch_limit"
-                    s["status"] = "blocked"
-                    self._state_store.save(s)
-                    print(
-                        f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
-                        f"{dispatch_count}× — forcing escalation",
-                        flush=True,
-                    )
-                    return "terminal-blocked"
+            # WHY phases use max_iterations as their cap (they legitimately iterate).
+            # All other phases use MAX_PHASE_DISPATCHES.
+            dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
+            phase_limit = (
+                self._max_iterations if phase in WHY_PHASES else MAX_PHASE_DISPATCHES
+            )
+            if dispatch_count > phase_limit:
+                escalation_q = (
+                    f"Phase {phase!r} has been dispatched {dispatch_count} times "
+                    f"(limit {phase_limit}) without converging or advancing. "
+                    f"Possible routing loop. How should I proceed?"
+                )
+                s = self._state_store.load()
+                s["escalation_question"] = escalation_q
+                s["blocked_reason"] = "phase_dispatch_limit"
+                s["status"] = "blocked"
+                self._state_store.save(s)
+                print(
+                    f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
+                    f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
+                    flush=True,
+                )
+                return "terminal-blocked"
 
             print(f"\n[squad] ▶ {node.id}  {label}", flush=True)
 
@@ -345,6 +348,18 @@ class SquadController:
 
             next_phase = self._evaluate_transitions(node, result)
             self._state_store.advance(phase, next_phase, result)
+
+            # Enforce iteration increment for transitions that declare action: increment_iteration.
+            # The condition `iteration < max_iterations` in definition.yaml must work regardless
+            # of whether the agent included `iteration` in its state_updates.
+            # Only increment if the agent didn't already write it explicitly.
+            if "iteration" not in (result.state_updates or {}):
+                for t in node.transitions:
+                    if t.get("to") == next_phase and t.get("action") == "increment_iteration":
+                        s = self._state_store.load()
+                        s["iteration"] = s.get("iteration", 0) + 1
+                        self._state_store.save(s)
+                        break
 
             # Inline escalation check — fires when _evaluate_transitions detected
             # escalation_question in state_updates and returned the current phase.
@@ -365,6 +380,12 @@ class SquadController:
                     s["blocked_reason"] = None
                     self._state_store.save(s)
                     self._judgment_dispatch_escalation(q, phase)
+                    # Unconditionally mark escalation resolved — do not rely on COMMANDER
+                    # to include it in state_updates. If it forgets, the check at line 354
+                    # re-fires on every iteration, which spins forever on WHY phases.
+                    s = self._state_store.load()
+                    s["escalation_resolved"] = True
+                    self._state_store.save(s)
                     continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
                 else:
                     _blocked_banner(
