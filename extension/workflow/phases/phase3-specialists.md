@@ -190,7 +190,12 @@ Use the Agent tool:
 
 ### Post-Specialist
 
-After all specialists complete, collect their outputs. Update `state.json.active_specialists` with the list of specialists that ran.
+After all specialists complete, collect their outputs. Return the list of specialists that ran in `echelon_result.state_updates`:
+
+```yaml
+active_specialists:
+  - "<specialist-name>"
+```
 
 **MANDATORY — run before transitioning to phase3-how:**
 

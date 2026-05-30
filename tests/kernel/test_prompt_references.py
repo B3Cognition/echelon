@@ -255,3 +255,12 @@ def test_build_7_integration_routes_checkpoint_through_echelon_result():
     assert "echelon_result.state_updates" in text
     assert "build:" in text
     assert "phase_checkpoints:" in text
+
+
+def test_phase3_specialists_routes_active_specialists_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase3-specialists.md"
+    text = prompt.read_text()
+
+    assert "Update `state.json.active_specialists`" not in text
+    assert "echelon_result.state_updates" in text
+    assert "active_specialists:" in text
