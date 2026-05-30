@@ -31,6 +31,15 @@ EXT_DIR = SCRIPT_DIR.parent.parent
 BUDGET_SECONDS = 60
 
 
+def _default_runs_root() -> Path:
+    repo_root = EXT_DIR
+    for base in ("runs", "squad"):
+        candidate = repo_root / base
+        if candidate.exists():
+            return candidate
+    return repo_root / ".specify" / "squad"
+
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -179,7 +188,7 @@ def run_audit(run_id: str, squad_dir: Path) -> dict:
 
     Args:
         run_id:    The run ID to audit (e.g., squad-1234)
-        squad_dir: Root of .specify/squad/
+        squad_dir: Root directory containing run directories.
 
     Returns:
         {run_id, checked_at, overall_verdict, checks, elapsed_seconds}
@@ -226,13 +235,13 @@ def main() -> int:
     )
     parser.add_argument("--run-id", required=True, help="Run ID (e.g., squad-1234)")
     parser.add_argument("--squad-dir", default=None,
-                        help="Path to .specify/squad/ directory")
+                        help="Path to the runs root directory")
     args = parser.parse_args()
 
     if args.squad_dir:
         squad_dir = Path(args.squad_dir)
     else:
-        squad_dir = EXT_DIR.parent.parent / ".specify" / "squad"
+        squad_dir = _default_runs_root()
 
     report = run_audit(args.run_id, squad_dir)
     print(json.dumps(report, indent=2))

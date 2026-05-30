@@ -29,6 +29,15 @@ EXT_DIR = SCRIPT_DIR.parent.parent
 BUDGET_SECONDS = 60
 
 
+def _default_runs_root() -> Path:
+    repo_root = EXT_DIR
+    for base in ("runs", "squad"):
+        candidate = repo_root / base
+        if candidate.exists():
+            return candidate
+    return repo_root / ".specify" / "squad"
+
+
 def _iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -187,7 +196,7 @@ def detect_patterns(
 
     Args:
         run_id:    The completed run ID (e.g., squad-1234)
-        squad_dir: Root of .specify/squad/
+        squad_dir: Root directory containing run directories.
         kb_dir:    Path to knowledge-base/
         dry_run:   If True, do not write to patterns.yaml
 
@@ -304,7 +313,7 @@ def main() -> int:
     )
     parser.add_argument("--run-id", required=True, help="Run ID (e.g., squad-1234)")
     parser.add_argument("--squad-dir", default=None,
-                        help="Path to .specify/squad/ directory")
+                        help="Path to the runs root directory")
     parser.add_argument("--kb-dir", default=None,
                         help="Path to knowledge-base/ directory")
     parser.add_argument("--dry-run", action="store_true",
@@ -314,7 +323,7 @@ def main() -> int:
     if args.squad_dir:
         squad_dir = Path(args.squad_dir)
     else:
-        squad_dir = EXT_DIR.parent.parent / ".specify" / "squad"
+        squad_dir = _default_runs_root()
 
     if args.kb_dir:
         kb_dir = Path(args.kb_dir)

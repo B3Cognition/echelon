@@ -1,9 +1,9 @@
 """trace_shim.py — COMMANDER decision event tracer (WS2 side channel).
 
-Logs every COMMANDER "decision" event to .specify/squad/trace.jsonl.
+Logs every COMMANDER "decision" event to the active run's trace.jsonl.
 
 Contract:
-- Writes ONLY to the side-channel file (.specify/squad/trace.jsonl)
+- Writes ONLY to the side-channel file (`trace.jsonl` in the active run dir)
 - NEVER raises in COMMANDER's critical path — all exceptions are swallowed silently
 - NEVER reads from or writes to state.json
 - NEVER blocks dispatch
@@ -54,12 +54,25 @@ def _iso_now() -> str:
 
 def _auto_detect_trace_dir() -> Path:
     """Auto-detect the squad directory for trace.jsonl."""
-    # Walk up from this script to find .specify/squad/
+    if os.environ.get("ECHELON_SQUAD_DIR"):
+        return Path(os.environ["ECHELON_SQUAD_DIR"])
+
     script_dir = Path(__file__).resolve().parent
-    # .specify/extensions/echelon/scripts/python/ -> up 4 levels to repo root
-    repo_root = script_dir.parent.parent.parent.parent
-    squad_dir = repo_root / ".specify" / "squad"
-    return squad_dir
+    repo_root = script_dir.parent.parent
+    for candidate_root in (script_dir, *script_dir.parents):
+        if (candidate_root / ".specify").exists() or (candidate_root / "knowledge-base").exists():
+            repo_root = candidate_root
+            break
+
+    for base in ("runs", "squad"):
+        current = repo_root / base / ".current"
+        if current.exists():
+            run_id = current.read_text(encoding="utf-8").strip()
+            candidate = repo_root / base / run_id
+            if run_id and candidate.is_dir():
+                return candidate
+
+    return repo_root / ".specify" / "squad"
 
 
 def _get_trace_path(squad_dir: Path) -> Path:
