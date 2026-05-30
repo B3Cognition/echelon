@@ -2,7 +2,7 @@
 """
 token-logger.py — Echelon Pipeline Token Usage Logger
 
-Reads a reasoning-journal.json (and optionally state.json) produced by a
+Reads a reasoning-journal.jsonl (and optionally state.json) produced by a
 spec-kit / Echelon squad run, extracts per-invocation token counts, computes
 per-agent-type summary statistics, and writes a machine-readable
 token-baseline.json artifact plus a human-readable Markdown summary.
@@ -15,7 +15,7 @@ otherwise ``post_hoc_estimation``.
 
 Usage:
     python3 scripts/token-logger.py \\
-        --journal .specify/squad/staging/reasoning-journal.json \\
+        --journal .specify/squad/staging/reasoning-journal.jsonl \\
         [--state   .specify/squad/state.json] \\
         [--output  .specify/squad/token-baseline.json] \\
         [--spec-runs <dir-containing-multiple-run-dirs>]
@@ -144,17 +144,42 @@ def load_journal(journal_path: Path) -> list[dict[str, Any]]:
     if not journal_path.exists():
         raise FileNotFoundError(f"Journal file not found: {journal_path}")
     raw = journal_path.read_text(encoding="utf-8")
-    data = json.loads(raw)
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        # Some formats wrap entries under a key
-        for key in ("entries", "journal", "invocations", "events"):
-            if isinstance(data.get(key), list):
-                return data[key]
-        # Treat dict itself as a single entry
-        return [data]
-    raise ValueError(f"Unexpected journal format in {journal_path}: {type(data)}")
+    stripped = raw.strip()
+    if not stripped:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        entries = []
+        for line_number, line in enumerate(raw.splitlines(), start=1):
+            if not line.strip():
+                continue
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise json.JSONDecodeError(
+                    f"Invalid JSONL entry on line {line_number}: {exc.msg}",
+                    exc.doc,
+                    exc.pos,
+                ) from exc
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"Unexpected JSONL entry in {journal_path} on line {line_number}: "
+                    f"{type(entry)}"
+                )
+            entries.append(entry)
+        return entries
+    else:
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            # Some formats wrap entries under a key
+            for key in ("entries", "journal", "invocations", "events"):
+                if isinstance(data.get(key), list):
+                    return data[key]
+            # Treat dict itself as a single entry
+            return [data]
+        raise ValueError(f"Unexpected journal format in {journal_path}: {type(data)}")
 
 
 def parse_journal(
@@ -370,15 +395,15 @@ def aggregate_spec_runs(
     codebase_id: str = "unknown",
 ) -> tuple[list[dict[str, Any]], bool, str]:
     """
-    Scan *spec_runs_dir* for reasoning-journal.json files (one level deep or
+    Scan *spec_runs_dir* for reasoning-journal.jsonl files (one level deep or
     under a ``staging/`` subdirectory).  Aggregate all invocations across runs.
 
     Returns (all_invocations, any_live_data_found, run_ids_summary).
     """
     patterns = [
-        "*/reasoning-journal.json",
-        "*/staging/reasoning-journal.json",
-        "reasoning-journal.json",
+        "*/reasoning-journal.jsonl",
+        "*/staging/reasoning-journal.jsonl",
+        "reasoning-journal.jsonl",
     ]
     found_journals: list[Path] = []
     for pattern in patterns:
@@ -386,7 +411,7 @@ def aggregate_spec_runs(
 
     if not found_journals:
         print(
-            f"WARNING: No reasoning-journal.json files found under {spec_runs_dir}",
+            f"WARNING: No reasoning-journal.jsonl files found under {spec_runs_dir}",
             file=sys.stderr,
         )
         return [], False, "no-runs"
@@ -442,14 +467,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Instrument the Echelon pipeline to log per-agent-invocation token "
-            "counts from reasoning-journal.json entries."
+            "counts from reasoning-journal.jsonl entries."
         )
     )
     parser.add_argument(
         "--journal",
         metavar="FILE",
         default=None,
-        help="Path to reasoning-journal.json (default: .specify/squad/staging/reasoning-journal.json)",
+        help="Path to reasoning-journal.jsonl (default: .specify/squad/staging/reasoning-journal.jsonl)",
     )
     parser.add_argument(
         "--state",
@@ -486,7 +511,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Resolve paths ──────────────────────────────────────────────────────
-    default_journal = Path(".specify/squad/staging/reasoning-journal.json")
+    default_journal = Path(".specify/squad/staging/reasoning-journal.jsonl")
     default_state = Path(".specify/squad/state.json")
 
     journal_path: Path | None = Path(args.journal) if args.journal else None

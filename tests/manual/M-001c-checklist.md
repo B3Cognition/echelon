@@ -11,7 +11,7 @@
 
 - A prior squad run with `fallback_mode=true` (spec-kit was unavailable) must exist.
 - A recovery run with spec-kit available must have completed after the fallback run.
-- Artifacts: `spec.md`, `00-overview.md`, `reasoning-journal.json` from both runs.
+- Artifacts: `spec.md`, `00-overview.md`, `reasoning-journal.jsonl` from both runs.
 
 ---
 
@@ -19,7 +19,7 @@
 
 ### 1. `fallback_recovery` Journal Linkage
 
-- [ ] `reasoning-journal.json` contains an entry with `"type": "fallback_recovery"`.
+- [ ] `reasoning-journal.jsonl` contains an entry with `"type": "fallback_recovery"`.
 - [ ] The `prior_run_id` field in the `fallback_recovery` entry matches the `run_id` from the fallback run's `state.json`.
 - [ ] The `recovery_run_id` field matches the `run_id` from the recovery run's `state.json`.
 - [ ] Both run IDs are distinct (not the same string).
@@ -29,7 +29,7 @@
 - [ ] `templates/recovery-checklist.md` exists.
 - [ ] The checklist includes at least one item for **spec.md** (compare fallback spec with spec-kit-generated spec).
 - [ ] The checklist includes at least one item for **00-overview.md** (verify feature branches created manually match spec IDs).
-- [ ] The checklist includes at least one item for **reasoning-journal.json** (confirm `fallback_recovery` entry links correct run IDs).
+- [ ] The checklist includes at least one item for **reasoning-journal.jsonl** (confirm `fallback_recovery` entry links correct run IDs).
 - [ ] All items have a marked status column (e.g., `[ ]` or `[X]`).
 
 ### 3. `docs/fallback-mode.md` Accuracy

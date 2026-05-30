@@ -50,7 +50,7 @@ Optional:
   --verdicts <file>   Build verdicts for deferred metrics I-09..I-14
                       Format: "TASK_ID GATE VERDICT CYCLE" per line
   --checkpoint <file> CHECKPOINT report for I-10 doubt signal quality
-  --journal <file>    reasoning-journal.json for I-12 escalation precision
+  --journal <file>    reasoning-journal.jsonl for I-12 escalation precision
 USAGE
   exit 1
 fi
