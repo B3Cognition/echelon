@@ -134,3 +134,15 @@ def test_agent_prompts_do_not_write_squad_state_directly():
                 violations.append(f"{prompt.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
 
     assert not violations, "\n".join(violations)
+
+
+def test_phase1_what_routes_state_and_journal_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase1-what.md"
+    text = prompt.read_text()
+
+    assert "journal-append.sh" not in text
+    assert "`journal.json`" not in text
+    assert "Update state.json" not in text
+    assert "Set `state.json" not in text
+    assert "echelon_result.state_updates" in text
+    assert "echelon_result.journal_entries" in text

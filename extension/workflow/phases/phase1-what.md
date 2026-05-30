@@ -54,8 +54,8 @@ If speckit-echelon-cartographer (CARTOGRAPHER) returns `speckit-echelon-cartogra
 
 1. speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly (via Skill tool) with the same feature description speckit-echelon-cartographer (CARTOGRAPHER) would have used (derive from DISCOVER staging artifacts)
 2. After the Skill returns (success or error):
-   - **Success:** Update `state.json` with the returned `spec_id` and `spec_dir`, then re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with the spec directory already created (add `spec_dir` to the context pack prompt). Always continue to 4.3 immediately — **do not stop**.
-   - **Error:** Set `state.json.status = "blocked"`, set `blocked_reason = "speckit.specify unavailable"`, print the BLOCKED banner, stop.
+   - **Success:** Return the returned `spec_id` and `spec_dir` in `echelon_result.state_updates`, then re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with the spec directory already created (add `spec_dir` to the context pack prompt). Always continue to 4.3 immediately — **do not stop**.
+   - **Error:** Return `status: blocked` and `blocked_reason: "speckit.specify unavailable"` in `echelon_result.state_updates`, return a blocking journal entry, and stop.
 
 This is the only case where speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly. Always reserve this path for the explicit BLOCKED fallback. Do NOT use it pre-emptively.
 
@@ -65,7 +65,7 @@ After speckit-echelon-cartographer (CARTOGRAPHER) completes, read its output to 
 
 #### Branch + Directory Verification (MANDATORY)
 
-Before updating state.json, verify both invariants:
+Before returning state updates, verify both invariants:
 
 1. **Branch exists:**
    ```bash
@@ -85,16 +85,7 @@ Before updating state.json, verify both invariants:
    git checkout -b {NNN}-{feature-name}
    ```
 2. If `specs/{NNN}-{feature-name}/` is missing, create it and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with `spec_dir` pre-set in the context pack — speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
-3. Log a `branch_recovery` entry to `journal.json`:
-   ```json
-   {
-     "type": "branch_recovery",
-     "phase": "phase1-what",
-     "agent": "speckit-echelon-commander (COMMANDER)",
-     "detail": "Feature branch was absent after speckit-echelon-cartographer (CARTOGRAPHER) completed — created manually",
-     "timestamp": "{ISO-8601}"
-   }
-   ```
+3. Return a `branch_recovery` entry in `echelon_result.journal_entries`; the harness writes it to `reasoning-journal.jsonl`.
 
 **If both checks pass**, verify speckit-echelon-cartographer (CARTOGRAPHER) ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
 
@@ -116,7 +107,7 @@ grep -E '\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' \
   .specify/memory/constitution.md && echo "CONSTITUTION_PLACEHOLDERS_FOUND" || echo "CONSTITUTION_CLEAN"
 ```
 
-If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution was written without the skill (protocol violation logged in journal). Apply the fix now before advancing to Phase 2:
+If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution was written without the skill. Apply the fix now before advancing to Phase 2, then return the protocol-violation journal entry in `echelon_result.journal_entries`; the harness writes it to `reasoning-journal.jsonl`.
 
 ```bash
 TODAY=$(date +%Y-%m-%d)
@@ -125,17 +116,20 @@ sed -i '' \
   -e "s/\[RATIFICATION_DATE\]/$TODAY/g" \
   -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
   .specify/memory/constitution.md
-SCRIPTS="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
-JOURNAL="${PROJECT_ROOT}/${SQUAD_DIR}/reasoning-journal.jsonl"
-NEXT_ID=$(( $(wc -l < "$JOURNAL" 2>/dev/null || echo 0) + 1 ))
-TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-ENTRY=$(jq -n \
-  --argjson id "$NEXT_ID" \
-  --arg ts "$TS" \
-  --arg date "$TODAY" \
-  '{type:"constitution_placeholder_fix",id:$id,phase:"phase1-what",method:"sed_fallback",version:"1.0.0",date:$date,timestamp:$ts}')
-bash "${SCRIPTS}/journal-append.sh" --entry "$ENTRY" --journal-path "$JOURNAL"
 echo "[CONSTITUTION] Placeholder fix applied at §4.3 catch — constitution.md was not created via speckit.constitution"
+```
+
+Return this journal entry with your phase result when the placeholder fix runs:
+
+```yaml
+echelon_result:
+  journal_entries:
+    - type: constitution_placeholder_fix
+      phase: phase1-what
+      agent: speckit-echelon-commander (COMMANDER)
+      method: sed_fallback
+      version: 1.0.0
+      date: "{YYYY-MM-DD}"
 ```
 
 Always resolve constitution placeholders before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
@@ -157,23 +151,24 @@ Always complete these outputs before returning. Do NOT return until:
 </instructions>
 ```
 
-Update state.json:
+Return these state updates in `echelon_result`; the harness applies them to `state.json`:
 
-```json
-{
-  "spec_id": "{NNN}",
-  "spec_dir": "specs/{NNN}-{feature-name}",
-  "updated_at": "{ISO-8601}"
-}
+```yaml
+echelon_result:
+  state_updates:
+    spec_id: "{NNN}"
+    spec_dir: "specs/{NNN}-{feature-name}"
+    spec_status: planned
+    updated_at: "{ISO-8601}"
 ```
 
 ### Spec Status Transition — MANDATORY
 
-This step runs immediately after the state.json `spec_id`/`spec_dir` update above. Skipping it leaves downstream phases reading a stale `Status: Draft` flag.
+This step is part of the `echelon_result.state_updates` block above. Skipping it leaves downstream phases reading a stale `Status: Draft` flag.
 
-1. Update `state.json.spec_status` to `"planned"` (in the same Edit operation as `spec_id`/`spec_dir` per the atomic-write discipline in [commander.md](../../agents/control/commander.md) Post-Dispatch Protocol).
+1. Return `spec_status: planned` in the same `echelon_result.state_updates` block as `spec_id` and `spec_dir`.
 2. Update `{spec_dir}/spec.md`: replace the line `**Status**: Draft` with `**Status**: Planned`.
-3. **Verification (run before transitioning to phase1-why2):**
+3. **Verification (run after the harness applies state updates, before transitioning to phase1-why2):**
 
    ```bash
    grep -q '^\*\*Status\*\*: Planned' "${spec_dir}/spec.md" || { echo "ERROR: spec.md still shows Draft" >&2; exit 1; }
