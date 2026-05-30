@@ -8,10 +8,10 @@
 
 **Build Start State Update (mandatory, runs once before first task):**
 
-1. Set `state.json.spec_status` to `"in-progress"`.
+1. Return `spec_status: in-progress` in `echelon_result.state_updates`.
 2. Update `{spec_dir}/spec.md`: change `**Status**: Planned` to `**Status**: In Progress`.
-3. Count all task lines in `{spec_dir}/tasks.md` (lines matching `^\s*- \[[ xX]\]`) — set result as `state.json.build.total_tasks`.
-4. Set `state.json.build.completed_tasks` to `0` and `state.json.build.tasks_completed_pct` to `0`.
+3. Count all task lines in `{spec_dir}/tasks.md` (lines matching `^\s*- \[[ xX]\]`) and include the count in `echelon_result.state_updates.build.total_tasks`.
+4. Return the full initialized `build` object in one `echelon_result.state_updates.build` value; the harness applies it to `state.json`.
 
 ### 1.0 Anchor Project Root
 
@@ -94,22 +94,23 @@ If user specified task IDs, filter to only those tasks. Verify dependencies are 
 
 ### 1.4 Initialize Build State
 
-Update `${SQUAD_DIR}/state.json`:
+Return these state updates in `echelon_result`; the harness applies them to `${SQUAD_DIR}/state.json`:
 
-```json
-{
-  "status": "building",
-  "phase": "build_init",
-  "build": {
-    "total_tasks": "{count}",
-    "completed_tasks": 0,
-    "current_task": null,
-    "current_phase_group": null,
-    "task_results": {},
-    "phase_checkpoints": []
-  },
-  "updated_at": "{ISO-8601}"
-}
+```yaml
+echelon_result:
+  state_updates:
+    status: building
+    spec_status: in-progress
+    phase: build_init
+    build:
+      total_tasks: "{count}"
+      completed_tasks: 0
+      tasks_completed_pct: 0
+      current_task: null
+      current_phase_group: null
+      task_results: {}
+      phase_checkpoints: []
+    updated_at: "{ISO-8601}"
 ```
 
 ### 1.5 Initialize Build Reports

@@ -155,3 +155,15 @@ def test_phase2_decide_routes_kill_status_through_echelon_result():
     assert 'set state.json status to "killed"' not in text
     assert "echelon_result.state_updates" in text
     assert "status: killed" in text
+
+
+def test_build_1_init_routes_build_state_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "build-1-init.md"
+    text = prompt.read_text()
+
+    assert "Set `state.json.spec_status`" not in text
+    assert "set result as `state.json.build.total_tasks`" not in text
+    assert "Set `state.json.build.completed_tasks`" not in text
+    assert "Update `${SQUAD_DIR}/state.json`" not in text
+    assert "echelon_result.state_updates" in text
+    assert "tasks_completed_pct: 0" in text
