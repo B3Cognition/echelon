@@ -46,7 +46,7 @@ After 10+ runs:
 scripts/bash/calibrate-endocrine.sh
 
 # With custom state directory
-scripts/bash/calibrate-endocrine.sh --state-dir .specify/squad
+scripts/bash/calibrate-endocrine.sh --state-dir squad/<run-id>
 
 # Save report to file
 scripts/bash/calibrate-endocrine.sh --output calibration-report.md
@@ -118,7 +118,7 @@ Run 3-5 more sessions with the new baselines and compare gate pass rates. If pas
 ## Troubleshooting
 
 **Q: The script says "No state files found"**
-A: Ensure `endocrine.enabled: true` is set and you have run at least one session. Check that `.specify/squad/state.json` exists.
+A: Ensure `endocrine.enabled: true` is set and you have run at least one session. Check that the active run's `state.json` exists (`runs/.current` or `squad/.current` points to the run directory).
 
 **Q: All values show N/A**
 A: The hormone_history may not be recording events. Verify that `endocrine.sh log_hormone_event` is being called during runs (check COMMANDER dispatch logs).

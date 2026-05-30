@@ -476,7 +476,7 @@ Two entry points are available:
 speckit.echelon.codegen 001-photo-album
 ```
 
-This runs `RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER` and writes `.specify/squad/state.json` after every phase transition — same schema as `echelon.build`, so all status commands work unchanged.
+This runs `RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER` and writes the active run's `state.json` after every phase transition — same schema as `echelon.build`, so all status commands work unchanged.
 
 ### Parallel strategy run (with harness)
 
@@ -742,7 +742,7 @@ docker run --rm myapp:blue --help
 | `speckit.echelon.deploy rollback` | Roll back to the previous slot |
 
 Deploy state lives in two locations (kept in sync on every deploy and rollback):
-- `.specify/squad/deploy-state.json` — project-local copy
+- Active run `deploy-state.json` — project-local copy (`runs/.current`, `squad/.current`, with legacy fallback for older workspaces)
 - `~/.speckit-deploy/{app}.json` — global registry (used for port conflict detection and CLI wrapper scripts)
 
 ## Innovation Templates
