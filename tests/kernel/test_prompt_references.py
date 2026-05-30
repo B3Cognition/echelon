@@ -150,6 +150,48 @@ def test_re_single_phase_commands_use_shared_contract():
         assert "then stop. Always execute only this phase" not in text
 
 
+def test_primary_agent_prompts_have_paired_always_never_rules():
+    violations = []
+
+    for prompt in (EXTENSION_ROOT / "agents").rglob("*.md"):
+        rel = prompt.relative_to(REPO_ROOT)
+        if "appendices" in prompt.parts or "templates" in prompt.parts:
+            continue
+
+        lines = prompt.read_text().splitlines()
+        if "## ALWAYS / NEVER Rules" not in lines:
+            violations.append(f"{rel}: missing ALWAYS / NEVER Rules section")
+            continue
+
+        start = lines.index("## ALWAYS / NEVER Rules")
+        end = next(
+            (
+                index
+                for index in range(start + 1, len(lines))
+                if lines[index].startswith("## ")
+            ),
+            len(lines),
+        )
+        rule_lines = [
+            line
+            for line in lines[start + 1 : end]
+            if line.startswith("ALWAYS") or line.startswith("NEVER")
+        ]
+
+        if len(rule_lines) % 2 != 0:
+            violations.append(f"{rel}: unpaired ALWAYS / NEVER rule")
+            continue
+
+        for first, second in zip(rule_lines[0::2], rule_lines[1::2]):
+            if not first.startswith("ALWAYS") or not second.startswith("NEVER"):
+                violations.append(
+                    f"{rel}: rules must be ordered ALWAYS then NEVER"
+                )
+                break
+
+    assert not violations, "\n".join(violations)
+
+
 def test_agent_prompts_do_not_write_squad_state_directly():
     violations = []
 
