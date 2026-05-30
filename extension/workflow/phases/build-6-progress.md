@@ -100,3 +100,25 @@ speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` t
 - Log each violation as a journal entry with `type: "alert"` and `severity: "HIGH"`
 - Emit warning in build log: `[speckit-echelon-modeler (MODELER) ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
 - Always track violations for speckit-echelon-integrator (INTEGRATOR) to resolve at phase boundaries. Do NOT block task progression.
+
+### 6.4 Update tasks.md (speckit-echelon-commander (COMMANDER) — mandatory after every task)
+
+**This is a speckit-echelon-commander (COMMANDER) action.** After §6.3 state update, reflect task completion in `tasks.md` so the file remains a human-readable source of truth (not just state.json).
+
+1. Derive the task's final status from `build.task_results.{task_id}.status`:
+   - `DONE` or `DONE_WITH_CONCERNS` → `DONE`
+   - `DEGRADED` (fix_cycle limit hit) → `DEGRADED`
+   - `BLOCKED` → `BLOCKED`
+
+2. Locate the task section in `tasks.md`: find the heading `### {task_id}:`.
+
+3. Add `**Status:** {status}` on the line immediately after `**Complexity:** ...`.
+
+4. Change every `- [ ]` checkbox within that task's section (under **Acceptance Criteria** and **Test Tasks**) to `- [x]`.
+   - Only modify checkboxes within the target task section (stop at the next `### T` heading or end of file).
+   - Do not touch already-checked `- [x]` lines (idempotent).
+   - For `BLOCKED` tasks: change `- [ ]` to `- [-]` instead (skipped, not verified).
+
+5. Write the updated `tasks.md` back to `{spec_dir}/tasks.md`.
+
+**Always execute this step.** A tasks.md where all boxes remain `- [ ]` after a build is a silent lie to every developer who reads it.

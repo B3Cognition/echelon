@@ -27,9 +27,6 @@ requires:
     - name: "speckit.tasks"
       required: true
       required_for: "ORCHESTRATOR — task decomposition"
-    - name: "speckit.implement"
-      required: true
-      required_for: "IMPLEMENTER — task execution orchestration"
     - name: "speckit.clarify"
       required: false
       required_for: "CARTOGRAPHER — optional spec Q&A"
