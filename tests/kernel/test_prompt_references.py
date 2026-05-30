@@ -235,3 +235,13 @@ def test_phase1_why2_routes_state_updates_through_echelon_result():
     assert "echelon_result.state_updates" in text
     assert "status: blocked" in text
     assert "quality_scores:" in text
+
+
+def test_phase1_modeler_routes_last_dispatch_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase1-modeler.md"
+    text = prompt.read_text()
+
+    assert "Set `state.json.last_dispatch.agent`" not in text
+    assert "echelon_result.state_updates" in text
+    assert "last_dispatch:" in text
+    assert 'agent: "speckit-echelon-modeler (MODELER)"' in text

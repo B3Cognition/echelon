@@ -19,6 +19,11 @@ Dispatch speckit-echelon-modeler (MODELER) to build the initial queryable codeba
 
 **Verdict:** Must be `COMPLETE`. If speckit-echelon-modeler (MODELER) returns any invariant violations in its output, speckit-echelon-commander (COMMANDER) logs them as ALERT-level journal entries but does NOT block — the map is new and violations may be expected at this stage.
 
-**State update:** Set `state.json.last_dispatch.agent` to `"speckit-echelon-modeler (MODELER)"` using standard Pre-Dispatch Protocol before dispatching.
+**State update:** Before dispatch, return the standard Pre-Dispatch Protocol metadata in `echelon_result.state_updates`, including the full `last_dispatch` object because harness state updates are shallow top-level merges:
+
+```yaml
+last_dispatch:
+  agent: "speckit-echelon-modeler (MODELER)"
+```
 
 **Transition:** `phases[phase1-tracker]` — see `workflow/definition.yaml`
