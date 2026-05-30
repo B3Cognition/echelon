@@ -15,6 +15,31 @@ REFERENCE_RE = re.compile(
     r"(?:workflow/phases/appendices/[^`]+))`"
 )
 
+PROMPT_REFERENCE_RE = re.compile(
+    r"(?:`|\(|\s|^)"
+    r"("
+    r"(?:\.specify/extensions/echelon/)?"
+    r"(?:agents/|workflow/phases/|templates/|docs/)"
+    r"[^`)\s,*]+"
+    r"\.(?:md|yaml|yml)"
+    r")"
+)
+
+
+def _resolve_prompt_reference(ref: str, prompt: Path) -> Path:
+    if ref.startswith(".specify/extensions/echelon/"):
+        return EXTENSION_ROOT / ref.removeprefix(".specify/extensions/echelon/")
+    if ref.startswith("agents/") or ref.startswith("workflow/phases/"):
+        return EXTENSION_ROOT / ref
+    if ref.startswith("docs/"):
+        return REPO_ROOT / ref
+    if ref.startswith("templates/"):
+        local = prompt.parent / ref
+        if local.exists():
+            return local
+        return EXTENSION_ROOT / ref
+    return prompt.parent / ref
+
 
 def test_prompt_template_and_appendix_references_exist():
     missing = []
@@ -25,6 +50,23 @@ def test_prompt_template_and_appendix_references_exist():
             for match in REFERENCE_RE.finditer(text):
                 rel_path = match.group(1)
                 target = EXTENSION_ROOT / rel_path
+                if not target.exists():
+                    missing.append(
+                        f"{prompt.relative_to(REPO_ROOT)} references missing {rel_path}"
+                    )
+
+    assert not missing, "\n".join(missing)
+
+
+def test_prompt_template_docs_and_appendix_references_exist():
+    missing = []
+
+    for root in PROMPT_ROOTS:
+        for prompt in root.rglob("*.md"):
+            text = prompt.read_text()
+            for match in PROMPT_REFERENCE_RE.finditer(text):
+                rel_path = match.group(1)
+                target = _resolve_prompt_reference(rel_path, prompt)
                 if not target.exists():
                     missing.append(
                         f"{prompt.relative_to(REPO_ROOT)} references missing {rel_path}"
