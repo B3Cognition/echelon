@@ -25,7 +25,7 @@
 ### Step 2 — Backup Baseline A
 
 - [ ] Run: `bash scripts/bash/kb-recover.sh backup --file knowledge-base/estimates-log.yaml`
-- [ ] Confirm the backup file appears in `.specify/squad/recovery/` with an ISO-8601 timestamp in the filename.
+- [ ] Confirm the backup file appears in the active run's `recovery/` directory with an ISO-8601 timestamp in the filename.
 - [ ] Record the backup path: `backup_path = ___`
 
 ### Step 3 — Add Current-Run Delta
@@ -63,7 +63,7 @@
 
 - [ ] Run backup of corrupted file: `bash scripts/bash/kb-recover.sh backup --file knowledge-base/estimates-log.yaml`
 - [ ] Run restore: `bash scripts/bash/kb-recover.sh restore --file knowledge-base/estimates-log.yaml`
-- [ ] Confirm `recovery_mode=true` in `.specify/squad/state.json`.
+- [ ] Confirm `recovery_mode=true` in the active run's `state.json`.
 - [ ] Confirm restored file passes detect: `bash scripts/bash/kb-recover.sh detect --file knowledge-base/estimates-log.yaml` → exit 0.
 
 ### Step 6 — Verify "One Run Interval" Interpretation

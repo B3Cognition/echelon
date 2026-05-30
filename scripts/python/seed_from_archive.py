@@ -39,6 +39,25 @@ def iso_now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def repo_root_from_script(script_dir: Path) -> Path:
+    for candidate in (script_dir, *script_dir.parents):
+        if (candidate / ".specify").exists() or (candidate / "knowledge-base").exists():
+            return candidate
+    return script_dir.parent.parent
+
+
+def default_archive_root(repo_root: Path) -> Path:
+    for candidate in (
+        repo_root / "runs" / "archive",
+        repo_root / "squad" / "archive",
+        repo_root / ".specify" / "squad" / "archive",
+        repo_root / "archive",
+    ):
+        if candidate.exists():
+            return candidate
+    return repo_root / "runs" / "archive"
+
+
 def write_yaml_stub(path: Path, content: str) -> None:
     """Write YAML content to path, backing up any existing file first."""
     backup_dir = path.parent / ".backup"
@@ -367,21 +386,17 @@ def main() -> int:
 
     # Auto-detect paths
     script_dir = Path(__file__).resolve().parent
-    ext_dir = script_dir.parent.parent  # .specify/extensions/echelon
+    repo_root = repo_root_from_script(script_dir)
 
     if args.archive_root:
         archive_root = Path(args.archive_root)
     else:
-        # Try .specify/squad/archive relative to extension root
-        archive_root = ext_dir.parent.parent / ".specify" / "squad" / "archive"
-        if not archive_root.exists():
-            # Try relative to repo root
-            archive_root = ext_dir.parent.parent / "archive"
+        archive_root = default_archive_root(repo_root)
 
     if args.kb_dir:
         kb_dir = Path(args.kb_dir)
     else:
-        kb_dir = ext_dir / "knowledge-base"
+        kb_dir = repo_root / "knowledge-base"
 
     kb_dir.mkdir(parents=True, exist_ok=True)
 

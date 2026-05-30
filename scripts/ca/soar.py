@@ -124,7 +124,7 @@ def _repo_root() -> str:
 def _validate_run_id(run_id: str) -> None:
     """Raise ValueError if run_id contains path-traversal or illegal characters.
 
-    RAR-001 mitigation: prevents writes outside .specify/squad/ directory.
+    RAR-001 mitigation: prevents writes outside the active run directory.
     Allowed: [a-zA-Z0-9_\\-.], max 128 chars. Rejects '..', '/', '\\', null bytes.
     """
     if not isinstance(run_id, str):
@@ -137,19 +137,41 @@ def _validate_run_id(run_id: str) -> None:
         raise ValueError(f"run_id contains illegal characters: {run_id!r}")
 
 
+def _run_dir(run_id: str) -> str:
+    root = _repo_root()
+    override = os.environ.get("ECHELON_SQUAD_DIR")
+    if override:
+        return override
+
+    for base in ("runs", "squad"):
+        current = os.path.join(root, base, ".current")
+        if os.path.exists(current):
+            with open(current, encoding="utf-8") as f:
+                current_run_id = f.read().strip()
+            candidate = os.path.join(root, base, current_run_id)
+            if current_run_id and os.path.isdir(candidate):
+                return candidate
+
+        candidate = os.path.join(root, base, run_id)
+        if os.path.isdir(candidate):
+            return candidate
+
+    return os.path.join(root, ".specify", "squad")
+
+
 def _procedural_path(run_id: str) -> str:
     _validate_run_id(run_id)
-    return os.path.join(_repo_root(), ".specify", "squad", f"soar-procedural-{run_id}.json")
+    return os.path.join(_run_dir(run_id), f"soar-procedural-{run_id}.json")
 
 
 def _impasse_path(run_id: str) -> str:
     _validate_run_id(run_id)
-    return os.path.join(_repo_root(), ".specify", "squad", f"soar-impasse-{run_id}.json")
+    return os.path.join(_run_dir(run_id), f"soar-impasse-{run_id}.json")
 
 
 def _episodic_index_path(run_id: str) -> str:
     _validate_run_id(run_id)
-    return os.path.join(_repo_root(), ".specify", "squad", f"episodic-index-{run_id}.json")
+    return os.path.join(_run_dir(run_id), f"episodic-index-{run_id}.json")
 
 
 def _load_config() -> dict:
