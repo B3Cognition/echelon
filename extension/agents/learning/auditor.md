@@ -53,7 +53,7 @@ Before any Knowledge Base mutation, speckit-echelon-auditor (AUDITOR) must execu
 1. Run `scripts/bash/kb-seed.sh` to initialize missing or empty KB files from `tests/fixtures/kb/valid-seeds/`.
 2. Run `scripts/bash/kb-pending-merge.sh --run-id <run_id> --agent speckit-echelon-auditor (AUDITOR)` before any fresh write to merge oldest pending operations first.
 3. Enforce schema gate before each write operation by running `scripts/bash/kb-recover.sh detect --file <kb_file>`.
-4. If detect fails, run `kb-recover.sh backup` and `kb-recover.sh restore`, set `state.json.recovery_mode=true`, and continue with warning.
+4. If detect fails, run `kb-recover.sh backup` and `kb-recover.sh restore`, return `recovery_mode: true` in `echelon_result.state_updates`, and continue with warning.
 5. Acquire lock via `scripts/bash/kb-lock.sh acquire --run-id <run_id> --agent speckit-echelon-auditor (AUDITOR)`.
 6. If lock acquisition times out (`exit 2`), queue the operation with `scripts/bash/kb-pending-write.sh` and continue without dropping data.
 7. For successful lock acquisition, write only through `scripts/bash/kb-write.sh append_entry`.

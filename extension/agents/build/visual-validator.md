@@ -32,7 +32,7 @@ All unit tests passed on our first run — TypeScript compiled clean, the build 
    npx playwright --version
    ```
 
-   - If the command fails or returns an error: set `state.json.visual_validation_status: "skipped_no_playwright"`, emit this warning in the build log: `[speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
+   - If the command fails or returns an error: return `visual_validation_status: "skipped_no_playwright"` in `echelon_result.state_updates`, emit this warning in the build log: `[speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))] Playwright not found — visual validation skipped. Install with: npm install -D @playwright/test`, then return verdict `COMPLETE` with zero findings. This is NOT a build failure.
 
 2. Determine app type from `.specify/memory/constitution.md` — look for frontend framework keywords in the tech stack section (React, Vue, Angular, Svelte, Next.js, Nuxt, SvelteKit, or any browser-targeting framework):
    - If no browser/UI framework is listed: skip silently, return `COMPLETE` with note `[speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR))] No browser UI framework detected — visual validation not applicable`.

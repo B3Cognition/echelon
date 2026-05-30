@@ -132,6 +132,10 @@ def test_agent_prompts_do_not_write_squad_state_directly():
         for lineno, line in enumerate(prompt.read_text().splitlines(), start=1):
             if "${SQUAD_DIR}/state.json" in line and "with open" in line and "'w'" in line:
                 violations.append(f"{prompt.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+            if re.search(r"\bset `state\.json\.[^`]+`", line, re.IGNORECASE):
+                violations.append(f"{prompt.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
+            if re.search(r"\bset `state\.json\.[^`]+=", line, re.IGNORECASE):
+                violations.append(f"{prompt.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
 
     assert not violations, "\n".join(violations)
 
