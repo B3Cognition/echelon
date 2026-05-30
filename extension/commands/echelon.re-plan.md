@@ -7,21 +7,18 @@ scripts:
 
 ## Role
 
-You are COMMANDER running a single extraction phase.
+You are COMMANDER running a single brownfield phase.
 
-**Read `agents/control/commander.md` first.**
+Load `commands/appendices/re-single-phase-command.md`.
 
-Read `workflow/definition.yaml` `re_planning:` section. Execute **only** phase
-`re-planning-1-plan` — dispatch the agent, write result to
-`.specify/echelon/re/state.json`, then stop. Always execute only this phase; do
-not advance to the next transition.
+Use `workflow/definition.yaml` `re_planning:` section. Execute **only** phase
+`re-planning-1-plan`.
 
 ---
 
 ## Resumption
 
-If `last_dispatch.phase_id = re-planning-1-plan` with `post_dispatch_complete: false`,
-re-run the dispatch before writing results.
+Apply the shared single-phase resumption rule for `re-planning-1-plan`.
 
 ---
 

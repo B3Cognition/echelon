@@ -12,6 +12,7 @@ PROMPT_ROOTS = [
 
 REFERENCE_RE = re.compile(
     r"`((?:agents/(?:[^`]+/(?:templates|appendices)/[^`]+))|"
+    r"(?:commands/appendices/[^`]+)|"
     r"(?:workflow/phases/appendices/[^`]+))`"
 )
 
@@ -19,7 +20,7 @@ PROMPT_REFERENCE_RE = re.compile(
     r"(?:`|\(|\s|^)"
     r"("
     r"(?:\.specify/extensions/echelon/)?"
-    r"(?:agents/|workflow/phases/|templates/|docs/)"
+    r"(?:agents/|commands/|workflow/phases/|templates/|docs/)"
     r"[^`)\s,*]+"
     r"\.(?:md|yaml|yml)"
     r")"
@@ -29,7 +30,11 @@ PROMPT_REFERENCE_RE = re.compile(
 def _resolve_prompt_reference(ref: str, prompt: Path) -> Path:
     if ref.startswith(".specify/extensions/echelon/"):
         return EXTENSION_ROOT / ref.removeprefix(".specify/extensions/echelon/")
-    if ref.startswith("agents/") or ref.startswith("workflow/phases/"):
+    if (
+        ref.startswith("agents/")
+        or ref.startswith("commands/")
+        or ref.startswith("workflow/phases/")
+    ):
         return EXTENSION_ROOT / ref
     if ref.startswith("docs/"):
         return REPO_ROOT / ref
@@ -124,6 +129,25 @@ def test_commands_use_jsonl_reasoning_journal_name():
                 stale.append(f"{prompt.relative_to(REPO_ROOT)}:{lineno}: {line.strip()}")
 
     assert not stale, "\n".join(stale)
+
+
+def test_re_single_phase_commands_use_shared_contract():
+    commands = [
+        "echelon.re-analyze.md",
+        "echelon.re-specify.md",
+        "echelon.re-verify.md",
+        "echelon.re-expand.md",
+        "echelon.re-validate.md",
+        "echelon.re-checklist.md",
+        "echelon.re-constitute.md",
+        "echelon.re-plan.md",
+        "echelon.re-tasks.md",
+    ]
+
+    for command_name in commands:
+        text = (EXTENSION_ROOT / "commands" / command_name).read_text()
+        assert "commands/appendices/re-single-phase-command.md" in text
+        assert "then stop. Always execute only this phase" not in text
 
 
 def test_agent_prompts_do_not_write_squad_state_directly():
