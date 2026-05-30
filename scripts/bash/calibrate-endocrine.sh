@@ -16,7 +16,31 @@ export LC_ALL=C
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
-STATE_DIR=".specify/squad"
+SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
+    echo "$ECHELON_SQUAD_DIR"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="$REPO_ROOT/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$REPO_ROOT/$base/$run_id" ]]; then
+        echo "$REPO_ROOT/$base/$run_id"
+        return 0
+      fi
+    fi
+  done
+
+  echo "$REPO_ROOT/.specify/squad"
+}
+
+STATE_DIR="$(_resolve_squad_dir)"
 MIN_RUNS=10
 OUTPUT_FILE=""
 VERBOSE=false
@@ -36,7 +60,7 @@ while [[ $# -gt 0 ]]; do
       echo "Analyzes hormone_history from completed squad runs to suggest baseline adjustments."
       echo ""
       echo "Options:"
-      echo "  --state-dir DIR    Directory containing state.json and backups/ (default: .specify/squad)"
+      echo "  --state-dir DIR    Directory containing state.json and backups/ (default: active run dir)"
       echo "  --min-runs N       Minimum number of runs required for analysis (default: 10)"
       echo "  --output FILE      Write report to FILE instead of stdout"
       echo "  --verbose          Print progress messages to stderr"
