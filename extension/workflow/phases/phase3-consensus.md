@@ -114,7 +114,7 @@ bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
 phase4-build stays open through FINALIZE. Close it in phase4-document §12 before setting `status: done`:
 
 ```bash
-# At run close — in phase4-document BEFORE setting state.json.status = "done"
+# At run close — in phase4-document BEFORE returning status: done
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase4-build
 ```
 

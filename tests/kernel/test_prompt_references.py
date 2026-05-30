@@ -282,3 +282,11 @@ def test_phase4_document_routes_done_state_through_echelon_result():
     assert 'state.json.status = "done"' not in text
     assert "echelon_result.state_updates" in text
     assert "status: done" in text
+
+
+def test_phase3_consensus_references_returned_done_state():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase3-consensus.md"
+    text = prompt.read_text()
+
+    assert 'state.json.status = "done"' not in text
+    assert "BEFORE returning status: done" in text
