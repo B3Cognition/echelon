@@ -56,6 +56,24 @@ check "journal did not grow on re-run" "[ $journal_1 -eq $journal_2 ]"
 applied_3=$(jq -r '.endocrine_state.applied_dispatches | length' "$ENDOCRINE_STATE_FILE")
 check "different dispatch_id grows applied_dispatches" "[ $applied_3 -eq $((applied_1 + 1)) ]"
 
+# Run-dir detection: when no ENDOCRINE_* override is set, the hook must use runs/.current.
+RUN_WS="$TMPDIR/run-workspace"
+RUN_ID="run-active"
+RUN_DIR="$RUN_WS/runs/$RUN_ID"
+mkdir -p "$RUN_DIR" "$RUN_WS/runs" "$RUN_WS/.specify" "$RUN_WS/extension/scripts/bash"
+printf '%s\n' "$RUN_ID" > "$RUN_WS/runs/.current"
+ln -s "$REPO_ROOT/extension/scripts/bash"/* "$RUN_WS/extension/scripts/bash/" 2>/dev/null || true
+cp "$REPO_ROOT/extension/echelon-config.yml" "$RUN_WS/extension/echelon-config.yml"
+echo "{\"iteration\": 3, \"phase\": \"build-2-implement\", \"thresholds\": {\"token_budget_k\": 1000, \"max_squad_iterations\": 10}, \"token_ledger\": {\"total_estimated_tokens\": 200000}, \"autonomy_mode\": \"banzai\", \"quality_scores\": []}" > "$RUN_DIR/state.json"
+(cd "$RUN_WS" && env -u ENDOCRINE_STATE_FILE -u ENDOCRINE_SQUAD_DIR bash "$RUN_WS/extension/scripts/bash/endocrine.sh" init) >/dev/null 2>&1
+: > "$RUN_DIR/reasoning-journal.jsonl"
+
+(cd "$RUN_WS" && env -u ENDOCRINE_STATE_FILE -u ENDOCRINE_SQUAD_DIR bash "$HOOK" --agent SAGE --dispatch-id D-RUNS --result-file "$TMPDIR/result.yaml") > /dev/null
+
+check "runs/.current state receives applied dispatch" "jq -e '.endocrine_state.applied_dispatches | index(\"D-RUNS\")' '$RUN_DIR/state.json' > /dev/null"
+check "runs/.current journal receives entries" "[ \$(wc -l < '$RUN_DIR/reasoning-journal.jsonl') -ge 2 ]"
+check "legacy .specify/squad journal not created for runs/.current" "[ ! -e '$RUN_WS/.specify/squad/reasoning-journal.jsonl' ]"
+
 echo
 echo "Pass: $pass  Fail: $fail"
 exit $((fail == 0 ? 0 : 1))

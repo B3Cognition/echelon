@@ -18,6 +18,9 @@
 
 set -euo pipefail
 
+HOOK_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
+HOOK_REPO_ROOT="$(CDPATH='' cd "$HOOK_DIR/../.." && pwd)"
+
 # --- arg parsing ---
 AGENT=""; DISPATCH_ID=""; RESULT_FILE=""
 while [[ $# -gt 0 ]]; do
@@ -45,7 +48,23 @@ if [ "$ROOT" = "/" ]; then
 fi
 cd "$ROOT"
 
-STATE_FILE="${ENDOCRINE_STATE_FILE:-$ROOT/.specify/squad/state.json}"
+find_squad_dir() {
+  local root="$1" base run_id current_file
+  for base in runs squad; do
+    current_file="$root/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$root/$base/$run_id" ]]; then
+        echo "$root/$base/$run_id"
+        return 0
+      fi
+    fi
+  done
+  echo "$root/.specify/squad"
+}
+
+SQUAD_DIR="${ENDOCRINE_SQUAD_DIR:-$(find_squad_dir "$ROOT")}"
+STATE_FILE="${ENDOCRINE_STATE_FILE:-$SQUAD_DIR/state.json}"
 ENDOCRINE_SH="$ROOT/extension/scripts/bash/endocrine.sh"
 if [[ ! -f "$ENDOCRINE_SH" ]]; then
   echo "post-dispatch-hormone-update: endocrine.sh not found at $ENDOCRINE_SH" >&2
@@ -53,7 +72,7 @@ if [[ ! -f "$ENDOCRINE_SH" ]]; then
 fi
 
 # --- read current last_entry_id from journal index for sequential RJ-NNN ids ---
-JOURNAL_INDEX="$ROOT/.specify/squad/reasoning-journal-index.json"
+JOURNAL_INDEX="$SQUAD_DIR/reasoning-journal-index.json"
 NEXT_RJ_NUM=1
 if [[ -f "$JOURNAL_INDEX" ]] && command -v jq >/dev/null 2>&1; then
   last_id=$(jq -r '.last_entry_id // ""' "$JOURNAL_INDEX" 2>/dev/null)
@@ -84,27 +103,30 @@ if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
   [[ -z "$BEFORE_HORMONES" || "$BEFORE_HORMONES" == "null" ]] && BEFORE_HORMONES="{}"
 fi
 
-# --- map hormone name → index for hormone_update lines ---
-declare -A HORMONE_IDX=(
-  [adrenaline]=0
-  [dopamine]=1
-  [cortisol]=2
-  [serotonin]=3
-  [oxytocin]=4
-  [norepinephrine]=5
-)
+# --- map hormone name to index for hormone_update lines ---
+hormone_index() {
+  case "$1" in
+    adrenaline) echo 0 ;;
+    dopamine) echo 1 ;;
+    cortisol) echo 2 ;;
+    serotonin) echo 3 ;;
+    oxytocin) echo 4 ;;
+    norepinephrine) echo 5 ;;
+    *) return 1 ;;
+  esac
+}
 
 # --- invoke hormone-calc compute, capture triggers ---
-TRIGGERS=$(python3 -m hormone_calc.cli compute \
+TRIGGERS=$(PYTHONPATH="$HOOK_REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m hormone_calc.cli compute \
   --agent "$AGENT" --dispatch-id "$DISPATCH_ID" \
   --result-file "$RESULT_FILE" \
   --state "$STATE_FILE" \
-  --journal "$ROOT/.specify/squad/reasoning-journal.jsonl" 2>/dev/null) || {
+  --journal "$SQUAD_DIR/reasoning-journal.jsonl" 2>/dev/null) || {
   echo "post-dispatch-hormone-update: hormone-calc failed" >&2
   exit 1
 }
 
-JOURNAL="$ROOT/.specify/squad/reasoning-journal.jsonl"
+JOURNAL="$SQUAD_DIR/reasoning-journal.jsonl"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PHASE=$(jq -r '.phase // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
 
@@ -134,8 +156,7 @@ while IFS= read -r line; do
       target="$arg2"
       ;;
     hormone_update)
-      idx="${HORMONE_IDX[$arg2]:-}"
-      if [[ -z "$idx" ]]; then
+      if ! idx="$(hormone_index "$arg2")"; then
         echo "post-dispatch-hormone-update: unknown hormone '$arg2' (skipping)" >&2
         continue
       fi
