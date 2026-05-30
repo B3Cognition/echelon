@@ -225,6 +225,9 @@ def test_init_routes_post_creation_state_updates_through_echelon_result():
     assert "echelon_result.state_updates" in text
     assert "constitution_status: exists" in text
     assert "constitution_status: pending" in text
+    assert "sets `state.json.fallback_mode = true`" not in text
+    assert "fallback_mode: true" in text
+    assert "execution_mode: manual_specification" in text
 
 
 def test_phase1_why2_routes_state_updates_through_echelon_result():

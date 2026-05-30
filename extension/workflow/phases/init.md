@@ -219,7 +219,12 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 
 ### Spec-kit Availability
 
-spec-kit skill availability is validated at install time (`specify extension add echelon`). speckit-echelon-commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, speckit-echelon-commander (COMMANDER) sets `state.json.fallback_mode = true` and `execution_mode = manual_specification` at that point.
+spec-kit skill availability is validated at install time (`specify extension add echelon`). speckit-echelon-commander (COMMANDER) assumes `fallback_mode = false` at run start. If a skill invocation fails during the run, speckit-echelon-commander (COMMANDER) returns the fallback fields in `echelon_result.state_updates` at that point:
+
+```yaml
+fallback_mode: true
+execution_mode: manual_specification
+```
 
 Always continue routing in both available and fallback paths (AC-001a-4). speckit-echelon-cartographer (CARTOGRAPHER) dispatch must never be blocked by fallback detection.
 
