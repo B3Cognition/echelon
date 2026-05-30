@@ -221,3 +221,17 @@ def test_init_routes_post_creation_state_updates_through_echelon_result():
     assert "echelon_result.state_updates" in text
     assert "constitution_status: exists" in text
     assert "constitution_status: pending" in text
+
+
+def test_phase1_why2_routes_state_updates_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase1-why2.md"
+    text = prompt.read_text()
+
+    assert "Set `state.json.status`" not in text
+    assert "Set `state.json.blocked_reason`" not in text
+    assert "persist Understanding availability check result to state.json" not in text
+    assert "append to `state.json.quality_scores[]`" not in text
+    assert "State fields to write" not in text
+    assert "echelon_result.state_updates" in text
+    assert "status: blocked" in text
+    assert "quality_scores:" in text
