@@ -146,3 +146,12 @@ def test_phase1_what_routes_state_and_journal_through_echelon_result():
     assert "Set `state.json" not in text
     assert "echelon_result.state_updates" in text
     assert "echelon_result.journal_entries" in text
+
+
+def test_phase2_decide_routes_kill_status_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase2-decide.md"
+    text = prompt.read_text()
+
+    assert 'set state.json status to "killed"' not in text
+    assert "echelon_result.state_updates" in text
+    assert "status: killed" in text

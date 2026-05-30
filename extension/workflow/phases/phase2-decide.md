@@ -52,9 +52,18 @@ Use the Agent tool to dispatch a subagent with:
 
 Read ASSESS outputs:
 
-- **KILL** verdict → write kill report to `specs/{feature}/kill-report.md`, set state.json status to "killed", print summary, STOP.
+- **KILL** verdict → write kill report to `specs/{feature}/kill-report.md`, return `status: killed` in `echelon_result.state_updates`, return a summary journal entry, STOP. The harness applies the state update and routes to `done`.
 - **DEFER** verdict → reduce scope, re-route to WHAT. Track DEFER count. **DEFER loop >= 2 with no scope stabilization → kill or escalate to human.**
 - **PASS** → proceed to specialist summoning.
+
+For KILL, include this state update in the phase result:
+
+```yaml
+echelon_result:
+  verdict: KILL
+  state_updates:
+    status: killed
+```
 
 **MANDATORY — run before transitioning to phase2-strategic-overview:**
 
