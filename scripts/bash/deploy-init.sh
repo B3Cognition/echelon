@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # deploy-init.sh — one-time blue/green deploy infrastructure setup
 # Called from speckit.echelon.init. Idempotent: exits 0 immediately if
-# .specify/squad/deploy-state.json already exists and is valid.
+# deploy-state.json already exists and is valid.
 #
 # HTTP mode: single shared Traefik at :80, apps routed by PathPrefix(/{app}).
 # Blue/green ports are health-check-only (host-bound for curl, not Traefik entrypoints).
@@ -10,8 +10,31 @@ set -euo pipefail
 # ── Args ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT="${1:?PROJECT_ROOT required as first argument}"
 ECHELON_YML="${2:-${PROJECT_ROOT}/echelon-config.yml}"
-STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
 SCRIPTS_DIR="${PROJECT_ROOT}/.specify/extensions/echelon/scripts/bash"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [ -n "${ECHELON_SQUAD_DIR:-}" ]; then
+    echo "${ECHELON_SQUAD_DIR}"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="${PROJECT_ROOT}/${base}/.current"
+    if [ -f "${current_file}" ]; then
+      run_id=$(tr -d '[:space:]' < "${current_file}")
+      if [ -n "${run_id}" ] && [ -d "${PROJECT_ROOT}/${base}/${run_id}" ]; then
+        echo "${PROJECT_ROOT}/${base}/${run_id}"
+        return 0
+      fi
+    fi
+  done
+
+  echo "${PROJECT_ROOT}/.specify/squad"
+}
+
+SQUAD_DIR="$(_resolve_squad_dir)"
+STATE_FILE="${ECHELON_DEPLOY_STATE_FILE:-${SQUAD_DIR}/deploy-state.json}"
 
 # ── Idempotency guard ────────────────────────────────────────────────────────
 GIT_HOOK="${PROJECT_ROOT}/.git/hooks/post-merge"

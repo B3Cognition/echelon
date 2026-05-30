@@ -4,7 +4,30 @@
 set -euo pipefail
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
-STATE_FILE="${PROJECT_ROOT}/.specify/squad/deploy-state.json"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [ -n "${ECHELON_SQUAD_DIR:-}" ]; then
+    echo "${ECHELON_SQUAD_DIR}"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="${PROJECT_ROOT}/${base}/.current"
+    if [ -f "${current_file}" ]; then
+      run_id=$(tr -d '[:space:]' < "${current_file}")
+      if [ -n "${run_id}" ] && [ -d "${PROJECT_ROOT}/${base}/${run_id}" ]; then
+        echo "${PROJECT_ROOT}/${base}/${run_id}"
+        return 0
+      fi
+    fi
+  done
+
+  echo "${PROJECT_ROOT}/.specify/squad"
+}
+
+SQUAD_DIR="$(_resolve_squad_dir)"
+STATE_FILE="${ECHELON_DEPLOY_STATE_FILE:-${SQUAD_DIR}/deploy-state.json}"
 
 if [ ! -f "${STATE_FILE}" ]; then
   echo "✗ deploy-state.json not found. Run echelon.run first to initialize deploy." >&2

@@ -4,7 +4,30 @@
 set -euo pipefail
 
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
-FINGERPRINT_FILE="${PROJECT_ROOT}/.specify/squad/cicd-fingerprint.json"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [ -n "${ECHELON_SQUAD_DIR:-}" ]; then
+    echo "${ECHELON_SQUAD_DIR}"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="${PROJECT_ROOT}/${base}/.current"
+    if [ -f "${current_file}" ]; then
+      run_id=$(tr -d '[:space:]' < "${current_file}")
+      if [ -n "${run_id}" ] && [ -d "${PROJECT_ROOT}/${base}/${run_id}" ]; then
+        echo "${PROJECT_ROOT}/${base}/${run_id}"
+        return 0
+      fi
+    fi
+  done
+
+  echo "${PROJECT_ROOT}/.specify/squad"
+}
+
+SQUAD_DIR="$(_resolve_squad_dir)"
+FINGERPRINT_FILE="${ECHELON_CICD_FINGERPRINT_FILE:-${SQUAD_DIR}/cicd-fingerprint.json}"
 
 _compute_hash() {
   # Find all CI/CD-relevant files, sort for determinism, hash contents
