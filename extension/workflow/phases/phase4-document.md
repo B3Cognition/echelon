@@ -197,16 +197,14 @@ Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecar
 
 Read the scorecard output and apply any automatic self-healing actions.
 
-### 12.8 Set Final State
+### 12.8 Prepare Final State
 
-Update `state.json`:
+Prepare the final state update, but do not treat the run as complete until the run history is written and the final summary banner in 12.9 has been printed. Return the final status in `echelon_result.state_updates`:
 
-```json
-{
-  "status": "done",
-  "phase": "done",
-  "updated_at": "{ISO-8601}"
-}
+```yaml
+status: done
+phase: done
+updated_at: "{ISO-8601}"
 ```
 
 **Run History Write — MANDATORY at DONE. Without this, future runs cannot detect that Phase A is complete and will redo all of Phase A unnecessarily.**
@@ -241,7 +239,7 @@ Update `state.json`:
 
 ### 12.9 Print Final Summary — MANDATORY
 
-> **Always print this banner before setting `state.json.status = "done"` or beginning staging cleanup (12.10). NEVER set done or clean up first.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
+> **Always print this banner before returning `status: done` in `echelon_result.state_updates` or beginning staging cleanup (12.10). NEVER mark done or clean up first.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
 >
 > The **HUMAN ACTIONS REQUIRED** section is unconditionally required — always print it. If there are no pending actions, print `None — squad resolved all items autonomously.` Never omit the section.
 
@@ -313,7 +311,7 @@ NOTE: No application source files were modified by this command.
 
 ### 12.10 Archive and Cleanup Staging Area — MANDATORY
 
-**Precondition:** Only run after `run-history.json` is written (12.8) and `state.json.status = "done"`. Always archive completed runs only; do not archive a partial run.
+**Precondition:** Only run after `run-history.json` is written (12.8) and the final `status: done` update has been prepared in `echelon_result.state_updates`. Always archive completed runs only; do not archive a partial run.
 
 Archive the completed run artifacts, then clean staging:
 

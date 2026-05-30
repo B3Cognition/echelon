@@ -268,3 +268,14 @@ def test_phase3_specialists_routes_active_specialists_through_echelon_result():
     assert "Update `state.json.active_specialists`" not in text
     assert "echelon_result.state_updates" in text
     assert "active_specialists:" in text
+
+
+def test_phase4_document_routes_done_state_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase4-document.md"
+    text = prompt.read_text()
+
+    assert "Update `state.json`:" not in text
+    assert 'setting `state.json.status = "done"`' not in text
+    assert 'state.json.status = "done"' not in text
+    assert "echelon_result.state_updates" in text
+    assert "status: done" in text
