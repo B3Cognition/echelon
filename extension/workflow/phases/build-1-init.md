@@ -8,10 +8,8 @@
 
 **Build Start State Update (mandatory, runs once before first task):**
 
-1. Return `spec_status: in-progress` in `echelon_result.state_updates`.
-2. Update `{spec_dir}/spec.md`: change `**Status**: Planned` to `**Status**: In Progress`.
-3. Count all task lines in `{spec_dir}/tasks.md` (lines matching `^\s*- \[[ xX]\]`) and include the count in `echelon_result.state_updates.build.total_tasks`.
-4. Return the full initialized `build` object in one `echelon_result.state_updates.build` value; the harness applies it to `state.json`.
+1. Count all task lines in `{spec_dir}/tasks.md` (lines matching `^\s*- \[[ xX]\]`) and include the count in `echelon_result.state_updates.build.total_tasks`.
+2. Return the full initialized `build` object in one `echelon_result.state_updates.build` value; the harness applies it to `state.json`.
 
 ### 1.0 Anchor Project Root
 

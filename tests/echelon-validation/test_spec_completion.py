@@ -1,11 +1,11 @@
-"""Tests for spec completion tracking (gap 1).
+"""Tests for spec completion tracking.
 
 5 tests:
 - state-schema.json has spec_status with full lifecycle enum
 - state-schema.json has build object with tasks_completed_pct
-- echelon.run.md sets spec_status to planned after CARTOGRAPHER
-- echelon.build.md sets spec_status to in-progress at build start
-- echelon.build.md sets spec_status to implemented on VERIFICATION PASS
+- phase1-what.md sets spec_status to planned after CARTOGRAPHER (LLM-owned)
+- cli.py writes "In Progress" to spec frontmatter at harness run start (Python-owned)
+- coordinator.py writes "Implemented" to spec frontmatter on convergence (Python-owned)
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import pytest
 
 ECHELON = Path(__file__).parent.parent.parent / "extension"
 SCHEMA_DIR = Path(__file__).parent.parent.parent / "templates"
+SRC = Path(__file__).parent.parent.parent / "src"
 
 
 @pytest.mark.unit
@@ -40,20 +41,18 @@ class TestSpecCompletion:
         assert "completed_tasks" in build["properties"]
 
     def test_run_md_sets_spec_status_planned_after_cartographer(self) -> None:
-        # Content moved to workflow/phases/phase1-what.md (echelon.run.md is now a thin wrapper)
+        # phase1-what.md remains LLM-owned (squad phase, not harness)
         content = (ECHELON / "workflow/phases/phase1-what.md").read_text()
         assert re.search(r"spec_status.*planned", content)
         assert re.search(r"Status.*Planned", content)
 
-    def test_build_md_sets_spec_status_in_progress_at_start(self) -> None:
-        # Content moved to workflow/phases/build-1-init.md (echelon.build.md is now a thin wrapper)
-        content = (ECHELON / "workflow/phases/build-1-init.md").read_text()
-        assert re.search(r"spec_status.*in-progress", content)
-        assert re.search(r"Status.*In Progress", content)
+    def test_cli_writes_in_progress_at_harness_run_start(self) -> None:
+        # Python-owned: cli.py calls write_status("In Progress") before run()
+        content = (SRC / "echelon" / "cli.py").read_text()
+        assert re.search(r'write_spec_status\(spec_dir,\s*"In Progress"\)', content)
 
-    def test_build_md_sets_spec_status_implemented_on_verification_pass(self) -> None:
-        # Content moved to workflow/phases/build-8-finalize.md (echelon.build.md is now a thin wrapper)
-        content = (ECHELON / "workflow/phases/build-8-finalize.md").read_text()
-        assert re.search(r"spec_status.*implemented", content)
-        assert re.search(r"Status.*Implemented", content)
-        assert "tasks_completed_pct" in content
+    def test_coordinator_writes_implemented_on_convergence(self) -> None:
+        # Python-owned: coordinator.py calls write_status("Implemented") when converged
+        content = (SRC / "harness" / "coordinator.py").read_text()
+        assert re.search(r'write_spec_status\(_spec_dir,\s*"Implemented"\)', content)
+        assert re.search(r'result\.status\s*==\s*"converged"', content)

@@ -106,10 +106,8 @@ BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.m
 
 **Specification Complete (mandatory on speckit-echelon-verification (VERIFICATION) PASS):**
 
-1. Return `spec_status: implemented` in `echelon_result.state_updates`.
-2. Update `{spec_dir}/spec.md`: change `**Status**: In Progress` to `**Status**: Implemented`.
-3. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from `tasks.md` and return the full updated `build` object in `echelon_result.state_updates`.
-4. Return this journal entry in `echelon_result.journal_entries`: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
+1. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from `tasks.md` and return the full updated `build` object in `echelon_result.state_updates`.
+2. Return this journal entry in `echelon_result.journal_entries`: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
 
 ### 8.2 Collect Reports
 
@@ -133,7 +131,6 @@ echelon_result:
   state_updates:
     status: build_done
     phase: build_done
-    spec_status: implemented
     build:
       total_tasks: <existing total_tasks>
       completed_tasks: "{total}"

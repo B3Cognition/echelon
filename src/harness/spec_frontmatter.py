@@ -72,7 +72,8 @@ def write_targets(spec_dir: Path, targets: List[str]) -> Path:
 
 
 def write_status(spec_dir: Path, status: str) -> Path:
-    """Write (or replace) the ``status:`` field in spec_dir's frontmatter.
+    """Write (or replace) the ``status:`` field in spec_dir's frontmatter and
+    the ``**Status**: ...`` display line in the document body (if present).
 
     Creates a frontmatter block if none exists. Returns the modified file path.
     Preserves all other frontmatter keys.
@@ -95,6 +96,10 @@ def write_status(spec_dir: Path, status: str) -> Path:
     data["status"] = status
     front = yaml.dump(data, default_flow_style=False, sort_keys=False,
                       allow_unicode=True).rstrip()
+
+    # Keep the human-readable **Status**: line in the body in sync when present.
+    body = re.sub(r'(\*\*Status\*\*:\s*).*', rf'\g<1>{status}', body, count=1)
+
     md.write_text(f"---\n{front}\n---\n{body}", encoding="utf-8")
     return md
 

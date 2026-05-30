@@ -460,7 +460,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
-    from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+    from harness.spec_frontmatter import find_spec_dir, read_frontmatter, write_status as _write_spec_status
     from echelon.orchestrator import validate_targets, run_multi_target
 
     spec_dir = find_spec_dir(spec_id, Path.cwd())
@@ -510,6 +510,9 @@ def _cmd_harness_run(args: list[str]) -> None:
         ("Strategy", strategy),
         ("Target", target_display),
     ])
+
+    if spec_dir is not None:
+        _write_spec_status(spec_dir, "In Progress")
 
     run(user_message, provider, gitops)
 

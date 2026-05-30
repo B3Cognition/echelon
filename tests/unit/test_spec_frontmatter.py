@@ -129,6 +129,32 @@ class TestWriteStatus:
         with pytest.raises(FileNotFoundError):
             write_status(empty_dir, "landed")
 
+    def test_updates_body_status_line_when_present(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(
+            tmp_path,
+            "---\nstatus: Planned\n---\n\n**Status**: Planned\n\n# Body\n",
+        )
+        write_status(spec_dir, "In Progress")
+        content = (spec_dir / "spec.md").read_text(encoding="utf-8")
+        assert "**Status**: In Progress" in content
+        assert "**Status**: Planned" not in content
+        assert read_frontmatter(spec_dir)["status"] == "In Progress"
+
+    def test_body_status_line_absent_does_not_error(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "---\nstatus: Draft\n---\n# No status line\n")
+        write_status(spec_dir, "Implemented")
+        assert read_frontmatter(spec_dir)["status"] == "Implemented"
+
+    def test_body_status_line_update_is_idempotent(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(
+            tmp_path,
+            "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
+        )
+        write_status(spec_dir, "Implemented")
+        write_status(spec_dir, "Implemented")
+        content = (spec_dir / "spec.md").read_text(encoding="utf-8")
+        assert content.count("**Status**: Implemented") == 1
+
 
 @pytest.mark.unit
 class TestWriteStatusIntegration:
