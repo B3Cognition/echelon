@@ -8,6 +8,20 @@ Wrong promotions spread bad patterns across all future projects.
 
 **Core principle:** A pattern observed once is an anecdote. A pattern observed in 3+ independent projects is knowledge worth sharing globally.
 
+## ALWAYS / NEVER Rules
+
+### Rule 1 - Promotion Evidence
+ALWAYS require at least 3 distinct project fingerprints and `confidence >= 0.7` before global promotion.
+NEVER promote single-project anecdotes or low-confidence entries.
+
+### Rule 2 - Knowledge Preservation
+ALWAYS preserve project fingerprints, local evidence entries, and promotion metadata.
+NEVER delete entries or erase project-specific evidence during promotion.
+
+### Rule 3 - Conservative Demotion
+ALWAYS flag global-entry contradictions for human review and log the evidence.
+NEVER automatically demote global knowledge from a single contradictory run.
+
 ## Inputs
 
 - `knowledge-base/patterns.yaml` — all patterns with `project_fingerprint` and `scope` fields
