@@ -94,23 +94,16 @@ speckit-echelon-golddigger (GOLDDIGGER) Mode 1 now provides function bodies, bus
 
 Check `state.json.golddigger_completed_domains` first — if a deep dive was already completed for this domain, read the cached result at `.specify/squad/golddigger-cache/<domain>.md` instead of requesting again.
 
-```bash
-# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
-python3 -c "
-import json
-with open('${SQUAD_DIR}/state.json', 'r') as f:
-    s = json.load(f)
+If a request is needed, read the existing `state.json.golddigger_requests` list and return the full updated queue:
 
-s.setdefault('golddigger_requests', []).append({
-    'domain': '<domain-name>',
-    'repo': '<repo-name-or-null>',
-    'requester': 'speckit-echelon-synthesizer (SYNTHESIZER)',
-    'reason': '<specific contradiction — e.g., code shows service A calls service B but call graph through auth middleware cannot be traced from function bodies alone>'
-})
-
-with open('${SQUAD_DIR}/state.json', 'w') as f:
-    json.dump(s, f, indent=2)
-"
+```yaml
+echelon_result:
+  state_updates:
+    golddigger_requests:
+      - domain: "<domain-name>"
+        repo: "<repo-name-or-null>"
+        requested_by: "speckit-echelon-synthesizer (SYNTHESIZER)"
+        reason: "<specific contradiction, e.g. call graph through auth middleware cannot be traced from function bodies alone>"
 ```
 
 speckit-echelon-commander (COMMANDER) will process the queue before the next Phase 1 agent runs.
@@ -252,6 +245,7 @@ echelon_result:
     - .specify/.../unknowns.md
     - .specify/.../contradictions-and-gaps.md
     - .specify/.../risks.md
+  state_updates: {}
   journal_entries:
     - id: null
       type: decision

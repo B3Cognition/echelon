@@ -142,25 +142,16 @@ For each domain, assess:
 - Hotspot complexity — function bodies and git history already expose complexity patterns
 - General uncertainty — if you can answer the question from existing artifacts, do so
 
-If a domain meets either trigger, write a Mode 2 request to `state.json`:
+If a domain meets either trigger, read the existing `state.json.golddigger_requests` list and return the full updated Mode 2 request queue in `echelon_result.state_updates.golddigger_requests`:
 
-```bash
-# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
-python3 -c "
-import json
-with open('${SQUAD_DIR}/state.json', 'r') as f:
-    s = json.load(f)
-
-s.setdefault('golddigger_requests', []).append({
-    'domain': '<domain-name>',
-    'repo': '<repo-name-or-null>',
-    'requested_by': 'speckit-echelon-scout (SCOUT)',
-    'reason': '<specific reason — e.g., auth middleware execution path not traceable from function bodies; cannot map token validation flow>'
-})
-
-with open('${SQUAD_DIR}/state.json', 'w') as f:
-    json.dump(s, f, indent=2)
-"
+```yaml
+echelon_result:
+  state_updates:
+    golddigger_requests:
+      - domain: "<domain-name>"
+        repo: "<repo-name-or-null>"
+        requested_by: "speckit-echelon-scout (SCOUT)"
+        reason: "<specific reason, e.g. auth middleware execution path not traceable from function bodies>"
 ```
 
 In polyrepo mode, always include the `repo` field. In single-repo mode, set `repo` to `null`.
@@ -413,6 +404,7 @@ echelon_result:
     - .specify/.../boundaries.md
     - .specify/.../assumptions.md
     - .specify/.../unknowns.md
+  state_updates: {}
   journal_entries:
     - id: null
       type: insight

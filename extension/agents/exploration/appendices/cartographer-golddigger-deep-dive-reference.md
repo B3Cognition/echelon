@@ -19,24 +19,16 @@ Check `state.json.golddigger_completed_domains`. If a deep dive was already comp
 
 ## Request Format
 
-Append the request to `${SQUAD_DIR}/state.json` with JSON-safe Python output. Keep stdout JSON-only; do not add `print()` statements because stray stdout corrupts captured `state.json` data.
+Read the existing `state.json.golddigger_requests` list and return the full updated request queue in `echelon_result.state_updates.golddigger_requests`; the harness writes it to `${SQUAD_DIR}/state.json`.
 
-```bash
-python3 -c "
-import json
-with open('${SQUAD_DIR}/state.json', 'r') as f:
-    s = json.load(f)
-
-s.setdefault('golddigger_requests', []).append({
-    'domain': '<domain-name>',
-    'repo': '<repo-name-or-null>',
-    'requester': 'speckit-echelon-cartographer (CARTOGRAPHER)',
-    'reason': '<specific gap - e.g., cannot write testable AC for payment error cases without knowing full payment provider integration topology>'
-})
-
-with open('${SQUAD_DIR}/state.json', 'w') as f:
-    json.dump(s, f, indent=2)
-"
+```yaml
+echelon_result:
+  state_updates:
+    golddigger_requests:
+      - domain: "<domain-name>"
+        repo: "<repo-name-or-null>"
+        requested_by: "speckit-echelon-cartographer (CARTOGRAPHER)"
+        reason: "<specific gap, e.g. cannot write testable AC without full payment provider integration topology>"
 ```
 
 speckit-echelon-commander (COMMANDER) processes the queue after CARTOGRAPHER dispatch completes.
