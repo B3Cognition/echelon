@@ -245,3 +245,13 @@ def test_phase1_modeler_routes_last_dispatch_through_echelon_result():
     assert "echelon_result.state_updates" in text
     assert "last_dispatch:" in text
     assert 'agent: "speckit-echelon-modeler (MODELER)"' in text
+
+
+def test_build_7_integration_routes_checkpoint_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "build-7-integration.md"
+    text = prompt.read_text()
+
+    assert "Append to `state.json.build.phase_checkpoints`" not in text
+    assert "echelon_result.state_updates" in text
+    assert "build:" in text
+    assert "phase_checkpoints:" in text

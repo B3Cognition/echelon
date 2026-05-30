@@ -77,14 +77,14 @@ Handle result:
 
 ### 7.3 Record Checkpoint
 
-Append to `state.json.build.phase_checkpoints`:
+Return the full updated `build` object in `echelon_result.state_updates`, appending this checkpoint to `build.phase_checkpoints` because harness state updates are shallow top-level merges:
 
-```json
-{
-  "phase_group": "{name}",
-  "status": "PASS",
-  "tasks_completed": "{count}",
-  "integration_issues": 0,
-  "timestamp": "{ISO-8601}"
-}
+```yaml
+build:
+  phase_checkpoints:
+    - phase_group: "{name}"
+      status: "PASS"
+      tasks_completed: "{count}"
+      integration_issues: 0
+      timestamp: "{ISO-8601}"
 ```
