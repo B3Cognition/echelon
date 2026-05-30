@@ -124,7 +124,7 @@ Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). 
 2. If `run-history.json` exists:
    - Read `runs` array. Find the latest entry where `phase: "A"` and `status: "done"`.
    - Compare `constitution_hash` from that entry against current SHA of `.specify/memory/constitution.md`.
-   - If Phase A is done AND constitution hash matches: log `[speckit-echelon-commander (COMMANDER)] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Set `state.json.phase` to `"phase1-constitution"` to signal resume.
+   - If Phase A is done AND constitution hash matches: log `[speckit-echelon-commander (COMMANDER)] Phase A already complete for run {run_id} — skipping to Phase B routing` and jump to the ASSESS/DECIDE section. Return `phase: phase1-constitution` in `echelon_result.state_updates` to signal resume.
    - If Phase A is done but constitution hash differs: log `[speckit-echelon-commander (COMMANDER)] Constitution changed since last Phase A run — re-running Phase A to update spec/plan/tasks`, continue normally.
 3. If `run-history.json` does not exist: continue normally (new spec, first run).
 
@@ -209,11 +209,11 @@ Check if `.specify/memory/constitution.md` exists and note the status:
 
 - Read the constitution — it will guide all architectural decisions
 - Store constitution principles in context for speckit-echelon-architect (ARCHITECT) and all build agents
-- Set `state.json.constitution_status` to `"exists"`
+- Return `constitution_status: exists` in `echelon_result.state_updates`
 
 **If MISSING:**
 
-- Set `state.json.constitution_status` to `"pending"`
+- Return `constitution_status: pending` in `echelon_result.state_updates`
 - Always continue with `constitution_status: "pending"`. **Do NOT block** — constitution will be created after UNDERSTAND phase when we have enough context
 - Note: Constitution creation happens in section 3.5 (after WHY1) using UNDERSTAND findings
 

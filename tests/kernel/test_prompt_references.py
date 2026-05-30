@@ -209,3 +209,15 @@ def test_manual_specialist_commands_route_state_and_journal_through_echelon_resu
         assert "echelon_result:" in text
         assert "state_updates:" in text
         assert "journal_entries:" in text
+
+
+def test_init_routes_post_creation_state_updates_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "init.md"
+    text = prompt.read_text()
+
+    assert 'Set `state.json.phase` to `"phase1-constitution"`' not in text
+    assert 'Set `state.json.constitution_status` to `"exists"`' not in text
+    assert 'Set `state.json.constitution_status` to `"pending"`' not in text
+    assert "echelon_result.state_updates" in text
+    assert "constitution_status: exists" in text
+    assert "constitution_status: pending" in text
