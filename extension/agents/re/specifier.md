@@ -184,7 +184,7 @@ Columns: Source File, Domain, Depth, Requirements, User Stories. Include Orphan 
 
 Coverage target: ≥80% of source files mapped to domains. If below 80%, list orphan files clustered by similarity and suggest new domains.
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

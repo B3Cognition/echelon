@@ -245,7 +245,7 @@ Every user story in spec.md maps to at least one task. Checkpoints enforce const
 
 After all domains complete, optionally suggest `speckit.analyze` for consistency analysis across the generated spec/plan/tasks files.
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

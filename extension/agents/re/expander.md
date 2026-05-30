@@ -91,7 +91,7 @@ Coverage after expansion:
 
 Regenerate `specs/000-re-overview/coverage-report.md` with updated statistics. Preserve the history (note previous coverage and expansion round number).
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

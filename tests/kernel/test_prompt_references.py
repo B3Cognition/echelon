@@ -192,6 +192,23 @@ def test_primary_agent_prompts_have_paired_always_never_rules():
     assert not violations, "\n".join(violations)
 
 
+def test_re_agent_prompts_use_standard_output_block_heading():
+    violations = []
+
+    for prompt in (EXTENSION_ROOT / "agents" / "re").glob("*.md"):
+        text = prompt.read_text()
+        if "## echelon_result format" in text:
+            violations.append(
+                f"{prompt.relative_to(REPO_ROOT)}: uses stale output heading"
+            )
+        if "## Output Block" not in text:
+            violations.append(
+                f"{prompt.relative_to(REPO_ROOT)}: missing Output Block heading"
+            )
+
+    assert not violations, "\n".join(violations)
+
+
 def test_agent_prompts_do_not_write_squad_state_directly():
     violations = []
 

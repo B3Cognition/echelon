@@ -216,7 +216,7 @@ Create `specs/000-re-overview/checklist.md` with cross-domain concerns:
 **Status**: [ ] Approved for Planning [ ] Needs Revision
 ```
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

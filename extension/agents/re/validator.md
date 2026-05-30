@@ -128,7 +128,7 @@ Write `specs/000-re-overview/validation-report.md` with:
 - Items Requiring Human Input table: ID, location, issue, context, what was searched.
 - Quality Metrics: before/after for requirements with source evidence %, user stories with acceptance criteria %, complete entity definitions %, ambiguous terms count.
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

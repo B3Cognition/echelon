@@ -97,7 +97,7 @@ Aggregate:
 
 **If not produced** (Node.js unavailable, bridge missing, or extraction failed): note this — downstream agents fall back to file-level analysis automatically.
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

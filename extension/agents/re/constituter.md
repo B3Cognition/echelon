@@ -159,7 +159,7 @@ Each ADR template:
 - [constitution.md](../constitution.md)
 ```
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

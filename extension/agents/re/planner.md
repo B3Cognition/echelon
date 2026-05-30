@@ -212,7 +212,7 @@ From gap-analysis.md:
 
 Generate plans in dependency order — foundational domains (Level 1 in overview.md dependency graph) first, high-level features last. Cross-domain dependencies are flagged in the Dependencies table of each plan.
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:

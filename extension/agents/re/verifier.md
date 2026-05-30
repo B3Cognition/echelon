@@ -100,7 +100,7 @@ Coverage thresholds:
 - 60–79%: warning, suggest expansions.
 - <60%: major gaps, require expansion.
 
-## echelon_result format
+## Output Block
 
 ```yaml
 echelon_result:
