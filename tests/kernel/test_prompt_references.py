@@ -167,3 +167,15 @@ def test_build_1_init_routes_build_state_through_echelon_result():
     assert "Update `${SQUAD_DIR}/state.json`" not in text
     assert "echelon_result.state_updates" in text
     assert "tasks_completed_pct: 0" in text
+
+
+def test_build_6_progress_routes_build_state_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "build-6-progress.md"
+    text = prompt.read_text()
+
+    assert "update `state.json.build.completed_tasks`" not in text
+    assert "Record the task result in `state.json.build.task_results`" not in text
+    assert "Recompute `state.json.build.tasks_completed_pct`" not in text
+    assert "Write the new value to `state.json.build.tasks_completed_pct`" not in text
+    assert "echelon_result.state_updates" in text
+    assert "previous completed_tasks + 1" in text

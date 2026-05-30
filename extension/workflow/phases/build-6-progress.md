@@ -29,7 +29,7 @@ Use the Agent tool:
   <instructions>
   You are PROGRESS TRACKER. Read agents/build/progress-tracker.md for your complete protocol.
   Record completion of task {task_id}. Update running totals and check for drift.
-  Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`. Also update `state.json.build.completed_tasks` (increment by 1) and `state.json.build.task_results` with the task's gate results.
+  Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`. Return drift or budget alerts in `echelon_result.journal_entries`; speckit-echelon-commander (COMMANDER) owns build counter state updates in Section 6.3.
   </instructions>
   ```
 
@@ -39,7 +39,7 @@ Use the Agent tool:
 
 If speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) flags DRIFT WARNING or PHASE OVERRUN:
 
-- Log the alert in `state.json`
+- Return the alert in `echelon_result.journal_entries`
 - Print a warning to terminal
 - Always continue building unless MANAGER decides to re-scope; do not stop on the alert alone.
 
@@ -47,28 +47,42 @@ If speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER))
 
 **This is a speckit-echelon-commander (COMMANDER) action, not a speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) action.** speckit-echelon-commander (COMMANDER) performs this update after speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) returns, or after quality gates complete if speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) was skipped or if work was executed inline.
 
-1. **Increment `build.completed_tasks` by 1.**
-2. Record the task result in `state.json.build.task_results`:
+1. Load the current `build` object from state.
+2. **Increment `build.completed_tasks` by 1.**
+3. Record the task result in the copied `build.task_results` map:
 
-```json
-{
-  "{task_id}": {
-    "status": "DONE",
-    "review_cycles": 1,
-    "degraded": false,
-    "spec_guard": "PASS",
-    "code_review": "APPROVED",
-    "test_guardian": "PASS"
-  }
-}
+```yaml
+build:
+  task_results:
+    "{task_id}":
+      status: DONE
+      review_cycles: 1
+      degraded: false
+      spec_guard: PASS
+      code_review: APPROVED
+      test_guardian: PASS
 ```
 
 **Recompute percentage:**
 
-1. Recompute `state.json.build.tasks_completed_pct`:
+1. Recompute `build.tasks_completed_pct`:
 `tasks_completed_pct = Math.round((build.completed_tasks / build.total_tasks) * 100)`
-Write the new value to `state.json.build.tasks_completed_pct`.
-2. Update `state.json.updated_at` to current timestamp.
+2. Return the full updated `build` object and `updated_at` in `echelon_result.state_updates`; the harness applies them to `state.json`.
+
+```yaml
+echelon_result:
+  state_updates:
+    build:
+      total_tasks: <existing total_tasks>
+      completed_tasks: <previous completed_tasks + 1>
+      tasks_completed_pct: <computed percent>
+      current_task: null
+      current_phase_group: <existing phase group or null>
+      task_results:
+        <all previous task_results plus this task>
+      phase_checkpoints: <existing phase_checkpoints>
+    updated_at: "{ISO-8601}"
+```
 
 **This step MUST execute regardless of execution mode** — whether tasks were dispatched via subagents or executed inline by speckit-echelon-commander (COMMANDER). The `completed_tasks` counter is the authoritative progress indicator for speckit-echelon-engineering-manager (ENGINEERING MANAGER) and any external tooling reading state.json.
 
