@@ -91,20 +91,22 @@ Always log a warning for missing outputs. Do not fail the command for missing ou
 
 ---
 
-## Step 5: Update State and Journal
+## Step 5: Return State and Journal Updates
 
-Update `${SQUAD_DIR}/state.json`:
+Return these updates in `echelon_result`; the harness applies state and journal writes:
 - Update `updated_at` timestamp
 
-Verify that `reasoning-journal.jsonl` has new GROUND entries. If not, append a MANAGER entry:
+Verify that `reasoning-journal.jsonl` has new GROUND entries. If not, include this MANAGER entry in `echelon_result.journal_entries`:
 
-```json
-{
-  "type": "reality-check",
-  "agent": "MANAGER",
-  "timestamp": "{ISO-8601}",
-  "content": "GROUND dispatched manually. Focus: {$ARGUMENTS or 'full sweep'}. Check reality-check.md for findings."
-}
+```yaml
+echelon_result:
+  state_updates:
+    updated_at: "{ISO-8601}"
+  journal_entries:
+    - type: reality-check
+      agent: MANAGER
+      timestamp: "{ISO-8601}"
+      content: "GROUND dispatched manually. Focus: {$ARGUMENTS or 'full sweep'}. Check reality-check.md for findings."
 ```
 
 ---

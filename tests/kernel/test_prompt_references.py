@@ -193,3 +193,19 @@ def test_build_8_finalize_routes_completion_state_through_echelon_result():
     assert "echelon_result.state_updates" in text
     assert "echelon_result.journal_entries" in text
     assert "status: build_done" in text
+
+
+def test_manual_specialist_commands_route_state_and_journal_through_echelon_result():
+    commands = [
+        EXTENSION_ROOT / "commands" / "echelon.innovate.md",
+        EXTENSION_ROOT / "commands" / "echelon.ground.md",
+        EXTENSION_ROOT / "commands" / "echelon.investigate.md",
+    ]
+
+    for prompt in commands:
+        text = prompt.read_text()
+        assert f"{prompt.name}: Update `${{SQUAD_DIR}}/state.json`" not in text
+        assert f"{prompt.name}: append a MANAGER entry" not in text
+        assert "echelon_result:" in text
+        assert "state_updates:" in text
+        assert "journal_entries:" in text

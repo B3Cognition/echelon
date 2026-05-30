@@ -84,21 +84,24 @@ Always log a warning for missing outputs. Do not fail the command for missing ou
 
 ---
 
-## Step 5: Update State and Journal
+## Step 5: Return State and Journal Updates
 
-Update `${SQUAD_DIR}/state.json`:
+Return these updates in `echelon_result`; the harness applies state and journal writes:
 - Add `"INNOVATE"` to `active_specialists` if not already present
 - Update `updated_at` timestamp
 
-Verify that `reasoning-journal.jsonl` has new entries from INNOVATE. If not, append a MANAGER entry:
+Verify that `reasoning-journal.jsonl` has new entries from INNOVATE. If not, include this MANAGER entry in `echelon_result.journal_entries`:
 
-```json
-{
-  "type": "note",
-  "agent": "MANAGER",
-  "timestamp": "{ISO-8601}",
-  "content": "INNOVATE dispatched manually. Focus: {$ARGUMENTS or 'broad'}. Check alternatives.md for outputs."
-}
+```yaml
+echelon_result:
+  state_updates:
+    active_specialists: <existing active_specialists plus INNOVATE>
+    updated_at: "{ISO-8601}"
+  journal_entries:
+    - type: note
+      agent: MANAGER
+      timestamp: "{ISO-8601}"
+      content: "INNOVATE dispatched manually. Focus: {$ARGUMENTS or 'broad'}. Check alternatives.md for outputs."
 ```
 
 ---
