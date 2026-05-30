@@ -290,7 +290,7 @@ After each Phase 1 agent (DISCOVER/speckit-echelon-scout (SCOUT), speckit-echelo
 2. For each pending request entry (each entry is an object: `{domain, repo, requested_by, reason}`):
    - **Backward compatibility:** If a `golddigger_requests` entry is a plain string (old format), treat it as `{domain: <string>, repo: null, requested_by: "unknown", reason: ""}`.
    a. Compute the cache key: if `repo` is non-null → `"{repo}--{domain}"`, if `repo` is null → `"{domain}"`
-   b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `.specify/squad/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
+   b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `$SQUAD_DIR/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
    c. Otherwise: dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 2 (Deep Dive) for that domain
       - **prompt:**
 
@@ -305,7 +305,7 @@ After each Phase 1 agent (DISCOVER/speckit-echelon-scout (SCOUT), speckit-echelo
         </instructions>
         ```
 
-   d. After speckit-echelon-golddigger (GOLDDIGGER) completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `.specify/squad/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
+   d. After speckit-echelon-golddigger (GOLDDIGGER) completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `$SQUAD_DIR/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
 3. Continue to next Phase 1 agent dispatch.
 
 **Transition:** `phases[phase1-discover]` — see `workflow/definition.yaml`

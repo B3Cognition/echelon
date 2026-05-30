@@ -92,7 +92,7 @@ speckit-echelon-golddigger (GOLDDIGGER) Mode 1 now provides function bodies, bus
 - Contradictions resolvable from existing function bodies, docs, or git history
 - Boundary ambiguity — Mode 1 `logic` depth provides sufficient signal for domain boundary detection
 
-Check `state.json.golddigger_completed_domains` first — if a deep dive was already completed for this domain, read the cached result at `.specify/squad/golddigger-cache/<domain>.md` instead of requesting again.
+Check `state.json.golddigger_completed_domains` first — if a deep dive was already completed for this domain, read the cached result at `$SQUAD_DIR/golddigger-cache/<domain>.md` instead of requesting again.
 
 If a request is needed, read the existing `state.json.golddigger_requests` list and return the full updated queue:
 

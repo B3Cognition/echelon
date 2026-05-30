@@ -156,7 +156,7 @@ echelon_result:
 
 In polyrepo mode, always include the `repo` field. In single-repo mode, set `repo` to `null`.
 
-speckit-echelon-commander (COMMANDER) will process the queue before the next Phase 1 agent runs. Results will be at `.specify/squad/golddigger-cache/{repo}--{domain}.md` (polyrepo) or `.specify/squad/golddigger-cache/{domain}.md` (single-repo).
+speckit-echelon-commander (COMMANDER) will process the queue before the next Phase 1 agent runs. Results will be at `$SQUAD_DIR/golddigger-cache/{repo}--{domain}.md` (polyrepo) or `$SQUAD_DIR/golddigger-cache/{domain}.md` (single-repo).
 
 ---
 

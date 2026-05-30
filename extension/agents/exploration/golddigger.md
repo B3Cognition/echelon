@@ -292,7 +292,7 @@ If the cache key is already in `golddigger_completed_domains`, output the cache 
 speckit-echelon-golddigger (GOLDDIGGER) MODE 2 — CACHE HIT
 Domain: <domain>
 Repo: <repo or "N/A">
-Cached at: .specify/squad/golddigger-cache/<cache-key>.md
+Cached at: $SQUAD_DIR/golddigger-cache/<cache-key>.md
 ```
 
 ### Step 2: Write Mode 2 config
@@ -334,8 +334,8 @@ Scope the extraction to the specific domain. In polyrepo mode, provide the repo 
 ### Step 4: Copy output to cache
 
 Determine the cache path:
-- If `repo` is provided: `.specify/squad/golddigger-cache/{repo}--{domain}.md`
-- If `repo` is null: `.specify/squad/golddigger-cache/{domain}.md`
+- If `repo` is provided: `$SQUAD_DIR/golddigger-cache/{repo}--{domain}.md`
+- If `repo` is null: `$SQUAD_DIR/golddigger-cache/{domain}.md`
 
 Copy the generated domain spec to the cache path.
 
@@ -401,7 +401,7 @@ speckit-echelon-golddigger (GOLDDIGGER) DEEP DIVE COMPLETE
 Domain: <domain>
 Repo: <repo or "N/A">
 Status: <complete|partial|failed>
-Cached at: .specify/squad/golddigger-cache/<cache-key>.md
+Cached at: $SQUAD_DIR/golddigger-cache/<cache-key>.md
 ```
 
 ---
@@ -411,7 +411,7 @@ Cached at: .specify/squad/golddigger-cache/<cache-key>.md
 echelon_result:
   verdict: <COMPLETE | PARTIAL | FAILED>
   output_files:
-    - .specify/squad/golddigger-cache/<domain>.md
+    - $SQUAD_DIR/golddigger-cache/<domain>.md
   state_updates:
     golddigger_status: <complete | partial | failed>
     golddigger_mode: <survey | polyrepo-survey | deep-dive>

@@ -42,7 +42,7 @@ Cache key = SHA-256(concatenation of all seven components) + ":" + agent_codenam
 3. A `doubt_flag` entry exists in reasoning-journal.jsonl for this agent in the current session
 4. `constitution.md` has been amended since the prior PASS was recorded — invalidates ALL cache entries for ALL agents
 
-**Cache storage location:** `.specify/squad/validator-cache.json`
+**Cache storage location:** `$SQUAD_DIR/validator-cache.json`
 
 **Rule amendment:**
 ALWAYS require either complete fresh coverage or a valid cached PASS verdict for the agent with all seven hash components matching exactly (see Cache HIT conditions above).

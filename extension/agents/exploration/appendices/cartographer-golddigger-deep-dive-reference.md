@@ -15,7 +15,7 @@ Do not request Mode 2 for:
 
 ## Before Requesting
 
-Check `state.json.golddigger_completed_domains`. If a deep dive was already completed by a prior agent request, read the cached result at `.specify/squad/golddigger-cache/<domain>.md`.
+Check `state.json.golddigger_completed_domains`. If a deep dive was already completed by a prior agent request, read the cached result at `$SQUAD_DIR/golddigger-cache/<domain>.md`.
 
 ## Request Format
 
