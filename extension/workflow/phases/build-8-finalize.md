@@ -106,10 +106,10 @@ BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.m
 
 **Specification Complete (mandatory on speckit-echelon-verification (VERIFICATION) PASS):**
 
-1. Set `state.json.spec_status` to `"implemented"`.
+1. Return `spec_status: implemented` in `echelon_result.state_updates`.
 2. Update `{spec_dir}/spec.md`: change `**Status**: In Progress` to `**Status**: Implemented`.
-3. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from `tasks.md`.
-4. Log journal entry: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
+3. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from `tasks.md` and return the full updated `build` object in `echelon_result.state_updates`.
+4. Return this journal entry in `echelon_result.journal_entries`: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
 
 ### 8.2 Collect Reports
 
@@ -123,20 +123,28 @@ Verify all report files are populated:
 - `gap-report.md` — Verification coverage and gaps
 - `verification-summary.md` — Final PASS / FAIL completion verdict
 
-### 8.3 Update State
+### 8.3 Return Build Completion State
 
-```json
-{
-  "status": "build_done",
-  "phase": "build_done",
-  "build": {
-    "completed_tasks": "{total}",
-    "verification_verdict": "PASS",
-    "coverage_score": "100%",
-    "current_task": null
-  },
-  "updated_at": "{ISO-8601}"
-}
+Return these state updates in `echelon_result`; the harness applies them to `${SQUAD_DIR}/state.json`.
+Because `build` is a top-level object, include the full updated `build` object and preserve existing fields.
+
+```yaml
+echelon_result:
+  state_updates:
+    status: build_done
+    phase: build_done
+    spec_status: implemented
+    build:
+      total_tasks: <existing total_tasks>
+      completed_tasks: "{total}"
+      tasks_completed_pct: 100
+      verification_verdict: PASS
+      coverage_score: "100%"
+      current_task: null
+      current_phase_group: null
+      task_results: <existing task_results>
+      phase_checkpoints: <existing phase_checkpoints>
+    updated_at: "{ISO-8601}"
 ```
 
 **Run History Write (mandatory at BUILD_DONE):**
@@ -311,7 +319,7 @@ Read `drift_severity` from `intent-alignment-final.md`.
   4. After rework: re-dispatch speckit-echelon-tracker (TRACKER) for a second alignment check. If still MAJOR_DRIFT after one rework pass, log as CRITICAL in `feedback-report.md` and continue — no infinite loop.
 
 - **`MAJOR_DRIFT` AND `autonomy_mode == "banzai"`:**
-  1. Set `state.json.requires_human_review` to `true`.
+  1. Return `requires_human_review: true` in `echelon_result.state_updates`.
   2. Write `{spec_dir}/drift-escalation.md`:
      ```
      # Intent Drift Escalation
@@ -320,7 +328,7 @@ Read `drift_severity` from `intent-alignment-final.md`.
      **Unmet intent points:** {list from intent-alignment-final.md}
      **Action required:** Human review needed before this spec can be marked complete.
      ```
-  3. Log CRITICAL in `feedback-report.md`: `[speckit-echelon-commander (COMMANDER)] MAJOR_DRIFT detected in banzai mode — requires_human_review set. See drift-escalation.md.`
+  3. Log CRITICAL in `feedback-report.md`: `[speckit-echelon-commander (COMMANDER)] MAJOR_DRIFT detected in banzai mode — requires_human_review returned. See drift-escalation.md.`
   4. Continue to BUILD_DONE (banzai no-checkpoint contract preserved).
 
 ### 8.5.4 Auto-Update Knowledge Base
@@ -372,7 +380,7 @@ Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) i
 
 1. Merge both candidate lists — deduplicate by principle text (exact or near-exact match).
 2. Filter: keep only `confidence: high` or `confidence: medium` candidates.
-3. If merged list is empty: skip the remaining steps. Set `state.json.constitution_amendments_pending` to `0`.
+3. If merged list is empty: skip the remaining steps. Return `constitution_amendments_pending: 0` in `echelon_result.state_updates`.
 4. Write `{spec_dir}/constitution-amendment-candidates.md`:
 
    ```markdown
@@ -390,7 +398,7 @@ Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) i
    ```
 
 5. Append each candidate as a `[PROPOSED: ...]` block to `.specify/memory/constitution.md` (the existing file). Always append after the last existing section — never edit existing content.
-6. Set `state.json.constitution_amendments_pending` to the count of candidates appended.
+6. Return `constitution_amendments_pending: <count>` in `echelon_result.state_updates`.
 7. If `constitution_amendments_pending > 0`: add to the final run summary: `{N} constitution amendment candidate(s) pending human review — see {spec_dir}/constitution-amendment-candidates.md. Run speckit.constitution to approve or reject.`
 
 **Important:** Always leave constitution promotion to humans. speckit-echelon-commander (COMMANDER) never auto-amends constitution content. Only humans can promote `[PROPOSED]` blocks to permanent principles via `speckit.constitution`. Human review is required.

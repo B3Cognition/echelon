@@ -179,3 +179,17 @@ def test_build_6_progress_routes_build_state_through_echelon_result():
     assert "Write the new value to `state.json.build.tasks_completed_pct`" not in text
     assert "echelon_result.state_updates" in text
     assert "previous completed_tasks + 1" in text
+
+
+def test_build_8_finalize_routes_completion_state_through_echelon_result():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "build-8-finalize.md"
+    text = prompt.read_text()
+
+    assert "Set `state.json.spec_status`" not in text
+    assert "Log journal entry:" not in text
+    assert "### 8.3 Update State" not in text
+    assert "Set `state.json.requires_human_review`" not in text
+    assert "Set `state.json.constitution_amendments_pending`" not in text
+    assert "echelon_result.state_updates" in text
+    assert "echelon_result.journal_entries" in text
+    assert "status: build_done" in text
