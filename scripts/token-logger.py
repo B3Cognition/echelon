@@ -15,9 +15,9 @@ otherwise ``post_hoc_estimation``.
 
 Usage:
     python3 scripts/token-logger.py \\
-        --journal .specify/squad/staging/reasoning-journal.jsonl \\
-        [--state   .specify/squad/state.json] \\
-        [--output  .specify/squad/token-baseline.json] \\
+        --journal runs/<run-id>/reasoning-journal.jsonl \\
+        [--state   runs/<run-id>/state.json] \\
+        [--output  runs/<run-id>/token-baseline.json] \\
         [--spec-runs <dir-containing-multiple-run-dirs>]
 
 Dependencies: stdlib only (json, pathlib, argparse, statistics, datetime)
@@ -458,6 +458,29 @@ def read_run_id(state_path: Path) -> str:
         return "unknown-run"
 
 
+def find_active_squad_dir(start: Path | None = None) -> Path:
+    """
+    Resolve the current run directory.
+
+    Preferred layout: runs/.current -> runs/<run_id>/.
+    Legacy layout: squad/.current -> squad/<run_id>/.
+    Fallback: .specify/squad for older workspaces.
+    """
+    root = (start or Path.cwd()).resolve()
+    for base in [root, *root.parents]:
+        for run_root_name in ("runs", "squad"):
+            current_file = base / run_root_name / ".current"
+            if not current_file.exists():
+                continue
+            run_id = current_file.read_text(encoding="utf-8").strip()
+            candidate = base / run_root_name / run_id
+            if run_id and candidate.is_dir():
+                return candidate
+        if (base / ".specify").is_dir():
+            return base / ".specify" / "squad"
+    return Path(".specify") / "squad"
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
@@ -474,18 +497,18 @@ def main() -> None:
         "--journal",
         metavar="FILE",
         default=None,
-        help="Path to reasoning-journal.jsonl (default: .specify/squad/staging/reasoning-journal.jsonl)",
+        help="Path to reasoning-journal.jsonl (default: active run dir/reasoning-journal.jsonl)",
     )
     parser.add_argument(
         "--state",
         metavar="FILE",
-        help="Path to state.json for run_id (default: .specify/squad/state.json)",
+        help="Path to state.json for run_id (default: active run dir/state.json)",
     )
     parser.add_argument(
         "--output",
         metavar="FILE",
-        default=".specify/squad/token-baseline.json",
-        help="Output JSON artifact path (default: .specify/squad/token-baseline.json)",
+        default=None,
+        help="Output JSON artifact path (default: active run dir/token-baseline.json)",
     )
     parser.add_argument(
         "--spec-runs",
@@ -511,12 +534,14 @@ def main() -> None:
     args = parser.parse_args()
 
     # ── Resolve paths ──────────────────────────────────────────────────────
-    default_journal = Path(".specify/squad/staging/reasoning-journal.jsonl")
-    default_state = Path(".specify/squad/state.json")
+    active_squad_dir = find_active_squad_dir()
+    default_journal = active_squad_dir / "reasoning-journal.jsonl"
+    default_state = active_squad_dir / "state.json"
+    default_output = active_squad_dir / "token-baseline.json"
 
     journal_path: Path | None = Path(args.journal) if args.journal else None
     state_path: Path = Path(args.state) if args.state else default_state
-    output_path: Path = Path(args.output)
+    output_path: Path = Path(args.output) if args.output else default_output
     spec_runs_dir: Path | None = Path(args.spec_runs) if args.spec_runs else None
 
     # ── Collect invocations ────────────────────────────────────────────────

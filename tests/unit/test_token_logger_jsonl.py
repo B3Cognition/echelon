@@ -28,3 +28,21 @@ def test_token_logger_loads_jsonl_journal(tmp_path):
 
     assert [entry["agent"] for entry in entries] == ["SCOUT", "SAGE"]
     assert [entry["total_tokens"] for entry in entries] == [10, 20]
+
+
+def test_token_logger_prefers_runs_current(tmp_path):
+    token_logger = _load_token_logger()
+    run_dir = tmp_path / "runs" / "run-123"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text("run-123\n", encoding="utf-8")
+    (tmp_path / ".specify" / "squad").mkdir(parents=True)
+
+    assert token_logger.find_active_squad_dir(tmp_path) == run_dir
+
+
+def test_token_logger_falls_back_to_legacy_specify_squad(tmp_path):
+    token_logger = _load_token_logger()
+    legacy = tmp_path / ".specify" / "squad"
+    legacy.mkdir(parents=True)
+
+    assert token_logger.find_active_squad_dir(tmp_path) == legacy
