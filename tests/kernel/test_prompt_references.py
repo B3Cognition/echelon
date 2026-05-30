@@ -290,3 +290,11 @@ def test_phase3_consensus_references_returned_done_state():
 
     assert 'state.json.status = "done"' not in text
     assert "BEFORE returning status: done" in text
+
+
+def test_codegen_decompose_names_codegen_state_explicitly():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "codegen-2-decompose.md"
+    text = prompt.read_text()
+
+    assert "Update state.json:" not in text
+    assert "Update `codegen-state.json`" in text

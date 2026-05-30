@@ -26,7 +26,7 @@ Each task must:
 Output: ./codegen-staging/task-queue.json
 ```
 
-Inject task WMEs into SOAR. Update state.json: `task_queue.pending = [all task IDs]`, `psi.denominator = |I_D|`.
+Inject task WMEs into SOAR. Update `codegen-state.json` through the codegen pipeline state writer: `task_queue.pending = [all task IDs]`, `psi.denominator = |I_D|`.
 
 **Write state checkpoint:** `current_phase: "IMPLEMENT"`
 
