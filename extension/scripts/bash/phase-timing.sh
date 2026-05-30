@@ -155,31 +155,18 @@ elapsed_seconds = float(sys.argv[4])
 budget_seconds = float(sys.argv[5])
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-if journal_path.exists():
-    try:
-        data = json.loads(journal_path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {"entries": []}
-else:
-    journal_path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"entries": []}
-
-entries = data.setdefault("entries", [])
-entries.append(
-    {
-        "type": "timing_anomaly",
-        "phase": phase_key,
-        "run_id": run_id,
-        "elapsed_seconds": elapsed_seconds,
-        "budget_seconds": budget_seconds,
-        "anomaly_reason": "EXCEEDED_BUDGET_20_PERCENT",
-        "timestamp": now,
-    }
-)
-
-tmp = journal_path.with_name(journal_path.name + f".tmp.{os.getpid()}")
-tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-os.replace(tmp, journal_path)
+journal_path.parent.mkdir(parents=True, exist_ok=True)
+entry = {
+    "type": "timing_anomaly",
+    "phase": phase_key,
+    "run_id": run_id,
+    "elapsed_seconds": elapsed_seconds,
+    "budget_seconds": budget_seconds,
+    "anomaly_reason": "EXCEEDED_BUDGET_20_PERCENT",
+    "timestamp": now,
+}
+with journal_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 }
 

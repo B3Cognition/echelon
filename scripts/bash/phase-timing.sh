@@ -3,8 +3,24 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
-STATE_FILE_DEFAULT="$REPO_ROOT/.specify/squad/state.json"
-JOURNAL_FILE_DEFAULT="$REPO_ROOT/.specify/squad/reasoning-journal.json"
+
+# Detect the active spec run dir from runs/.current (primary); legacy squad/.current fallback.
+_phase_timing_squad_dir() {
+  local root="$1" base run_id current_file
+  for base in runs squad; do
+    current_file="$root/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$root/$base/$run_id" ]]; then
+        echo "$root/$base/$run_id"; return 0
+      fi
+    fi
+  done
+  echo "$root/.specify/squad"
+}
+_SQUAD_DIR="$(_phase_timing_squad_dir "$REPO_ROOT")"
+STATE_FILE_DEFAULT="$_SQUAD_DIR/state.json"
+JOURNAL_FILE_DEFAULT="$_SQUAD_DIR/reasoning-journal.jsonl"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -138,31 +154,18 @@ elapsed_seconds = float(sys.argv[4])
 budget_seconds = float(sys.argv[5])
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-if journal_path.exists():
-    try:
-        data = json.loads(journal_path.read_text(encoding="utf-8"))
-    except Exception:
-        data = {"entries": []}
-else:
-    journal_path.parent.mkdir(parents=True, exist_ok=True)
-    data = {"entries": []}
-
-entries = data.setdefault("entries", [])
-entries.append(
-    {
-        "type": "timing_anomaly",
-        "phase": phase_key,
-        "run_id": run_id,
-        "elapsed_seconds": elapsed_seconds,
-        "budget_seconds": budget_seconds,
-        "anomaly_reason": "EXCEEDED_BUDGET_20_PERCENT",
-        "timestamp": now,
-    }
-)
-
-tmp = journal_path.with_name(journal_path.name + f".tmp.{os.getpid()}")
-tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-os.replace(tmp, journal_path)
+journal_path.parent.mkdir(parents=True, exist_ok=True)
+entry = {
+    "type": "timing_anomaly",
+    "phase": phase_key,
+    "run_id": run_id,
+    "elapsed_seconds": elapsed_seconds,
+    "budget_seconds": budget_seconds,
+    "anomaly_reason": "EXCEEDED_BUDGET_20_PERCENT",
+    "timestamp": now,
+}
+with journal_path.open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 }
 

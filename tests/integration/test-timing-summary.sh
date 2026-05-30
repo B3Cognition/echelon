@@ -25,7 +25,7 @@ ok_result() { echo "OK"; }
 fail_result() { printf 'FAIL:%s' "$*"; }
 
 # write_timing_summary: reads all phase_timings from state.json and appends
-# one timing_summary journal entry per phase (COMMANDER run-close logic).
+# one JSONL timing_summary journal entry per phase (COMMANDER run-close logic).
 write_timing_summary() {
   local state_file="$1"
   local journal_file="$2"
@@ -44,12 +44,10 @@ run_id = sys.argv[3]
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 state = json.loads(state_path.read_text(encoding="utf-8"))
-journal_data = json.loads(journal_path.read_text(encoding="utf-8")) if journal_path.exists() else {"entries": []}
-entries = journal_data.setdefault("entries", [])
-
 phase_timings = state.get("phase_timings", {})
-for phase_key, timing in phase_timings.items():
-    entries.append({
+with journal_path.open("a", encoding="utf-8") as fh:
+  for phase_key, timing in phase_timings.items():
+    entry = {
         "type": "timing_summary",
         "phase": phase_key,
         "run_id": run_id,
@@ -58,20 +56,17 @@ for phase_key, timing in phase_timings.items():
         "over_budget": timing.get("over_budget"),
         "anomaly_reason": timing.get("anomaly_reason"),
         "timestamp": now,
-    })
-
-tmp = journal_path.with_name(journal_path.name + f".tmp.{os.getpid()}")
-tmp.write_text(json.dumps(journal_data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-os.replace(tmp, journal_path)
+    }
+    fh.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 }
 
 # Setup: temporary state + journal files
 tmpdir="$(mktemp -d)"
 state_file="$tmpdir/state.json"
-journal_file="$tmpdir/journal.json"
+journal_file="$tmpdir/journal.jsonl"
 printf '{"run_id":"int-timing-001"}\n' > "$state_file"
-printf '{"entries":[]}\n' > "$journal_file"
+: > "$journal_file"
 
 RUN_ID="int-timing-001"
 PHASES=("phase1-understand" "phase2-decide" "phase3-solution")
@@ -97,8 +92,8 @@ for pkey in "${PHASES[@]}"; do
   assert "INT-003a-3: timing_summary for $pkey in journal" "$(
     $PYTHON - "$journal_file" "$pkey" <<'PY'
 import json, sys
-d = json.load(open(sys.argv[1]))
-entries = [e for e in d.get("entries", []) if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
+entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+entries = [e for e in entries if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
 print("OK" if entries else "FAIL:not found")
 PY
   )"
@@ -109,8 +104,8 @@ for pkey in "${PHASES[@]}"; do
   state_elapsed="$($PYTHON -c "import json; d=json.load(open('$state_file')); print(d.get('phase_timings',{}).get('$pkey',{}).get('elapsed_seconds',-1))")"
   journal_elapsed="$($PYTHON - "$journal_file" "$pkey" <<'PY'
 import json, sys
-d = json.load(open(sys.argv[1]))
-entries = [e for e in d.get("entries",[]) if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
+entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+entries = [e for e in entries if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
 print(entries[0].get("elapsed_seconds",-1) if entries else -1)
 PY
 )"
@@ -130,8 +125,8 @@ done
 for pkey in "${PHASES[@]}"; do
   count="$($PYTHON - "$journal_file" "$pkey" <<'PY'
 import json, sys
-d = json.load(open(sys.argv[1]))
-entries = [e for e in d.get("entries",[]) if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
+entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+entries = [e for e in entries if e.get("type")=="timing_summary" and e.get("phase")==sys.argv[2]]
 print(len(entries))
 PY
 )"

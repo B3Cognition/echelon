@@ -64,8 +64,8 @@ assert "start_phase: start_ts matches current time ±5s" "$ts_ok"
 
 # TEST: end_phase after 1s sleep → elapsed >= 1, over_budget=false (budget=300) -----------
 
-journal_file="$tmpdir/journal1.json"
-printf '{"entries":[]}\n' > "$journal_file"
+journal_file="$tmpdir/journal1.jsonl"
+: > "$journal_file"
 
 sleep 1
 
@@ -89,7 +89,7 @@ assert "end_phase: over_budget=False when within budget" "$(
   [[ "$over_budget" == "False" ]] && ok_result || fail_result "over_budget=$over_budget"
 )"
 # No timing_anomaly in journal for on-budget phase
-anomaly_count="$($PYTHON -c "import json; d=json.load(open('$journal_file')); entries=[e for e in d.get('entries',[]) if e.get('type')=='timing_anomaly']; print(len(entries))")"
+anomaly_count="$($PYTHON -c "import json; entries=[json.loads(line) for line in open('$journal_file') if line.strip()]; entries=[e for e in entries if e.get('type')=='timing_anomaly']; print(len(entries))")"
 assert "end_phase: no timing_anomaly in journal for on-budget phase" "$(
   [[ "$anomaly_count" == "0" ]] && ok_result || fail_result "anomaly_count=$anomaly_count"
 )"
@@ -97,9 +97,9 @@ assert "end_phase: no timing_anomaly in journal for on-budget phase" "$(
 # TEST: end_phase after 2s for 1s budget → over_budget=true, anomaly_reason set ----------
 
 state_file2="$tmpdir/state2.json"
-journal_file2="$tmpdir/journal2.json"
+journal_file2="$tmpdir/journal2.jsonl"
 printf '{"run_id":"unit-test-2"}\n' > "$state_file2"
-printf '{"entries":[]}\n' > "$journal_file2"
+: > "$journal_file2"
 
 bash "$SCRIPTS/phase-timing.sh" start_phase "tight-phase" 1 --state-file "$state_file2"
 sleep 2
@@ -123,8 +123,8 @@ assert "end_phase: anomaly_reason=EXCEEDED_BUDGET_20_PERCENT" "$(
 # timing_anomaly journal entry written for over-budget phase
 anomaly_entry="$($PYTHON -c "
 import json
-d=json.load(open('$journal_file2'))
-entries=[e for e in d.get('entries',[]) if e.get('type')=='timing_anomaly']
+entries=[json.loads(line) for line in open('$journal_file2') if line.strip()]
+entries=[e for e in entries if e.get('type')=='timing_anomaly']
 if entries:
     e=entries[0]
     if e.get('anomaly_reason')=='EXCEEDED_BUDGET_20_PERCENT' and e.get('phase')=='tight-phase':
