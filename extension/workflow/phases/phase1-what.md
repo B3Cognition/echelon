@@ -39,9 +39,9 @@ Use the Agent tool to dispatch a subagent with:
   Add user stories with acceptance criteria (Given/When/Then). Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
 
   Always complete ALL of the following before returning. Do NOT return until they are true:
-  1. `specs/{spec_id}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
-  2. `specs/{spec_id}/00-overview.md` exists (your 1–2 page human-readable summary).
-  3. All staging artifacts have been moved from `${STAGING_DIR}/` to `specs/{spec_id}/`.
+  1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
+  2. `{spec_dir}/00-overview.md` exists (your 1-2 page human-readable summary).
+  3. All staging artifacts have been moved from `${STAGING_DIR}/` to `{spec_dir}/`.
   Calling `speckit.specify` alone is NOT sufficient — Step 2 (spec enhancement) is mandatory before returning.
   </instructions>
   ```
@@ -62,6 +62,8 @@ This is the only case where speckit-echelon-commander (COMMANDER) calls `speckit
 ### 4.3 Post-speckit-echelon-cartographer (CARTOGRAPHER)
 
 After speckit-echelon-cartographer (CARTOGRAPHER) completes, read its output to get the created `spec_id` and `spec_dir`.
+
+Treat `spec_dir` as authoritative. It may be an absolute path or a repository-relative path returned by the Skill/harness. Use it exactly as returned for file checks and prompts; NEVER prefix it with `${SQUAD_DIR}`, `${STAGING_DIR}`, or another `specs/` segment.
 
 #### Branch + Directory Verification (MANDATORY)
 
@@ -84,7 +86,7 @@ Before returning state updates, verify both invariants:
    ```bash
    git checkout -b {NNN}-{feature-name}
    ```
-2. If `specs/{NNN}-{feature-name}/` is missing, create it and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with `spec_dir` pre-set in the context pack — speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
+2. If `{spec_dir}/` is missing, create it and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with `spec_dir` pre-set in the context pack — speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
 3. Return a `branch_recovery` entry in `echelon_result.journal_entries`; the harness writes it to `reasoning-journal.jsonl`.
 
 **If both checks pass**, verify speckit-echelon-cartographer (CARTOGRAPHER) ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
@@ -138,8 +140,8 @@ Always resolve constitution placeholders before Phase 2. Do NOT proceed to Phase
 
 ```xml
 <context>
-[include same context pack as first dispatch, plus current contents of specs/{spec_id}/spec.md]
-spec_dir: specs/{spec_id}
+[include same context pack as first dispatch, plus current contents of {spec_dir}/spec.md]
+spec_dir: {spec_dir}
 </context>
 
 <instructions>

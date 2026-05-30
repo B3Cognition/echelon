@@ -236,6 +236,18 @@ def test_phase1_what_routes_state_and_journal_through_echelon_result():
     assert "echelon_result.journal_entries" in text
 
 
+def test_phase1_what_treats_spec_dir_as_authoritative_path():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase1-what.md"
+    text = prompt.read_text()
+
+    assert "Treat `spec_dir` as authoritative" in text
+    assert "NEVER prefix it with `${SQUAD_DIR}`" in text
+    assert "specs/{spec_id}/spec.md" not in text
+    assert "spec_dir: specs/{spec_id}" not in text
+    assert "If `specs/{NNN}-{feature-name}/` is missing" not in text
+    assert "{spec_dir}/spec.md" in text
+
+
 def test_phase2_decide_routes_kill_status_through_echelon_result():
     prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase2-decide.md"
     text = prompt.read_text()
