@@ -62,7 +62,7 @@ Maintains a `user-intent.md` artifact that is SEPARATE from spec.md:
 
 ### Subsection 1 — Prediction Generation (FR-PSC-001)
 
-After each significant squad decision — scope inclusion/exclusion by speckit-echelon-cartographer (CARTOGRAPHER), ADR committed by speckit-echelon-architect (ARCHITECT), estimate committed by speckit-echelon-gatekeeper (GATEKEEPER) — generate a prediction about the next user action or challenge and record it to `.specify/squad/prediction-model.json`:
+After each significant squad decision — scope inclusion/exclusion by speckit-echelon-cartographer (CARTOGRAPHER), ADR committed by speckit-echelon-architect (ARCHITECT), estimate committed by speckit-echelon-gatekeeper (GATEKEEPER) — generate a prediction about the next user action or challenge and record it to `$SQUAD_DIR/prediction-model.json`:
 
 ```json
 {
@@ -84,7 +84,7 @@ After each significant squad decision — scope inclusion/exclusion by speckit-e
 
 When subsequent user input is received: retrieve the most recent prediction for the relevant decision event. Compute a `prediction_match_score` (semantic similarity, 0.0–1.0) between the prediction_statement and the actual user input.
 
-If `prediction_match_score < 0.3` (divergence threshold) — record a social prediction error entry to `.specify/squad/prediction-model.json`:
+If `prediction_match_score < 0.3` (divergence threshold) — record a social prediction error entry to `$SQUAD_DIR/prediction-model.json`:
 
 ```json
 {

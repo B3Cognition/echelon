@@ -36,7 +36,7 @@ NEVER use `print()` in python3 scripts that read or write JSON files.
 
 ### Rule 7 - Config Layering
 ALWAYS write extraction config overrides to `.specify/extensions/echelon/local-config.yml` and remove the file after extraction completes.
-NEVER write config to `.specify/squad/golddigger-mode*.yml`.
+NEVER write config into `$SQUAD_DIR` or legacy `.specify/squad` paths.
 
 ## Configuration Profiles
 
