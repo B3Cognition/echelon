@@ -82,12 +82,31 @@ Report the full output.
 
 ## Run Rollback
 
-First read the deploy type:
+First resolve the deploy state file, then read the deploy type:
+
+```bash
+export DEPLOY_STATE_FILE="$(python3 - <<'PYEOF'
+from pathlib import Path
+
+root = Path.cwd()
+for base in ("runs", "squad"):
+    current = root / base / ".current"
+    if current.exists():
+        run_id = current.read_text().strip()
+        candidate = root / base / run_id / "deploy-state.json"
+        if run_id and candidate.parent.is_dir():
+            print(candidate)
+            raise SystemExit(0)
+
+print(root / ".specify" / "squad" / "deploy-state.json")
+PYEOF
+)"
+```
 
 ```bash
 python3 -c "
-import json
-with open('.specify/squad/deploy-state.json') as f:
+import json, os
+with open(os.environ['DEPLOY_STATE_FILE']) as f:
     d = json.load(f)
 print(d.get('type', 'http'))
 "
@@ -101,7 +120,8 @@ CLI rollback: swap the active pointer in state.json. No containers to restart â€
 python3 - <<'PYEOF'
 import sys, json, datetime, os
 
-with open('.specify/squad/deploy-state.json') as f:
+state_file = os.environ['DEPLOY_STATE_FILE']
+with open(state_file) as f:
     state = json.load(f)
 
 app = state['app']
@@ -118,7 +138,7 @@ print(f"rollback: {app} (cli) {active} â†’ {inactive}")
 state['active'] = inactive
 state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
 
-with open('.specify/squad/deploy-state.json', 'w') as f:
+with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
 global_dir = os.path.expanduser('~/.speckit-deploy')
@@ -149,7 +169,8 @@ HTTP rollback: restart the previously-stopped inactive container and flip the st
 python3 - <<'PYEOF'
 import os, sys, json, subprocess, datetime
 
-with open('.specify/squad/deploy-state.json') as f:
+state_file = os.environ['DEPLOY_STATE_FILE']
+with open(state_file) as f:
     state = json.load(f)
 
 app = state['app']
@@ -174,7 +195,7 @@ subprocess.run(['docker', 'stop', f'{app}-{active}'], capture_output=True)
 
 state['active'] = inactive
 state['last_deploy'] = datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
-with open('.specify/squad/deploy-state.json', 'w') as f:
+with open(state_file, 'w') as f:
     json.dump(state, f, indent=2)
 
 global_dir = os.path.expanduser('~/.speckit-deploy')

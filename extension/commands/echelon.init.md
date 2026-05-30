@@ -141,7 +141,7 @@ Print a summary:
 ╚══════════════════════════════════════════╝
 
   config       → {ECHELON_CONFIG}
-  deploy-state → {PROJECT_ROOT}/.specify/squad/deploy-state.json
+  deploy-state → active run deploy-state.json (`runs/.current`, `squad/.current`, legacy `.specify/squad` fallback)
 
 Next step:
   speckit.echelon.run — start the cognitive squad run

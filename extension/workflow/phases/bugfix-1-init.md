@@ -57,5 +57,5 @@ Read the following — pass to every agent dispatch:
 - `specs/{spec_id}-{spec_name}/spec.md`
 - `specs/{spec_id}-{spec_name}/coverage-map.md` (if exists)
 - `specs/{spec_id}-{spec_name}/tasks.md` (if exists)
-- `.specify/squad/deploy-state.json` (if exists)
+- Active run `deploy-state.json` if it exists (`runs/.current`, `squad/.current`, legacy `.specify/squad` fallback)
 - The relevant source files based on `description` (the component, hook, API call, config file, or test most likely related to the issue)

@@ -210,7 +210,20 @@ If `LESSONS_CONTENT` is non-empty, translate each `INVARIANT:` line into a SOAR 
 Also run the SPA base path fix and stage it before any SOAR phase starts:
 
 ```bash
-DEPLOY_STATE=$(cat "${PROJECT_ROOT}/.specify/squad/deploy-state.json" 2>/dev/null || echo '')
+DEPLOY_STATE_FILE="${_DEPLOY_ROOT}/.specify/squad/deploy-state.json"
+for base in runs squad; do
+  current_file="${_DEPLOY_ROOT}/${base}/.current"
+  if [ -f "${current_file}" ]; then
+    run_id=$(tr -d '[:space:]' < "${current_file}")
+    candidate="${_DEPLOY_ROOT}/${base}/${run_id}/deploy-state.json"
+    if [ -n "${run_id}" ] && [ -d "$(dirname "${candidate}")" ]; then
+      DEPLOY_STATE_FILE="${candidate}"
+      break
+    fi
+  fi
+done
+
+DEPLOY_STATE=$(cat "${DEPLOY_STATE_FILE}" 2>/dev/null || echo '')
 DEPLOY_APP=$(echo "${DEPLOY_STATE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('app',''))" 2>/dev/null || echo '')
 DEPLOY_TYPE=$(echo "${DEPLOY_STATE}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('type',''))" 2>/dev/null || echo '')
 

@@ -132,7 +132,16 @@ Before building, read the deployment configuration from CWD (not the worktree) t
 ```bash
 PYTHONPATH=.specify/extensions/echelon python3 -c "
 import json, pathlib, sys
-p = pathlib.Path('.specify/squad/deploy-state.json')
+root = pathlib.Path.cwd()
+p = root / '.specify' / 'squad' / 'deploy-state.json'
+for base in ('runs', 'squad'):
+    current = root / base / '.current'
+    if current.exists():
+        run_id = current.read_text().strip()
+        candidate = root / base / run_id / 'deploy-state.json'
+        if run_id and candidate.parent.is_dir():
+            p = candidate
+            break
 if not p.exists():
     print('none none')
     sys.exit(0)
