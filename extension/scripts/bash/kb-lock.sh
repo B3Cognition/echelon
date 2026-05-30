@@ -8,7 +8,30 @@ KB_DIR="$REPO_ROOT/knowledge-base"
 LOCKS_DIR="$KB_DIR/.locks"
 LOCK_DIR="$LOCKS_DIR/kb-write.lock"
 METADATA_FILE="$LOCK_DIR/metadata.yaml"
-RECOVERY_DIR="$REPO_ROOT/.specify/squad/recovery"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
+    echo "$ECHELON_SQUAD_DIR"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="$REPO_ROOT/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$REPO_ROOT/$base/$run_id" ]]; then
+        echo "$REPO_ROOT/$base/$run_id"
+        return 0
+      fi
+    fi
+  done
+
+  echo "$REPO_ROOT/.specify/squad"
+}
+
+SQUAD_DIR="$(_resolve_squad_dir)"
+RECOVERY_DIR="${ECHELON_KB_RECOVERY_DIR:-$SQUAD_DIR/recovery}"
 
 DEFAULT_LEASE_SECONDS=30
 DEFAULT_GRACE_SECONDS=5

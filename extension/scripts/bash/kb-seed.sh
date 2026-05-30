@@ -6,7 +6,30 @@ REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
 . "$SCRIPT_DIR/python-detect.sh"
 KB_DIR="$REPO_ROOT/knowledge-base"
 FIXTURES_DIR="$REPO_ROOT/tests/fixtures/kb/valid-seeds"
-ERROR_LOG="$REPO_ROOT/.specify/squad/error.log"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
+    echo "$ECHELON_SQUAD_DIR"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="$REPO_ROOT/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$REPO_ROOT/$base/$run_id" ]]; then
+        echo "$REPO_ROOT/$base/$run_id"
+        return 0
+      fi
+    fi
+  done
+
+  echo "$REPO_ROOT/.specify/squad"
+}
+
+SQUAD_DIR="$(_resolve_squad_dir)"
+ERROR_LOG="${ECHELON_ERROR_LOG:-$SQUAD_DIR/error.log}"
 
 FILES=("calibration-profile.yaml" "estimates-log.yaml" "patterns.yaml" "pitfalls.yaml")
 

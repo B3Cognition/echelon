@@ -4,7 +4,30 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../../.." && pwd)"
-CACHE_DIR="$REPO_ROOT/.specify/squad/cache"
+
+_resolve_squad_dir() {
+  local base current_file run_id
+  if [[ -n "${ECHELON_SQUAD_DIR:-}" ]]; then
+    echo "$ECHELON_SQUAD_DIR"
+    return 0
+  fi
+
+  for base in runs squad; do
+    current_file="$REPO_ROOT/$base/.current"
+    if [[ -f "$current_file" ]]; then
+      run_id=$(tr -d '[:space:]' < "$current_file")
+      if [[ -n "$run_id" && -d "$REPO_ROOT/$base/$run_id" ]]; then
+        echo "$REPO_ROOT/$base/$run_id"
+        return 0
+      fi
+    fi
+  done
+
+  echo "$REPO_ROOT/.specify/squad"
+}
+
+SQUAD_DIR="$(_resolve_squad_dir)"
+CACHE_DIR="${ECHELON_KB_CACHE_DIR:-$SQUAD_DIR/cache}"
 CHECKSUM_FILE="$CACHE_DIR/kb-checksums.json"
 
 usage() {
