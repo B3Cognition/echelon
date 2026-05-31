@@ -43,6 +43,15 @@ logger = logging.getLogger(__name__)
 _NO_PROGRESS_THRESHOLD = 2
 
 
+class CommitPushError(RuntimeError):
+    """Raised when verified work cannot be committed or pushed."""
+
+    def __init__(self, message: str, *, branch: str, worktree_path: str) -> None:
+        super().__init__(message)
+        self.branch = branch
+        self.worktree_path = worktree_path
+
+
 class RalphController:
     """Orchestrates the ralph-loop for one strategy.
 
@@ -214,6 +223,7 @@ class RalphController:
                 base_branch=feature_branch,
                 build_id=self._build_id,
             )
+            preserve_worktree = False
 
             try:
                 # Create sandbox
@@ -339,7 +349,20 @@ class RalphController:
 
                     if verify_result.passed:
                         # Converged!
-                        branch = self._commit_and_push(worktree_path, outer_iter)
+                        try:
+                            branch = self._commit_and_push(worktree_path, outer_iter)
+                        except CommitPushError as e:
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="publish_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                                branch=e.branch,
+                            )
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
 
                         return self._finalize(
@@ -378,7 +401,20 @@ class RalphController:
                         )
 
                     if inner_result["converged"]:
-                        branch = self._commit_and_push(worktree_path, outer_iter)
+                        try:
+                            branch = self._commit_and_push(worktree_path, outer_iter)
+                        except CommitPushError as e:
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="publish_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                                branch=e.branch,
+                            )
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
                         return self._finalize(
                             status="converged",
@@ -448,7 +484,20 @@ class RalphController:
                             )
 
                     # Inner loop exhausted -- commit progress and continue outer
-                    branch = self._commit_and_push(worktree_path, outer_iter)
+                    try:
+                        branch = self._commit_and_push(worktree_path, outer_iter)
+                    except CommitPushError as e:
+                        preserve_worktree = True
+                        return self._finalize(
+                            status="blocked",
+                            reason="publish_failed",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=inner_result.get("final_verify"),
+                            branch=e.branch,
+                        )
                     pr_url = self._manage_pr(pr_url, branch, converged=False)
 
                 finally:
@@ -456,7 +505,7 @@ class RalphController:
 
             finally:
                 # Keep last worktree (FR-REPO-003b)
-                if outer_iter < max_outer - 1:
+                if not preserve_worktree and outer_iter < max_outer - 1:
                     self._gitops.destroy_worktree(worktree_path, keep_branch=True)
 
             # Update state after each iteration
@@ -1121,31 +1170,51 @@ class RalphController:
         not on a harness/* branch — pushing the wrong name silently fails.
         """
         fallback = f"harness/{self._spec_id}-{self._strategy_id}-iter-{outer_iter}"
+        branch = fallback
+        message = f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}"
         try:
-            message = f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}"
             self._gitops.commit(worktree_path, message)
+        except Exception as e:
+            logger.warning("Commit failed for %s: %s", worktree_path, e)
+            raise CommitPushError(
+                f"Commit failed: {e}",
+                branch=branch,
+                worktree_path=worktree_path,
+            ) from e
 
-            # Detect the actual branch rather than assuming a harness/* name.
-            # create_worktree() checks out the feature branch directly in
-            # feature-branch mode, so we must read HEAD to get the real branch.
+        # Detect the actual branch rather than assuming a harness/* name.
+        # create_worktree() checks out the feature branch directly in
+        # feature-branch mode, so we must read HEAD to get the real branch.
+        try:
             from harness.gitops import _run_git  # local import to avoid circular
             result = _run_git(
                 ["branch", "--show-current"],
                 cwd=worktree_path,
                 check=False,
             )
-            branch = result.stdout.strip() or fallback
+            detected_branch = result.stdout.strip()
+            branch = detected_branch or fallback
             if not result.stdout.strip():
                 logger.warning(
                     "Worktree at %s is in detached HEAD state; pushing as %s",
                     worktree_path, branch,
                 )
+        except Exception as e:
+            logger.warning(
+                "Could not detect current branch for %s; pushing fallback %s: %s",
+                worktree_path, branch, e,
+            )
 
+        try:
             self._gitops.push(worktree_path, branch)
             return branch
         except Exception as e:
-            logger.warning("Commit/push failed: %s", e)
-            return fallback
+            logger.warning("Push failed for %s on %s: %s", worktree_path, branch, e)
+            raise CommitPushError(
+                f"Push failed: {e}",
+                branch=branch,
+                worktree_path=worktree_path,
+            ) from e
 
     def _manage_pr(self, pr_url: Optional[str], branch: str, converged: bool) -> Optional[str]:
         """Create/update/promote PR as needed."""

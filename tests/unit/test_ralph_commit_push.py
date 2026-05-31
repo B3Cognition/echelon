@@ -18,7 +18,7 @@ import pytest
 from harness.config import HarnessConfig
 from harness.escalation import EscalationHandler
 from harness.mode import ModeController
-from harness.ralph import RalphController
+from harness.ralph import CommitPushError, RalphController
 from harness.state import StateStore
 
 
@@ -108,24 +108,24 @@ class TestCommitAndPushBranchDetection:
         assert "007-spec" in pushed_branch
         assert "alpha" in pushed_branch
 
-    def test_commit_failure_still_warns_not_raises(self, tmp_path):
-        """Commit failure is caught and logged as warning, not raised."""
+    def test_commit_failure_blocks_convergence(self, tmp_path):
+        """Commit failure raises so run_loop cannot report converged work as landed."""
         ralph, gitops = _make_ralph(tmp_path)
         gitops.commit.side_effect = Exception("git commit failed")
 
         with patch("harness.gitops._run_git") as mock_run_git:
             mock_run_git.return_value = MagicMock(stdout="001-feature\n", returncode=0)
-            # Should not raise
-            ralph._commit_and_push(worktree_path="/tmp/wt", outer_iter=0)
+            with pytest.raises(CommitPushError):
+                ralph._commit_and_push(worktree_path="/tmp/wt", outer_iter=0)
 
         gitops.push.assert_not_called()
 
-    def test_push_failure_still_warns_not_raises(self, tmp_path):
-        """Push failure is caught and logged as warning, not raised."""
+    def test_push_failure_blocks_convergence(self, tmp_path):
+        """Push failure raises so work is preserved for explicit recovery."""
         ralph, gitops = _make_ralph(tmp_path)
         gitops.push.side_effect = Exception("network error")
 
         with patch("harness.gitops._run_git") as mock_run_git:
             mock_run_git.return_value = MagicMock(stdout="001-feature\n", returncode=0)
-            # Should not raise
-            ralph._commit_and_push(worktree_path="/tmp/wt", outer_iter=0)
+            with pytest.raises(CommitPushError):
+                ralph._commit_and_push(worktree_path="/tmp/wt", outer_iter=0)

@@ -179,6 +179,27 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
 
+    def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:
+        """Verified work must not be reported converged when commit/push fails."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.push.side_effect = Exception("network error")
+
+        result = controller.run_loop(max_outer=5, max_inner=3)
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "publish_failed"
+        assert result.branch == "harness/spec-001-default-iter-0"
+        gitops.promote_pr_ready.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+        state = state_store.read()
+        assert state["status"] == "blocked"
+        assert state["termination_reason"] == "publish_failed"
+        assert state["branch"] == "harness/spec-001-default-iter-0"
+
     def test_converges_second_outer_iteration(self, tmp_path: Path) -> None:
         """Verify fails first outer, passes on second outer -> converged."""
         # First outer: verify fails, inner loop fails (different errors to avoid same-failure)
