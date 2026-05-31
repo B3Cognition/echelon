@@ -289,6 +289,7 @@ class RalphController:
                     # llm_provider clears the file before each build so a missing
                     # or non-"done" status always means this build didn't complete.
                     if not build_result.get("passed", True):
+                        preserve_worktree = True
                         from echelon.ui import banner as _ui_banner
                         _ui_banner(
                             "HARNESS — BUILD DID NOT COMPLETE",

@@ -200,6 +200,37 @@ class TestOuterLoopConvergence:
         assert state["termination_reason"] == "publish_failed"
         assert state["branch"] == "harness/spec-001-default-iter-0"
 
+    def test_llm_build_incomplete_returns_blocked_result(self, tmp_path: Path) -> None:
+        """Missing build status should block gracefully instead of raising."""
+        from harness.build_result import BuildResult
+
+        llm_provider = MagicMock()
+        llm_provider.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="unknown",
+            impasse_file=None,
+            stdout="done without status file",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_provider=llm_provider,
+        )
+
+        result = controller.run_loop(
+            max_outer=5,
+            max_inner=3,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        assert provider.destroyed is True
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
     def test_converges_second_outer_iteration(self, tmp_path: Path) -> None:
         """Verify fails first outer, passes on second outer -> converged."""
         # First outer: verify fails, inner loop fails (different errors to avoid same-failure)

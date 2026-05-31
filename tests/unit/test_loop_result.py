@@ -119,6 +119,19 @@ class TestLoopResultConstruction:
         )
         assert result.termination_reason == "visual_failed"
 
+    def test_build_incomplete_is_valid_termination_reason(self) -> None:
+        """build_incomplete must be accepted when COMMANDER exits before deliver."""
+        result = LoopResult(
+            status="blocked",
+            termination_reason="build_incomplete",
+            outer_iterations=1,
+            inner_iterations=0,
+            pr_url=None,
+            tokens_used=0,
+            final_verify=None,
+        )
+        assert result.termination_reason == "build_incomplete"
+
 
 @pytest.mark.unit
 class TestLoopResultValidation:
