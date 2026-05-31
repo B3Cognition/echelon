@@ -104,6 +104,35 @@ class TestCmdHarnessResume:
 
         mock_run.assert_called_once()
 
+    @pytest.mark.parametrize("reason", ["build_incomplete", "publish_failed"])
+    def test_recoverable_blocked_reason_recovers_and_calls_run(
+        self,
+        tmp_path: Path,
+        reason: str,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": reason,
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            mock_recover.return_value = MagicMock(
+                source="mirror",
+                commit="abc123",
+                target_branch="001-feature",
+                applied=True,
+            )
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001"])
+
+        mock_recover.assert_called_once()
+        mock_run.assert_called_once()
+
     def test_no_args_prints_help(self, tmp_path: Path, capsys) -> None:
         from echelon.cli import _cmd_harness_resume
         _cmd_harness_resume([])

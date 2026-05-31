@@ -524,9 +524,11 @@ def _cmd_harness_resume(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon harness resume <spec_id> [strategy=<s>]\n\n"
-            "Resume a harness run that is blocked waiting for verify_command configuration.\n\n"
+            "Resume a blocked harness run. Supports verify_command_needed and\n"
+            "recovery from build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
-            "  1. Add verify_command to echelon-config.yml (or run 'echelon cicd').\n"
+            "  1. For verify_command_needed: add verify_command to echelon-config.yml\n"
+            "     (or run 'echelon cicd').\n"
             "  2. Run: echelon harness resume <spec_id>\n",
         )
         return
@@ -591,13 +593,53 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         sys.exit(1)
 
-    if termination_reason != "verify_command_needed":
+    recoverable_reasons = {"build_incomplete", "publish_failed"}
+    if termination_reason not in {"verify_command_needed", *recoverable_reasons}:
         print(
             f"✗ Spec {spec_id!r} is blocked for a different reason: {termination_reason!r}.\n"
             "  Use 'echelon harness run <spec_id>' to resume.",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    gitops = GitOpsManager(config)
+
+    if termination_reason in recoverable_reasons:
+        from harness.recovery import HarnessRecoveryError, recover_blocked_run
+
+        build_id = marker.read_text().strip() if marker.exists() else ""
+        try:
+            recovered = recover_blocked_run(
+                project_dir=cwd,
+                spec_id=spec_id,
+                strategy_id=strategy,
+                state=state,
+                gitops=gitops,
+                build_id=build_id,
+            )
+        except HarnessRecoveryError as e:
+            print(
+                f"✗ Harness recovery failed for spec {spec_id!r}: {e}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        action = "applied" if recovered.applied else "already present"
+        _banner("HARNESS RESUME — RECOVERED", [
+            ("Spec", spec_id),
+            ("Strategy", strategy),
+            ("Reason", termination_reason),
+            ("Source", recovered.source),
+            ("Commit", recovered.commit[:12]),
+            ("Branch", recovered.target_branch),
+            ("Status", action),
+        ])
+
+        from harness.skills.run_skill import run
+        provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+        user_message = f"spec {spec_id} {strategy} mode resume"
+        run(user_message, provider, gitops)
+        return
 
     if not config.verify_command:
         print(
@@ -619,7 +661,6 @@ def _cmd_harness_resume(args: list[str]) -> None:
     ])
 
     from harness.skills.run_skill import run
-    gitops = GitOpsManager(config)
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
     user_message = f"spec {spec_id} {strategy} mode resume"
     run(user_message, provider, gitops)
