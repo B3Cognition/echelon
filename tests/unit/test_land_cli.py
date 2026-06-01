@@ -151,6 +151,30 @@ class TestCmdLand:
         captured = capsys.readouterr()
         assert "--strategy must be" in captured.err
 
+    def test_unknown_land_flag_exits_1(self, capsys):
+        """Unknown land flags are rejected instead of silently ignored."""
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["042", "--no-autresolve"])
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "unknown option" in captured.err.lower()
+        assert "--no-autresolve" in captured.err
+
+    def test_flag_shaped_first_arg_exits_1(self, capsys):
+        """The spec id cannot be replaced by an option-like token."""
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["--continue", "042"])
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "missing spec_id" in captured.err.lower()
+        assert "--continue" in captured.err
+
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")

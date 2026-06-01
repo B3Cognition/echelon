@@ -311,25 +311,47 @@ def _cmd_land(args: list[str]) -> None:
         )
         sys.exit(0)
 
-    from harness.config import load_config, ValidationError as HarnessValidationError
-    from harness.gitops import GitOpsManager
-    from harness.land import LandOptions, land
+    if args[0].startswith("-"):
+        print(f"✗ missing spec_id before option {args[0]!r}", file=sys.stderr)
+        sys.exit(1)
 
     spec_id = args[0]
-    continue_existing = "--continue" in args[1:]
-    prepare_only = "--prepare-only" in args[1:]
-    autoresolve = "--no-autoresolve" not in args[1:]
+    continue_existing = False
+    prepare_only = False
+    autoresolve = True
     strategy = "merge"
-    if "--strategy" in args[1:]:
-        idx = args.index("--strategy")
-        try:
-            strategy = args[idx + 1]
-        except IndexError:
-            print("✗ --strategy requires 'merge' or 'rebase'", file=sys.stderr)
+
+    remaining = args[1:]
+    idx = 0
+    while idx < len(remaining):
+        arg = remaining[idx]
+        if arg == "--continue":
+            continue_existing = True
+        elif arg == "--prepare-only":
+            prepare_only = True
+        elif arg == "--no-autoresolve":
+            autoresolve = False
+        elif arg == "--strategy":
+            if idx + 1 >= len(remaining):
+                print("✗ --strategy requires 'merge' or 'rebase'", file=sys.stderr)
+                sys.exit(1)
+            strategy = remaining[idx + 1]
+            idx += 1
+        elif arg.startswith("-"):
+            print(f"✗ unknown option for echelon land: {arg}", file=sys.stderr)
             sys.exit(1)
+        else:
+            print(f"✗ unexpected argument for echelon land: {arg}", file=sys.stderr)
+            sys.exit(1)
+        idx += 1
+
     if strategy not in {"merge", "rebase"}:
         print("✗ --strategy must be 'merge' or 'rebase'", file=sys.stderr)
         sys.exit(1)
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.gitops import GitOpsManager
+    from harness.land import LandOptions, land
     options = LandOptions(
         autoresolve=autoresolve,
         prepare_only=prepare_only,
