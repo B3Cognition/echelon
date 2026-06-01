@@ -369,6 +369,9 @@ def _cmd_land(args: list[str]) -> None:
 
     success = land(spec_id, project_dir=project_dir, gitops=gitops, options=options)
     if success:
+        if options.prepare_only:
+            _banner("LAND", [("spec", spec_id), ("status", "prepared")])
+            sys.exit(0)
         _banner("LAND", [("spec", spec_id), ("status", "landed successfully")])
         _archive_squad_run(project_dir, spec_id)
         sys.exit(0)

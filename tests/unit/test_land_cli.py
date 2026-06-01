@@ -93,6 +93,29 @@ class TestCmdLand:
         assert options.prepare_only is True
         assert options.autoresolve is False
 
+    @patch("echelon.cli._archive_squad_run")
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_prepare_only_success_does_not_archive_as_landed(
+        self, mock_load_config, mock_gitops_cls, mock_land, mock_archive, capsys
+    ):
+        """A prepare-only success is not treated as a completed landing."""
+        from echelon.cli import _cmd_land
+
+        mock_load_config.return_value = MagicMock()
+        mock_gitops_cls.return_value = MagicMock()
+        mock_land.return_value = True
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["042", "--prepare-only"])
+
+        assert exc_info.value.code == 0
+        mock_archive.assert_not_called()
+        captured = capsys.readouterr()
+        assert "prepared" in captured.out.lower()
+        assert "landed successfully" not in captured.out.lower()
+
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")
