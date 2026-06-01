@@ -251,7 +251,7 @@ def land(
                 ("spec", spec_id),
                 ("problem", "PR merge blocked by branch protection, checks, or conflicts"),
                 ("PR", pr_url),
-                ("next step", f"push prepared branch, then re-run: echelon land {spec_id}"),
+                ("next step", f"re-run after checks/branch protection clear: echelon land {spec_id}"),
             ],
             subtitle="Feature branch was prepared, but Echelon will not bypass the PR.",
         )

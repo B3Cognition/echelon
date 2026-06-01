@@ -285,6 +285,8 @@ class TestLand:
         finish_landing.assert_not_called()
         banner.assert_called_once()
         assert banner.call_args.args[0] == "LAND — ACTION NEEDED"
+        fields = dict(banner.call_args.args[1])
+        assert fields["next step"] == "re-run after checks/branch protection clear: echelon land 042"
 
     def test_returns_false_when_preparation_blocks_on_semantic_conflict(
         self, tmp_path: Path
