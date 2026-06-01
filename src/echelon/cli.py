@@ -81,7 +81,9 @@ Commands:
   change  <spec_id> <description>           Plan a scope change
   codegen <spec_id>                         Run SOAR codegen pipeline
   cicd    <spec_id>                         Detect project type and configure verify_command
-  land    <spec_id>                         Land a spec: merge PR, clean up
+  land    <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
+                    [--strategy merge|rebase]
+                                            Land a spec: merge PR, clean up
   harness init   [<target_repo>]            Initialize harness (no LLM)
   harness run    <spec_id> [strategy=<s>]   Run build→verify→PR loop
   harness resume <spec_id> [strategy=<s>]   Resume harness blocked on verify_command_needed
@@ -303,16 +305,37 @@ def _cmd_land(args: list[str]) -> None:
 
     if not args or args[0] in ("-h", "--help"):
         print(
-            "Usage: echelon land <spec_id>\n\n"
+            "Usage: echelon land <spec_id> [--continue] [--prepare-only] "
+            "[--no-autoresolve] [--strategy merge|rebase]\n\n"
             "  Merge PR, delete branch, clean worktrees, mark spec as landed.\n",
         )
         sys.exit(0)
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.gitops import GitOpsManager
-    from harness.land import land
+    from harness.land import LandOptions, land
 
     spec_id = args[0]
+    continue_existing = "--continue" in args[1:]
+    prepare_only = "--prepare-only" in args[1:]
+    autoresolve = "--no-autoresolve" not in args[1:]
+    strategy = "merge"
+    if "--strategy" in args[1:]:
+        idx = args.index("--strategy")
+        try:
+            strategy = args[idx + 1]
+        except IndexError:
+            print("✗ --strategy requires 'merge' or 'rebase'", file=sys.stderr)
+            sys.exit(1)
+    if strategy not in {"merge", "rebase"}:
+        print("✗ --strategy must be 'merge' or 'rebase'", file=sys.stderr)
+        sys.exit(1)
+    options = LandOptions(
+        autoresolve=autoresolve,
+        prepare_only=prepare_only,
+        continue_existing=continue_existing,
+        strategy=strategy,
+    )
     project_dir = Path.cwd()
 
     try:
@@ -322,7 +345,7 @@ def _cmd_land(args: list[str]) -> None:
         sys.exit(1)
     gitops = GitOpsManager(config)
 
-    success = land(spec_id, project_dir=project_dir, gitops=gitops)
+    success = land(spec_id, project_dir=project_dir, gitops=gitops, options=options)
     if success:
         _banner("LAND", [("spec", spec_id), ("status", "landed successfully")])
         _archive_squad_run(project_dir, spec_id)

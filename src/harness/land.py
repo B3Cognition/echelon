@@ -73,12 +73,14 @@ def land(
     project_dir: Path,
     gitops: Any,
     state_dir: Optional[Path] = None,
+    options: Optional[LandOptions] = None,
 ) -> bool:
     """Idempotent: merge PR, delete remote branch, clean worktrees, mark spec landed.
 
     Returns True if spec is now in landed state.
     Returns False only when PR merge is blocked — caller must retry or merge manually.
     """
+    options = options or LandOptions()
     feature_branch = gitops.find_feature_branch(spec_id)
     if feature_branch is None:
         logger.info("land: %s — feature branch not found, already landed", spec_id)

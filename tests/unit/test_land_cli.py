@@ -38,7 +38,93 @@ class TestCmdLand:
             "042",
             project_dir=expected_cwd,
             gitops=mock_gitops,
+            options=mock_land.call_args.kwargs["options"],
         )
+        options = mock_land.call_args.kwargs["options"]
+        assert options.autoresolve is True
+        assert options.prepare_only is False
+        assert options.continue_existing is False
+        assert options.strategy == "merge"
+
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_land_passes_continue_option(
+        self, mock_load_config, mock_gitops_cls, mock_land
+    ):
+        """--continue tells land() to continue an existing preparation."""
+        from echelon.cli import _cmd_land
+
+        mock_load_config.return_value = MagicMock()
+        mock_gitops_cls.return_value = MagicMock()
+        mock_land.return_value = True
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["042", "--continue"])
+
+        assert exc_info.value.code == 0
+        options = mock_land.call_args.kwargs["options"]
+        assert options.continue_existing is True
+
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_land_passes_prepare_only_and_no_autoresolve_options(
+        self, mock_load_config, mock_gitops_cls, mock_land
+    ):
+        """--prepare-only and --no-autoresolve are forwarded as LandOptions."""
+        from echelon.cli import _cmd_land
+
+        mock_load_config.return_value = MagicMock()
+        mock_gitops_cls.return_value = MagicMock()
+        mock_land.return_value = True
+
+        with pytest.raises(SystemExit):
+            _cmd_land(["042", "--prepare-only", "--no-autoresolve"])
+
+        options = mock_land.call_args.kwargs["options"]
+        assert options.prepare_only is True
+        assert options.autoresolve is False
+
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_land_passes_rebase_strategy(
+        self, mock_load_config, mock_gitops_cls, mock_land
+    ):
+        """--strategy rebase is forwarded as LandOptions.strategy."""
+        from echelon.cli import _cmd_land
+
+        mock_load_config.return_value = MagicMock()
+        mock_gitops_cls.return_value = MagicMock()
+        mock_land.return_value = True
+
+        with pytest.raises(SystemExit):
+            _cmd_land(["042", "--strategy", "rebase"])
+
+        assert mock_land.call_args.kwargs["options"].strategy == "rebase"
+
+    def test_missing_strategy_value_exits_1(self, capsys):
+        """--strategy requires an explicit merge or rebase value."""
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["042", "--strategy"])
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "--strategy requires" in captured.err
+
+    def test_invalid_strategy_value_exits_1(self, capsys):
+        """--strategy rejects values other than merge or rebase."""
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["042", "--strategy", "squash"])
+
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "--strategy must be" in captured.err
 
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
