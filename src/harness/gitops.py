@@ -493,6 +493,14 @@ class GitOpsManager:
 
     # === Push Operations ===
 
+    def _ensure_not_default_branch_push(self, branch: str, command: str) -> None:
+        default_branch = self.get_default_branch()
+        if branch == default_branch or branch.endswith(f"/{default_branch}"):
+            raise GitOpsError(
+                f"Refusing to push to default branch '{default_branch}' (FR-REPO-004)",
+                command=command,
+            )
+
     def push(
         self,
         worktree_path: str,
@@ -509,14 +517,7 @@ class GitOpsManager:
             GitOpsEscalation: On retry failure (needs human intervention).
             GitOpsError: On push to default branch.
         """
-        default_branch = self.get_default_branch()
-
-        # FR-REPO-004: never push default branch
-        if branch == default_branch or branch.endswith(f"/{default_branch}"):
-            raise GitOpsError(
-                f"Refusing to push to default branch '{default_branch}' (FR-REPO-004)",
-                command="push",
-            )
+        self._ensure_not_default_branch_push(branch, "push")
 
         # Use 'upstream' remote (added by create_worktree). The mirror's 'origin'
         # may have mirror=true which blocks refspec pushes.
@@ -563,6 +564,24 @@ class GitOpsManager:
                 f"Human intervention required.",
                 command="push --force (retry)",
             )
+
+    def push_prepared_branch(
+        self,
+        project_dir: str,
+        branch: str,
+        *,
+        force_with_lease: bool = False,
+    ) -> None:
+        """Push a prepared feature branch to origin.
+
+        FR-REPO-004: NEVER pushes to default branch directly.
+        """
+        self._ensure_not_default_branch_push(branch, "push_prepared_branch")
+        args = ["push", "origin", branch]
+        if force_with_lease:
+            args.insert(1, "--force-with-lease")
+        _run_git(args, cwd=project_dir)
+        logger.info("Pushed prepared branch %s to origin", branch)
 
     # === PR Operations ===
 

@@ -80,11 +80,14 @@ def prepare_feature_branch(
     )
     if result.returncode == 0:
         commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+        gitops.push_prepared_branch(
+            str(project_dir), feature_branch, force_with_lease=False
+        )
         return LandPrepareResult(
             status="prepared",
             branch=feature_branch,
             prepared_commit=commit,
-            pushed=False,
+            pushed=True,
         )
 
     conflicted = _list_unmerged_files(project_dir)
@@ -95,11 +98,14 @@ def prepare_feature_branch(
         if not conflicted:
             _run_git(["commit", "--no-edit"], cwd=str(project_dir))
             commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+            gitops.push_prepared_branch(
+                str(project_dir), feature_branch, force_with_lease=False
+            )
             return LandPrepareResult(
                 status="prepared",
                 branch=feature_branch,
                 prepared_commit=commit,
-                pushed=False,
+                pushed=True,
                 autoresolved_files=autoresolved,
             )
 

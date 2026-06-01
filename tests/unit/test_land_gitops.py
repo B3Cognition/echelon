@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager
 
 
@@ -13,6 +14,17 @@ def _make_gitops() -> MagicMock:
     """Return a GitOpsManager mock with delete_remote_branch bound as a real method."""
     m = MagicMock(spec=GitOpsManager)
     m.delete_remote_branch = GitOpsManager.delete_remote_branch.__get__(m, GitOpsManager)
+    return m
+
+
+def _make_push_gitops(default_branch: str = "main") -> MagicMock:
+    """Return a GitOpsManager mock with push_prepared_branch bound as a real method."""
+    m = MagicMock(spec=GitOpsManager)
+    m.get_default_branch.return_value = default_branch
+    m._ensure_not_default_branch_push = GitOpsManager._ensure_not_default_branch_push.__get__(
+        m, GitOpsManager
+    )
+    m.push_prepared_branch = GitOpsManager.push_prepared_branch.__get__(m, GitOpsManager)
     return m
 
 
@@ -64,6 +76,41 @@ class TestDeleteRemoteBranch:
             )
         cmd = mock_run.call_args[0][0]
         assert cmd[2] == "upstream"
+
+
+@pytest.mark.unit
+class TestPushPreparedBranch:
+    def test_pushes_branch_to_origin_without_force_by_default(self, tmp_path) -> None:
+        gitops = _make_push_gitops()
+        with patch("harness.gitops._run_git") as run_git:
+            gitops.push_prepared_branch(str(tmp_path), "042-my-feature")
+
+        run_git.assert_called_once_with(
+            ["push", "origin", "042-my-feature"], cwd=str(tmp_path)
+        )
+
+    def test_pushes_with_force_with_lease_when_requested(self, tmp_path) -> None:
+        gitops = _make_push_gitops()
+        with patch("harness.gitops._run_git") as run_git:
+            gitops.push_prepared_branch(
+                str(tmp_path), "042-my-feature", force_with_lease=True
+            )
+
+        run_git.assert_called_once_with(
+            ["push", "--force-with-lease", "origin", "042-my-feature"],
+            cwd=str(tmp_path),
+        )
+
+    def test_refuses_to_push_default_branch(self, tmp_path) -> None:
+        gitops = _make_push_gitops(default_branch="main")
+
+        with (
+            patch("harness.gitops._run_git") as run_git,
+            pytest.raises(GitOpsError, match="Refusing to push to default branch"),
+        ):
+            gitops.push_prepared_branch(str(tmp_path), "main")
+
+        run_git.assert_not_called()
 
 
 @pytest.mark.unit

@@ -439,6 +439,7 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
 
     gitops = MagicMock()
     gitops.get_default_branch.return_value = "main"
+    gitops.push_prepared_branch.return_value = None
 
     result = prepare_feature_branch(
         spec_id="001",
@@ -450,7 +451,10 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
-    assert result.pushed is False
+    gitops.push_prepared_branch.assert_called_once_with(
+        str(repo), "001-feature", force_with_lease=False
+    )
+    assert result.pushed is True
     assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
     assert (
         _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
@@ -566,6 +570,7 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
 
     gitops = MagicMock()
     gitops.get_default_branch.return_value = "main"
+    gitops.push_prepared_branch.return_value = None
 
     result = prepare_feature_branch(
         spec_id="001",
@@ -577,6 +582,10 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
+    gitops.push_prepared_branch.assert_called_once_with(
+        str(repo), "001-feature", force_with_lease=False
+    )
+    assert result.pushed is True
     assert result.autoresolved_files == [".gitignore"]
     assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
     assert (repo / ".gitignore").read_text(encoding="utf-8").splitlines() == [
