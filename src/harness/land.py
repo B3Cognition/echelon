@@ -1,6 +1,7 @@
 """Land — idempotent spec completion: merge PR, delete branch, clean worktrees, mark done."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 import json
 import logging
 import subprocess
@@ -13,6 +14,25 @@ from harness.paths import runs_dir
 from harness.spec_frontmatter import find_spec_dir, write_status
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LandOptions:
+    autoresolve: bool = True
+    prepare_only: bool = False
+    continue_existing: bool = False
+    strategy: str = "merge"
+
+
+@dataclass(frozen=True)
+class LandPrepareResult:
+    status: str
+    branch: str
+    prepared_commit: str | None = None
+    pushed: bool = False
+    conflicted_files: list[str] = field(default_factory=list)
+    autoresolved_files: list[str] = field(default_factory=list)
+    message: str = ""
 
 
 def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:

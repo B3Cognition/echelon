@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.land import find_pr_url, land
+from harness.land import LandOptions, LandPrepareResult, find_pr_url, land
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -28,6 +28,29 @@ def _make_gitops(
     m.merge_pr.return_value = merge_result
     m.delete_remote_branch.return_value = delete_result
     return m
+
+
+@pytest.mark.unit
+class TestLandOptions:
+    def test_default_land_options_are_autonomous_merge(self) -> None:
+        options = LandOptions()
+        assert options.autoresolve is True
+        assert options.prepare_only is False
+        assert options.continue_existing is False
+        assert options.strategy == "merge"
+
+    def test_prepare_result_records_conflict_state(self) -> None:
+        result = LandPrepareResult(
+            status="blocked",
+            branch="001-feature",
+            prepared_commit=None,
+            pushed=False,
+            conflicted_files=["src/app.py"],
+            autoresolved_files=[".gitignore"],
+            message="semantic conflicts remain",
+        )
+        assert result.status == "blocked"
+        assert result.conflicted_files == ["src/app.py"]
 
 
 @pytest.mark.unit
