@@ -111,20 +111,31 @@ class TestLand:
         state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
         gitops = _make_gitops(merge_result=False)
-        result = land("042", project_dir=tmp_path, gitops=gitops)
+        with patch("harness.land.prepare_feature_branch") as prepare:
+            prepare.return_value = LandPrepareResult(
+                status="blocked",
+                branch="042-my-feature",
+                conflicted_files=["src/app.swift"],
+            )
+            result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is False
         gitops.delete_remote_branch.assert_not_called()
 
     def test_skips_merge_when_no_pr_url(self, tmp_path: Path) -> None:
         gitops = _make_gitops()
-        result = land("042", project_dir=tmp_path, gitops=gitops)
+        with patch("harness.land.prepare_feature_branch") as prepare:
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+            result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is True
         gitops.merge_pr.assert_not_called()
+        prepare.assert_called_once()
         gitops.delete_remote_branch.assert_called_once()
 
     def test_calls_ensure_on_default_branch(self, tmp_path: Path) -> None:
         gitops = _make_gitops()
-        land("042", project_dir=tmp_path, gitops=gitops)
+        with patch("harness.land.prepare_feature_branch") as prepare:
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+            land("042", project_dir=tmp_path, gitops=gitops)
         gitops.ensure_on_default_branch.assert_called_once_with(str(tmp_path))
 
     def test_writes_landed_status_to_spec_frontmatter(self, tmp_path: Path) -> None:
@@ -132,7 +143,9 @@ class TestLand:
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("---\ntargets: []\n---\n# Spec\n", encoding="utf-8")
         gitops = _make_gitops()
-        land("042", project_dir=tmp_path, gitops=gitops)
+        with patch("harness.land.prepare_feature_branch") as prepare:
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+            land("042", project_dir=tmp_path, gitops=gitops)
         from harness.spec_frontmatter import read_frontmatter
         assert read_frontmatter(spec_dir)["status"] == "landed"
 
@@ -145,7 +158,9 @@ class TestLand:
         worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
         worktree_dir.mkdir(parents=True)
         gitops = _make_gitops()
-        land("042", project_dir=tmp_path, gitops=gitops)
+        with patch("harness.land.prepare_feature_branch") as prepare:
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+            land("042", project_dir=tmp_path, gitops=gitops)
         gitops.destroy_worktree.assert_called_once_with(worktree_dir, keep_branch=True)
 
     @patch("harness.land.subprocess.run")
@@ -178,6 +193,78 @@ class TestLand:
         assert result is True
         gitops.merge_pr.assert_called_once_with("https://github.com/o/r/pull/9")
 
+    def test_prepare_only_prepares_without_landing_cleanup(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("---\ntargets: []\n---\n# Spec\n", encoding="utf-8")
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._delete_local_branch") as delete_local,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+            patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
+            patch("harness.land.write_status") as write_status,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(
+                status="prepared",
+                branch="042-my-feature",
+                prepared_commit="abc123",
+            )
+
+            result = land(
+                "042",
+                project_dir=tmp_path,
+                gitops=gitops,
+                options=LandOptions(prepare_only=True),
+            )
+
+        assert result is True
+        prepare.assert_called_once()
+        gitops.merge_branch_into_default.assert_not_called()
+        gitops.delete_remote_branch.assert_not_called()
+        delete_local.assert_not_called()
+        delete_harness.assert_not_called()
+        cleanup_worktrees.assert_not_called()
+        gitops.ensure_on_default_branch.assert_not_called()
+        write_status.assert_not_called()
+        banner.assert_called_once()
+        assert banner.call_args.args[0] == "LAND — PREPARED"
+
+    def test_returns_false_when_preparation_blocks_on_semantic_conflict(
+        self, tmp_path: Path
+    ) -> None:
+        gitops = _make_gitops()
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._delete_local_branch") as delete_local,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+            patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
+            patch("harness.land.write_status") as write_status,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(
+                status="blocked",
+                branch="042-my-feature",
+                conflicted_files=["src/app.swift"],
+                message="merge conflicts remain",
+            )
+
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        gitops.merge_branch_into_default.assert_not_called()
+        gitops.delete_remote_branch.assert_not_called()
+        delete_local.assert_not_called()
+        delete_harness.assert_not_called()
+        cleanup_worktrees.assert_not_called()
+        gitops.ensure_on_default_branch.assert_not_called()
+        write_status.assert_not_called()
+        banner.assert_called_once()
+        assert banner.call_args.args[0] == "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION"
+
 
 @pytest.mark.unit
 class TestDeleteHarnessBranches:
@@ -191,7 +278,9 @@ class TestDeleteHarnessBranches:
         with patch("harness.land.subprocess.run") as mock_run:
             # 4 calls: _delete_local_branch, then --list, then 2x -D for harness branches
             mock_run.side_effect = [delete_result, list_result, delete_result, delete_result]
-            land("042", project_dir=tmp_path, gitops=gitops)
+            with patch("harness.land.prepare_feature_branch") as prepare:
+                prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+                land("042", project_dir=tmp_path, gitops=gitops)
         # First call: git branch -d <feature-branch> (safe local cleanup)
         local_delete_call = mock_run.call_args_list[0]
         assert local_delete_call[0][0] == ["git", "branch", "-d", "042-my-feature"]
@@ -209,7 +298,9 @@ class TestDeleteHarnessBranches:
         empty_result = MagicMock(returncode=0, stdout="")
         with patch("harness.land.subprocess.run") as mock_run:
             mock_run.return_value = empty_result
-            result = land("042", project_dir=tmp_path, gitops=gitops)
+            with patch("harness.land.prepare_feature_branch") as prepare:
+                prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+                result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is True
 
 
@@ -238,6 +329,46 @@ def _commit(path: Path, rel: str, text: str, message: str) -> str:
     _git(path, "add", rel)
     _git(path, "commit", "-m", message)
     return _git(path, "rev-parse", "HEAD").stdout.strip()
+
+
+@pytest.mark.unit
+def test_land_prepares_feature_branch_before_direct_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    main_commit = _commit(repo, "main.txt", "main\n", "main")
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+    gitops.delete_remote_branch.return_value = True
+
+    def direct_merge(branch: str, project_dir: str) -> bool:
+        target = Path(project_dir)
+        assert (
+            _git(target, "merge-base", "--is-ancestor", main_commit, branch, check=False).returncode
+            == 0
+        )
+        _git(target, "checkout", "main")
+        _git(target, "merge", "--no-ff", branch, "-m", "land feature")
+        return True
+
+    gitops.merge_branch_into_default.side_effect = direct_merge
+
+    with patch("harness.land._delete_local_branch"):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is True
+    gitops.merge_branch_into_default.assert_called_once_with("001-feature", str(repo))
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert (repo / "feature.txt").read_text(encoding="utf-8") == "feature\n"
+    assert (
+        _git(repo, "merge-base", "--is-ancestor", main_commit, "001-feature", check=False).returncode
+        == 0
+    )
 
 
 @pytest.mark.unit

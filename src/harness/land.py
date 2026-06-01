@@ -207,33 +207,61 @@ def land(
 
     if pr_url:
         merged = gitops.merge_pr(pr_url)
-        if not merged:
-            _banner(
-                "LAND — ACTION NEEDED",
-                [
-                    ("spec", spec_id),
-                    ("problem", "PR merge blocked by branch protection or conflicts"),
-                    ("PR", pr_url),
-                    ("next step", f"echelon land {spec_id}"),
-                ],
-                subtitle="Merge the PR on GitHub, then re-run land.",
-            )
-            return False
-    else:
-        # No PR URL — gh/glab not configured. Merge directly into the default branch.
-        merged = gitops.merge_branch_into_default(feature_branch, str(project_dir))
-        if not merged:
-            _banner(
-                "LAND — MERGE FAILED",
-                [
-                    ("spec", spec_id),
-                    ("branch", feature_branch),
-                    ("problem", "direct merge into default branch failed (conflicts?)"),
-                    ("next step", f"git merge --no-ff {feature_branch}  # resolve conflicts, then re-run"),
-                ],
-                subtitle="Resolve conflicts manually, then re-run: echelon land " + spec_id,
-            )
-            return False
+        if merged:
+            return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+
+    prepare_result = prepare_feature_branch(
+        spec_id=spec_id,
+        feature_branch=feature_branch,
+        project_dir=project_dir,
+        gitops=gitops,
+        options=options,
+    )
+    if prepare_result.status == "blocked":
+        _banner(
+            "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION",
+            [
+                ("spec", spec_id),
+                ("branch", feature_branch),
+                ("conflicts", "\n".join(prepare_result.conflicted_files) or "(none)"),
+                ("next step", f"resolve conflicts, then run: echelon land {spec_id} --continue"),
+            ],
+            subtitle="Echelon stopped on semantic conflicts.",
+        )
+        return False
+
+    if options.prepare_only:
+        _banner(
+            "LAND — PREPARED",
+            [
+                ("spec", spec_id),
+                ("branch", feature_branch),
+                ("commit", prepare_result.prepared_commit or "(unchanged)"),
+            ],
+            subtitle="Feature branch is prepared; landing was not attempted.",
+        )
+        return True
+
+    # No PR URL, or the PR could not merge before branch preparation. Merge directly.
+    merged = gitops.merge_branch_into_default(feature_branch, str(project_dir))
+    if not merged:
+        _banner(
+            "LAND — MERGE FAILED",
+            [
+                ("spec", spec_id),
+                ("branch", feature_branch),
+                ("problem", "direct merge into default branch failed (conflicts?)"),
+                ("next step", f"git merge --no-ff {feature_branch}  # resolve conflicts, then re-run"),
+            ],
+            subtitle="Resolve conflicts manually, then re-run: echelon land " + spec_id,
+        )
+        return False
+
+    return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+
+
+def _finish_landing(spec_id: str, feature_branch: str, project_dir: Path, gitops: Any) -> bool:
+    """Clean up after a feature branch has merged."""
 
     if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
         _banner(
