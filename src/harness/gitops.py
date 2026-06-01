@@ -495,7 +495,7 @@ class GitOpsManager:
 
     def _ensure_not_default_branch_push(self, branch: str, command: str) -> None:
         default_branch = self.get_default_branch()
-        if ":" in branch:
+        if ":" in branch or branch.startswith("+"):
             raise GitOpsError(
                 f"Refusing to push refspec-shaped branch '{branch}' (FR-REPO-004)",
                 command=command,

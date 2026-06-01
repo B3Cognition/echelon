@@ -123,6 +123,17 @@ class TestPushPreparedBranch:
 
         run_git.assert_not_called()
 
+    def test_refuses_force_refspec_shaped_branch(self, tmp_path) -> None:
+        gitops = _make_push_gitops(default_branch="main")
+
+        with (
+            patch("harness.gitops._run_git") as run_git,
+            pytest.raises(GitOpsError, match="refspec-shaped branch"),
+        ):
+            gitops.push_prepared_branch(str(tmp_path), "+main")
+
+        run_git.assert_not_called()
+
 
 @pytest.mark.unit
 class TestDeleteRemoteBranchIntegration:
