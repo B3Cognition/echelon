@@ -368,6 +368,40 @@ def test_prepare_feature_branch_reports_merge_conflicts(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, ".gitignore", "*.pyc\n.env\n", "feature gitignore")
+    _git(repo, "checkout", "main")
+    _commit(repo, ".gitignore", ".env\n.cache\n", "main gitignore")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert result.branch == "001-feature"
+    assert result.autoresolved_files == [".gitignore"]
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
+    assert (repo / ".gitignore").read_text(encoding="utf-8").splitlines() == [
+        "*.pyc",
+        ".env",
+        ".cache",
+    ]
+
+
+@pytest.mark.unit
 class TestLandIntegration:
     """Integration tests using real tmp dirs and real git repos."""
 

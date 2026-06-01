@@ -88,10 +88,26 @@ def prepare_feature_branch(
         )
 
     conflicted = _list_unmerged_files(project_dir)
+    autoresolved: list[str] = []
+    if options.autoresolve and conflicted == [".gitignore"] and _autoresolve_gitignore(project_dir):
+        autoresolved.append(".gitignore")
+        conflicted = _list_unmerged_files(project_dir)
+        if not conflicted:
+            _run_git(["commit", "--no-edit"], cwd=str(project_dir))
+            commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+            return LandPrepareResult(
+                status="prepared",
+                branch=feature_branch,
+                prepared_commit=commit,
+                pushed=False,
+                autoresolved_files=autoresolved,
+            )
+
     return LandPrepareResult(
         status="blocked",
         branch=feature_branch,
         conflicted_files=conflicted,
+        autoresolved_files=autoresolved,
         message="merge conflicts remain",
     )
 
@@ -103,6 +119,28 @@ def _list_unmerged_files(project_dir: Path) -> list[str]:
         check=False,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _autoresolve_gitignore(project_dir: Path) -> bool:
+    ours = _run_git(["show", ":2:.gitignore"], cwd=str(project_dir), check=False)
+    theirs = _run_git(["show", ":3:.gitignore"], cwd=str(project_dir), check=False)
+    if ours.returncode != 0 or theirs.returncode != 0:
+        return False
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for content in (ours.stdout, theirs.stdout):
+        for raw_line in content.splitlines():
+            line = raw_line.rstrip()
+            key = line.strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            lines.append(line)
+
+    (project_dir / ".gitignore").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    add = _run_git(["add", ".gitignore"], cwd=str(project_dir), check=False)
+    return add.returncode == 0
 
 
 def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:
