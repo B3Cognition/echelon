@@ -122,6 +122,10 @@ def _list_unmerged_files(project_dir: Path) -> list[str]:
 
 
 def _autoresolve_gitignore(project_dir: Path) -> bool:
+    base = _run_git(["show", ":1:.gitignore"], cwd=str(project_dir), check=False)
+    if base.returncode == 0:
+        return False
+
     ours = _run_git(["show", ":2:.gitignore"], cwd=str(project_dir), check=False)
     theirs = _run_git(["show", ":3:.gitignore"], cwd=str(project_dir), check=False)
     if ours.returncode != 0 or theirs.returncode != 0:
