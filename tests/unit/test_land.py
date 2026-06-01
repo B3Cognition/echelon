@@ -464,6 +464,35 @@ def test_prepare_feature_branch_does_not_autoresolve_modified_gitignore(
 
 
 @pytest.mark.unit
+def test_prepare_feature_branch_blocks_on_source_conflict(tmp_path: Path) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "src/app.swift", "let value = 1\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "src/app.swift", "let value = 2\n", "feature")
+    _git(repo, "checkout", "main")
+    _commit(repo, "src/app.swift", "let value = 3\n", "main")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "blocked"
+    assert result.conflicted_files == ["src/app.swift"]
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == "src/app.swift"
+
+
+@pytest.mark.unit
 class TestLandIntegration:
     """Integration tests using real tmp dirs and real git repos."""
 
