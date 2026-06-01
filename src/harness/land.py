@@ -52,6 +52,13 @@ def prepare_feature_branch(
             message=f"unsupported land strategy: {options.strategy}",
         )
 
+    if options.continue_existing:
+        return _continue_feature_branch_preparation(
+            feature_branch=feature_branch,
+            project_dir=project_dir,
+            gitops=gitops,
+        )
+
     dirty = _run_git(
         ["status", "--porcelain", "--untracked-files=no"],
         cwd=str(project_dir),
@@ -115,6 +122,47 @@ def prepare_feature_branch(
         conflicted_files=conflicted,
         autoresolved_files=autoresolved,
         message="merge conflicts remain",
+    )
+
+
+def _continue_feature_branch_preparation(
+    *,
+    feature_branch: str,
+    project_dir: Path,
+    gitops: Any,
+) -> LandPrepareResult:
+    current_branch = _run_git(
+        ["branch", "--show-current"],
+        cwd=str(project_dir),
+        check=False,
+    ).stdout.strip()
+    if current_branch != feature_branch:
+        _run_git(["checkout", feature_branch], cwd=str(project_dir))
+
+    conflicted = _list_unmerged_files(project_dir)
+    if conflicted:
+        return LandPrepareResult(
+            status="blocked",
+            branch=feature_branch,
+            conflicted_files=conflicted,
+            message="conflicts remain",
+        )
+
+    merge_head = _run_git(
+        ["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if merge_head.returncode == 0:
+        _run_git(["commit", "--no-edit"], cwd=str(project_dir))
+
+    commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+    gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
+    return LandPrepareResult(
+        status="prepared",
+        branch=feature_branch,
+        prepared_commit=commit,
+        pushed=True,
     )
 
 
