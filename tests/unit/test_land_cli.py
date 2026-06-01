@@ -13,6 +13,13 @@ import pytest
 class TestCmdLand:
     """Verify _cmd_land wires arguments correctly and exits with proper codes."""
 
+    def _assert_help_mentions_autonomous_land_flags(self, help_text: str) -> None:
+        assert "Usage" in help_text
+        assert "--continue" in help_text
+        assert "--prepare-only" in help_text
+        assert "--no-autoresolve" in help_text
+        assert "--strategy merge|rebase" in help_text
+
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")
@@ -103,6 +110,24 @@ class TestCmdLand:
             _cmd_land(["042", "--strategy", "rebase"])
 
         assert mock_land.call_args.kwargs["options"].strategy == "rebase"
+
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_land_passes_explicit_merge_strategy(
+        self, mock_load_config, mock_gitops_cls, mock_land
+    ):
+        """--strategy merge is forwarded as LandOptions.strategy."""
+        from echelon.cli import _cmd_land
+
+        mock_load_config.return_value = MagicMock()
+        mock_gitops_cls.return_value = MagicMock()
+        mock_land.return_value = True
+
+        with pytest.raises(SystemExit):
+            _cmd_land(["042", "--strategy", "merge"])
+
+        assert mock_land.call_args.kwargs["options"].strategy == "merge"
 
     def test_missing_strategy_value_exits_1(self, capsys):
         """--strategy requires an explicit merge or rebase value."""
@@ -245,7 +270,7 @@ class TestCmdLand:
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert "Usage" in captured.out
+        self._assert_help_mentions_autonomous_land_flags(captured.out)
 
     @pytest.mark.parametrize("flag", ["-h", "--help"])
     def test_help_flag_shows_help(self, flag, capsys):
@@ -257,7 +282,7 @@ class TestCmdLand:
 
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert "Usage" in captured.out
+        self._assert_help_mentions_autonomous_land_flags(captured.out)
 
     @patch("harness.config.load_config")
     def test_config_validation_error_exits_1(self, mock_load_config, capsys):
