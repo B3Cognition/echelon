@@ -213,6 +213,66 @@ class TestDeleteHarnessBranches:
         assert result is True
 
 
+def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=check,
+    )
+
+
+def _init_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    _git(path, "init", "-b", "main")
+    _git(path, "config", "user.email", "test@example.com")
+    _git(path, "config", "user.name", "Test User")
+
+
+def _commit(path: Path, rel: str, text: str, message: str) -> str:
+    target = path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    _git(path, "add", rel)
+    _git(path, "commit", "-m", message)
+    return _git(path, "rev-parse", "HEAD").stdout.strip()
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main work")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert result.branch == "001-feature"
+    assert result.pushed is False
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
+    assert (
+        _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
+        == 0
+    )
+
+
 @pytest.mark.unit
 class TestLandIntegration:
     """Integration tests using real tmp dirs and real git repos."""

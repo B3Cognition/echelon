@@ -10,6 +10,7 @@ from typing import Any, Optional
 
 from echelon.ui import banner as _banner
 
+from harness.gitops import _run_git
 from harness.paths import runs_dir
 from harness.spec_frontmatter import find_spec_dir, write_status
 
@@ -33,6 +34,63 @@ class LandPrepareResult:
     conflicted_files: list[str] = field(default_factory=list)
     autoresolved_files: list[str] = field(default_factory=list)
     message: str = ""
+
+
+def prepare_feature_branch(
+    *,
+    spec_id: str,
+    feature_branch: str,
+    project_dir: Path,
+    gitops: Any,
+    options: LandOptions,
+) -> LandPrepareResult:
+    """Prepare a feature branch by bringing it up to date with the default branch."""
+    default_branch = gitops.get_default_branch()
+    _run_git(["checkout", feature_branch], cwd=str(project_dir))
+
+    if options.strategy != "merge":
+        return LandPrepareResult(
+            status="blocked",
+            branch=feature_branch,
+            message="rebase strategy is not implemented yet",
+        )
+
+    result = _run_git(
+        [
+            "merge",
+            "--no-ff",
+            default_branch,
+            "-m",
+            f"Merge {default_branch} into {feature_branch}",
+        ],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode == 0:
+        commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+        return LandPrepareResult(
+            status="prepared",
+            branch=feature_branch,
+            prepared_commit=commit,
+            pushed=False,
+        )
+
+    conflicted = _list_unmerged_files(project_dir)
+    return LandPrepareResult(
+        status="blocked",
+        branch=feature_branch,
+        conflicted_files=conflicted,
+        message="merge conflicts remain",
+    )
+
+
+def _list_unmerged_files(project_dir: Path) -> list[str]:
+    result = _run_git(
+        ["diff", "--name-only", "--diff-filter=U"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def find_pr_url(spec_id: str, state_dir: Path) -> Optional[str]:
