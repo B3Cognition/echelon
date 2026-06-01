@@ -205,11 +205,88 @@ def land(
     else:
         pr_url = _find_pr_url_all_builds(spec_id, project_dir)
 
+    if options.prepare_only:
+        prepare_result = _prepare_for_land(
+            spec_id=spec_id,
+            feature_branch=feature_branch,
+            project_dir=project_dir,
+            gitops=gitops,
+            options=options,
+        )
+        if prepare_result is None:
+            return False
+        _banner(
+            "LAND — PREPARED",
+            [
+                ("spec", spec_id),
+                ("branch", feature_branch),
+                ("commit", prepare_result.prepared_commit or "(unchanged)"),
+            ],
+            subtitle="Feature branch is prepared; landing was not attempted.",
+        )
+        return True
+
     if pr_url:
         merged = gitops.merge_pr(pr_url)
         if merged:
             return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+        prepare_result = _prepare_for_land(
+            spec_id=spec_id,
+            feature_branch=feature_branch,
+            project_dir=project_dir,
+            gitops=gitops,
+            options=options,
+        )
+        if prepare_result is None:
+            return False
+        _banner(
+            "LAND — ACTION NEEDED",
+            [
+                ("spec", spec_id),
+                ("problem", "PR merge blocked by branch protection, checks, or conflicts"),
+                ("PR", pr_url),
+                ("next step", f"push prepared branch, then re-run: echelon land {spec_id}"),
+            ],
+            subtitle="Feature branch was prepared, but Echelon will not bypass the PR.",
+        )
+        return False
 
+    prepare_result = _prepare_for_land(
+        spec_id=spec_id,
+        feature_branch=feature_branch,
+        project_dir=project_dir,
+        gitops=gitops,
+        options=options,
+    )
+    if prepare_result is None:
+        return False
+
+    # No PR URL — gh/glab not configured. Merge directly into the default branch.
+    merged = gitops.merge_branch_into_default(feature_branch, str(project_dir))
+    if not merged:
+        _banner(
+            "LAND — MERGE FAILED",
+            [
+                ("spec", spec_id),
+                ("branch", feature_branch),
+                ("problem", "direct merge into default branch failed (conflicts?)"),
+                ("next step", f"git merge --no-ff {feature_branch}  # resolve conflicts, then re-run"),
+            ],
+            subtitle="Resolve conflicts manually, then re-run: echelon land " + spec_id,
+        )
+        return False
+
+    return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+
+
+def _prepare_for_land(
+    *,
+    spec_id: str,
+    feature_branch: str,
+    project_dir: Path,
+    gitops: Any,
+    options: LandOptions,
+) -> LandPrepareResult | None:
     prepare_result = prepare_feature_branch(
         spec_id=spec_id,
         feature_branch=feature_branch,
@@ -228,36 +305,8 @@ def land(
             ],
             subtitle="Echelon stopped on semantic conflicts.",
         )
-        return False
-
-    if options.prepare_only:
-        _banner(
-            "LAND — PREPARED",
-            [
-                ("spec", spec_id),
-                ("branch", feature_branch),
-                ("commit", prepare_result.prepared_commit or "(unchanged)"),
-            ],
-            subtitle="Feature branch is prepared; landing was not attempted.",
-        )
-        return True
-
-    # No PR URL, or the PR could not merge before branch preparation. Merge directly.
-    merged = gitops.merge_branch_into_default(feature_branch, str(project_dir))
-    if not merged:
-        _banner(
-            "LAND — MERGE FAILED",
-            [
-                ("spec", spec_id),
-                ("branch", feature_branch),
-                ("problem", "direct merge into default branch failed (conflicts?)"),
-                ("next step", f"git merge --no-ff {feature_branch}  # resolve conflicts, then re-run"),
-            ],
-            subtitle="Resolve conflicts manually, then re-run: echelon land " + spec_id,
-        )
-        return False
-
-    return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+        return None
+    return prepare_result
 
 
 def _finish_landing(spec_id: str, feature_branch: str, project_dir: Path, gitops: Any) -> bool:

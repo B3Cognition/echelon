@@ -232,6 +232,60 @@ class TestLand:
         banner.assert_called_once()
         assert banner.call_args.args[0] == "LAND — PREPARED"
 
+    def test_prepare_only_does_not_merge_existing_pr(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / "runs" / "build-test" / "state"
+        _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
+        gitops = _make_gitops()
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._finish_landing") as finish_landing,
+        ):
+            prepare.return_value = LandPrepareResult(
+                status="prepared",
+                branch="042-my-feature",
+                prepared_commit="abc123",
+            )
+            result = land(
+                "042",
+                project_dir=tmp_path,
+                gitops=gitops,
+                options=LandOptions(prepare_only=True),
+            )
+
+        assert result is True
+        prepare.assert_called_once()
+        gitops.merge_pr.assert_not_called()
+        gitops.merge_branch_into_default.assert_not_called()
+        finish_landing.assert_not_called()
+
+    def test_pr_merge_failure_does_not_bypass_pr_with_direct_merge(
+        self, tmp_path: Path
+    ) -> None:
+        state_dir = tmp_path / "runs" / "build-test" / "state"
+        _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
+        gitops = _make_gitops(merge_result=False)
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._finish_landing") as finish_landing,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(
+                status="prepared",
+                branch="042-my-feature",
+                prepared_commit="abc123",
+            )
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        gitops.merge_pr.assert_called_once_with("https://github.com/o/r/pull/7")
+        prepare.assert_called_once()
+        gitops.merge_branch_into_default.assert_not_called()
+        finish_landing.assert_not_called()
+        banner.assert_called_once()
+        assert banner.call_args.args[0] == "LAND — ACTION NEEDED"
+
     def test_returns_false_when_preparation_blocks_on_semantic_conflict(
         self, tmp_path: Path
     ) -> None:
