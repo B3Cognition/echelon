@@ -135,3 +135,53 @@ def test_recover_blocked_run_prefers_preserved_worktree(
     assert result.commit == recovered
     assert result.applied is True
     assert (project / "src" / "from-worktree.txt").read_text(encoding="utf-8") == "worktree\n"
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_treats_empty_cherry_pick_as_already_applied(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    producer = tmp_path / "producer"
+    _git(tmp_path, "clone", str(mirror), str(producer))
+    _git(producer, "config", "user.email", "test@example.com")
+    _git(producer, "config", "user.name", "Test User")
+    _git(producer, "checkout", "001-feature")
+    recovered = _commit_file(
+        producer,
+        "src/generated.txt",
+        "generated\n",
+        "codegen iter-0: generated work",
+    )
+    _git(producer, "push", "origin", "001-feature")
+
+    _commit_file(
+        project,
+        "src/generated.txt",
+        "generated\n",
+        "manual recovery of generated work",
+    )
+    applied_once = _git(project, "rev-parse", "HEAD")
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={"termination_reason": "build_incomplete"},
+        gitops=_make_gitops(project),
+    )
+
+    assert result.source == "mirror"
+    assert result.commit == recovered
+    assert result.applied is False
+    assert _git(project, "rev-parse", "HEAD") == applied_once
+    assert _git(project, "status", "--porcelain", "--untracked-files=no") == ""

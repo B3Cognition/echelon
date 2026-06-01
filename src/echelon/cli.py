@@ -584,8 +584,9 @@ def _cmd_harness_resume(args: list[str]) -> None:
 
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
+    recoverable_reasons = {"build_incomplete", "publish_failed"}
 
-    if current_status != "blocked":
+    if current_status != "blocked" and termination_reason not in recoverable_reasons:
         print(
             f"✗ Spec {spec_id!r} is not blocked (status={current_status!r}).\n"
             "  Use 'echelon harness run <spec_id>' to start or continue.",
@@ -593,7 +594,6 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         sys.exit(1)
 
-    recoverable_reasons = {"build_incomplete", "publish_failed"}
     if termination_reason not in {"verify_command_needed", *recoverable_reasons}:
         print(
             f"✗ Spec {spec_id!r} is blocked for a different reason: {termination_reason!r}.\n"

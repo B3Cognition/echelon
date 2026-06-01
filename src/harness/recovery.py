@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from harness.errors import GitOpsError
 from harness.gitops import _run_git
 
 
@@ -238,7 +239,18 @@ def _apply_commit(
             applied=False,
         )
 
-    _run_git(["cherry-pick", commit], cwd=str(project_dir))
+    try:
+        _run_git(["cherry-pick", commit], cwd=str(project_dir))
+    except GitOpsError as e:
+        if "previous cherry-pick is now empty" in str(e):
+            _run_git(["cherry-pick", "--abort"], cwd=str(project_dir), check=False)
+            return RecoveryResult(
+                source=source_label,
+                commit=commit,
+                target_branch=target_branch,
+                applied=False,
+            )
+        raise HarnessRecoveryError(f"Could not cherry-pick recovered commit {commit}: {e}") from e
     return RecoveryResult(
         source=source_label,
         commit=commit,
