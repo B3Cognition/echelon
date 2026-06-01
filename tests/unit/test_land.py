@@ -274,6 +274,100 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
+def test_prepare_feature_branch_blocks_unsupported_strategy_without_checkout(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(strategy="rebase"),
+    )
+
+    assert result.status == "blocked"
+    assert result.branch == "001-feature"
+    assert "unsupported" in result.message
+    assert "rebase" in result.message
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    gitops.get_default_branch.assert_not_called()
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_blocks_dirty_tracked_worktree_without_checkout(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "blocked"
+    assert result.branch == "001-feature"
+    assert "tracked changes" in result.message
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    gitops.get_default_branch.assert_not_called()
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_reports_merge_conflicts(tmp_path: Path) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "README.md", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    _commit(repo, "README.md", "main\n", "main work")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "blocked"
+    assert result.branch == "001-feature"
+    assert result.conflicted_files == ["README.md"]
+    assert "conflicts" in result.message
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
+
+
+@pytest.mark.unit
 class TestLandIntegration:
     """Integration tests using real tmp dirs and real git repos."""
 

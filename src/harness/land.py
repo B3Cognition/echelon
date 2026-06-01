@@ -45,15 +45,27 @@ def prepare_feature_branch(
     options: LandOptions,
 ) -> LandPrepareResult:
     """Prepare a feature branch by bringing it up to date with the default branch."""
-    default_branch = gitops.get_default_branch()
-    _run_git(["checkout", feature_branch], cwd=str(project_dir))
-
     if options.strategy != "merge":
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
-            message="rebase strategy is not implemented yet",
+            message=f"unsupported land strategy: {options.strategy}",
         )
+
+    dirty = _run_git(
+        ["status", "--porcelain", "--untracked-files=no"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if dirty.stdout.strip():
+        return LandPrepareResult(
+            status="blocked",
+            branch=feature_branch,
+            message="working tree has tracked changes",
+        )
+
+    default_branch = gitops.get_default_branch()
+    _run_git(["checkout", feature_branch], cwd=str(project_dir))
 
     result = _run_git(
         [
