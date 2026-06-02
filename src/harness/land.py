@@ -153,9 +153,14 @@ def _continue_feature_branch_preparation(
         cwd=str(project_dir),
         check=False,
     )
-    if merge_head.returncode == 0:
-        _run_git(["commit", "--no-edit"], cwd=str(project_dir))
+    if merge_head.returncode != 0:
+        return LandPrepareResult(
+            status="blocked",
+            branch=feature_branch,
+            message="no merge in progress to continue",
+        )
 
+    _run_git(["commit", "--no-edit"], cwd=str(project_dir))
     commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
     gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
     return LandPrepareResult(
