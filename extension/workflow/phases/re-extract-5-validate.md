@@ -5,8 +5,8 @@
 ## Context Pack
 
 - `specs/NNN-re-*/spec.md` — all domain specs
-- `.specify/echelon/re/analysis.json` — source code for ambiguity resolution
-- `.specify/echelon/re/state.json` — resolution_pct, validate_iterations, max_validate_iterations
+- `{state.output_dir}/analysis.json` — source code for ambiguity resolution
+- `{state.output_dir}/state.json` — resolution_pct, validate_iterations, max_validate_iterations
 
 ## Dispatch Prompt
 

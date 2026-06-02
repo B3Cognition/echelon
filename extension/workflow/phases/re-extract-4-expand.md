@@ -5,8 +5,8 @@
 ## Context Pack
 
 - `specs/000-re-overview/coverage-report.md` — orphan file clusters
-- `.specify/echelon/re/analysis.json` — file metadata for orphan files
-- `.specify/echelon/re/state.json` — domain list, output_dir
+- `{state.output_dir}/analysis.json` — file metadata for orphan files
+- `{state.output_dir}/state.json` — domain list, output_dir
 
 ## Dispatch Prompt
 

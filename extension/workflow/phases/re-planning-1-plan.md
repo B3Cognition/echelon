@@ -7,7 +7,7 @@
 - `specs/NNN-re-{domain}/spec.md` — domain spec (one per iteration)
 - `constitution.md` — non-negotiable coding rules and target decisions
 - `migration-strategy.md` — 6R/7R per domain
-- `.specify/echelon/re/state.json` — domain list
+- `{state.output_dir}/state.json` — domain list
 
 ## Dispatch Prompt
 

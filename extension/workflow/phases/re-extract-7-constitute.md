@@ -6,8 +6,8 @@
 
 - `specs/NNN-re-*/spec.md`
 - `specs/000-re-overview/checklist.md`
-- `.specify/echelon/re/analysis.json`
-- `.specify/echelon/re/state.json`
+- `{state.output_dir}/analysis.json`
+- `{state.output_dir}/state.json`
 
 ## Dispatch Prompt
 

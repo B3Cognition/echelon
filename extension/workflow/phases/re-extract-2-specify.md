@@ -5,9 +5,9 @@
 ## Context Pack
 
 Provide RE-SPECIFIER with:
-- `.specify/echelon/re/analysis.json` — extracted codebase data
-- `.specify/echelon/re/repos-manifest.json` — polyrepo structure (if exists)
-- `.specify/echelon/re/state.json` — run state (output_dir, domains)
+- `{state.output_dir}/analysis.json` — extracted codebase data
+- `{state.output_dir}/repos-manifest.json` — polyrepo structure (if exists)
+- `{state.output_dir}/state.json` — run state (output_dir, domains)
 
 ## Dispatch Prompt
 

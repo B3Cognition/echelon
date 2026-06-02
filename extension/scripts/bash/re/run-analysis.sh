@@ -37,6 +37,66 @@ if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
     fi
 fi
 
+run_codegraph_bridge() {
+    local bridge_script="$1"
+    local output_path="$2"
+    local codegraph_dir
+    local codegraph_preexisted=false
+
+    codegraph_dir="$(pwd)/.codegraph"
+    if [[ -e "$codegraph_dir" ]]; then
+        codegraph_preexisted=true
+    fi
+
+    node "$bridge_script" analyze \
+        --repo-path "$(pwd)" \
+        --output-path "$output_path" \
+        2>&1 | grep -v "^$" >&2 || true
+
+    # Echelon only needs the normalized JSON artifact. Avoid dirtying target repos
+    # with a transient CodeGraph index, while preserving any pre-existing index.
+    if [[ "$codegraph_preexisted" == "false" && -d "$codegraph_dir" ]]; then
+        rm -rf "$codegraph_dir"
+    fi
+}
+
+write_codegraph_summary() {
+    local analysis_path="$1"
+    local summary_path="$2"
+
+    if [[ ! -f "$analysis_path" ]]; then
+        return 0
+    fi
+
+    jq '{
+        version,
+        generated_at,
+        repo_path,
+        supported,
+        index_state: (.index_stats.index_state // "unknown"),
+        index_stats,
+        language_coverage,
+        coverage,
+        symbol_kinds: ((.symbols // [])
+            | group_by(.kind)
+            | map({kind: (.[0].kind // "unknown"), count: length})
+            | sort_by(.count)
+            | reverse),
+        top_callers: ((.call_graph // [])
+            | group_by(.caller)
+            | map({symbol: (.[0].caller // "unknown"), outgoing_calls: length})
+            | sort_by(.outgoing_calls)
+            | reverse
+            | .[:25]),
+        top_callees: ((.call_graph // [])
+            | group_by(.callee)
+            | map({symbol: (.[0].callee // "unknown"), incoming_calls: length})
+            | sort_by(.incoming_calls)
+            | reverse
+            | .[:25])
+    }' "$analysis_path" > "$summary_path" || true
+}
+
 # ---------- Manifest-driven mode (1 or more repos in subdirectories) ----------
 
 if [[ "$USE_MANIFEST" == "true" ]]; then
@@ -196,18 +256,17 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
 
     # Structural Code Intelligence (conditional — fail-open, non-blocking)
     # Runs once at root level covering all repos via aggregate analysis
-    BRIDGE_SCRIPT="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/codegraph-bridge.js"
-    NODE_MODULES_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/node_modules"
+    RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
+    BRIDGE_SCRIPT="$RE_NODE_DIR/codegraph-bridge.js"
+    NODE_MODULES_DIR="$RE_NODE_DIR/node_modules"
     if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
         if [[ ! -d "$NODE_MODULES_DIR" ]]; then
             echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-            echo "   Run: npm install --prefix scripts/node/re" >&2
+            echo "   Run: npm ci --prefix \"$RE_NODE_DIR\"" >&2
         else
             echo "Running structural analysis (CodeGraph)..." >&2
-            node "$BRIDGE_SCRIPT" analyze \
-                --repo-path "$(pwd)" \
-                --output-path "$OUTPUT_DIR/codegraph-analysis.json" \
-                2>&1 | grep -v "^$" >&2 || true
+            run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
+            write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
         fi
     fi
 
@@ -286,18 +345,17 @@ jq -n \
     }' > "$OUTPUT_DIR/analysis.json"
 
 # Structural Code Intelligence (conditional — fail-open, non-blocking)
-BRIDGE_SCRIPT="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/codegraph-bridge.js"
-NODE_MODULES_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re/node_modules"
+RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
+BRIDGE_SCRIPT="$RE_NODE_DIR/codegraph-bridge.js"
+NODE_MODULES_DIR="$RE_NODE_DIR/node_modules"
 if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
     if [[ ! -d "$NODE_MODULES_DIR" ]]; then
         echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-        echo "   Run: npm install --prefix scripts/node/re" >&2
+        echo "   Run: npm ci --prefix \"$RE_NODE_DIR\"" >&2
     else
         echo "Running structural analysis (CodeGraph)..." >&2
-        node "$BRIDGE_SCRIPT" analyze \
-            --repo-path "$(pwd)" \
-            --output-path "$OUTPUT_DIR/codegraph-analysis.json" \
-            2>&1 | grep -v "^$" >&2 || true
+        run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
+        write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
     fi
 fi
 

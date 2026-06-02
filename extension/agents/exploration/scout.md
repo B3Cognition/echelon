@@ -65,10 +65,11 @@ Read the artifacts directly — no intermediate normalization layer.
 
 **Polyrepo mode** (if `golddigger_artifacts.manifest` exists):
 
-1. Read `.specify/echelon/re/repos-manifest.json` for repo list
-2. Read `.specify/echelon/re/cross-repo.json` for dependency links and shared tech
-3. For each repo: read `.specify/echelon/re/{repo}/analysis.json` for structure, dependencies, git history, hotspots
+1. Read `golddigger_artifacts.manifest` for repo list.
+2. Read `golddigger_artifacts.cross_repo` for dependency links and shared tech.
+3. For each repo: read `golddigger_artifacts.per_repo[]/analysis.json` for structure, dependencies, git history, hotspots.
 4. If domain specs exist (from auto-promoted full-depth repos): read `specs/NNN-re-{repo}-{domain}/spec.md`
+5. If `golddigger_artifacts.codegraph_summary` exists, read it before full CodeGraph analysis; read `golddigger_artifacts.codegraph_analysis` only when structural detail is needed.
 
 Use the data to seed your output artifacts:
 - `repos-manifest.json` → seeds **boundaries** (each repo is a top-level boundary)
@@ -78,8 +79,9 @@ Use the data to seed your output artifacts:
 
 **Single-repo mode** (if `golddigger_artifacts.analysis` exists):
 
-1. Read `.specify/echelon/re/analysis.json` for structure, dependencies, git history, hotspots
+1. Read `golddigger_artifacts.analysis` for structure, dependencies, git history, hotspots.
 2. If domain specs exist: read `specs/NNN-re-{domain}/spec.md`
+3. If `golddigger_artifacts.codegraph_summary` exists, read it before full CodeGraph analysis; read `golddigger_artifacts.codegraph_analysis` only when structural detail is needed.
 
 Use the data to seed your output artifacts:
 - `analysis.json` → seeds **glossary**, **mental-model**, **boundaries**

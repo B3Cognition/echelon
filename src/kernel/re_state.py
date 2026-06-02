@@ -7,9 +7,42 @@ from __future__ import annotations
 
 import copy
 from datetime import datetime, timezone
+from pathlib import Path
+
+DEFAULT_RE_OUTPUT_DIR = ".specify/echelon/re"
+
+
+def resolve_re_output_dir(
+    project_root: str | Path = ".",
+    configured_output_dir: str | None = None,
+) -> str:
+    """Return the RE output directory for the current execution context.
+
+    Standalone re-* commands use the configured/default `.specify/echelon/re`
+    location. When that default is in effect and an active echelon run exists,
+    RE artifacts belong to the active run directory under `runs/<run-id>/re`.
+    """
+    configured = configured_output_dir or DEFAULT_RE_OUTPUT_DIR
+    if configured != DEFAULT_RE_OUTPUT_DIR:
+        return configured
+
+    root = Path(project_root)
+    current = root / "runs" / ".current"
+    if not current.exists():
+        return DEFAULT_RE_OUTPUT_DIR
+
+    run_id = current.read_text().strip()
+    if not run_id:
+        return DEFAULT_RE_OUTPUT_DIR
+
+    run_dir = root / "runs" / run_id
+    if not run_dir.exists():
+        return DEFAULT_RE_OUTPUT_DIR
+
+    return f"runs/{run_id}/re"
 
 def init_re_state(
-    output_dir: str = ".specify/echelon/re",
+    output_dir: str = DEFAULT_RE_OUTPUT_DIR,
     mode: str = "single",
     coverage_threshold: int = 80,
     resolution_threshold: int = 80,
@@ -43,6 +76,8 @@ def init_re_state(
             "analysis_json": f"{output_dir}/analysis.json",
             "repos_manifest": f"{output_dir}/repos-manifest.json",
             "cross_repo": None,
+            "codegraph_analysis": f"{output_dir}/codegraph-analysis.json",
+            "codegraph_summary": f"{output_dir}/codegraph-summary.json",
         },
         "issues_log": [],
     }

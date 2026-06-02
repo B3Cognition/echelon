@@ -38,7 +38,9 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 ### Polyrepo Detection
 
-Check `.specify/echelon/re/repos-manifest.json`:
+Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
+
+Check `$RE_OUTPUT_DIR/repos-manifest.json`:
 - File absent or `repo_count == 1` → single-repo flow.
 - `repo_count > 1` → multi-repo flow: process each repo independently, generate per-repo specs with IDs `NNN-re-{repo}-{domain}`, generate cross-repo overview from `cross-repo.json`, add "Repository Map" table to `specs/000-re-overview/overview.md`.
 
@@ -68,30 +70,32 @@ Depth levels determine how much source code is read:
 
 ### Load Analysis Data
 
-Read `.specify/echelon/re/analysis.json` to extract: `metadata`, `structure.file_counts`, `structure.entry_points`, `dependencies`, `git_history.commits`, `git_history.hotspots`, `configs`.
+Read `$RE_OUTPUT_DIR/analysis.json` to extract: `metadata`, `structure.file_counts`, `structure.entry_points`, `dependencies`, `git_history.commits`, `git_history.hotspots`, `configs`.
 
 ### Load Structural Intelligence (REQUIRED if available)
 
-Check whether `.specify/echelon/re/codegraph-analysis.json` exists.
+Check whether `$RE_OUTPUT_DIR/codegraph-summary.json` exists, then whether `$RE_OUTPUT_DIR/codegraph-analysis.json` exists.
 
-**If it exists — always read it and extract before identifying domains. Do not skip.**
+**If summary exists — read it first** to get counts, symbol kinds, top callers, top callees, and index state.
+
+**If full analysis exists — read it only when domain identification needs modules, inheritance, or cross-file call detail not present in the summary.**
 
 Produce a named summary called **CG**:
 ```
-CG.hub_functions     = symbols in call_graph[] with 3+ unique callers (sort by incoming call count desc)
-CG.cross_file_pairs  = call_graph[] entries where caller file_path ≠ callee file_path
+CG.hub_functions     = summary.top_callees with 3+ incoming calls, enriched from full call_graph[] when needed
+CG.cross_file_pairs  = full call_graph[] entries where caller file_path ≠ callee file_path
 CG.modules           = group symbols[] by file_path, sorted by symbol count desc (top 20 files)
 CG.inheritance       = type_hierarchy[] entries (child → parent relationships)
 CG.domain_clusters   = for each file in CG.modules: list all qualified_names, count outgoing cross-file calls
-CG.index_state       = index_stats.index_state ("ready" | "degraded")
-CG.total_symbols     = index_stats.total_symbols (or length of symbols[])
+CG.index_state       = summary.index_state or index_stats.index_state ("ready" | "degraded")
+CG.total_symbols     = summary.index_stats.total_nodes or index_stats.total_symbols or length of symbols[]
 ```
 
 Print: `[CodeGraph] {CG.total_symbols} symbols | {len(CG.cross_file_pairs)} cross-file calls | {len(CG.hub_functions)} hub functions | state: {CG.index_state}`
 
 If `CG.index_state` is `"degraded"`: treat as supplementary signal only.
 
-**If the file does not exist**: set CG = null.
+**If neither file exists**: set CG = null.
 
 ### Identify Functional Domains
 

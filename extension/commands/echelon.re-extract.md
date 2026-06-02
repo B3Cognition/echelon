@@ -14,7 +14,9 @@ framework: role separation, governance constraints, dispatch protocols, and all 
 
 Then read `workflow/definition.yaml` `re_extraction:` section. Start at phase
 `re-extract-0-preflight`, read each phase node's `spec_file` before dispatching,
-write all state to `.specify/echelon/re/state.json`.
+and write all state to the resolved RE output directory:
+- active `echelon run`: `runs/<run-id>/re/state.json`
+- standalone `re-*`: `.specify/echelon/re/state.json`
 
 **This command always extracts and specifies. It never writes implementation code.**
 
@@ -22,7 +24,7 @@ write all state to `.specify/echelon/re/state.json`.
 
 ## Resumption
 
-If `.specify/echelon/re/state.json` exists with `status: in_progress`, resume from
+If the resolved RE `state.json` exists with `status: in_progress`, resume from
 `last_dispatch.phase_id`. If `post_dispatch_complete: false`, re-run that phase
 before advancing.
 

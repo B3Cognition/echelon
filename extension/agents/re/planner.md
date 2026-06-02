@@ -50,9 +50,13 @@ Use Glob to find all `specs/[0-9][0-9][0-9]-re-*/` directories. If none found, r
 
 ### Step 3: Load Structural Intelligence (REQUIRED if available)
 
-Check whether `.specify/echelon/re/codegraph-analysis.json` exists.
+Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
 
-**If it exists — always read it now before Step 4. Do not skip.**
+Check whether `$RE_OUTPUT_DIR/codegraph-summary.json` exists, then whether `$RE_OUTPUT_DIR/codegraph-analysis.json` exists.
+
+**If summary exists — read it first** to get index state, top callers/callees, and graph size.
+
+**If full analysis exists — read it only when planning needs impact radius, coupled pairs, or dependency ordering.**
 
 Extract:
 ```
@@ -63,12 +67,12 @@ CG.coupled_pairs  = call_graph[] entries where caller file ≠ callee file, grou
                     sorted by pair call count descending
 CG.dep_order      = relationships[] where kind in ["extends","implements","imports"],
                     as edges: target must be implemented before source
-CG.index_state    = index_stats.index_state
+CG.index_state    = summary.index_state or index_stats.index_state
 ```
 
 Print: `[CodeGraph] Impact map: {len(CG.impact_map)} symbols | Top coupled pair: {CG.coupled_pairs[0]} | Dep edges: {len(CG.dep_order)} | state: {CG.index_state}`
 
-**If the file does not exist**: set CG = null.
+**If neither file exists**: set CG = null.
 
 ### Step 4: Generate Plan for Each Domain
 

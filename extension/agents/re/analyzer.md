@@ -36,18 +36,20 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Verify the workspace looks like a project root. Check for `.git`, `package.json`, `pyproject.toml`, `go.mod`, or `Cargo.toml`. If none are present, note a warning but continue.
 
-**Polyrepo marker check**: When `.specify/echelon/re/repos-manifest.json` exists and `repo_count > 1`, the root-level `analysis.json` may be absent — check per-repo paths `.specify/echelon/re/{repo-name}/analysis.json` instead. Missing root-level `analysis.json` is expected in polyrepo mode.
+Read `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir` (default `.specify/echelon/re` for standalone RE, `runs/<run-id>/re` during an active echelon run).
+
+**Polyrepo marker check**: When `$RE_OUTPUT_DIR/repos-manifest.json` exists and `repo_count > 1`, the root-level `analysis.json` may be absent — check per-repo paths `$RE_OUTPUT_DIR/{repo-name}/analysis.json` instead. Missing root-level `analysis.json` is expected in polyrepo mode.
 
 ### Step 2: Create Output Directory
 
 ```bash
-mkdir -p ".specify/echelon/re"
+mkdir -p "$RE_OUTPUT_DIR"
 ```
 
 ### Step 3: Run Repo Discovery
 
 ```bash
-"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" ".specify/echelon/re/repos-manifest.json"
+"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" "$RE_OUTPUT_DIR/repos-manifest.json"
 ```
 
 Read the resulting `repos-manifest.json`:
@@ -59,12 +61,12 @@ Read the resulting `repos-manifest.json`:
 Resolve config then run analysis:
 
 ```bash
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)" && "$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" ".specify/echelon/re" ".specify/echelon/re/repos-manifest.json"
+eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)" && "$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" "$RE_OUTPUT_DIR" "$RE_OUTPUT_DIR/repos-manifest.json"
 ```
 
 The script produces:
-1. Per-repo data in `.specify/echelon/re/{repo-name}/analysis.json` for each repo.
-2. `.specify/echelon/re/cross-repo.json` when `repo_count > 1`.
+1. Per-repo data in `$RE_OUTPUT_DIR/{repo-name}/analysis.json` for each repo.
+2. `$RE_OUTPUT_DIR/cross-repo.json` when `repo_count > 1`.
 
 ### Step 5: Summarize Outputs
 
@@ -74,26 +76,27 @@ Display summary of produced files:
 Analysis complete! ({N} repo(s))
 
 Per-repo analysis:
-  - .specify/echelon/re/{repo-name}/analysis.json
-  - .specify/echelon/re/{repo-name}/structure.json
-  - .specify/echelon/re/{repo-name}/dependencies.json
-  - .specify/echelon/re/{repo-name}/git-history.json
-  - .specify/echelon/re/{repo-name}/configs.json
+  - $RE_OUTPUT_DIR/{repo-name}/analysis.json
+  - $RE_OUTPUT_DIR/{repo-name}/structure.json
+  - $RE_OUTPUT_DIR/{repo-name}/dependencies.json
+  - $RE_OUTPUT_DIR/{repo-name}/git-history.json
+  - $RE_OUTPUT_DIR/{repo-name}/configs.json
 
 Aggregate:
-  - .specify/echelon/re/analysis.json       (aggregate summary)
-  - .specify/echelon/re/repos-manifest.json (repo list)
-  - .specify/echelon/re/cross-repo.json     (only if repo_count > 1)
+  - $RE_OUTPUT_DIR/analysis.json       (aggregate summary)
+  - $RE_OUTPUT_DIR/repos-manifest.json (repo list)
+  - $RE_OUTPUT_DIR/cross-repo.json     (only if repo_count > 1)
 ```
 
 ### Step 6: CodeGraph (Optional)
 
 `run-analysis.sh` automatically runs the CodeGraph bridge when Node.js and `scripts/node/re/codegraph-bridge.js` are available.
 
-**If `.specify/echelon/re/codegraph-analysis.json` was produced**, include in the summary:
+**If `$RE_OUTPUT_DIR/codegraph-analysis.json` was produced**, include in the summary:
 - Total symbols: `.index_stats.total_symbols`
 - Languages covered: keys of `.language_coverage` where value is `"supported"`
 - Index state: `.index_stats.index_state` (`"ready"` or `"degraded"`)
+- Compact summary: `$RE_OUTPUT_DIR/codegraph-summary.json`
 
 **If not produced** (Node.js unavailable, bridge missing, or extraction failed): note this — downstream agents fall back to file-level analysis automatically.
 
@@ -107,11 +110,16 @@ echelon_result:
     mode: single | polyrepo
     domains: []
     artifacts:
-      analysis_json: .specify/echelon/re/analysis.json
-      repos_manifest: .specify/echelon/re/repos-manifest.json
+      analysis_json: "{RE_OUTPUT_DIR}/analysis.json"
+      repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
       cross_repo: null
+      codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json" | null
+      codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json" | null
   output_files:
-    - .specify/echelon/re/analysis.json
+    - "{RE_OUTPUT_DIR}/analysis.json"
+    # Include only when produced:
+    - "{RE_OUTPUT_DIR}/codegraph-analysis.json"
+    - "{RE_OUTPUT_DIR}/codegraph-summary.json"
   journal_entries:
     - type: phase_complete
       phase: re-extract-1-analyze

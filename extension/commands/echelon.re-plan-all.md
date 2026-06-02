@@ -13,7 +13,8 @@ You are COMMANDER executing the brownfield planning phase.
 
 Then read `workflow/definition.yaml` `re_planning:` section. Start at phase
 `re-planning-0-preflight`, read each phase node's `spec_file` before dispatching,
-write all state to `.specify/echelon/re/state.json`.
+write all state to the resolved RE output directory (`runs/<run-id>/re/state.json`
+during an active `echelon run`, otherwise `.specify/echelon/re/state.json`).
 
 **This command always generates plans and tasks. It never writes implementation code.**
 
@@ -21,7 +22,7 @@ write all state to `.specify/echelon/re/state.json`.
 
 ## Resumption
 
-If `.specify/echelon/re/state.json` exists with `status: in_progress` and
+If the resolved RE `state.json` exists with `status: in_progress` and
 `last_dispatch.phase_id` in `re_planning:`, resume from there. If
 `post_dispatch_complete: false`, re-run that phase before advancing.
 

@@ -5,8 +5,8 @@
 ## Context Pack
 
 - `specs/NNN-re-*/spec.md` — all current domain specs
-- `.specify/echelon/re/analysis.json` — full file list for coverage computation
-- `.specify/echelon/re/state.json` — current coverage_pct, verify_expand_iterations
+- `{state.output_dir}/analysis.json` — full file list for coverage computation
+- `{state.output_dir}/state.json` — current coverage_pct, verify_expand_iterations
 
 ## Dispatch Prompt
 

@@ -986,7 +986,7 @@ Echelon includes native brownfield extraction for reverse-engineering existing c
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.re-analyze` | Extract structured data from codebase → `.specify/echelon/re/analysis.json` |
+| `speckit.echelon.re-analyze` | Extract structured data from codebase → `runs/<run-id>/re/analysis.json` during `echelon run`, or `.specify/echelon/re/analysis.json` standalone, plus optional CodeGraph artifacts |
 | `speckit.echelon.re-specify` | Generate domain specs with coverage tracking |
 | `speckit.echelon.re-verify` | Verify spec coverage; identify orphan files |
 | `speckit.echelon.re-expand` | Fill coverage gaps from orphan file clusters |

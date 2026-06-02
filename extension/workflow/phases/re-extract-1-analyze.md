@@ -5,7 +5,7 @@
 ## Context Pack
 
 Provide RE-ANALYZER with:
-- `.specify/echelon/re/state.json` — current run state (output_dir, mode)
+- `{state.output_dir}/state.json` — current run state (output_dir, mode)
 - `echelon-config.yml` `re:` section — analysis scope, extensions, depth settings
 
 ## Dispatch Prompt
@@ -20,10 +20,11 @@ Instruct RE-ANALYZER to:
 
 | File | Required |
 |---|---|
-| `.specify/echelon/re/analysis.json` | Yes |
-| `.specify/echelon/re/repos-manifest.json` | Yes |
-| `.specify/echelon/re/cross-repo.json` | Polyrepo only |
-| `.specify/echelon/re/codegraph-analysis.json` | Optional (Node.js) |
+| `{state.output_dir}/analysis.json` | Yes |
+| `{state.output_dir}/repos-manifest.json` | Yes |
+| `{state.output_dir}/cross-repo.json` | Polyrepo only |
+| `{state.output_dir}/codegraph-analysis.json` | Optional (Node.js) |
+| `{state.output_dir}/codegraph-summary.json` | Optional (Node.js) |
 
 ## echelon_result schema
 
@@ -35,11 +36,16 @@ echelon_result:
     mode: single | polyrepo
     domains: []
     artifacts:
-      analysis_json: .specify/echelon/re/analysis.json
-      repos_manifest: .specify/echelon/re/repos-manifest.json
+      analysis_json: "{state.output_dir}/analysis.json"
+      repos_manifest: "{state.output_dir}/repos-manifest.json"
       cross_repo: null
+      codegraph_analysis: "{state.output_dir}/codegraph-analysis.json" | null
+      codegraph_summary: "{state.output_dir}/codegraph-summary.json" | null
   output_files:
-    - .specify/echelon/re/analysis.json
+    - "{state.output_dir}/analysis.json"
+    # Include only when produced:
+    - "{state.output_dir}/codegraph-analysis.json"
+    - "{state.output_dir}/codegraph-summary.json"
   journal_entries:
     - type: phase_complete
       phase: re-extract-1-analyze

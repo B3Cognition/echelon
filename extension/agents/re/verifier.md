@@ -34,7 +34,9 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 ### Step 1: Load File Inventory
 
-Check `.specify/echelon/re/repos-manifest.json` for repo count. Read `.specify/echelon/re/analysis.json` to get `metadata.total_files`.
+Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
+
+Check `$RE_OUTPUT_DIR/repos-manifest.json` for repo count. Read `$RE_OUTPUT_DIR/analysis.json` to get `metadata.total_files`.
 
 Use the Glob tool to enumerate all source file paths on disk. Load `source_extensions` from resolved config (`specify extension config resolve echelon --format json`) or use built-in defaults:
 

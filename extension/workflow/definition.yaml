@@ -1304,7 +1304,7 @@ escalation:
 # =============================================================================
 re_extraction:
 
-  state_file: .specify/echelon/re/state.json
+  state_file: "{state.output_dir}/state.json"
 
   phases:
 
@@ -1323,12 +1323,12 @@ re_extraction:
       agent: speckit-echelon-re-analyzer
       tier: re_extraction
       context_pack:
-        - .specify/echelon/re/state.json
+        - "{state.output_dir}/state.json"
         - echelon-config.yml (re: section)
       outputs:
-        - .specify/echelon/re/analysis.json
-        - .specify/echelon/re/repos-manifest.json   # polyrepo only
-        - .specify/echelon/re/cross-repo.json        # polyrepo only
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/repos-manifest.json"   # polyrepo only
+        - "{state.output_dir}/cross-repo.json"        # polyrepo only
       transitions:
         - to: re-extract-2-specify
           condition: verdict = DONE
@@ -1340,9 +1340,9 @@ re_extraction:
       agent: speckit-echelon-re-specifier
       tier: re_extraction
       context_pack:
-        - .specify/echelon/re/analysis.json
-        - .specify/echelon/re/state.json
-        - .specify/echelon/re/repos-manifest.json    # if exists
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/state.json"
+        - "{state.output_dir}/repos-manifest.json"    # if exists
       outputs:
         - specs/000-re-overview/overview.md
         - specs/NNN-re-{domain}/spec.md               # one per domain
@@ -1358,8 +1358,8 @@ re_extraction:
       tier: re_extraction
       context_pack:
         - specs/NNN-re-*/spec.md
-        - .specify/echelon/re/analysis.json
-        - .specify/echelon/re/state.json
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/state.json"
       outputs:
         - specs/000-re-overview/coverage-report.md
         - state.json[coverage_pct, verify_expand_iterations]
@@ -1377,8 +1377,8 @@ re_extraction:
       tier: re_extraction
       context_pack:
         - specs/000-re-overview/coverage-report.md
-        - .specify/echelon/re/analysis.json
-        - .specify/echelon/re/state.json
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/state.json"
       outputs:
         - specs/NNN-re-{domain}/spec.md    # new or expanded domains
         - state.json[verify_expand_iterations]
@@ -1394,8 +1394,8 @@ re_extraction:
       tier: re_extraction
       context_pack:
         - specs/NNN-re-*/spec.md
-        - .specify/echelon/re/analysis.json
-        - .specify/echelon/re/state.json
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/state.json"
       outputs:
         - specs/000-re-overview/validation-report.md
         - state.json[resolution_pct, validate_iterations]
@@ -1431,8 +1431,8 @@ re_extraction:
       context_pack:
         - specs/NNN-re-*/spec.md
         - specs/000-re-overview/checklist.md
-        - .specify/echelon/re/analysis.json
-        - .specify/echelon/re/state.json
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/state.json"
       outputs:
         - constitution.md
         - migration-strategy.md
@@ -1448,7 +1448,7 @@ re_extraction:
 # =============================================================================
 re_retarget:
 
-  state_file: .specify/echelon/re/state.json
+  state_file: "{state.output_dir}/state.json"
 
   phases:
 
@@ -1473,7 +1473,7 @@ re_retarget:
 # =============================================================================
 re_planning:
 
-  state_file: .specify/echelon/re/state.json
+  state_file: "{state.output_dir}/state.json"
 
   phases:
 
@@ -1495,7 +1495,7 @@ re_planning:
         - specs/NNN-re-{domain}/spec.md
         - constitution.md
         - migration-strategy.md
-        - .specify/echelon/re/state.json
+        - "{state.output_dir}/state.json"
       outputs:
         - specs/NNN-re-{domain}/plan.md
       transitions:

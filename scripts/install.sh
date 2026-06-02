@@ -8,6 +8,7 @@ SOAR_VERSION="9.6.4"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
+RE_NODE_DIR="$ECHELON_DIR/extension/scripts/node/re"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -127,13 +128,28 @@ with open(sys.argv[2], 'w') as f:
 " "$JETYPES_YAML" "$JETYPES_JSON"
 echo "  ✓ journal-entry-types.json generated"
 
-# ── 3. Memory directory ──────────────────────────────────────────────────────
+# ── 3. RE CodeGraph bridge dependencies ─────────────────────────────────────
+echo "▶ Installing RE CodeGraph bridge dependencies..."
+if ! command -v node &>/dev/null; then
+  echo "  ⚠ Node.js not found; RE CodeGraph structural analysis will be skipped."
+  echo "    Install Node.js, then run: npm ci --prefix \"$RE_NODE_DIR\""
+elif ! command -v npm &>/dev/null; then
+  echo "  ⚠ npm not found; RE CodeGraph structural analysis will be skipped."
+  echo "    Install npm, then run: npm ci --prefix \"$RE_NODE_DIR\""
+elif [ ! -f "$RE_NODE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $RE_NODE_DIR; skipping RE CodeGraph bridge deps."
+else
+  npm ci --prefix "$RE_NODE_DIR" --silent
+  echo "  ✓ CodeGraph bridge dependencies installed → $RE_NODE_DIR/node_modules"
+fi
+
+# ── 4. Memory directory ──────────────────────────────────────────────────────
 echo "▶ Setting up memory directory..."
 mkdir -p "$MEMORY_DIR"
 chmod 700 "$MEMORY_DIR"
 echo "  ✓ $MEMORY_DIR (permissions 700)"
 
-# ── 4. Warm up embedding model ───────────────────────────────────────────────
+# ── 5. Warm up embedding model ───────────────────────────────────────────────
 echo "▶ Warming up embedding model (downloads ~80MB on first run)..."
 "$VENV_DIR/bin/python" -c "
 import chromadb, os
@@ -160,6 +176,11 @@ echo "  echelon       → $VENV_DIR/bin/echelon"
 echo "  codegen       → $VENV_DIR/bin/codegen"
 echo "  understanding → $VENV_DIR/bin/understanding"
 echo "  harness       → $VENV_DIR/bin/harness"
+if [ -d "$RE_NODE_DIR/node_modules" ]; then
+  echo "  CodeGraph bridge → $RE_NODE_DIR/node_modules"
+else
+  echo "  CodeGraph bridge → not ready (run: npm ci --prefix \"$RE_NODE_DIR\")"
+fi
 echo "  Memory        → $MEMORY_DIR"
 echo ""
 echo "  Register the spec-kit extension:"

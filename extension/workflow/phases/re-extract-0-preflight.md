@@ -17,7 +17,19 @@ If exit code non-zero: report error "jq is required for brownfield extraction. I
 ### 2. Output directory
 
 ```bash
-mkdir -p .specify/echelon/re
+CONFIGURED_OUTPUT_DIR=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.output.directory 2>/dev/null || echo ".specify/echelon/re")
+if [ "$CONFIGURED_OUTPUT_DIR" = ".specify/echelon/re" ] && [ -f runs/.current ]; then
+  RUN_ID=$(cat runs/.current)
+  if [ -n "$RUN_ID" ] && [ -d "runs/$RUN_ID" ]; then
+    OUTPUT_DIR="runs/$RUN_ID/re"
+  else
+    OUTPUT_DIR="$CONFIGURED_OUTPUT_DIR"
+  fi
+else
+  OUTPUT_DIR="$CONFIGURED_OUTPUT_DIR"
+fi
+export OUTPUT_DIR
+mkdir -p "$OUTPUT_DIR"
 ```
 
 ### 3. Codebase non-empty
@@ -32,17 +44,25 @@ COVERAGE_THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-confi
 RESOLUTION_THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.resolution_threshold 2>/dev/null || echo "80")
 MAX_VALIDATE=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.max_validate_iterations 2>/dev/null || echo "3")
 MAX_VERIFY_EXPAND=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.workflow.max_verify_expand_iterations 2>/dev/null || echo "5")
-OUTPUT_DIR=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh re.output.directory 2>/dev/null || echo ".specify/echelon/re")
+export COVERAGE_THRESHOLD RESOLUTION_THRESHOLD MAX_VALIDATE MAX_VERIFY_EXPAND
 ```
 
-### 5. Initialize `.specify/echelon/re/state.json`
+### 5. Initialize RE `state.json`
 
 If the file does not exist, create it:
 
 ```python
 import json, sys, os
 from pathlib import Path
-state_path = Path('.specify/echelon/re/state.json')
+output_dir = os.environ.get('OUTPUT_DIR', '.specify/echelon/re')
+if output_dir == '.specify/echelon/re':
+    current = Path('runs/.current')
+    if current.exists():
+        run_id = current.read_text().strip()
+        if run_id and Path('runs', run_id).exists():
+            output_dir = f'runs/{run_id}/re'  # rendered as runs/{run_id}/re in docs
+Path(output_dir).mkdir(parents=True, exist_ok=True)
+state_path = Path(output_dir) / 'state.json'
 if not state_path.exists():
     from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -50,7 +70,7 @@ if not state_path.exists():
         'run_id': f're-{ts}', 'status': 'in_progress',
         'phase': 're-extract-0-preflight',
         'last_dispatch': {'phase_id': None, 'agent': None, 'post_dispatch_complete': False, 'dispatched_at': None},
-        'mode': 'single', 'output_dir': os.environ.get('OUTPUT_DIR', '.specify/echelon/re'),
+        'mode': 'single', 'output_dir': output_dir,
         'domains': [], 'coverage_pct': 0,
         'coverage_threshold': int(os.environ.get('COVERAGE_THRESHOLD', 80)),
         'verify_expand_iterations': 0, 'resolution_pct': 0,
@@ -58,8 +78,11 @@ if not state_path.exists():
         'validate_iterations': 0,
         'max_validate_iterations': int(os.environ.get('MAX_VALIDATE', 3)),
         'max_verify_expand_iterations': int(os.environ.get('MAX_VERIFY_EXPAND', 5)),
-        'artifacts': {'analysis_json': '.specify/echelon/re/analysis.json',
-                      'repos_manifest': '.specify/echelon/re/repos-manifest.json', 'cross_repo': None},
+        'artifacts': {'analysis_json': f'{output_dir}/analysis.json',
+                      'repos_manifest': f'{output_dir}/repos-manifest.json',
+                      'cross_repo': None,
+                      'codegraph_analysis': f'{output_dir}/codegraph-analysis.json',
+                      'codegraph_summary': f'{output_dir}/codegraph-summary.json'},
         'issues_log': []
     }
     state_path.parent.mkdir(parents=True, exist_ok=True)

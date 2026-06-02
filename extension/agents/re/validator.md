@@ -41,26 +41,30 @@ workflow:
   max_validate_iterations: 3  # Max loop iterations
 ```
 
-Load all domain specs (`specs/[0-9][0-9][0-9]-re-*/spec.md`), overview, and analysis data.
+Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
+
+Load all domain specs (`specs/[0-9][0-9][0-9]-re-*/spec.md`), overview, and analysis data from `$RE_OUTPUT_DIR`.
 
 ### Load Structural Intelligence (REQUIRED if available)
 
-Check whether `.specify/echelon/re/codegraph-analysis.json` exists.
+Check whether `$RE_OUTPUT_DIR/codegraph-summary.json` exists, then whether `$RE_OUTPUT_DIR/codegraph-analysis.json` exists.
 
-**If it exists — always read it now. Do not defer.**
+**If summary exists — read it first** to get index state, supported languages, and graph size before deciding how much full graph detail is needed.
+
+**If full analysis exists — read it only when validating symbol references or public API/export status.**
 
 Extract:
 ```
 CG.symbols_by_name   = index of symbols[] keyed by name (lowercase) and qualified_name
 CG.exported_symbols  = symbols[] where is_exported=true (the public API surface)
-CG.index_state       = index_stats.index_state
-CG.total_symbols     = length of symbols[]
-CG.supported_langs   = keys of language_coverage where value = "supported"
+CG.index_state       = summary.index_state or index_stats.index_state
+CG.total_symbols     = summary.index_stats.total_nodes or length of symbols[]
+CG.supported_langs   = keys of summary.language_coverage or language_coverage where value = "supported"
 ```
 
 Print: `[CodeGraph] {CG.total_symbols} symbols indexed | public API: {len(CG.exported_symbols)} exported | languages: {CG.supported_langs} | state: {CG.index_state}`
 
-**If the file does not exist**: set CG = null.
+**If neither file exists**: set CG = null.
 
 ### Build Semantic Model
 

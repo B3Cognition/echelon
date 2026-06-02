@@ -110,7 +110,12 @@ re:
 Read the repos manifest to determine if this is a polyrepo:
 
 ```bash
-MANIFEST=".specify/echelon/re/repos-manifest.json"
+RE_OUTPUT_DIR="${RE_OUTPUT_DIR:-runs/$(cat runs/.current 2>/dev/null)/re}"
+if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
+  RE_OUTPUT_DIR=".specify/echelon/re"  # standalone fallback
+fi
+MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
+export MANIFEST
 if [ -f "$MANIFEST" ]; then
     MODE=$(jq -r '.mode' "$MANIFEST")
 else
@@ -134,7 +139,7 @@ THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh 
 python3 -c "
 import json, os, yaml
 
-with open('.specify/echelon/re/repos-manifest.json') as f:
+with open(os.environ['MANIFEST']) as f:
     manifest = json.load(f)
 
 threshold = int('$THRESHOLD')
@@ -225,6 +230,15 @@ Under NO circumstances should `golddigger_notes` contain "manual code analysis u
 
 **No brownfield index normalization.** Return artifact paths directly in `echelon_result.state_updates`.
 
+Resolve the RE artifact directory before building `golddigger_artifacts`:
+
+```bash
+RE_OUTPUT_DIR="${RE_OUTPUT_DIR:-runs/$(cat runs/.current 2>/dev/null)/re}"
+if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
+  RE_OUTPUT_DIR=".specify/echelon/re"  # standalone fallback
+fi
+```
+
 Remove the config override first:
 
 ```bash
@@ -239,10 +253,12 @@ echelon_result:
     golddigger_status: complete
     golddigger_mode: polyrepo-survey
     golddigger_artifacts:
-      manifest: .specify/echelon/re/repos-manifest.json
-      cross_repo: .specify/echelon/re/cross-repo.json
+      manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
+      cross_repo: "{RE_OUTPUT_DIR}/cross-repo.json"
       per_repo:
-        - .specify/echelon/re/<repo-name>/
+        - "{RE_OUTPUT_DIR}/<repo-name>/"
+      codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json"
+      codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"
     golddigger_notes: []
 ```
 
@@ -254,7 +270,9 @@ echelon_result:
     golddigger_status: complete
     golddigger_mode: survey
     golddigger_artifacts:
-      analysis: .specify/echelon/re/analysis.json
+      analysis: "{RE_OUTPUT_DIR}/analysis.json"
+      codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json"
+      codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"
       specs: specs/
     golddigger_notes: []
 ```
@@ -383,7 +401,7 @@ speckit-echelon-scout (SCOUT) will detect `golddigger_status: "failed"` in state
 ```
 speckit-echelon-golddigger (GOLDDIGGER) SURVEY COMPLETE
 Status: <complete|partial|failed>
-Artifacts: .specify/echelon/re/analysis.json
+Artifacts: {RE_OUTPUT_DIR}/analysis.json
 ```
 
 **Mode 1 (polyrepo):**
@@ -391,8 +409,8 @@ Artifacts: .specify/echelon/re/analysis.json
 speckit-echelon-golddigger (GOLDDIGGER) POLYREPO SURVEY COMPLETE
 Status: <complete|partial|failed>
 Repos: <count>
-Manifest: .specify/echelon/re/repos-manifest.json
-Cross-repo: .specify/echelon/re/cross-repo.json
+Manifest: {RE_OUTPUT_DIR}/repos-manifest.json
+Cross-repo: {RE_OUTPUT_DIR}/cross-repo.json
 ```
 
 **Mode 2:**

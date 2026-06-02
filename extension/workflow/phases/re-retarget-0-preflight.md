@@ -5,7 +5,7 @@
 ## Preflight checks
 
 ### 1. analysis.json exists
-Read `.specify/echelon/re/analysis.json` using Read tool. If not found: HARD STOP — "Run /speckit.echelon.re-extract first."
+Read `{state.output_dir}/analysis.json` using Read tool. If not found: HARD STOP — "Run /speckit.echelon.re-extract first."
 
 ### 2. Strategic stubs exist
 Check that `constitution.md` exists (created by re-extract Phase 7). If not found: HARD STOP — "Run /speckit.echelon.re-extract first to generate strategic artifacts."

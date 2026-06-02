@@ -34,7 +34,9 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 ### Step 1: Load Inputs
 
-Read from `.specify/echelon/re/analysis.json`:
+Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
+
+Read from `$RE_OUTPUT_DIR/analysis.json`:
 - `structure.file_counts` — language/technology breakdown.
 - `dependencies` — external packages and versions.
 - `git_history.hotspots` — frequently changed files (problem areas).
@@ -45,7 +47,7 @@ Also read all domain specs (`specs/[0-9][0-9][0-9]-re-*/spec.md`) and `specs/000
 
 **Preset detection**: Check whether `.specify/presets/echelon-brownfield-*/` exists. If preset templates are present, use them as the base for all generated documents.
 
-**Polyrepo check**: If `.specify/echelon/re/repos-manifest.json` has `repo_count > 1`, also read `.specify/echelon/re/cross-repo.json` for cross-repo dependency data.
+**Polyrepo check**: If `$RE_OUTPUT_DIR/repos-manifest.json` has `repo_count > 1`, also read `$RE_OUTPUT_DIR/cross-repo.json` for cross-repo dependency data.
 
 ### Step 2: Create Output Directory
 

@@ -52,6 +52,18 @@ assert_file_not_exists() {
     fi
 }
 
+assert_path_not_exists() {
+    local label="$1"
+    local path="$2"
+    if [[ ! -e "$path" ]]; then
+        echo "  PASS: $label"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "  FAIL: $label (path should not exist: $path)"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+}
+
 assert_json_field() {
     local label="$1"
     local file="$2"
@@ -100,6 +112,11 @@ trap 'rm -rf "$TMPDIR1"' EXIT
 assert_file_exists "analysis.json at root output dir" "$TMPDIR1/analysis.json"
 assert_file_exists "structure.json at root output dir" "$TMPDIR1/structure.json"
 assert_file_exists "dependencies.json at root output dir" "$TMPDIR1/dependencies.json"
+if [[ -f "$TMPDIR1/codegraph-analysis.json" ]]; then
+    assert_file_exists "codegraph-summary.json at root output dir" "$TMPDIR1/codegraph-summary.json"
+    assert_json_field "codegraph summary has index_state" "$TMPDIR1/codegraph-summary.json" '.index_state' "ready"
+fi
+assert_path_not_exists "single-repo fixture remains free of .codegraph" "$FIXTURES_DIR/single-repo/.codegraph"
 
 # Should NOT have any subdirectories with analysis.json
 SUBDIRS_WITH_ANALYSIS=$(find "$TMPDIR1" -mindepth 2 -name "analysis.json" 2>/dev/null | wc -l | tr -d ' ')
@@ -124,6 +141,7 @@ assert_eq "manifest repo_count is 1 (root is repo)" "1" "$MANIFEST2_COUNT"
 (cd "$FIXTURES_DIR/single-repo" && "$RUN_ANALYSIS" "$TMPDIR2" "$MANIFEST2" 2>/dev/null)
 
 assert_file_exists "analysis.json at root output dir" "$TMPDIR2/analysis.json"
+assert_path_not_exists "single-repo manifest run remains free of .codegraph" "$FIXTURES_DIR/single-repo/.codegraph"
 
 # Should have 1 subdirectory (single-repo/) with analysis.json
 SUBDIRS_WITH_ANALYSIS2=$(find "$TMPDIR2" -mindepth 2 -name "analysis.json" 2>/dev/null | wc -l | tr -d ' ')
@@ -152,6 +170,7 @@ assert_eq "manifest repo_count is 3" "3" "$MANIFEST3_COUNT"
 assert_file_exists "repo-a/analysis.json exists" "$TMPDIR3/repo-a/analysis.json"
 assert_file_exists "repo-b/analysis.json exists" "$TMPDIR3/repo-b/analysis.json"
 assert_file_exists "repo-c/analysis.json exists" "$TMPDIR3/repo-c/analysis.json"
+assert_path_not_exists "polyrepo fixture remains free of .codegraph" "$FIXTURES_DIR/polyrepo/.codegraph"
 
 # cross-repo.json at root
 assert_file_exists "cross-repo.json exists" "$TMPDIR3/cross-repo.json"

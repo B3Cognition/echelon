@@ -15,8 +15,8 @@ NEVER infer phase routing or outputs from memory.
 ALWAYS execute only the phase named by the calling command.
 NEVER advance to the next transition after the single requested phase completes.
 
-ALWAYS dispatch the phase agent, write the result to `.specify/echelon/re/state.json`, then stop.
-NEVER write state anywhere else for these commands.
+ALWAYS dispatch the phase agent, write the result to the resolved RE `state.json`, then stop.
+NEVER write state outside the resolved RE output directory for these commands.
 
 ## Resumption
 
