@@ -18,6 +18,7 @@ class TestCmdLand:
         assert "--continue" in help_text
         assert "--prepare-only" in help_text
         assert "--no-autoresolve" in help_text
+        assert "--allow-fulfillment-gaps" in help_text
         assert "--strategy merge|rebase" in help_text
 
     @patch("harness.land.land")
@@ -52,6 +53,7 @@ class TestCmdLand:
         assert options.prepare_only is False
         assert options.continue_existing is False
         assert options.strategy == "merge"
+        assert options.allow_fulfillment_gaps is False
 
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
@@ -151,6 +153,24 @@ class TestCmdLand:
             _cmd_land(["042", "--strategy", "merge"])
 
         assert mock_land.call_args.kwargs["options"].strategy == "merge"
+
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_land_passes_allow_fulfillment_gaps_option(
+        self, mock_load_config, mock_gitops_cls, mock_land
+    ):
+        """--allow-fulfillment-gaps permits landing despite fulfillment report gaps."""
+        from echelon.cli import _cmd_land
+
+        mock_load_config.return_value = MagicMock()
+        mock_gitops_cls.return_value = MagicMock()
+        mock_land.return_value = True
+
+        with pytest.raises(SystemExit):
+            _cmd_land(["042", "--allow-fulfillment-gaps"])
+
+        assert mock_land.call_args.kwargs["options"].allow_fulfillment_gaps is True
 
     def test_missing_strategy_value_exits_1(self, capsys):
         """--strategy requires an explicit merge or rebase value."""

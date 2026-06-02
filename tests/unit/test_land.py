@@ -47,6 +47,7 @@ class TestLandOptions:
         assert options.prepare_only is False
         assert options.continue_existing is False
         assert options.strategy == "merge"
+        assert options.allow_fulfillment_gaps is False
 
     def test_prepare_result_records_conflict_state(self) -> None:
         result = LandPrepareResult(
@@ -123,7 +124,7 @@ class TestLand:
         assert _fulfillment_warning("001", tmp_path, strict=False) is None
         assert _fulfillment_warning("001", tmp_path, strict=True) is not None
 
-    def test_land_surfaces_fulfillment_warning_before_merge(self, tmp_path: Path) -> None:
+    def test_land_blocks_fulfillment_gaps_before_merge(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "fulfillment-report.md").write_text(
@@ -144,11 +145,45 @@ class TestLand:
 
             result = land("042", project_dir=tmp_path, gitops=gitops)
 
-        assert result is True
-        assert banner.call_args.args[0] == "LAND — FULFILLMENT GAPS WARNING"
+        assert result is False
+        prepare.assert_not_called()
+        finish_landing.assert_not_called()
+        assert banner.call_args.args[0] == "LAND — FULFILLMENT GAPS BLOCKED"
         fields = dict(banner.call_args.args[1])
-        assert "DEVIATED" in fields["warning"]
-        assert "echelon reopen 042" in fields["warning"]
+        assert "DEVIATED" in fields["problem"]
+        assert "echelon reopen 042" in fields["next step"]
+
+    def test_land_allows_fulfillment_gaps_with_explicit_override(
+        self, tmp_path: Path
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | MISSING | none | high | absent |\n",
+            encoding="utf-8",
+        )
+        gitops = _make_gitops()
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._finish_landing") as finish_landing,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+            finish_landing.return_value = True
+
+            result = land(
+                "042",
+                project_dir=tmp_path,
+                gitops=gitops,
+                options=LandOptions(allow_fulfillment_gaps=True),
+            )
+
+        assert result is True
+        prepare.assert_called_once()
+        assert banner.call_args.args[0] == "LAND — FULFILLMENT GAPS WARNING"
 
     def test_returns_true_when_feature_branch_not_found(self, tmp_path: Path) -> None:
         gitops = _make_gitops(feature_branch=None)

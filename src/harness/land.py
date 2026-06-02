@@ -30,6 +30,7 @@ class LandOptions:
     prepare_only: bool = False
     continue_existing: bool = False
     strategy: str = "merge"
+    allow_fulfillment_gaps: bool = False
 
 
 @dataclass(frozen=True)
@@ -271,6 +272,11 @@ def land(
     else:
         pr_url = _find_pr_url_all_builds(spec_id, project_dir)
 
+    if not options.prepare_only and not _check_fulfillment_before_land(
+        spec_id, project_dir, options
+    ):
+        return False
+
     if options.prepare_only:
         prepare_result = _prepare_for_land(
             spec_id=spec_id,
@@ -293,7 +299,7 @@ def land(
         return True
 
     if pr_url:
-        if not _verify_before_land(spec_id, project_dir, gitops):
+        if not _verify_before_land(spec_id, project_dir, gitops, options):
             return False
         merged = gitops.merge_pr(pr_url)
         if merged:
@@ -307,7 +313,7 @@ def land(
         )
         if prepare_result is None:
             return False
-        if not _verify_before_land(spec_id, project_dir, gitops):
+        if not _verify_before_land(spec_id, project_dir, gitops, options):
             return False
         _banner(
             "LAND — ACTION NEEDED",
@@ -330,7 +336,7 @@ def land(
     )
     if prepare_result is None:
         return False
-    if not _verify_before_land(spec_id, project_dir, gitops):
+    if not _verify_before_land(spec_id, project_dir, gitops, options):
         return False
 
     # No PR URL — gh/glab not configured. Merge directly into the default branch.
@@ -381,18 +387,12 @@ def _prepare_for_land(
     return prepare_result
 
 
-def _verify_before_land(spec_id: str, project_dir: Path, gitops: Any) -> bool:
-    fulfillment_warning = _fulfillment_warning(spec_id, project_dir, strict=False)
-    if fulfillment_warning:
-        _banner(
-            "LAND — FULFILLMENT GAPS WARNING",
-            [
-                ("spec", spec_id),
-                ("warning", fulfillment_warning),
-            ],
-            subtitle="Echelon will continue landing, but the spec has unresolved fulfillment evidence.",
-        )
-
+def _verify_before_land(
+    spec_id: str,
+    project_dir: Path,
+    gitops: Any,
+    options: LandOptions,
+) -> bool:
     passed, output = _run_land_verify(project_dir, gitops)
     if passed:
         return True
@@ -408,6 +408,39 @@ def _verify_before_land(spec_id: str, project_dir: Path, gitops: Any) -> bool:
         subtitle="Echelon stopped before merging or changing landing state.",
     )
     return False
+
+
+def _check_fulfillment_before_land(
+    spec_id: str,
+    project_dir: Path,
+    options: LandOptions,
+) -> bool:
+    fulfillment_warning = _fulfillment_warning(spec_id, project_dir, strict=False)
+    if not fulfillment_warning:
+        return True
+
+    if not options.allow_fulfillment_gaps:
+        _banner(
+            "LAND — FULFILLMENT GAPS BLOCKED",
+            [
+                ("spec", spec_id),
+                ("problem", fulfillment_warning),
+                ("next step", f"echelon reopen {spec_id}  # then rerun harness and land"),
+                ("override", f"echelon land {spec_id} --allow-fulfillment-gaps"),
+            ],
+            subtitle="Echelon stopped before landing incomplete spec coverage.",
+        )
+        return False
+
+    _banner(
+        "LAND — FULFILLMENT GAPS WARNING",
+        [
+            ("spec", spec_id),
+            ("warning", fulfillment_warning),
+        ],
+        subtitle="Echelon will continue landing because --allow-fulfillment-gaps was set.",
+    )
+    return True
 
 
 def _fulfillment_warning(

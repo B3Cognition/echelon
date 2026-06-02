@@ -86,7 +86,7 @@ Commands:
   codegen <spec_id>                         Run SOAR codegen pipeline
   cicd    <spec_id>                         Detect project type and configure verify_command
   land    <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
-                    [--strategy merge|rebase]
+                    [--allow-fulfillment-gaps] [--strategy merge|rebase]
                                             Land a spec: merge PR, clean up
   harness init   [<target_repo>]            Initialize harness (no LLM)
   harness run    <spec_id> [strategy=<s>]   Run build→verify→PR loop
@@ -310,7 +310,8 @@ def _cmd_land(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon land <spec_id> [--continue] [--prepare-only] "
-            "[--no-autoresolve] [--strategy merge|rebase]\n\n"
+            "[--no-autoresolve] [--allow-fulfillment-gaps] "
+            "[--strategy merge|rebase]\n\n"
             "  Merge PR, delete branch, clean worktrees, mark spec as landed.\n",
         )
         sys.exit(0)
@@ -323,6 +324,7 @@ def _cmd_land(args: list[str]) -> None:
     continue_existing = False
     prepare_only = False
     autoresolve = True
+    allow_fulfillment_gaps = False
     strategy = "merge"
 
     remaining = args[1:]
@@ -335,6 +337,8 @@ def _cmd_land(args: list[str]) -> None:
             prepare_only = True
         elif arg == "--no-autoresolve":
             autoresolve = False
+        elif arg == "--allow-fulfillment-gaps":
+            allow_fulfillment_gaps = True
         elif arg == "--strategy":
             if idx + 1 >= len(remaining):
                 print("✗ --strategy requires 'merge' or 'rebase'", file=sys.stderr)
@@ -361,6 +365,7 @@ def _cmd_land(args: list[str]) -> None:
         prepare_only=prepare_only,
         continue_existing=continue_existing,
         strategy=strategy,
+        allow_fulfillment_gaps=allow_fulfillment_gaps,
     )
     project_dir = Path.cwd()
 
