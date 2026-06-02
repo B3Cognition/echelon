@@ -201,6 +201,7 @@ Read from the **worktree path** (synced in Step 4 — this is the single source 
 - `specs/{spec_id}-*/spec.md` — the feature requirements
 - `specs/{spec_id}-*/tasks.md` — the implementation tasks (may include `## Bugfix N:` sections appended by `echelon.bugfix`)
 - `specs/{spec_id}-*/bugfix-*.md` — if any exist, read the latest one. This is the diagnosis report from `echelon.bugfix`: root cause, fix scope, test strategy. Pass it to the build step as additional context so the implementer knows exactly what to fix and what test to write.
+- `specs/{spec_id}-*/fulfillment-gaps.md` — if present, read it as mandatory implementation context. These are verified missing spec-coverage tasks and must be addressed before convergence.
 
 **Dispatch on `strategy`:**
 

@@ -246,6 +246,12 @@ def test_reopen_command_and_phase_exist():
     assert 'file: "commands/echelon.reopen.md"' in extension_text
 
 
+def test_harness_run_reads_fulfillment_gaps():
+    text = (EXTENSION_ROOT / "commands" / "echelon.harness-run.md").read_text()
+    assert "fulfillment-gaps.md" in text
+    assert "mandatory implementation context" in text
+
+
 def test_agent_prompts_do_not_write_squad_state_directly():
     violations = []
 
