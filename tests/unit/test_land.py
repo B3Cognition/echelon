@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.land import LandOptions, LandPrepareResult, find_pr_url, land
+from harness.land import LandOptions, LandPrepareResult, _run_land_verify, find_pr_url, land
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -320,6 +322,102 @@ class TestLand:
         write_status.assert_not_called()
         banner.assert_called_once()
         assert banner.call_args.args[0] == "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION"
+
+    def test_verify_failure_blocks_before_direct_merge(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+        gitops._config = MagicMock(
+            verify_command=f"{shlex.quote(sys.executable)} -c \"import sys; print('verify failed'); sys.exit(7)\""
+        )
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._delete_local_branch") as delete_local,
+            patch("harness.land._delete_harness_branches") as delete_harness,
+            patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
+            patch("harness.land.write_status") as write_status,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(
+                status="prepared",
+                branch="042-my-feature",
+                prepared_commit="abc123",
+            )
+
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        gitops.merge_branch_into_default.assert_not_called()
+        gitops.delete_remote_branch.assert_not_called()
+        delete_local.assert_not_called()
+        delete_harness.assert_not_called()
+        cleanup_worktrees.assert_not_called()
+        gitops.ensure_on_default_branch.assert_not_called()
+        write_status.assert_not_called()
+        banner.assert_called_once()
+        assert banner.call_args.args[0] == "LAND — VERIFY FAILED"
+        fields = dict(banner.call_args.args[1])
+        assert "verify failed" in fields["output"]
+
+    def test_verify_failure_blocks_before_pr_action_needed(self, tmp_path: Path) -> None:
+        state_dir = tmp_path / "runs" / "build-test" / "state"
+        _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
+        gitops = _make_gitops(merge_result=False)
+        gitops._config = MagicMock(
+            verify_command=f"{shlex.quote(sys.executable)} -c \"import sys; sys.exit(2)\""
+        )
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(
+                status="prepared",
+                branch="042-my-feature",
+                prepared_commit="abc123",
+            )
+
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        gitops.merge_pr.assert_called_once_with("https://github.com/o/r/pull/7")
+        gitops.merge_branch_into_default.assert_not_called()
+        gitops.delete_remote_branch.assert_not_called()
+        banner.assert_called_once()
+        assert banner.call_args.args[0] == "LAND — VERIFY FAILED"
+
+
+@pytest.mark.unit
+class TestLandVerify:
+    def test_no_verify_command_is_success(self, tmp_path: Path) -> None:
+        passed, output = _run_land_verify(tmp_path, _make_gitops())
+        assert passed is True
+        assert "no verify_command" in output
+
+    def test_verify_command_success_captures_output(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+        gitops._config = MagicMock(
+            verify_command=f"{shlex.quote(sys.executable)} -c \"print('verify ok')\""
+        )
+
+        passed, output = _run_land_verify(tmp_path, gitops)
+
+        assert passed is True
+        assert output == "verify ok"
+
+    def test_verify_command_failure_captures_trimmed_output(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+        gitops._config = MagicMock(
+            verify_command=(
+                f"{shlex.quote(sys.executable)} -c "
+                "\"import sys; print('x' * 2500); sys.exit(1)\""
+            )
+        )
+
+        passed, output = _run_land_verify(tmp_path, gitops)
+
+        assert passed is False
+        assert len(output) == 2000
+        assert output == "x" * 2000
 
 
 @pytest.mark.unit

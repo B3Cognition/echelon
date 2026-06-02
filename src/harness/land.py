@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 import logging
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Optional
@@ -298,6 +299,8 @@ def land(
         )
         if prepare_result is None:
             return False
+        if not _verify_before_land(spec_id, project_dir, gitops):
+            return False
         _banner(
             "LAND — ACTION NEEDED",
             [
@@ -318,6 +321,8 @@ def land(
         options=options,
     )
     if prepare_result is None:
+        return False
+    if not _verify_before_land(spec_id, project_dir, gitops):
         return False
 
     # No PR URL — gh/glab not configured. Merge directly into the default branch.
@@ -366,6 +371,55 @@ def _prepare_for_land(
         )
         return None
     return prepare_result
+
+
+def _verify_before_land(spec_id: str, project_dir: Path, gitops: Any) -> bool:
+    passed, output = _run_land_verify(project_dir, gitops)
+    if passed:
+        return True
+
+    _banner(
+        "LAND — VERIFY FAILED",
+        [
+            ("spec", spec_id),
+            ("problem", "verification command failed"),
+            ("output", output or "(no output)"),
+            ("next step", f"fix verification failures, then re-run: echelon land {spec_id}"),
+        ],
+        subtitle="Echelon stopped before merging or changing landing state.",
+    )
+    return False
+
+
+def _run_land_verify(project_dir: Path, gitops: Any) -> tuple[bool, str]:
+    config = getattr(gitops, "_config", None)
+    command = getattr(config, "verify_command", None) if config is not None else None
+    if not isinstance(command, str) or not command.strip():
+        return True, "no verify_command configured"
+
+    try:
+        result = subprocess.run(
+            shlex.split(command),
+            cwd=str(project_dir),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        output = "\n".join(part for part in [e.stdout or "", e.stderr or ""] if part)
+        return False, _trim_verify_output(output or f"verify_command timed out after {e.timeout}s")
+    except FileNotFoundError as e:
+        return False, _trim_verify_output(str(e))
+
+    output = "\n".join(part for part in [result.stdout, result.stderr] if part)
+    if result.returncode != 0 and not output.strip():
+        output = f"verify_command exited with status {result.returncode}"
+    return result.returncode == 0, _trim_verify_output(output)
+
+
+def _trim_verify_output(output: str) -> str:
+    return output.strip()[-2000:]
 
 
 def _finish_landing(spec_id: str, feature_branch: str, project_dir: Path, gitops: Any) -> bool:
