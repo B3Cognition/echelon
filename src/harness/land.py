@@ -15,6 +15,11 @@ from echelon.ui import banner as _banner
 from harness.gitops import _run_git
 from harness.paths import runs_dir
 from harness.spec_frontmatter import find_spec_dir, write_status
+from kernel.fulfillment import (
+    blocking_statuses,
+    fulfillment_has_blocking_gaps,
+    latest_fulfillment_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +382,17 @@ def _prepare_for_land(
 
 
 def _verify_before_land(spec_id: str, project_dir: Path, gitops: Any) -> bool:
+    fulfillment_warning = _fulfillment_warning(spec_id, project_dir, strict=False)
+    if fulfillment_warning:
+        _banner(
+            "LAND — FULFILLMENT GAPS WARNING",
+            [
+                ("spec", spec_id),
+                ("warning", fulfillment_warning),
+            ],
+            subtitle="Echelon will continue landing, but the spec has unresolved fulfillment evidence.",
+        )
+
     passed, output = _run_land_verify(project_dir, gitops)
     if passed:
         return True
@@ -392,6 +408,29 @@ def _verify_before_land(spec_id: str, project_dir: Path, gitops: Any) -> bool:
         subtitle="Echelon stopped before merging or changing landing state.",
     )
     return False
+
+
+def _fulfillment_warning(
+    spec_id: str,
+    project_dir: Path,
+    strict: bool = False,
+) -> str | None:
+    spec_dir = find_spec_dir(spec_id, project_dir)
+    if spec_dir is None:
+        return None
+
+    report = latest_fulfillment_report(spec_dir)
+    if report is None:
+        return None
+
+    if not fulfillment_has_blocking_gaps(report, strict=strict):
+        return None
+
+    statuses = ", ".join(sorted(blocking_statuses(strict)))
+    return (
+        f"fulfillment report has unresolved statuses ({statuses}): {report}. "
+        f"Run `echelon reopen {spec_id}` or rerun `echelon verify-spec {spec_id}`."
+    )
 
 
 def _run_land_verify(project_dir: Path, gitops: Any) -> tuple[bool, str]:
