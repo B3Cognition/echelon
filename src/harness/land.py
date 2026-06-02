@@ -6,6 +6,7 @@ import json
 import logging
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
@@ -287,6 +288,8 @@ def land(
         return True
 
     if pr_url:
+        if not _verify_before_land(spec_id, project_dir, gitops):
+            return False
         merged = gitops.merge_pr(pr_url)
         if merged:
             return _finish_landing(spec_id, feature_branch, project_dir, gitops)
@@ -398,24 +401,50 @@ def _run_land_verify(project_dir: Path, gitops: Any) -> tuple[bool, str]:
         return True, "no verify_command configured"
 
     try:
-        result = subprocess.run(
-            shlex.split(command),
-            cwd=str(project_dir),
-            capture_output=True,
-            text=True,
-            timeout=600,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        output = "\n".join(part for part in [e.stdout or "", e.stderr or ""] if part)
-        return False, _trim_verify_output(output or f"verify_command timed out after {e.timeout}s")
-    except FileNotFoundError as e:
-        return False, _trim_verify_output(str(e))
+        args = shlex.split(command)
+    except ValueError as e:
+        return False, _trim_verify_output(f"invalid verify_command: {e}")
 
-    output = "\n".join(part for part in [result.stdout, result.stderr] if part)
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        try:
+            result = subprocess.run(
+                args,
+                cwd=str(project_dir),
+                stdout=stdout_file,
+                stderr=stderr_file,
+                timeout=600,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            output = _join_verify_output(
+                _read_verify_tail(stdout_file),
+                _read_verify_tail(stderr_file),
+            )
+            return False, _trim_verify_output(
+                output or f"verify_command timed out after {e.timeout}s"
+            )
+        except FileNotFoundError as e:
+            return False, _trim_verify_output(str(e))
+
+        output = _join_verify_output(
+            _read_verify_tail(stdout_file),
+            _read_verify_tail(stderr_file),
+        )
+
     if result.returncode != 0 and not output.strip():
         output = f"verify_command exited with status {result.returncode}"
     return result.returncode == 0, _trim_verify_output(output)
+
+
+def _read_verify_tail(file: Any, limit: int = 4096) -> str:
+    file.flush()
+    size = file.seek(0, 2)
+    file.seek(max(0, size - limit))
+    return file.read().decode("utf-8", errors="replace")
+
+
+def _join_verify_output(stdout: str, stderr: str) -> str:
+    return "\n".join(part for part in [stdout, stderr] if part)
 
 
 def _trim_verify_output(output: str) -> str:

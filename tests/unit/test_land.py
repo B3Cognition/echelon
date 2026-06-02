@@ -358,10 +358,10 @@ class TestLand:
         fields = dict(banner.call_args.args[1])
         assert "verify failed" in fields["output"]
 
-    def test_verify_failure_blocks_before_pr_action_needed(self, tmp_path: Path) -> None:
+    def test_verify_failure_blocks_before_pr_merge(self, tmp_path: Path) -> None:
         state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
-        gitops = _make_gitops(merge_result=False)
+        gitops = _make_gitops(merge_result=True)
         gitops._config = MagicMock(
             verify_command=f"{shlex.quote(sys.executable)} -c \"import sys; sys.exit(2)\""
         )
@@ -379,7 +379,8 @@ class TestLand:
             result = land("042", project_dir=tmp_path, gitops=gitops)
 
         assert result is False
-        gitops.merge_pr.assert_called_once_with("https://github.com/o/r/pull/7")
+        gitops.merge_pr.assert_not_called()
+        prepare.assert_not_called()
         gitops.merge_branch_into_default.assert_not_called()
         gitops.delete_remote_branch.assert_not_called()
         banner.assert_called_once()
@@ -418,6 +419,32 @@ class TestLandVerify:
         assert passed is False
         assert len(output) == 2000
         assert output == "x" * 2000
+
+    def test_malformed_verify_command_fails_closed(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+        gitops._config = MagicMock(verify_command="'unterminated")
+
+        passed, output = _run_land_verify(tmp_path, gitops)
+
+        assert passed is False
+        assert "invalid verify_command" in output
+
+    def test_verify_command_uses_bounded_tempfile_capture(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+        gitops._config = MagicMock(verify_command="verify-tool")
+
+        with patch("harness.land.subprocess.run") as run:
+            run.return_value = subprocess.CompletedProcess(["verify-tool"], 0)
+
+            passed, output = _run_land_verify(tmp_path, gitops)
+
+        assert passed is True
+        assert output == ""
+        kwargs = run.call_args.kwargs
+        assert "capture_output" not in kwargs
+        assert "text" not in kwargs
+        assert kwargs["stdout"] is not subprocess.PIPE
+        assert kwargs["stderr"] is not subprocess.PIPE
 
 
 @pytest.mark.unit
