@@ -209,6 +209,18 @@ def test_re_agent_prompts_use_standard_output_block_heading():
     assert not violations, "\n".join(violations)
 
 
+def test_verify_spec_command_and_phases_exist():
+    assert (EXTENSION_ROOT / "commands" / "echelon.verify-spec.md").exists()
+    for phase in [
+        "verify-spec-1-init.md",
+        "verify-spec-2-codegraph.md",
+        "verify-spec-3-audit.md",
+        "verify-spec-4-map.md",
+        "verify-spec-5-judge.md",
+    ]:
+        assert (EXTENSION_ROOT / "workflow" / "phases" / phase).exists()
+
+
 def test_agent_prompts_do_not_write_squad_state_directly():
     violations = []
 
