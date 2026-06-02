@@ -237,6 +237,15 @@ def test_verify_spec_agents_are_registered():
         assert (EXTENSION_ROOT / rel_path).exists()
 
 
+def test_reopen_command_and_phase_exist():
+    assert (EXTENSION_ROOT / "commands" / "echelon.reopen.md").exists()
+    assert (EXTENSION_ROOT / "workflow" / "phases" / "reopen-1-apply-gaps.md").exists()
+
+    extension_text = (EXTENSION_ROOT / "extension.yml").read_text()
+    assert 'name: "speckit.echelon.reopen"' in extension_text
+    assert 'file: "commands/echelon.reopen.md"' in extension_text
+
+
 def test_agent_prompts_do_not_write_squad_state_directly():
     violations = []
 
