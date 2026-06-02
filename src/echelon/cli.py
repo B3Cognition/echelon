@@ -43,6 +43,8 @@ SKILL_MAP = {
     "change":  "echelon.change",
     "codegen": "echelon.codegen",
     "cicd":    "echelon.cicd",
+    "verify-spec": "echelon.verify-spec",
+    "reopen":  "echelon.reopen",
 }
 
 CLI_VERSION = "2.2.0"
@@ -76,6 +78,8 @@ Commands:
                                             and continue it. Use when the run printed
                                             "blocked — human input required".
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
+  verify-spec <spec_id> [strict=true]        Audit implementation against spec
+  reopen  <spec_id> [from=<report>]          Reopen spec from fulfillment gaps
   build   <spec_id>                         Build implementation for a spec
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
   change  <spec_id> <description>           Plan a scope change
