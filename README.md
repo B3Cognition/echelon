@@ -85,7 +85,7 @@ echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
 echelon spec target 001 og-platform fet-frontend-libs   # set target repos in spec frontmatter
 echelon harness run 001                                  # auto-dispatches to each sub-repo in parallel
 
-# After build converges and PR is open
+# After build converges, fulfillment passes, and PR is open
 echelon land 001                           # merge PR, delete branch, clean worktrees, mark landed
 
 # After PR is open — review triage runs automatically via harness Phase 3
@@ -441,7 +441,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
 | `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
-| `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed |
+| `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; blocks on unresolved fulfillment gaps |
+| `echelon land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
 | *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
 | *(spec-kit only)* | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
 | *(spec-kit only)* | `speckit.echelon.investigate` | Trigger INVESTIGATOR |

@@ -173,12 +173,14 @@ Structural status: ready
 
 ## Harness Integration
 
-`echelon harness run` should read, in this order:
+`echelon harness run` reads, in this order:
 1. latest `bugfix-*.md`
 2. `fulfillment-gaps.md`
 3. `lessons.md`
 
 Fulfillment gaps are not bugfixes. They are missing-spec-coverage tasks and should be passed to the build step as mandatory implementation context.
+
+After ordinary sandbox verification passes, Ralph refreshes fulfillment evidence by running `echelon verify-spec <spec-id>` through the configured LLM provider. It then parses the latest `fulfillment-report.md`; unresolved `MISSING`, `PARTIAL`, or `DEVIATED` rows are converted into a synthetic verification failure so the existing build/feedback loop continues instead of converging early.
 
 ## Freshness and Trust
 
@@ -210,12 +212,12 @@ This keeps `verify-spec` targeted while avoiding stale structural evidence from 
 
 ## Land Integration
 
-`echelon land` warns when the latest `fulfillment-report.md` has unresolved:
+`echelon land` blocks by default when the latest `fulfillment-report.md` has unresolved:
 - `MISSING`
 - `PARTIAL`
 - `DEVIATED`
 
-The fulfillment parser supports strict handling where `UNVERIFIED` is also treated as blocking, but the exposed `echelon land` flow is warning-only by default.
+Use `echelon land <spec-id> --allow-fulfillment-gaps` only as an explicit emergency override. The fulfillment parser supports strict handling where `UNVERIFIED` is also treated as blocking, but the exposed `echelon land` flow keeps `UNVERIFIED` warning-only by default.
 
 ## Why Not Full Brownfield RE?
 
@@ -229,4 +231,5 @@ Brownfield RE answers "what does this codebase do?" This workflow answers "does 
 4. Add fulfillment agents/prompts.
 5. Add `reopen` command that converts gaps to `FG-T*` tasks.
 6. Teach harness to read `fulfillment-gaps.md`.
-7. Teach land to warn based on unresolved fulfillment report statuses.
+7. Teach Ralph to refresh fulfillment after ordinary verification passes.
+8. Teach land to block based on unresolved fulfillment report statuses.
