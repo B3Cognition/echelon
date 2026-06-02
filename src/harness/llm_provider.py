@@ -11,7 +11,7 @@ from pathlib import Path
 
 from harness.build_result import BUILD_STATUS_FILENAME, BuildResult
 from harness.config import HarnessConfig
-from harness.skill_loader import StreamEventPrinter
+from harness.skill_loader import StreamEventPrinter, build_skill_prompt, find_skill
 
 
 class AICodingCliProvider:
@@ -74,6 +74,21 @@ class AICodingCliProvider:
         """Run `<cli> -p <prompt>` for a targeted fix. Same mechanics as exec_build."""
         return self.exec_build(worktree_path, prompt)
 
+    def exec_verify_spec(self, worktree_path: str, spec_id: str) -> int:
+        """Run the verify-spec skill in worktree_path and return the process exit code."""
+        skill_path = find_skill("echelon.verify-spec", Path(worktree_path), self._cli)
+        if skill_path is None:
+            return 127
+
+        prompt = build_skill_prompt(skill_path, spec_id)
+        env = self._build_env()
+        start = time.monotonic()
+        if self._cli == "claude":
+            exit_code = self._run_streaming(self._build_cmd(prompt), worktree_path, env, start)
+        else:
+            exit_code = self._run_plain(self._build_cmd(prompt), worktree_path, env, start)
+        return -1 if exit_code is None else int(exit_code)
+
     # === Private ===
 
     def _run_streaming(self, cmd: list, cwd: str, env: dict, start: float):
@@ -123,8 +138,10 @@ class AICodingCliProvider:
     def _status_file_path(self, worktree_path: str) -> Path:
         return Path(worktree_path) / BUILD_STATUS_FILENAME
 
-    def _build_env(self, status_file: str) -> dict:
-        env = {**os.environ, "HARNESS_BUILD_STATUS_FILE": status_file}
+    def _build_env(self, status_file: str | None = None) -> dict:
+        env = {**os.environ}
+        if status_file is not None:
+            env["HARNESS_BUILD_STATUS_FILE"] = status_file
         if self._config_dir and self._cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
         return env

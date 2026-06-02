@@ -319,6 +319,9 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
+                    verify_result = self._refresh_fulfillment_report(
+                        verify_result, worktree_path
+                    )
                     verify_result = self._apply_fulfillment_gate(
                         verify_result, worktree_path
                     )
@@ -638,6 +641,9 @@ class RalphController:
 
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
+            current_verify = self._refresh_fulfillment_report(
+                current_verify, worktree_path
+            )
             current_verify = self._apply_fulfillment_gate(
                 current_verify, worktree_path
             )
@@ -814,6 +820,34 @@ class RalphController:
                 f"fulfillment report has unresolved statuses ({statuses}): {report}. "
                 f"Run `echelon reopen {self._spec_id}` or continue the harness loop "
                 "with fulfillment-gaps.md as mandatory implementation context."
+            ),
+        )
+        return VerifyResult(
+            passed=False,
+            failures=[failure],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+        )
+
+    def _refresh_fulfillment_report(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Run verify-spec after ordinary verification passes, when possible."""
+        if not verify_result.passed or not worktree_path or self._llm_provider is None:
+            return verify_result
+
+        exit_code = self._llm_provider.exec_verify_spec(worktree_path, self._spec_id)
+        if exit_code == 0:
+            return verify_result
+
+        failure = FailureEntry(
+            category=FailureCategory.OTHER,
+            id="verify-spec-failed",
+            error=(
+                f"`echelon verify-spec {self._spec_id}` failed with exit code "
+                f"{exit_code}; fulfillment could not be refreshed."
             ),
         )
         return VerifyResult(

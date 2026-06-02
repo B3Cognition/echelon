@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
@@ -229,6 +230,57 @@ class TestOuterLoopConvergence:
         assert result.final_verify.passed is False
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
         gitops.promote_pr_ready.assert_not_called()
+
+    def test_runs_verify_spec_before_fulfillment_gate_when_llm_provider_available(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph refreshes fulfillment evidence after sandbox verification passes."""
+        from harness.build_result import BuildResult
+        from harness.llm_provider import AICodingCliProvider
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+
+        llm_provider = MagicMock(spec=AICodingCliProvider)
+        llm_provider.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+
+        def write_fulfillment_gap(worktree_path: str, spec_id: str) -> int:
+            (spec_dir / "fulfillment-report.md").write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "|---|---|---|---|---|\n"
+                "| FR-001 | MISSING | none | high | absent |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        llm_provider.exec_verify_spec.side_effect = write_fulfillment_gap
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_provider=llm_provider,
+        )
+        controller._config.verify_command = f"{sys.executable} -c \"pass\""
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        llm_provider.exec_verify_spec.assert_called_once_with(str(worktree), "spec-001")
+        assert result.status == "failed"
+        assert result.final_verify is not None
+        assert result.final_verify.failures[0].id == "fulfillment-gaps"
 
     def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:
         """Verified work must not be reported converged when commit/push fails."""
