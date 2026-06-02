@@ -33,8 +33,14 @@ from harness.failure_signature import detect_same_failure, normalize
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
+from harness.spec_frontmatter import find_spec_dir
 from harness.state import StateStore
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+from kernel.fulfillment import (
+    blocking_statuses,
+    fulfillment_has_blocking_gaps,
+    latest_fulfillment_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +319,9 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
+                    verify_result = self._apply_fulfillment_gate(
+                        verify_result, worktree_path
+                    )
                     tokens_used += verify_result.token_usage
 
                     # Hard-stop: unknown project type cannot be fixed by the LLM.
@@ -629,6 +638,9 @@ class RalphController:
 
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
+            current_verify = self._apply_fulfillment_gate(
+                current_verify, worktree_path
+            )
             tokens_used += current_verify.token_usage
 
             self._append_iteration_log(
@@ -773,6 +785,43 @@ class RalphController:
                 duration_s=result.duration_ms / 1000.0,
                 token_usage=_estimate_tokens(result),
             )
+
+    def _apply_fulfillment_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Treat unresolved fulfillment gaps as verification failures."""
+        if not verify_result.passed or not worktree_path:
+            return verify_result
+
+        spec_dir = find_spec_dir(self._spec_id, Path(worktree_path))
+        if spec_dir is None:
+            return verify_result
+
+        report = latest_fulfillment_report(spec_dir)
+        if report is None:
+            return verify_result
+
+        if not fulfillment_has_blocking_gaps(report):
+            return verify_result
+
+        statuses = ", ".join(sorted(blocking_statuses()))
+        failure = FailureEntry(
+            category=FailureCategory.OTHER,
+            id="fulfillment-gaps",
+            error=(
+                f"fulfillment report has unresolved statuses ({statuses}): {report}. "
+                f"Run `echelon reopen {self._spec_id}` or continue the harness loop "
+                "with fulfillment-gaps.md as mandatory implementation context."
+            ),
+        )
+        return VerifyResult(
+            passed=False,
+            failures=[failure],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+        )
 
     def _exec_verify_locally(self, worktree_path: str) -> VerifyResult:
         """Run verification locally on the host when LLM provider is active.

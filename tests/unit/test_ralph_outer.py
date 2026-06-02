@@ -161,6 +161,29 @@ def _make_controller(
 class TestOuterLoopConvergence:
     """Test outer loop converges on first iteration."""
 
+    def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
+        """Passing tests are not enough when verify-spec found blocking gaps."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | MISSING | none | high | absent |\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[])
+
+        result = controller._apply_fulfillment_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "fulfillment-gaps"
+        assert "echelon reopen spec-001" in result.failures[0].error
+
     def test_converges_first_iteration(self, tmp_path: Path) -> None:
         """Verify passes on first try -> converged."""
         controller, provider, gitops, state_store = _make_controller(
@@ -178,6 +201,34 @@ class TestOuterLoopConvergence:
         assert provider.destroyed is True
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
+
+    def test_does_not_converge_when_fulfillment_report_has_gaps(
+        self, tmp_path: Path
+    ) -> None:
+        """Fulfillment gaps keep Ralph iterating even when sandbox verification passes."""
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | PARTIAL | src/a.py | high | missing edge case |\n",
+            encoding="utf-8",
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "failed"
+        assert result.termination_reason == "outer_cap"
+        assert result.final_verify is not None
+        assert result.final_verify.passed is False
+        assert result.final_verify.failures[0].id == "fulfillment-gaps"
+        gitops.promote_pr_ready.assert_not_called()
 
     def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:
         """Verified work must not be reported converged when commit/push fails."""
