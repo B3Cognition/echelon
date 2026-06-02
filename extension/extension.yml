@@ -123,6 +123,9 @@ provides:
     - name: "speckit.echelon.verify"
       file: "commands/echelon.verify.md"
       description: "Run full backpropagation verification — 100% spec coverage check"
+    - name: "speckit.echelon.verify-spec"
+      file: "commands/echelon.verify-spec.md"
+      description: "Read-only fulfillment audit for an existing spec against the current implementation"
     - name: "speckit.echelon.health"
       file: "commands/echelon.health.md"
       description: "Periodic health check — spec-code drift, estimate drift, KB freshness"
@@ -427,6 +430,22 @@ provides:
         execution: agent
         capability: balanced
         tools: write         # writes spec-compliance-report.md, traceability-matrix.md
+        color: red
+    - name: "speckit.echelon.spec-fulfillment-auditor"
+      file: "agents/build/spec-fulfillment-auditor.md"
+      description: "SPEC FULFILLMENT AUDITOR — extracts a canonical checklist from a spec for implementation verification"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes requirement-audit.md
+        color: red
+    - name: "speckit.echelon.implementation-mapper"
+      file: "agents/build/implementation-mapper.md"
+      description: "IMPLEMENTATION MAPPER — maps spec checklist items to concrete implementation and test evidence"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes implementation-map.md
         color: red
     - name: "speckit.echelon.code-reviewer"
       file: "agents/build/code-reviewer.md"

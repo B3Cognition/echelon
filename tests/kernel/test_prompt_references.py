@@ -211,6 +211,9 @@ def test_re_agent_prompts_use_standard_output_block_heading():
 
 def test_verify_spec_command_and_phases_exist():
     assert (EXTENSION_ROOT / "commands" / "echelon.verify-spec.md").exists()
+    extension_text = (EXTENSION_ROOT / "extension.yml").read_text()
+    assert 'name: "speckit.echelon.verify-spec"' in extension_text
+    assert 'file: "commands/echelon.verify-spec.md"' in extension_text
     for phase in [
         "verify-spec-1-init.md",
         "verify-spec-2-codegraph.md",
@@ -219,6 +222,19 @@ def test_verify_spec_command_and_phases_exist():
         "verify-spec-5-judge.md",
     ]:
         assert (EXTENSION_ROOT / "workflow" / "phases" / phase).exists()
+
+
+def test_verify_spec_agents_are_registered():
+    text = (EXTENSION_ROOT / "extension.yml").read_text()
+
+    expected = {
+        "speckit.echelon.spec-fulfillment-auditor": "agents/build/spec-fulfillment-auditor.md",
+        "speckit.echelon.implementation-mapper": "agents/build/implementation-mapper.md",
+    }
+    for name, rel_path in expected.items():
+        assert f'name: "{name}"' in text
+        assert f'file: "{rel_path}"' in text
+        assert (EXTENSION_ROOT / rel_path).exists()
 
 
 def test_agent_prompts_do_not_write_squad_state_directly():
