@@ -140,7 +140,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: RESOLVED
   output_files:
-    - .specify/.../debug-report.md
+    - {spec_dir}/debug-report.md
   journal_entries:
     - id: null
       type: debug_finding
