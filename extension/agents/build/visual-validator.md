@@ -148,12 +148,12 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: VISUAL_PASS
   output_files:
-    - .specify/.../visual-validation-report.md
+    - {spec_dir}/visual-validation-report.md
   journal_entries:
     - id: null
       type: visual_check
       phase: build
-      agent: VISUAL_VALIDATOR
+      agent: speckit-echelon-visual-validator (VISUAL VALIDATOR)
       timestamp: null
       data:
         components_checked: []
