@@ -161,7 +161,7 @@ Doubts are **valuable signal** — they expose gaps that would have caused rewor
 
 ### Step 5: Record Internalization Scores
 
-Save to `.specify/specs/{feature}/internalization-report.md` and feed into Agent Scorecard.
+Save to `{spec_dir}/internalization-report.md` and feed into Agent Scorecard.
 
 ---
 
@@ -219,7 +219,7 @@ echelon_result:
     - id: null
       type: validator_dispatch
       phase: build_init
-      agent: INTERNALIZATION_GATE
+      agent: speckit-echelon-validator (VALIDATOR)
       timestamp: null
       data:
         verdict: "<INTERNALIZED | PARTIAL | FAILED>"
