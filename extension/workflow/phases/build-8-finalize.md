@@ -175,12 +175,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include state.json, progress-report.md, all gate reports, reasoning-journal.jsonl, knowledge-base/agent-scores.yaml]
+  [include state.json, progress-report.md, all gate reports, reasoning-journal.jsonl, knowledge-base/agent-scores.yaml, agents/control/appendices/scorekeeper-output-template.md, agents/control/appendices/scorekeeper-scoring-reference.md]
   </context>
 
   <instructions>
   You are SCOREKEEPER. Read agents/control/scorekeeper.md for your complete protocol.
-  Score all build agents: speckit-echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), speckit-echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by speckit-echelon-verification (VERIFICATION)), speckit-echelon-code-reviewer (CODE REVIEWER) (issues found), speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.jsonl. Check badge criteria. Produce `agent-scorecard.md`. Update `knowledge-base/agent-scores.yaml`.
+  Score all build agents: speckit-echelon-implementer (IMPLEMENTER) (first-pass approvals vs rework), speckit-echelon-spec-guard (SPEC GUARD) (gaps caught vs missed by speckit-echelon-verification (VERIFICATION)), speckit-echelon-code-reviewer (CODE REVIEWER) (issues found), speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN)) (coverage improvements). Collect peer appreciation from reasoning-journal.jsonl. Check badge criteria. Produce `agent-scorecard.md` using the provided template. Update `knowledge-base/agent-scores.yaml`.
   </instructions>
   ```
 

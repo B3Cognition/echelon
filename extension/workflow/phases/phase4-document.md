@@ -195,6 +195,8 @@ Additional artifacts (conditional):
 
 Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
 
+Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template and update `knowledge-base/agent-scores.yaml`.
+
 Read the scorecard output and apply any automatic self-healing actions.
 
 ### 12.8 Prepare Final State

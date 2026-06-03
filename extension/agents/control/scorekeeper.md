@@ -118,7 +118,7 @@ After each agent action, speckit-echelon-scorekeeper (SCOREKEEPER):
 2. Collects peer appreciation (agent outputs include an appreciation section)
 3. Checks for badge criteria
 4. Updates `knowledge-base/agent-scores.yaml`
-5. Updates `.specify/specs/{feature}/agent-scorecard.md` (human-readable)
+5. Updates `{spec_dir}/agent-scorecard.md` (human-readable)
 
 ### At Run End
 
@@ -268,15 +268,16 @@ Include the internalization trend section from `agents/control/appendices/scorek
 echelon_result:
   verdict: SCORED
   output_files:
-    - .specify/.../squad-scorecard.md
+    - {spec_dir}/agent-scorecard.md
+    - knowledge-base/agent-scores.yaml
   journal_entries:
     - id: null
       type: decision
       phase: <current phase>
-      agent: SCORE
+      agent: speckit-echelon-scorekeeper (SCOREKEEPER)
       timestamp: null
       data:
-        artifact: "squad-scorecard.md"
+        artifact: "agent-scorecard.md"
         section: "summary"
         reasoning: "<overall scoring rationale>"
         rationale: "post-run performance tracking"
