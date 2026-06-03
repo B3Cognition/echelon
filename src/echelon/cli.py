@@ -513,6 +513,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
     from harness.skills.run_skill import run, _count_tasks
+    from harness.plan_validation import PlanValidationError, validate_plan_file
     from harness.task_validation import TaskValidationError
 
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
@@ -577,6 +578,20 @@ def _cmd_harness_run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    if spec_dir is not None and (spec_dir / "plan.md").exists():
+        try:
+            validate_plan_file(spec_dir / "plan.md")
+        except PlanValidationError as e:
+            plan_path = spec_dir / "plan.md"
+            print(
+                "✗ plan.md is not in canonical format.\n"
+                f"  Error: {e}\n"
+                f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
+                f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
+                f"  Then rerun:        echelon harness run {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     target_display = str(getattr(config, "target_repo", None) or "local")
     _banner("HARNESS RUN", [
         ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),
