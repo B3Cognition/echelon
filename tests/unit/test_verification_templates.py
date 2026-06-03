@@ -16,5 +16,12 @@ class TestVerificationTemplates:
         assert "specs/{feature}/verification-summary.md" not in text
         assert "{spec_dir}/gap-report.md" in text
         assert "{spec_dir}/verification-summary.md" in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/gap-report.md\n"
+            "    - {spec_dir}/verification-summary.md\n"
+            "  journal_entries:\n"
+            in text
+        )
         assert "agent: speckit-echelon-verification (VERIFICATION)" in text
         assert "agent: VERIFICATION" not in text
