@@ -288,7 +288,9 @@ phases:
       - mental-model.md          # unified, gaps flagged
       - boundaries.md            # unified
       - assumptions.md           # deduplicated
+      - unknowns.md              # unified, prioritized
       - contradictions-and-gaps.md
+      - risks.md                 # synthesized risks
     transitions:
       - to: phase1-modeler
         condition: always

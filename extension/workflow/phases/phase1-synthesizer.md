@@ -13,6 +13,16 @@ Read and include in the subagent prompt:
 
 - ALL DISCOVER outputs (every .md file produced in step 2)
 - reasoning-journal.jsonl (DISCOVER entries)
+- `extension/templates/glossary-template.md`
+- `extension/templates/mental-model-template.md`
+- `extension/templates/boundaries-template.md`
+- `extension/templates/assumptions-template.md`
+- `extension/templates/unknowns-template.md`
+- `extension/templates/contradictions-and-gaps-template.md`
+- `extension/templates/risks-template.md`
+- `extension/templates/people-and-teams-template.md`
+- `extension/templates/timeline-template.md`
+- `extension/templates/qa-test-strategy-inputs-template.md`
 
 ### Dispatch
 
@@ -22,12 +32,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include all DISCOVER outputs, reasoning-journal.jsonl (DISCOVER entries)]
+  [include all DISCOVER outputs, synthesizer output templates, reasoning-journal.jsonl (DISCOVER entries)]
   </context>
 
   <instructions>
   You are SYNTHESIZER. Read agents/exploration/synthesizer.md for your complete protocol.
-  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
+  Read ALL DISCOVER outputs and fuse them into a unified knowledge base. Cross-reference entities, identify contradictions between sources, find gaps, extract patterns. Produce unified outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

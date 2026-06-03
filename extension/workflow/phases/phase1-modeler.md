@@ -11,8 +11,10 @@ Dispatch speckit-echelon-modeler (MODELER) to build the initial queryable codeba
 
 **Input context pack:**
 
-- `${STAGING_DIR}/synthesis.md` (speckit-echelon-synthesizer (SYNTHESIZER) output)
-- `${STAGING_DIR}/` (all discovery artifacts)
+- `${STAGING_DIR}/mental-model.md` (unified speckit-echelon-synthesizer (SYNTHESIZER) entity model)
+- `${STAGING_DIR}/boundaries.md` (unified system boundary map)
+- `${STAGING_DIR}/contradictions-and-gaps.md` (cross-source contradiction and gap analysis)
+- `${STAGING_DIR}/` (all discovery and synthesis artifacts)
 - Codebase file structure (from `state.json.mode`: for brownfield, also include `state.json.golddigger_artifacts`)
 
 **Output required:** `${STAGING_DIR}/mental-model-code.md` — entity graph, contract map, data flow trace, and invariants list.

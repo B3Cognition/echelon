@@ -37,6 +37,21 @@ ALL DISCOVER outputs, which may include any combination of:
 
 Plus the reasoning-journal.jsonl entries from DISCOVER.
 
+## Output Templates
+
+Use these templates exactly, removing placeholder rows only after replacing them with project-specific content:
+
+- `extension/templates/glossary-template.md` -> `glossary.md`
+- `extension/templates/mental-model-template.md` -> `mental-model.md`
+- `extension/templates/boundaries-template.md` -> `boundaries.md`
+- `extension/templates/assumptions-template.md` -> `assumptions.md`
+- `extension/templates/unknowns-template.md` -> `unknowns.md`
+- `extension/templates/contradictions-and-gaps-template.md` -> `contradictions-and-gaps.md`
+- `extension/templates/risks-template.md` -> `risks.md`
+- `extension/templates/people-and-teams-template.md` -> `people-and-teams.md` (if discoverable)
+- `extension/templates/timeline-template.md` -> `timeline.md` (if discoverable)
+- `extension/templates/qa-test-strategy-inputs-template.md` -> `qa-test-strategy-inputs.md` (if discoverable)
+
 ## Process
 
 ### Step 1: Inventory Discovery Outputs
@@ -139,61 +154,37 @@ From test files, CI configs, and documentation:
 
 ## Output — Unified Knowledge Base
 
-Produce these files in the spec directory:
+Produce these files in the target directory provided by speckit-echelon-commander (COMMANDER), normally `${STAGING_DIR}` during Phase 1.
 
 ### glossary.md (unified)
-Merged from all sources. Each term includes:
-- Definition
-- Source(s) it came from
-- Conflicts flagged (if different sources define differently)
+Use `extension/templates/glossary-template.md`. Merge terms from all sources, preserve sources, and flag conflicting definitions.
 
 ### mental-model.md (unified)
-Merged entity/relationship map. Each entity includes:
-- Attributes (from all sources)
-- Relationships (with cardinality)
-- Source(s) confirming its existence
-- Gaps (attributes mentioned in docs but not in code, or vice versa)
+Use `extension/templates/mental-model-template.md`. Merge entities and relationships, include cardinality, preserve sources, and flag source gaps.
 
 ### boundaries.md (unified)
-Merged system boundary map. Each boundary includes:
-- Internal/external classification
-- Communication method (confirmed by code, docs, or both)
-- Trust level
-- Contradictions flagged
+Use `extension/templates/boundaries-template.md`. Merge boundaries, include communication and trust signals, and flag contradictions.
 
 ### assumptions.md (unified)
-Collected from all sources, deduplicated:
-- Each assumption with source and confidence level
-- Contradictory assumptions flagged explicitly
+Use `extension/templates/assumptions-template.md`. Deduplicate assumptions, preserve source and confidence, and flag contradictory assumptions.
 
 ### unknowns.md (unified)
-Collected from all sources, prioritized:
-- Must-resolve-before-WHAT
-- Should-resolve-before-HOW
-- Can-defer
+Use `extension/templates/unknowns-template.md`. Deduplicate and prioritize unknowns.
 
 ### contradictions-and-gaps.md (NEW — unique to speckit-echelon-synthesizer (SYNTHESIZER))
-The cross-reference analysis:
-- Every contradiction between sources
-- Every gap (something in one source but missing from another)
-- Every suspicious finding (stale repos, outdated docs, abandoned modules)
-- Patterns that only emerge from cross-source analysis
+Use `extension/templates/contradictions-and-gaps-template.md`. Include every contradiction, source gap, suspicious finding, and cross-source pattern.
 
 ### risks.md (NEW — synthesized risks)
-Risks identified from cross-referencing:
-- Knowledge concentration (single contributor to critical code)
-- Stale dependencies
-- Documentation drift from code
-- Architecture assumptions that contradict code reality
+Use `extension/templates/risks-template.md`. Include risks identified from cross-referencing, including knowledge concentration, stale dependencies, documentation drift, and architecture assumptions that contradict code reality.
 
 ### people-and-teams.md (if discoverable)
-Who owns what, who's active, knowledge concentration risks.
+Use `extension/templates/people-and-teams-template.md`. Include ownership, active contributors, and knowledge concentration risks.
 
 ### timeline.md (if discoverable)
-Development history, velocity trends, stale modules.
+Use `extension/templates/timeline-template.md`. Include development history, velocity trends, and stale modules.
 
 ### qa-test-strategy-inputs.md (if discoverable)
-Current test state, coverage, frameworks, gaps.
+Use `extension/templates/qa-test-strategy-inputs-template.md`. Include current test state, coverage, frameworks, and gaps.
 
 ## ALWAYS / NEVER Rules
 
@@ -238,13 +229,13 @@ Repeat one `decision` entry per significant synthesis decision, contradiction fl
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../glossary.md
-    - .specify/.../mental-model.md
-    - .specify/.../boundaries.md
-    - .specify/.../assumptions.md
-    - .specify/.../unknowns.md
-    - .specify/.../contradictions-and-gaps.md
-    - .specify/.../risks.md
+    - ${STAGING_DIR}/glossary.md
+    - ${STAGING_DIR}/mental-model.md
+    - ${STAGING_DIR}/boundaries.md
+    - ${STAGING_DIR}/assumptions.md
+    - ${STAGING_DIR}/unknowns.md
+    - ${STAGING_DIR}/contradictions-and-gaps.md
+    - ${STAGING_DIR}/risks.md
   state_updates: {}
   journal_entries:
     - id: null
