@@ -1593,6 +1593,7 @@ verify_spec:
         - "{verify_run_dir}/state.json"
         - "{verify_run_dir}/requirement-audit.md"
         - "{verify_run_dir}/implementation-map.md"
+        - "{spec_dir}/tasks.md"
       outputs:
         - "{spec_dir}/fulfillment-report.md"
         - "{spec_dir}/fulfillment-gaps.md"

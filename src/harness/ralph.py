@@ -37,6 +37,7 @@ from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.spec_frontmatter import find_spec_dir
 from harness.state import StateStore
+from harness.task_progress import summarize_task_progress
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from kernel.fulfillment import (
     blocking_statuses,
@@ -333,6 +334,9 @@ class RalphController:
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
+                    verify_result = self._apply_task_progress_gate(
+                        verify_result, worktree_path
+                    )
                     verify_result = self._refresh_fulfillment_report(
                         verify_result, worktree_path
                     )
@@ -834,6 +838,47 @@ class RalphController:
                 f"fulfillment report has unresolved statuses ({statuses}): {report}. "
                 f"Run `echelon reopen {self._spec_id}` or continue the harness loop "
                 "with fulfillment-gaps.md as mandatory implementation context."
+            ),
+        )
+        return VerifyResult(
+            passed=False,
+            failures=[failure],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+        )
+
+    def _apply_task_progress_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Treat task progress mismatches as verification failures."""
+        if not verify_result.passed or not worktree_path:
+            return verify_result
+
+        spec_dir = find_spec_dir(self._spec_id, Path(worktree_path))
+        if spec_dir is None:
+            return verify_result
+
+        tasks_path = spec_dir / "tasks.md"
+        if not tasks_path.exists():
+            return verify_result
+
+        state = self._state_store.read()
+        summary = summarize_task_progress(
+            tasks_path.read_text(encoding="utf-8", errors="replace"),
+            state.get("build") if isinstance(state.get("build"), dict) else {},
+        )
+        if summary.valid:
+            return verify_result
+
+        failure = FailureEntry(
+            category=FailureCategory.OTHER,
+            id="task-progress-mismatch",
+            error=(
+                "task progress tracking is inconsistent: "
+                + "; ".join(summary.errors)
+                + ". Update tasks.md canonical rows and state.json build progress before convergence."
             ),
         )
         return VerifyResult(

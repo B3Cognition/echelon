@@ -189,6 +189,36 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "fulfillment-gaps"
         assert "echelon reopen spec-001" in result.failures[0].error
 
+    def test_task_progress_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
+        """Ralph does not converge when state progress disagrees with tasks.md."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": 1,
+            "completed_tasks": 1,
+            "tasks_completed_pct": 100,
+            "task_results": {"T-001": {"status": "DONE"}},
+        }
+        state_store.write(state)
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[])
+
+        result = controller._apply_task_progress_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "task-progress-mismatch"
+        assert "state completed_tasks=1 but tasks.md has 0 checked task rows" in result.failures[0].error
+
     def test_converges_first_iteration(self, tmp_path: Path) -> None:
         """Verify passes on first try -> converged."""
         controller, provider, gitops, state_store = _make_controller(

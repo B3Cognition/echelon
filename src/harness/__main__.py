@@ -5,6 +5,7 @@ Subcommands:
   resume  — resume a blocked loop with an answer (reads HARNESS_* env vars)
   gitops  — GitOps operations (find-branch, create-worktree, commit-push, open-pr, merge-pr, local-merge)
   validate-tasks — validate canonical tasks.md rows
+  validate-task-progress — reconcile canonical tasks.md progress with state.json
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -120,6 +121,40 @@ def _validate_tasks() -> None:
     print(f"OK: {result.task_count} canonical tasks")
 
 
+def _validate_task_progress() -> None:
+    if len(sys.argv) < 3:
+        print(
+            "Usage: python -m harness validate-task-progress <tasks.md> [state.json]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import json
+    from pathlib import Path
+
+    from harness.task_progress import summarize_task_progress
+
+    tasks_path = Path(sys.argv[2])
+    build_state = {}
+    if len(sys.argv) >= 4:
+        state = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+        if isinstance(state.get("build"), dict):
+            build_state = state["build"]
+
+    summary = summarize_task_progress(
+        tasks_path.read_text(encoding="utf-8", errors="replace"),
+        build_state,
+    )
+    if not summary.valid:
+        print(f"invalid task progress: {'; '.join(summary.errors)}", file=sys.stderr)
+        sys.exit(1)
+
+    print(
+        f"OK: {summary.completed_tasks}/{summary.total_tasks} tasks complete "
+        f"({summary.tasks_completed_pct}%)"
+    )
+
+
 def _migrate_tasks() -> None:
     if len(sys.argv) < 3:
         print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
@@ -221,6 +256,8 @@ def main() -> None:
         sys.exit(gitops_main(sys.argv[2:]))
     elif subcommand == "validate-tasks":
         _validate_tasks()
+    elif subcommand == "validate-task-progress":
+        _validate_task_progress()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -229,7 +266,7 @@ def main() -> None:
         _migrate_plan()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)

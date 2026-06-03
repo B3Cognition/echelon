@@ -110,15 +110,28 @@ speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` t
    - `DEGRADED` (fix_cycle limit hit) → `DEGRADED`
    - `BLOCKED` → `BLOCKED`
 
-2. Locate the task section in `tasks.md`: find the heading `### {task_id}:`.
+2. Locate the canonical top-level task row in `tasks.md`: find the row that starts with `- [ ] {task_id}` or `- [x] {task_id}`.
 
-3. Add `**Status:** {status}` on the line immediately after `**Complexity:** ...`.
+3. Update the canonical row checkbox:
+   - `DONE`, `DONE_WITH_CONCERNS`, or `DEGRADED` → `- [x] {task_id} ...`
+   - `BLOCKED` → `- [ ] {task_id} ...`
 
-4. Change every `- [ ]` checkbox within that task's section (under **Acceptance Criteria** and **Test Tasks**) to `- [x]`.
-   - Only modify checkboxes within the target task section (stop at the next `### T` heading or end of file).
-   - Do not touch already-checked `- [x]` lines (idempotent).
-   - For `BLOCKED` tasks: change `- [ ]` to `- [-]` instead (skipped, not verified).
+4. Add or replace `  **Status:** {status}` immediately after the canonical row. Preserve the task row metadata exactly.
 
-5. Write the updated `tasks.md` back to `{spec_dir}/tasks.md`.
+5. For `DONE` or `DONE_WITH_CONCERNS`, change nested `  - [ ]` checkboxes within that task block to `  - [x]`.
+   - Only modify nested checkboxes within the target task block.
+   - Stop at the next top-level canonical task row or end of file.
+   - Do not touch already-checked `  - [x]` lines.
+   - For `DEGRADED` or `BLOCKED`, leave nested acceptance/test checkboxes unchanged unless they were actually verified.
 
-**Always execute this step.** A tasks.md where all boxes remain `- [ ]` after a build is a silent lie to every developer who reads it.
+6. Write the updated `tasks.md` back to `{spec_dir}/tasks.md`.
+
+7. Validate progress integrity:
+
+```bash
+python -m harness validate-task-progress "{spec_dir}/tasks.md" "{state_json_path}"
+```
+
+If validation fails, fix `tasks.md` and the returned `build` state update before continuing.
+
+**Always execute this step.** A tasks.md where canonical rows and build state disagree is a silent lie to every developer who reads it.

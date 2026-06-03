@@ -106,8 +106,10 @@ BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.m
 
 **Specification Complete (mandatory on speckit-echelon-verification (VERIFICATION) PASS):**
 
-1. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from `tasks.md` and return the full updated `build` object in `echelon_result.state_updates`.
-2. Return this journal entry in `echelon_result.journal_entries`: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
+1. Validate task progress integrity with `python -m harness validate-task-progress "{spec_dir}/tasks.md" "{state_json_path}"`.
+2. Confirm `state.json.build.tasks_completed_pct` is `100`. If not, recompute from canonical checked task rows in `tasks.md` and return the full updated `build` object in `echelon_result.state_updates`.
+3. If progress validation fails, do not enter BUILD_DONE. Fix canonical task row checkboxes, `**Status:**` lines, and the returned `build` state update first.
+4. Return this journal entry in `echelon_result.journal_entries`: `{ "type": "milestone", "event": "spec_implemented", "spec_id": "{spec_id}", "spec_dir": "{spec_dir}" }`.
 
 ### 8.2 Collect Reports
 
