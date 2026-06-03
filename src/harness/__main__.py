@@ -6,6 +6,8 @@ Subcommands:
   gitops  — GitOps operations (find-branch, create-worktree, commit-push, open-pr, merge-pr, local-merge)
   validate-tasks — validate canonical tasks.md rows
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
+  validate-plan — validate canonical plan.md sections
+  migrate-plan — migrate legacy plan.md files to canonical sections
 
 Environment variables for `run`:
   HARNESS_SPEC          required  spec ID (e.g., "012")
@@ -151,6 +153,58 @@ def _migrate_tasks() -> None:
     print(migrated, end="")
 
 
+def _validate_plan() -> None:
+    if len(sys.argv) < 3:
+        print("Usage: python -m harness validate-plan <plan.md>", file=sys.stderr)
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+
+    plan_path = Path(sys.argv[2])
+    try:
+        validate_plan_file(plan_path)
+    except PlanValidationError as e:
+        print(f"invalid plan.md: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print("OK: canonical plan.md")
+
+
+def _migrate_plan() -> None:
+    if len(sys.argv) < 3:
+        print("Usage: python -m harness migrate-plan <plan.md> [--write]", file=sys.stderr)
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.plan_migration import migrate_plan_markdown
+    from kernel.plan_contract import validate_plan_markdown
+
+    plan_path = Path(sys.argv[2])
+    write = "--write" in sys.argv[3:]
+    unknown = [arg for arg in sys.argv[3:] if arg != "--write"]
+    if unknown:
+        print(f"Unknown migrate-plan option: {unknown[0]!r}", file=sys.stderr)
+        sys.exit(1)
+
+    migrated = migrate_plan_markdown(
+        plan_path.read_text(encoding="utf-8", errors="replace")
+    )
+    result = validate_plan_markdown(migrated)
+    if not result.valid:
+        print(f"invalid migrated plan.md: {'; '.join(result.errors)}", file=sys.stderr)
+        sys.exit(1)
+
+    if write:
+        plan_path.write_text(migrated, encoding="utf-8")
+        print("OK: migrated canonical plan.md")
+        return
+
+    print(migrated, end="")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -169,9 +223,13 @@ def main() -> None:
         _validate_tasks()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
+    elif subcommand == "validate-plan":
+        _validate_plan()
+    elif subcommand == "migrate-plan":
+        _migrate_plan()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', or 'migrate-tasks'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)

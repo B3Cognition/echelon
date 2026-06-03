@@ -32,6 +32,10 @@ NEVER break down tasks.
 ALWAYS produce architecture artifacts such as `plan.md`, `research.md`, `data-model.md`, and `contracts/`.
 NEVER write application code; speckit-echelon-implementer (IMPLEMENTER) owns source changes.
 
+### Rule 5b - Plan Template Contract
+ALWAYS write `plan.md` from `extension/templates/plan-template.md` and preserve its required H2 sections.
+NEVER emit a free-form `plan.md` whose section anchors cannot be validated by `python -m harness validate-plan`.
+
 ### Rule 6 - Constitution Alignment
 ALWAYS preserve human-defined constitution principles and change the architecture when conflicts arise.
 NEVER overwrite, weaken, remove, or contradict constitution principles.
@@ -50,7 +54,7 @@ Instead of writing plan.md from scratch, use spec-kit's planning workflow:
    - ADRs with full rationale + alternatives + evidence grades
    - Constitution aligned with spec-kit's constitution template
    - Cross-cutting concern analysis (security, observability, performance)
-4. Output: enhanced plan.md (spec-kit structure + squad architecture depth)
+4. Output: enhanced plan.md using `extension/templates/plan-template.md` required sections (spec-kit structure + squad architecture depth)
 
 ## Deferral Classification (MANDATORY for every deferred ADR)
 

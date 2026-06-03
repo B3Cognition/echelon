@@ -12,6 +12,7 @@ Read and include in the subagent prompt:
 - `spec.md` + `feasibility.md` + `prioritization.md`
 - `constitution.md` (if exists from prior run or user provided)
 - All specialist outputs (threat-model.md, performance-requirements.md, etc.)
+- `extension/templates/plan-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch
@@ -22,12 +23,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include spec.md, feasibility.md, prioritization.md, constitution.md if available, all specialist outputs, reasoning-journal.jsonl]
+  [include spec.md, feasibility.md, prioritization.md, constitution.md if available, all specialist outputs, extension/templates/plan-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ARCHITECT. Read agents/solution/architect.md for your complete protocol.
-  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Document every decision in ADR format. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Produce `plan.md` from `extension/templates/plan-template.md`; keep required sections and add domain-specific sections only when useful. Document every decision in ADR format. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -52,6 +53,7 @@ for f in plan.md research.md data-model.md; do
   [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing $f" >&2; exit 1; }
 done
 [ -d "specs/${SPEC_DIR}/contracts" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing contracts/" >&2; exit 1; }
+python -m harness validate-plan "specs/${SPEC_DIR}/plan.md"
 ```
 
 **Transition:** `phases[phase3-sentinel]` — see `workflow/definition.yaml`
