@@ -28,7 +28,7 @@ NEVER delete learning history outright or fabricate comparisons on first runs.
 
 ## Inputs
 
-- Current run artifacts (`.specify/specs/{feature}/`)
+- Current run artifacts (`specs/{feature}/`)
 - Prior run artifacts (if re-run — loaded from `${SQUAD_DIR}/prior-runs/`)
 - `knowledge-base/calibration-profile.yaml`
 - `reasoning-journal.jsonl` (current + prior if available)
@@ -101,20 +101,7 @@ Cross-reference evolution signals with internalization data to produce evidence-
 4. Read `evolution.recommendations.min_confidence` from config — only produce recommendation if correlated data points >= this threshold
 5. Read `evolution.recommendations.require_downstream_evidence` from config — if true, skip recommendations where `downstream_outcome` is null for all entries
 
-For each recommendation that passes the confidence gate, produce a block in `prompt-recommendations.md`:
-
-```markdown
-## Prompt Recommendation: REC-NNN
-Agent: {agent codename}
-Domain: {domain from evolution signal}
-Evidence:
-- accuracy regression: {best_known} → {current} over {N} runs
-- internalization doubts: {N}/{total} runs had "{category}" doubts about {topic}
-- downstream: {N}/{total} runs had {outcome} triggered by {agent}
-Correlation: {category} doubts → {outcome} ({percentage}% rate)
-Recommended change: {specific change to agent prompt, referencing section name}
-Confidence: {HIGH|MEDIUM|LOW} ({N} correlated data points)
-```
+For each recommendation that passes the confidence gate, produce a block in `prompt-recommendations.md` using `extension/templates/prompt-recommendation-template.md`.
 
 If no recommendations pass the confidence gate, always omit the file; do not produce it.
 
@@ -167,13 +154,13 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: STABLE
   output_files:
-    - evolution-report.md
-    - improvement-metrics.md
+    - {spec_dir}/evolution-report.md
+    - {spec_dir}/improvement-metrics.md
   journal_entries:
     - id: null
       type: adaptation_triggered
       phase: finalize
-      agent: EVOLVE
+      agent: speckit-echelon-adaptive (ADAPTIVE)
       timestamp: null
       data:
         trajectory: improving

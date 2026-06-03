@@ -73,6 +73,7 @@ Context pack:
 - Prior run artifacts (for diffing)
 - `reasoning-journal.jsonl`
 - `knowledge-base/` files
+- `extension/templates/prompt-recommendation-template.md`
 
 Use the Agent tool:
 
@@ -80,12 +81,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.jsonl, knowledge-base/ files]
+  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.jsonl, knowledge-base/ files, extension/templates/prompt-recommendation-template.md]
   </context>
 
   <instructions>
   You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
-  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`; when prompt recommendations are produced, use the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
