@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import re
 
-from kernel.task_contract import parse_task_rows
+from kernel.task_contract import TASK_ID_PATTERN, parse_task_rows
 
 
+_LEGACY_TASK_ID_PATTERN = rf"(?:T-?\d{{3,4}}|{TASK_ID_PATTERN})"
 _HEADING_RE = re.compile(
-    r"^(?P<level>#{1,6})\s+(?P<task_id>T-?\d{3,4})\s*[:\-]?\s*(?P<title>.*)$"
+    rf"^(?P<level>#{{1,6}})\s+(?P<task_id>{_LEGACY_TASK_ID_PATTERN})\s*[:\-]?\s*(?P<title>.*)$"
 )
 _CHECKBOX_RE = re.compile(
-    r"^- \[(?P<status>[ xX])\]\s+(?P<task_id>T-?\d{3,4})\b\s*[:\-]?\s*(?P<title>.*)$"
+    rf"^- \[(?P<status>[ xX])\]\s+(?P<task_id>{_LEGACY_TASK_ID_PATTERN})\b\s*[:\-]?\s*(?P<title>.*)$"
 )
 
 

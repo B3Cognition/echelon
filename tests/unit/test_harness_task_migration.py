@@ -75,6 +75,25 @@ def test_migrate_compact_legacy_task_ids_to_canonical_rows() -> None:
     assert validate_tasks_markdown(migrated).valid is True
 
 
+def test_migrate_spike_task_headings_to_canonical_rows() -> None:
+    migrated = migrate_tasks_markdown(
+        """
+### T-S01b: Validate Swift SPM Cross-Platform Build Pipeline [P]
+
+### T-S02: Validate CoreMotion + ARKit Cockpit Overlay [P]
+"""
+    )
+
+    tasks = parse_task_rows(migrated)
+
+    assert [task.task_id for task in tasks] == ["T-S01b", "T-S02"]
+    assert tasks[0].parallel is True
+    assert tasks[1].parallel is True
+    assert "**Title:** Validate Swift SPM Cross-Platform Build Pipeline" in migrated
+    assert "**Title:** Validate CoreMotion + ARKit Cockpit Overlay" in migrated
+    assert validate_tasks_markdown(migrated).valid is True
+
+
 def test_migrate_leaves_existing_canonical_rows_unchanged() -> None:
     source = "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
 

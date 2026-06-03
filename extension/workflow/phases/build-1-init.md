@@ -8,7 +8,7 @@
 
 **Build Start State Update (mandatory, runs once before first task):**
 
-1. Count only canonical task rows in `{spec_dir}/tasks.md` (top-level lines matching `^- \[[ xX]\] T-[0-9]{3,4}\b`) and include the count in `echelon_result.state_updates.build.total_tasks`. Acceptance-criteria checkboxes are not tasks.
+1. Count only canonical task rows in `{spec_dir}/tasks.md` (top-level rows with `T-###`, or `T-S##` / `T-S##x` for spike/user-decision tasks) and include the count in `echelon_result.state_updates.build.total_tasks`. Acceptance-criteria checkboxes are not tasks.
 2. Return the full initialized `build` object in one `echelon_result.state_updates.build` value; the harness applies it to `state.json`.
 
 ### 1.0 Anchor Project Root
@@ -71,8 +71,8 @@ If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not f
 
 Read `tasks.md` and parse all tasks into a structured list:
 
-- Canonical task row (e.g., `- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none`)
-- Task ID (`T-###`)
+- Canonical task row (e.g., `- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none`; spike/user-decision rows may use `T-S01b`)
+- Task ID (`T-###` for normal tasks; `T-S##` / `T-S##x` for spike/user-decision tasks)
 - Phase/group (`phase=<token>`)
 - Complexity (`trivial`, `standard`, or `complex`)
 - Description

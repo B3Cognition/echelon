@@ -6,9 +6,11 @@ import re
 from dataclasses import dataclass
 
 
+TASK_ID_PATTERN = r"T-(?:\d{3,4}|S\d{2}[A-Za-z]?)"
+
 _TASK_ROW_RE = re.compile(
     r"^- \[(?P<status>[ xX])\]\s+"
-    r"(?P<task_id>T-\d{3,4})"
+    rf"(?P<task_id>{TASK_ID_PATTERN})"
     r"(?:\s+(?P<parallel>\[P\]))?\s+"
     r"complexity=(?P<complexity>trivial|standard|complex)\s+"
     r"phase=(?P<phase>[A-Za-z0-9_.-]+)\s+"

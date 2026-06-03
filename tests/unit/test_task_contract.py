@@ -77,6 +77,16 @@ class TestTaskContract:
         assert result.valid is False
         assert "duplicate task id: T-001" in result.errors
 
+    def test_parse_task_rows_accepts_spike_task_ids(self) -> None:
+        tasks = parse_task_rows(
+            "- [ ] T-S01b [P] complexity=trivial phase=spike req=OQ-001 depends=none\n"
+            "- [ ] T-S02 complexity=complex phase=spike req=OQ-002 depends=T-S01b\n"
+        )
+
+        assert [task.task_id for task in tasks] == ["T-S01b", "T-S02"]
+        assert tasks[0].parallel is True
+        assert tasks[1].dependencies == ["T-S01b"]
+
     def test_parse_task_rows_ignores_fenced_examples(self) -> None:
         tasks = parse_task_rows(
             """

@@ -30,7 +30,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
-  Break the architecture into executable tasks (foundation, features, polish). Use `extension/templates/tasks-template.md` and `extension/templates/task-entry-fragment.md`; every executable task must start with a canonical `T-###` row. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Break the architecture into executable tasks (foundation, features, polish). Use `extension/templates/tasks-template.md` and `extension/templates/task-entry-fragment.md`; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
