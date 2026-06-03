@@ -248,7 +248,7 @@ Report as: `Calibration Health: {score} ({HEALTHY|DEGRADED|CRITICAL})`
 
 ### Output Path
 
-Save as `.specify/specs/{feature}/calibration-dashboard.md`
+Save as `{spec_dir}/calibration-dashboard.md`.
 
 ---
 
@@ -262,10 +262,10 @@ Entry format:
 
 Use the calibration profile entry format in `agents/learning/appendices/auditor-output-formats.md`.
 
-- **`confidence-flags.md`** — per-artifact confidence scores for the current run
+- **`{spec_dir}/confidence-flags.md`** — per-artifact confidence scores for the current run
 - **`knowledge-base/evolution-signals.yaml`** — evolution signals when regression thresholds met (Mode 3)
 - **`knowledge-base/prompt-versions.yaml`** — updated `active_at_runs` per agent (Mode 3)
-- **`calibration-dashboard.md`** — calibration health overview (our addition)
+- **`{spec_dir}/calibration-dashboard.md`** — calibration health overview
 
 ### Confidence Flag Format
 
@@ -299,7 +299,7 @@ When calibration data grows (5+ data points per domain), CALIBRATE should produc
 
 Use the Calibration Analytics section in `agents/learning/appendices/auditor-dashboard-template.md`.
 
-Save as `.specify/specs/{feature}/calibration-analytics.md`
+Save as `{spec_dir}/calibration-analytics.md`.
 This makes learning VISIBLE, not just stored in YAML.
 
 ---
@@ -369,13 +369,13 @@ Scan all sections. For any finding with severity CRITICAL:
 
 ### Step 8: Produce feedback-report.md
 
-Write a human-readable summary to `specs/{feature}/feedback-report.md` with:
+Write a human-readable summary to `{spec_dir}/feedback-report.md` with:
 Use the feedback report sections in `agents/learning/appendices/auditor-output-formats.md`.
 
 ### Output
 
 - `knowledge-base/feedback/{spec-id}-{project-name}.yaml` — structured auto-feedback
-- `specs/{feature}/feedback-report.md` — human-readable report
+- `{spec_dir}/feedback-report.md` — human-readable report
 - Both files produced via KB Bootstrap Protocol (lock, write, validate, release)
 
 ### Mode 5: Post-Feedback Confidence Threshold Refresh (FR-FEP-006)
@@ -474,13 +474,13 @@ echelon_result:
   verdict: CALIBRATED
   output_files:
     - knowledge-base/calibration-profile.yaml
-    - .specify/specs/<feature>/calibration-dashboard.md
-    - confidence-flags.md
+    - {spec_dir}/calibration-dashboard.md
+    - {spec_dir}/confidence-flags.md
   journal_entries:
     - id: null
       type: calibration_update
       phase: finalize
-      agent: CALIBRATE
+      agent: speckit-echelon-auditor (AUDITOR)
       timestamp: null
       data:
         # speckit-echelon-auditor (AUDITOR) FINALIZE parses adr_self_check and self_check type entries to validate unresolved concerns (FR-INH-006).
