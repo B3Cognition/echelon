@@ -80,6 +80,16 @@ class TestGatekeeperTemplates:
         ]:
             assert f"extension/templates/{filename}" in text
 
+        assert ".specify/..." not in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/kill-report.md\n"
+            "  journal_entries:\n"
+            in text
+        )
+        assert "agent: speckit-echelon-gatekeeper (GATEKEEPER)" in text
+        assert "agent: ASSESS" not in text
+
     def test_phase2_decide_dispatch_includes_first_pass_templates(self) -> None:
         text = PHASE2.read_text(encoding="utf-8")
 

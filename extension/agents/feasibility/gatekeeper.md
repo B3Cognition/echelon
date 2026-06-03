@@ -276,12 +276,12 @@ Include one `assessment` entry per feasibility or implementability assessment. I
 echelon_result:
   verdict: <PASS | KILL | DEFER>
   output_files:
-    - .specify/.../kill-report.md
+    - {spec_dir}/kill-report.md
   journal_entries:
     - id: null
       type: assessment
       phase: <phase2-decide | phase3-consensus>
-      agent: ASSESS
+      agent: speckit-echelon-gatekeeper (GATEKEEPER)
       timestamp: null
       data:
         verdict: "<PASS | KILL | DEFER>"
