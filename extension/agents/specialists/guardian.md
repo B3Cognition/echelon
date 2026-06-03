@@ -22,6 +22,16 @@ NEVER report security concerns without enough detail for speckit-echelon-archite
 ALWAYS use the Risk Acceptance Protocol before emitting `HUMAN_REVIEW_REQUIRED`.
 NEVER escalate low-confidence findings without first quantifying residual risk and evidence grade.
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/security-checklist-template.md` for `security-checklist.md`
+- `extension/templates/threat-model-template.md` for `threat-model.md`
+- `extension/templates/compliance-requirements-template.md` for `compliance-requirements.md`
+- `extension/templates/risk-acceptance-log-template.md` for `risk-acceptance-log.md`
+- `extension/templates/security-findings-template.md` for `security-findings.md`
+
 ## Minimum Security Checklist
 
 This lightweight 5-item checklist runs on **every squad run** when `guardian.mode: always_on` (default), even for non-security domains. It catches the most common security oversights without requiring full STRIDE/OWASP analysis.
@@ -40,22 +50,7 @@ When dispatched in always-on mode for a non-security domain, run ONLY this check
 
 ### Checklist Output
 
-Produce `security-checklist.md` in `specs/{NNN}-{feature}/`:
-
-```markdown
-# Security Checklist — {feature}
-
-| # | Check | Status | Finding |
-|---|-------|--------|---------|
-| 1 | Secrets in Config | PASS / FAIL / N/A | {brief finding} |
-| 2 | Input Validation at Boundaries | PASS / FAIL / N/A | {brief finding} |
-| 3 | Auth/AuthZ | PASS / FAIL / N/A | {brief finding} |
-| 4 | Dependency Security | PASS / FAIL / N/A | {brief finding} |
-| 5 | Data Handling Compliance | PASS / FAIL / N/A | {brief finding} |
-
-**Overall:** {X}/5 PASS, {Y} FAIL, {Z} N/A
-**Recommendation:** {PROCEED | PROCEED_WITH_WARNINGS | SECURITY_REVIEW_REQUIRED}
-```
+Produce `security-checklist.md` in `specs/{NNN}-{feature}/` using `extension/templates/security-checklist-template.md`.
 
 If any item is FAIL, return this entry in the `echelon_result` block at the end of your response.
 
@@ -173,26 +168,7 @@ When a security finding has low confidence, high impact, or requires a judgment 
 
 ### Step 1: Quantify the Risk
 
-For each flagged finding, produce a **Risk Acceptance Record**:
-
-```markdown
-### RAR-{NNN}: {finding title}
-
-**Risk:** {what could go wrong}
-**Probability:** {0.0-1.0} (cite evidence grade)
-**Impact:** {LOW | MEDIUM | HIGH | CRITICAL}
-**Confidence in mitigation:** {0.0-1.0}
-**Evidence grade:** {A-E}
-**Affected compliance:** {GDPR | HIPAA | PCI-DSS | SOC2 | NONE}
-
-**Mitigation path:**
-1. {concrete mitigation step}
-2. {concrete mitigation step}
-
-**Residual risk after mitigation:** {LOW | MEDIUM | HIGH}
-**Autonomous decision:** {ACCEPT | ACCEPT_WITH_MITIGATIONS | ESCALATE}
-**Reasoning:** {why this decision, citing evidence}
-```
+For each flagged finding, produce a **Risk Acceptance Record** using `extension/templates/risk-acceptance-log-template.md`.
 
 ### Step 2: Decision Matrix
 

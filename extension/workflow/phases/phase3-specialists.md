@@ -76,6 +76,11 @@ Use the Agent tool:
 Context pack:
 
 - `spec.md` + `boundaries.md` + domain-relevant artifacts
+- `extension/templates/security-checklist-template.md`
+- `extension/templates/threat-model-template.md`
+- `extension/templates/compliance-requirements-template.md`
+- `extension/templates/risk-acceptance-log-template.md`
+- `extension/templates/security-findings-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -84,12 +89,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, boundaries.md, domain-relevant artifacts, reasoning-journal.jsonl]
+  [include spec.md, boundaries.md, domain-relevant artifacts, guardian output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are GUARDIAN. Read agents/specialists/guardian.md for your complete protocol.
-  Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
