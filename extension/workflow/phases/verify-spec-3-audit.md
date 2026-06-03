@@ -8,6 +8,8 @@ Provide SPEC-FULFILLMENT-AUDITOR with:
 - `spec.md`
 - `plan.md`
 - `tasks.md`
+- `progress-integrity.json`
+- `progress-integrity.md`
 - `coverage-map.md` if present
 - verification `state.json`
 
@@ -15,10 +17,9 @@ Provide SPEC-FULFILLMENT-AUDITOR with:
 
 Extract a canonical fulfillment checklist. Include requirements, acceptance
 criteria, user stories, edge cases, and measurable non-functional requirements.
-Use `plan.md` for intended architecture and phase commitments. Use `tasks.md`
-and verification `state.json` to include a task-progress integrity section:
-canonical task rows, recorded `**Status:**` values, checked rows, and mismatches
-between `tasks.md` and `state.json.build`.
+Use `plan.md` for intended architecture and phase commitments. Use
+`progress-integrity.json` and `progress-integrity.md` as the authoritative
+task-progress integrity evidence. Do not recalculate task progress by hand.
 
 ## Expected Output
 

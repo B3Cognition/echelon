@@ -9,6 +9,8 @@ Provide SPEC-GUARD with:
 - implementation evidence map
 - `spec.md`
 - `tasks.md`
+- `progress-integrity.json`
+- `progress-integrity.md`
 - verification `state.json`
 
 ## Dispatch Prompt
@@ -17,9 +19,10 @@ Run SPEC-GUARD in fulfillment mode. Assign exactly one status per item:
 `IMPLEMENTED`, `PARTIAL`, `UNVERIFIED`, `MISSING`, `DEVIATED`, or
 `OBSOLETE_SPEC`.
 
-Also judge task-progress integrity. If `tasks.md` canonical rows, recorded
-`**Status:**` values, or `state.json.build` disagree, write a `TASK-PROGRESS`
-row with status `PARTIAL` and include the mismatch in `{spec_dir}/fulfillment-gaps.md`.
+Also judge task-progress integrity from `progress-integrity.json` and
+`progress-integrity.md`. If progress integrity is invalid or incomplete, write a
+`TASK-PROGRESS` row with status `PARTIAL` and include the mismatch in
+`{spec_dir}/fulfillment-gaps.md`.
 
 ## Expected Outputs
 

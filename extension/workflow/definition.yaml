@@ -1546,6 +1546,17 @@ verify_spec:
         - "{verify_run_dir}/codegraph-summary.json"
         - "{verify_run_dir}/codegraph-error.txt"
       transitions:
+        - to: verify-spec-2-progress-integrity
+          condition: always
+
+    - id: verify-spec-2-progress-integrity
+      label: "Progress Integrity Evidence"
+      spec_file: workflow/phases/verify-spec-2-progress-integrity.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/progress-integrity.json"
+        - "{verify_run_dir}/progress-integrity.md"
+      transitions:
         - to: verify-spec-3-audit
           condition: always
 
@@ -1558,6 +1569,8 @@ verify_spec:
       context_pack:
         - "{verify_run_dir}/state.json"
         - "{verify_run_dir}/codegraph-summary.json"
+        - "{verify_run_dir}/progress-integrity.json"
+        - "{verify_run_dir}/progress-integrity.md"
         - "{spec_dir}/spec.md"
         - "{spec_dir}/plan.md"
         - "{spec_dir}/tasks.md"
@@ -1593,6 +1606,8 @@ verify_spec:
         - "{verify_run_dir}/state.json"
         - "{verify_run_dir}/requirement-audit.md"
         - "{verify_run_dir}/implementation-map.md"
+        - "{verify_run_dir}/progress-integrity.json"
+        - "{verify_run_dir}/progress-integrity.md"
         - "{spec_dir}/tasks.md"
       outputs:
         - "{spec_dir}/fulfillment-report.md"

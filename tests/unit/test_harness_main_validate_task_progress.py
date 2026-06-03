@@ -114,3 +114,84 @@ class TestHarnessMainMarkTaskProgress:
 
         assert exc.value.code == 1
         assert "could not mark task progress" in capsys.readouterr().err
+
+
+@pytest.mark.unit
+class TestHarnessMainWriteProgressIntegrity:
+    def test_write_progress_integrity_creates_json_and_markdown(self, tmp_path, capsys) -> None:
+        tasks = tmp_path / "tasks.md"
+        tasks.write_text(
+            "- [x] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
+            "  **Status:** DONE\n",
+            encoding="utf-8",
+        )
+        state = tmp_path / "state.json"
+        state.write_text(
+            json.dumps(
+                {
+                    "build": {
+                        "total_tasks": 1,
+                        "completed_tasks": 1,
+                        "tasks_completed_pct": 100,
+                        "task_results": {"T-001": {"status": "DONE"}},
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        out_json = tmp_path / "progress-integrity.json"
+        out_md = tmp_path / "progress-integrity.md"
+
+        from harness.__main__ import main
+
+        with patch(
+            "sys.argv",
+            [
+                "python -m harness",
+                "write-progress-integrity",
+                str(tasks),
+                str(state),
+                str(out_json),
+                str(out_md),
+            ],
+        ):
+            main()
+
+        data = json.loads(out_json.read_text(encoding="utf-8"))
+        assert data["valid"] is True
+        assert data["completed_tasks"] == 1
+        assert data["task_statuses"] == {"T-001": "DONE"}
+        markdown = out_md.read_text(encoding="utf-8")
+        assert "# Progress Integrity" in markdown
+        assert "| T-001 | DONE |" in markdown
+        assert "OK: wrote progress integrity" in capsys.readouterr().out
+
+    def test_write_progress_integrity_exits_nonzero_for_mismatch(self, tmp_path, capsys) -> None:
+        tasks = tmp_path / "tasks.md"
+        tasks.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+        state = tmp_path / "state.json"
+        state.write_text(
+            json.dumps({"build": {"total_tasks": 1, "completed_tasks": 1}}),
+            encoding="utf-8",
+        )
+
+        from harness.__main__ import main
+
+        with patch(
+            "sys.argv",
+            [
+                "python -m harness",
+                "write-progress-integrity",
+                str(tasks),
+                str(state),
+                str(tmp_path / "out.json"),
+                str(tmp_path / "out.md"),
+            ],
+        ), pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 1
+        assert "invalid task progress" in capsys.readouterr().err

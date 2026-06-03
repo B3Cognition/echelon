@@ -7,6 +7,7 @@ Subcommands:
   validate-tasks — validate canonical tasks.md rows
   validate-task-progress — reconcile canonical tasks.md progress with state.json
   mark-task-progress — update one canonical tasks.md row and status
+  write-progress-integrity — write deterministic progress integrity artifacts
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -186,6 +187,67 @@ def _mark_task_progress() -> None:
     print(f"OK: marked {task_id} as {status.upper()}")
 
 
+def _write_progress_integrity() -> None:
+    if len(sys.argv) < 6:
+        print(
+            "Usage: python -m harness write-progress-integrity <tasks.md> <state.json> <out.json> <out.md>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import json
+    from pathlib import Path
+
+    from harness.task_progress import summarize_task_progress
+
+    tasks_path = Path(sys.argv[2])
+    state_path = Path(sys.argv[3])
+    out_json = Path(sys.argv[4])
+    out_md = Path(sys.argv[5])
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    build_state = state.get("build") if isinstance(state.get("build"), dict) else {}
+    summary = summarize_task_progress(
+        tasks_path.read_text(encoding="utf-8", errors="replace"),
+        build_state,
+    )
+    if not summary.valid:
+        print(f"invalid task progress: {'; '.join(summary.errors)}", file=sys.stderr)
+        sys.exit(1)
+
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_md.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "valid": summary.valid,
+        "total_tasks": summary.total_tasks,
+        "completed_tasks": summary.completed_tasks,
+        "tasks_completed_pct": summary.tasks_completed_pct,
+        "task_statuses": summary.task_statuses,
+        "errors": summary.errors,
+    }
+    out_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    out_md.write_text(_progress_integrity_markdown(payload), encoding="utf-8")
+    print(f"OK: wrote progress integrity to {out_json} and {out_md}")
+
+
+def _progress_integrity_markdown(payload: dict[str, object]) -> str:
+    statuses = payload.get("task_statuses")
+    rows = []
+    if isinstance(statuses, dict):
+        for task_id, status in sorted(statuses.items()):
+            rows.append(f"| {task_id} | {status} |")
+    rows_text = "\n".join(rows) if rows else "| (none) | (none) |"
+    return (
+        "# Progress Integrity\n\n"
+        f"Valid: {payload['valid']}\n\n"
+        f"Completed: {payload['completed_tasks']}/{payload['total_tasks']} "
+        f"({payload['tasks_completed_pct']}%)\n\n"
+        "| Task | Status |\n"
+        "| --- | --- |\n"
+        f"{rows_text}\n"
+    )
+
+
 def _migrate_tasks() -> None:
     if len(sys.argv) < 3:
         print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
@@ -291,6 +353,8 @@ def main() -> None:
         _validate_task_progress()
     elif subcommand == "mark-task-progress":
         _mark_task_progress()
+    elif subcommand == "write-progress-integrity":
+        _write_progress_integrity()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -299,7 +363,7 @@ def main() -> None:
         _migrate_plan()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'mark-task-progress', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'mark-task-progress', 'write-progress-integrity', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)
