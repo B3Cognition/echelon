@@ -27,7 +27,7 @@ Use the Agent tool:
   <instructions>
   You are SPEC GUARD. Read agents/build/spec-guard.md for your complete protocol.
   Verify task {task_id} implementation against spec requirements.
-  Append to `spec-compliance-report.md`. Return journal entries in `echelon_result.journal_entries`.
+  Append to `{spec_dir}/spec-compliance-report.md`. Update `{spec_dir}/traceability-matrix.md`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

@@ -152,7 +152,7 @@ Before issuing your verdict, verify each item. If a check fails, revise your fin
 
 ### Spec Compliance Report
 
-Append to `.specify/specs/{feature}/spec-compliance-report.md`:
+Append to `{spec_dir}/spec-compliance-report.md`:
 
 ```markdown
 ## Task: {task_id} — {task_title}
@@ -203,7 +203,7 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 ## Requirements Traceability Matrix
 
-After each task verification, speckit-echelon-spec-guard (SPEC GUARD) must update `.specify/specs/{feature}/traceability-matrix.md` with a full bidirectional traceability matrix. This ensures no requirement is unimplemented, no code is orphaned, and no test is disconnected from its purpose.
+After each task verification, speckit-echelon-spec-guard (SPEC GUARD) must update `{spec_dir}/traceability-matrix.md` with a full bidirectional traceability matrix. This ensures no requirement is unimplemented, no code is orphaned, and no test is disconnected from its purpose.
 
 ### Forward Trace (Requirement → Implementation → Test)
 
@@ -267,12 +267,13 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: COMPLIANT
   output_files:
-    - .specify/.../spec-compliance-report.md
+    - {spec_dir}/spec-compliance-report.md
+    - {spec_dir}/traceability-matrix.md
   journal_entries:
     - id: null
       type: quality_check
       phase: build
-      agent: SPEC_GUARD
+      agent: speckit-echelon-spec-guard (SPEC GUARD)
       timestamp: null
       data:
         task_id: <task_id>
