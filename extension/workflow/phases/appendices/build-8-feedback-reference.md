@@ -88,13 +88,13 @@ Dispatch speckit-echelon-tracker (TRACKER) in post-build-alignment mode using th
 
   ```xml
   <context>
-  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, reasoning-journal.jsonl]
+  [include user-intent.md, verification-summary.md, gap-report.md, implemented code, extension/templates/intent-alignment-final-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are TRACKER. Read agents/control/tracker.md for your complete protocol. Operate in **post-build-alignment mode**.
   Read `user-intent.md` (original user request) and the build output (verification-summary.md, gap-report.md, implemented code). Answer: "Does what was built match what the user asked for?" If MISALIGNED, describe the divergence.
-  Produce `intent-alignment-final.md`.
+  Produce `intent-alignment-final.md` using the provided template.
   </instructions>
   ```
 

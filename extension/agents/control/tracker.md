@@ -12,6 +12,15 @@ speckit-echelon-gatekeeper (GATEKEEPER) must honor your intent model. If intent 
 ALWAYS preserve explicit user statements as the authority for intent.
 NEVER override user statements with agent reasoning.
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/user-intent-template.md` for `user-intent.md`
+- `extension/templates/intent-alignment-check-template.md` for `intent-alignment-check.md`
+- `extension/templates/intent-alignment-final-template.md` for `intent-alignment-final.md`
+- `extension/templates/stakeholder-model-template.md` for `stakeholder-model.md`
+
 ## Why This Exists
 
 In our first real run, ASSESS scoped the project to a small MVP subset when the user wanted full parity with the legacy system. The user said "prepare me the best latest technology solution" — that means EVERYTHING, not a subset. But ASSESS applied Kano/RICE prioritization (a pattern from training data) instead of listening to the actual request.
@@ -20,35 +29,7 @@ The spec was technically correct. The prioritization was technically sound. But 
 
 ## What Intent Tracking Does
 
-Maintains a `user-intent.md` artifact that is SEPARATE from spec.md:
-
-```markdown
-# User Intent Model
-
-## Explicit Statements (what the user literally said)
-- "prepare me the best latest technology solution"
-- "create the new version"
-- "do it all automatically"
-- "there are many more modules, right?" (implicit: I want ALL of them)
-
-## Inferred Intent (what they probably mean)
-- Full legacy parity, not a subset
-- Latest technology (cutting edge, not safe/proven)
-- Autonomous execution (don't ask me questions, just do it)
-- Visual proof (show me the components rendering)
-
-## Intent vs Spec Alignment
-| User Intent | Spec Says | Aligned? |
-|------------|-----------|----------|
-| All modules | FR-MOD-003: 5 MVP modules | NO — MISALIGNED |
-| Latest tech | ADR-001: Modern framework | YES |
-| Autonomous | squad.run autonomous mode | YES |
-| Visual proof | No visual validation | NO — MISSING |
-
-## Red Flags (intent divergence detected)
-- ASSESS scoped to MVP → user wants full parity
-- No demo/visual check planned → user wants to SEE components
-```
+Maintains a `user-intent.md` artifact that is SEPARATE from spec.md. Use `extension/templates/user-intent-template.md`.
 
 ## Process
 
@@ -137,29 +118,7 @@ Place `drift_severity: {ALIGNED|MINOR_DRIFT|MAJOR_DRIFT}` on the second line of 
 
 Real projects have multiple stakeholders with competing priorities. Track them:
 
-### stakeholder-model.md
-
-```markdown
-# Stakeholder Model
-
-## Stakeholders
-
-| Stakeholder | Role | Primary Goal | Key Constraint | Potential Conflicts |
-|------------|------|-------------|----------------|-------------------|
-| {name/role} | {PM/QA/Security/CTO/User} | {what they want most} | {their non-negotiable} | {who they conflict with} |
-
-## Priority Conflicts
-
-| Conflict | Stakeholder A | Stakeholder B | Current Resolution | Risk |
-|----------|-------------|-------------|-------------------|------|
-| Speed vs Quality | PM (ship fast) | QA (test more) | {how it's balanced} | {what breaks if wrong} |
-
-## Tradeoff Decisions
-
-When ASSESS or HOW makes a tradeoff, log it against the stakeholder model:
-- "Cutting test coverage to 60% saves 2 weeks (PM wins) but risks regressions (QA loses)"
-- Make tradeoffs EXPLICIT, not hidden in technical decisions
-```
+Use `extension/templates/stakeholder-model-template.md`.
 
 Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders are detectable from the project description or constitution.
 
