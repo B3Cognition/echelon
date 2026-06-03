@@ -62,6 +62,8 @@ class TestScoutTemplates:
 
         assert "```markdown\n# Domain Glossary" not in text
         assert ".specify/..." not in text
+        assert "agent: speckit-echelon-scout (SCOUT)" in text
+        assert "agent: DISCOVER" not in text
 
     def test_phase1_discover_dispatch_includes_scout_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

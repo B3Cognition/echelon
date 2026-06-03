@@ -290,7 +290,7 @@ echelon_result:
     - id: null
       type: insight
       phase: phase1-discover
-      agent: DISCOVER
+      agent: speckit-echelon-scout (SCOUT)
       timestamp: null
       data:
         artifact: "<filename this relates to>"
