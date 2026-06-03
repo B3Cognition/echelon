@@ -46,16 +46,28 @@ Instead of writing tasks.md from scratch, use spec-kit's task generation:
 
 1. Call `speckit.tasks` with the validated plan as input
 2. Spec-kit produces tasks.md using its template (consistent format, dependency ordering)
-3. Your job: enhance with:
+3. Read `extension/templates/tasks-template.md` and `extension/templates/task-entry-fragment.md`; preserve the canonical task row contract while enhancing the file.
+4. Your job: enhance with:
    - Critical path analysis (spec-kit doesn't do this)
    - Risk matrix per task (probability × impact)
    - Effort estimates from ASSESS (spec-kit doesn't estimate)
    - [P] parallelization markers
    - Specialist task integration (security, performance, accessibility tasks from specialists)
-4. Call `speckit.analyze` for cross-artifact consistency check
-5. Output: enhanced tasks.md + critical-path.md + risk-matrix.md + dependencies.md
+5. Call `speckit.analyze` for cross-artifact consistency check
+6. Output: enhanced tasks.md + critical-path.md + risk-matrix.md + dependencies.md
 
 This gives us: spec-kit's proven task format + squad's planning depth.
+
+## Canonical Task Template
+
+ALWAYS preserve the machine-readable task row format from `extension/templates/tasks-template.md`:
+
+```markdown
+- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none
+```
+
+NEVER use acceptance-criteria checkboxes as executable task rows.
+NEVER emit executable task IDs such as `BF1-T1`, `RF1-T1`, or `FG-T1` in the top-level row; use the next available `T-###` row and put those labels in the title/description.
 
 ## Operating Modes
 
@@ -129,15 +141,12 @@ Break the plan into concrete tasks organized by phase:
 
 #### 2. Task Format
 
-Each task follows this structure:
+Each executable task MUST start with the canonical row from `extension/templates/task-entry-fragment.md`, followed by rich markdown details:
 
 ```markdown
-### T<NNN>: <Task Title> [P]
+- [ ] T-<NNN> [P] complexity=<trivial|standard|complex> phase=<phase-token> req=<FR-IDs|INFRA> depends=<none|T-IDs>
 
-**Phase:** <phase number>
-**User Story:** <US-ID from spec, or "infrastructure">
-**Depends On:** <T-IDs that must complete first>
-**Effort:** <estimate in hours or days>
+  **Title:** <Task Title>
 **Files:**
 - `<exact/file/path.ext>` — <what this file does>
 - `<exact/file/path.ext>` — <what this file does>

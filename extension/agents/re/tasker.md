@@ -46,164 +46,27 @@ Use Glob to find all `specs/[0-9][0-9][0-9]-re-*/` directories with both `spec.m
 
 For each domain (iterate over all domains in `state.json.domains`), read `spec.md` and `plan.md`, then write `{domain_dir}/tasks.md`.
 
-**tasks.md structure:**
+Read `extension/templates/tasks-template.md`, `extension/templates/task-entry-fragment.md`, and `extension/templates/task-checkpoint-fragment.md`. Use them as the base for every generated `tasks.md`.
+
+Every executable task MUST begin with the canonical row:
 
 ```markdown
-# Tasks: {Domain Name}
+- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none
+```
 
-**Domain**: {NNN}-{domain-name}
-**Created**: {DATE}
-**Spec**: [spec.md](spec.md)
-**Plan**: [plan.md](plan.md)
+ALWAYS use stable `T-###` IDs for executable tasks.
+NEVER use acceptance-criteria checkboxes as executable tasks.
+NEVER use domain-style IDs such as `[001.1.1]` as the canonical executable task row.
 
----
+Required phases:
+- `foundation`
+- `core`
+- `integration`
+- `polish`
 
-## Task Format
+Include checkpoints using `extension/templates/task-checkpoint-fragment.md`.
 
-- `[D.P.S]` = Domain.Phase.Sequence (e.g., `[001.1.1]`)
-- `→ [D.P.S]` = Depends on task
-- ⚡ Parallel = Can run alongside other parallel tasks
-- 🔒 Sequential = Must complete before next
-
----
-
-## Phase 1: Foundation
-
-### [{DDD}.1.1] Set up domain structure 🔒
-
-**Description**: Create directory structure and initial files for {domain}
-
-**Acceptance**:
-- [ ] Directory structure matches plan
-- [ ] Base interfaces defined
-- [ ] Initial test scaffold in place
-
-**Effort**: S
-
----
-
-### [{DDD}.1.2] Implement core interfaces → [{DDD}.1.1] ⚡
-
-**Description**: Define interfaces for domain entities per constitution naming standards
-
-**Acceptance**:
-- [ ] All entities from spec have interfaces
-- [ ] Interfaces follow constitution naming standards
-- [ ] Documentation comments added
-
-**Effort**: M
-
----
-
-[Continue for each Phase 1 task from plan.md...]
-
----
-
-## ✓ Checkpoint: Foundation Complete
-
-**Verify before continuing**:
-- [ ] All Phase 1 tasks complete
-- [ ] Tests passing
-- [ ] Code review approved
-
----
-
-## Phase 2: Core Implementation
-
-[One task per user story from spec.md — link each task to its US-{NNN}.N ID]
-
-### [{DDD}.2.N] Implement {story subject} → [{DDD}.1.2] 🔒
-
-**Description**: {From spec US-{NNN}.N}
-
-**Links**: US-{NNN}.N
-
-**Acceptance**:
-- [ ] Acceptance scenarios from spec met
-- [ ] Business rules from spec enforced
-- [ ] Unit tests at {constitution.coverage}% coverage
-
-**Effort**: {S/M/L/XL}
-
----
-
-## ✓ Checkpoint: Core Implementation Complete
-
-**Verify before continuing**:
-- [ ] All user stories from spec addressed
-- [ ] Coverage meets constitution threshold
-- [ ] No critical issues open
-
----
-
-## Phase 3: Integration
-
-[One task per cross-domain integration point in plan.md]
-
----
-
-## ✓ Checkpoint: Integration Complete
-
-**Verify before continuing**:
-- [ ] Cross-domain integration tested
-- [ ] Performance acceptable
-- [ ] Monitoring in place
-
----
-
-## Phase 4: Polish
-
-### [{DDD}.4.1] Add comprehensive error handling ⚡
-
-**Acceptance**:
-- [ ] All error paths handled
-- [ ] User-facing error messages clear
-- [ ] Errors logged appropriately
-
-**Effort**: M
-
-### [{DDD}.4.2] Add logging and monitoring ⚡
-
-**Acceptance**:
-- [ ] Key operations logged
-- [ ] Metrics exposed
-- [ ] Alerts configured
-
-**Effort**: S
-
-### [{DDD}.4.3] Documentation 🔒
-
-**Acceptance**:
-- [ ] API documentation complete
-- [ ] README updated
-
-**Effort**: S
-
----
-
-## ✓ Final Checkpoint: Domain Complete
-
-**Verify**:
-- [ ] All tasks complete
-- [ ] All tests passing
-- [ ] Documentation complete
-- [ ] Ready for next wave domains
-
----
-
-## Summary
-
-| Phase | Tasks | Effort |
-|-------|-------|--------|
-| 1. Foundation | {count} | {total} |
-| 2. Core | {count} | {total} |
-| 3. Integration | {count} | {total} |
-| 4. Polish | {count} | {total} |
-| **Total** | {count} | {total} |
-
-**Critical Path**: [{DDD}.1.1] → [{DDD}.1.2] → [{DDD}.2.1] → [{DDD}.3.1]
-
----
+Each task detail block includes title, files, description, acceptance criteria, and test tasks.
 
 ## Cross-Domain Dependencies
 
@@ -214,22 +77,14 @@ For each domain (iterate over all domains in `state.json.domains`), read `spec.m
 | Other Domains Need | From This Domain |
 |--------------------|------------------|
 | {service/data} | {NNN-domain} |
-```
 
-### Task ID Convention
-
-Task IDs follow `[DDD.P.S]`:
-- **DDD**: Domain number (001, 002, etc.)
-- **P**: Phase number (1–4)
-- **S**: Sequence within phase
-
-Every user story in spec.md maps to at least one task. Checkpoints enforce constitution quality gates.
+Every user story in spec.md maps to at least one canonical `T-###` task. Checkpoints enforce constitution quality gates.
 
 ### Granularity Rules
 
 - One task = one logical unit of work (a single service, a single entity, a single integration).
 - Always keep independent user stories as separate tasks; do not merge them into one task.
-- Parallelize-safe tasks get ⚡; tasks that must serialize get 🔒.
+- Parallelize-safe tasks get `[P]` in the canonical row; tasks without `[P]` are sequential blockers.
 
 ### Effort Sizing
 

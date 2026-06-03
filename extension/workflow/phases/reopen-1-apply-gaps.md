@@ -16,13 +16,23 @@ NEVER reopen from a stale report without recording the source path.
 
 Set spec frontmatter/status to `In Progress`.
 
-Append a `## Fulfillment Gap Tasks` section to `{spec_dir}/tasks.md` with one
-small test-first sequence per actionable gap:
+Append a `## Fulfillment Gap Tasks` section to `{spec_dir}/tasks.md` using
+`extension/templates/fulfillment-gap-task-fragment.md`. Add one small
+test-first sequence per actionable gap, preserving canonical `T-###` executable
+task rows:
 
 ```markdown
-- [ ] FG-T{n}.1: Add failing test for {gap_id} from fulfillment-gaps.md
-- [ ] FG-T{n}.2: Implement missing or deviated behavior for {gap_id}
-- [ ] FG-T{n}.3: Rerun `echelon verify-spec {spec_id}` and update fulfillment evidence
+- [ ] T-{next} complexity=standard phase=fulfillment-gap req={FR-id} depends=none
+
+  **Title:** FG-T{n}.1 - Add failing test for {gap_id}
+
+- [ ] T-{next+1} complexity=standard phase=fulfillment-gap req={FR-id} depends=T-{next}
+
+  **Title:** FG-T{n}.2 - Implement missing or deviated behavior for {gap_id}
+
+- [ ] T-{next+2} complexity=standard phase=fulfillment-gap req={FR-id} depends=T-{next+1}
+
+  **Title:** FG-T{n}.3 - Rerun verify-spec and update fulfillment evidence
 ```
 
 Write `{spec_dir}/reopen-{n}.md` summarizing:

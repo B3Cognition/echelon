@@ -262,7 +262,7 @@ Comments:
 {from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
-Then append tasks to `specs/{spec_id}-{spec_name}/tasks.md`:
+Then append tasks to `specs/{spec_id}-{spec_name}/tasks.md` using `extension/templates/review-fix-task-fragment.md` and the canonical task row contract:
 
 ```markdown
 ---
@@ -272,10 +272,17 @@ Then append tasks to `specs/{spec_id}-{spec_name}/tasks.md`:
 > PR: {pr_url}
 > Status: pending
 
-- [ ] RF{n}-T1: Write failing test — {test from speckit-echelon-sentinel (SENTINEL)}
-- [ ] RF{n}-T2: Fix {file} — {what changes from speckit-echelon-debugger (DEBUGGER)}
-- [ ] RF{n}-T3: Verify test passes and all prior tests still pass
-- [ ] RF{n}-T4: Update coverage-map.md if coverage changed
+- [ ] T-{next} complexity=standard phase=review-fix req={FR-id} depends=none
+
+  **Title:** RF{n}-T1 - Write failing test for review finding
+
+- [ ] T-{next+1} complexity=standard phase=review-fix req={FR-id} depends=T-{next}
+
+  **Title:** RF{n}-T2 - Fix {file}
+
+- [ ] T-{next+2} complexity=standard phase=review-fix req={FR-id} depends=T-{next+1}
+
+  **Title:** RF{n}-T3 - Verify regression and prior tests
 ```
 
 After writing all artifacts, return to the default branch:

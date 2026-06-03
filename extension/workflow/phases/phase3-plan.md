@@ -12,6 +12,9 @@ Read and include in the subagent prompt:
 - `plan.md` + `research.md` + `data-model.md`
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
+- `extension/templates/tasks-template.md`
+- `extension/templates/task-entry-fragment.md`
+- `extension/templates/task-checkpoint-fragment.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch
@@ -22,12 +25,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, reasoning-journal.jsonl]
+  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, extension/templates/tasks-template.md, extension/templates/task-entry-fragment.md, extension/templates/task-checkpoint-fragment.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
-  Break the architecture into executable tasks (foundation, features, polish). Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Break the architecture into executable tasks (foundation, features, polish). Use `extension/templates/tasks-template.md` and `extension/templates/task-entry-fragment.md`; every executable task must start with a canonical `T-###` row. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -56,6 +59,28 @@ speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `specs/
 for f in tasks.md critical-path.md risk-matrix.md dependencies.md; do
   [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-orchestrator (ORCHESTRATOR) missing $f" >&2; exit 1; }
 done
+```
+
+Also verify `tasks.md` uses canonical task rows:
+
+```bash
+python - <<'PY'
+import re
+from pathlib import Path
+path = Path("specs/${SPEC_DIR}/tasks.md")
+task_re = re.compile(r"^- \[[ xX]\] T-[0-9]{3,4}(?: \[P\])? complexity=(trivial|standard|complex) phase=[A-Za-z0-9_.-]+ req=[A-Za-z0-9_,.-]+ depends=(none|[A-Za-z0-9_,.-]+)$")
+in_fence = False
+count = 0
+for line in path.read_text().splitlines():
+    if line.startswith("```"):
+        in_fence = not in_fence
+        continue
+    if not in_fence and task_re.match(line):
+        count += 1
+if count == 0:
+    raise SystemExit("ERROR: invalid canonical tasks.md: no canonical task rows found")
+print(f"OK: {count} canonical tasks")
+PY
 ```
 
 **MANDATORY — run before transitioning to phase3-consensus:**

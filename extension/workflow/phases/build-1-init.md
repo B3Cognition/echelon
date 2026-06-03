@@ -8,7 +8,7 @@
 
 **Build Start State Update (mandatory, runs once before first task):**
 
-1. Count all task lines in `{spec_dir}/tasks.md` (lines matching `^\s*- \[[ xX]\]`) and include the count in `echelon_result.state_updates.build.total_tasks`.
+1. Count only canonical task rows in `{spec_dir}/tasks.md` (top-level lines matching `^- \[[ xX]\] T-[0-9]{3,4}\b`) and include the count in `echelon_result.state_updates.build.total_tasks`. Acceptance-criteria checkboxes are not tasks.
 2. Return the full initialized `build` object in one `echelon_result.state_updates.build` value; the harness applies it to `state.json`.
 
 ### 1.0 Anchor Project Root
@@ -71,13 +71,15 @@ If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not f
 
 Read `tasks.md` and parse all tasks into a structured list:
 
-- Task ID (e.g., `T-001`)
-- Phase/group (e.g., "Foundation", "Core Features")
+- Canonical task row (e.g., `- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none`)
+- Task ID (`T-###`)
+- Phase/group (`phase=<token>`)
+- Complexity (`trivial`, `standard`, or `complex`)
 - Description
 - File paths (where code goes)
 - Acceptance criteria
-- Dependencies (task IDs that must complete first)
-- Referenced requirements (FR-* IDs)
+- Dependencies (`depends=none` or comma-separated task IDs)
+- Referenced requirements (`req=FR-*` or `INFRA`)
 - Estimated effort (from `estimates.md` if available)
 
 ### 1.3 Determine Build Order

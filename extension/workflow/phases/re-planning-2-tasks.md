@@ -7,10 +7,13 @@
 - `specs/NNN-re-{domain}/plan.md`
 - `specs/NNN-re-{domain}/spec.md`
 - `constitution.md`
+- `extension/templates/tasks-template.md`
+- `extension/templates/task-entry-fragment.md`
+- `extension/templates/task-checkpoint-fragment.md`
 
 ## Dispatch Prompt
 
-Instruct RE-TASKER to: iterate over all domains, for each read plan.md + spec.md + constitution, generate `specs/NNN-re-{domain}/tasks.md` with actionable task items (IDs, descriptions, acceptance criteria, dependencies). After all domains complete, optionally offer `speckit.analyze` for consistency analysis.
+Instruct RE-TASKER to: iterate over all domains, for each read plan.md + spec.md + constitution, generate `specs/NNN-re-{domain}/tasks.md` from `extension/templates/tasks-template.md`. Every executable task must start with a canonical `T-###` row containing `complexity=`, `phase=`, `req=`, and `depends=` metadata. After all domains complete, optionally offer `speckit.analyze` for consistency analysis.
 
 ## Expected Outputs
 
