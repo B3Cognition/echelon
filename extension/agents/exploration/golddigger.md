@@ -439,7 +439,7 @@ echelon_result:
     - id: null
       type: decision
       phase: phase1-discover
-      agent: EXTRACT
+      agent: speckit-echelon-golddigger (GOLDDIGGER)
       timestamp: null
       data:
         artifact: "golddigger-cache/<domain>.md"
