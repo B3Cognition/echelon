@@ -32,7 +32,7 @@ Use the Agent tool:
   <instructions>
   You are INTEGRATOR. Read agents/build/integrator.md for your complete protocol.
   Verify system integration after phase "{phase_group}".
-  Write `integration-report.md`. Return journal entries in `echelon_result.journal_entries`.
+  Write `{spec_dir}/integration-report.md`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

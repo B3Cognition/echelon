@@ -126,7 +126,7 @@ These checks verify that components work together, not just individually:
 
 ### Integration Report
 
-Write to `.specify/specs/{feature}/integration-report.md` (one per phase checkpoint):
+Write to `{spec_dir}/integration-report.md` (one per phase checkpoint):
 
 ```markdown
 ## Phase: {phase_name} — Integration Report
@@ -200,7 +200,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: INTEGRATED
   output_files:
-    - .specify/.../integration-report.md
+    - {spec_dir}/integration-report.md
   journal_entries:
     - id: null
       type: integration_finding
