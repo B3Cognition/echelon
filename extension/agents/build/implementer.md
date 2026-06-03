@@ -376,7 +376,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: DONE
   output_files:
-    - .specify/.../implementation/<file>
+    - {spec_dir}/implementation/<file>
   journal_entries:
     - id: null
       type: implementation_complete
