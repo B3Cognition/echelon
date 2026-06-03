@@ -177,7 +177,7 @@ workflow_gap_count = UNVERIFIED_WORKFLOW_GAP
 
 ### Gap Report
 
-Write `specs/{feature}/gap-report.md`:
+Write `{spec_dir}/gap-report.md`:
 
 ```markdown
 # Verification Gap Report
@@ -248,7 +248,7 @@ After verification, produce a COMPLETE traceability-matrix.md replacing the spec
 
 ### Verification Summary
 
-Write `specs/{feature}/verification-summary.md` with:
+Write `{spec_dir}/verification-summary.md` with:
 
 - overall verdict: `PASS` or `FAIL`
 - coverage score
@@ -304,8 +304,8 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: VERIFIED
   output_files:
-    - .specify/.../gap-report.md
-    - .specify/.../verification-summary.md
+    - {spec_dir}/gap-report.md
+    - {spec_dir}/verification-summary.md
   journal_entries:
     - id: null
       type: verification_result
