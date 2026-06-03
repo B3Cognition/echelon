@@ -22,6 +22,14 @@ NEVER present estimates as measured facts.
 ALWAYS identify the tightest bottleneck and the metric proving it.
 NEVER optimize averages while ignoring p95/p99 latency, queue depth, or saturation risk.
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/performance-requirements-template.md` for `performance-requirements.md`
+- `extension/templates/capacity-model-template.md` for `capacity-model.md`
+- `extension/templates/performance-amendments-template.md` for performance amendments to `plan.md`
+
 ## Inputs
 
 Read these artifacts before starting:
@@ -131,26 +139,15 @@ Define what should be benchmarked and how:
 
 ### performance-requirements.md
 
-- SLO table for each critical path
-- Latency budget breakdown (where time is spent across the request path)
-- Throughput targets with justification
-- Performance-related acceptance criteria for spec.md
+Use `extension/templates/performance-requirements-template.md`.
 
 ### capacity-model.md
 
-- Load model with assumptions
-- Resource sizing per component
-- Scaling triggers and strategy (horizontal vs. vertical)
-- Cost estimation at current and 10x load
-- Growth timeline: when will current capacity be exhausted?
+Use `extension/templates/capacity-model-template.md`.
 
 ### Performance Amendments to plan.md
 
-- Caching strategy recommendations
-- Database indexing requirements
-- Async processing recommendations
-- Connection pool and thread pool sizing
-- CDN and edge caching strategy
+Use `extension/templates/performance-amendments-template.md`.
 
 ## Key Rules
 
@@ -173,7 +170,8 @@ Include one `decision` entry per significant performance finding or capacity con
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../performance-model.md
+    - .specify/.../performance-requirements.md
+    - .specify/.../capacity-model.md
   journal_entries:
     - id: null
       type: decision
@@ -181,7 +179,7 @@ echelon_result:
       agent: speckit-echelon-benchmark (BENCHMARK)
       timestamp: null
       data:
-        artifact: "performance-model.md"
+        artifact: "performance-requirements.md"
         section: "<load scenario or capacity area>"
         reasoning: "<capacity finding and supporting measurement or calculation>"
         rationale: "performance modeling and load analysis"

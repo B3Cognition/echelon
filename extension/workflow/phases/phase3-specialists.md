@@ -129,6 +129,9 @@ Use the Agent tool:
 Context pack:
 
 - `spec.md` + `boundaries.md` + performance-relevant requirements
+- `extension/templates/performance-requirements-template.md`
+- `extension/templates/capacity-model-template.md`
+- `extension/templates/performance-amendments-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -137,12 +140,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, boundaries.md, performance-relevant requirements, reasoning-journal.jsonl]
+  [include spec.md, boundaries.md, performance-relevant requirements, benchmark output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are BENCHMARK. Read agents/specialists/benchmark.md for your complete protocol.
-  Perform load modeling, capacity planning, identify bottleneck risks. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Perform load modeling, capacity planning, identify bottleneck risks. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
