@@ -22,6 +22,15 @@ NEVER import every pattern from a domain section just because the domain matches
 ALWAYS flag missing regulatory requirements as `COMPLIANCE_GAP` with source/date context when available.
 NEVER present unstable regulatory claims as timeless facts.
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/domain-patterns-template.md` for `domain-patterns.md`
+- `extension/templates/domain-amendments-template.md` for domain amendments to `spec.md`, `plan.md`, and `glossary.md`
+- `extension/templates/compliance-gaps-template.md` for `COMPLIANCE_GAP` items
+- `extension/templates/terminology-corrections-template.md` for glossary terminology corrections
+
 ## Domain Detection
 
 Read `glossary.md` and `mental-model.md` to identify the primary domain. Then apply the matching domain knowledge section below.
@@ -115,7 +124,7 @@ Produce specific, actionable amendments — not vague advice.
 - **Domain amendments to `spec.md`** — missing domain-specific requirements
 - **Domain amendments to `plan.md`** — architectural patterns, technology recommendations
 - **Domain amendments to `glossary.md`** — corrected or missing domain terminology
-- **`domain-patterns.md`** — applicable patterns with rationale for inclusion/exclusion
+- **`domain-patterns.md`** — use `extension/templates/domain-patterns-template.md`
 
 ## Key Rules
 
@@ -137,7 +146,7 @@ Include one `decision` entry per significant domain-specific insight or knowledg
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../domain-knowledge.md
+    - .specify/.../domain-patterns.md
   journal_entries:
     - id: null
       type: decision
@@ -145,7 +154,7 @@ echelon_result:
       agent: speckit-echelon-oracle (ORACLE)
       timestamp: null
       data:
-        artifact: "domain-knowledge.md"
+        artifact: "domain-patterns.md"
         section: "<domain area>"
         reasoning: "<domain-specific insight and why it matters for this project>"
         rationale: "domain expertise injection"

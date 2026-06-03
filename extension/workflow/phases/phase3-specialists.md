@@ -105,6 +105,10 @@ Use the Agent tool:
 Context pack:
 
 - Domain-relevant artifacts from `specs/{feature}/`
+- `extension/templates/domain-patterns-template.md`
+- `extension/templates/domain-amendments-template.md`
+- `extension/templates/compliance-gaps-template.md`
+- `extension/templates/terminology-corrections-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -113,12 +117,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include domain-relevant artifacts from specs/{feature}/, reasoning-journal.jsonl]
+  [include domain-relevant artifacts from specs/{feature}/, oracle output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORACLE. Read agents/specialists/oracle.md for your complete protocol.
-  You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  You are the ORACLE agent for {domain}. Provide domain patterns, regulatory requirements, common pitfalls, and terminology corrections. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
