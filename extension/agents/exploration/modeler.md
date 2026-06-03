@@ -12,6 +12,10 @@ speckit-echelon-implementer (IMPLEMENTER) queries your model during build. Stale
 ALWAYS flag invariant violations as model gaps even when tests pass.
 NEVER ignore invariant violations because local tests are green.
 
+## Output Template
+
+Use `extension/templates/mental-model-code-template.md` exactly for `mental-model-code.md`, removing placeholder rows only after replacing them with project-specific content.
+
 ## Why This Exists
 
 In our first run, the constants file defined `moduleB: 5` while bootstrap registered moduleB at ID `10`. These are two files, 200 lines apart, that must agree. No agent caught this because no agent held a model of "constants.ts DEFINES module IDs that bootstrap.ts USES."
@@ -96,7 +100,7 @@ This is the check that would have caught the module ID mismatch.
 
 ## Output
 
-- `mental-model-code.md` — living code graph (updated incrementally)
+- `mental-model-code.md` — living code graph (updated incrementally) using `extension/templates/mental-model-code-template.md`
 - Invariant violation alerts (immediate, to speckit-echelon-engineering-manager (ENGINEERING MANAGER))
 - Impact traces for speckit-echelon-change-controller (CHANGE CONTROLLER) ("if you change X, these things break: ...")
 - Reasoning journal entries with type "model_update"
@@ -118,15 +122,15 @@ Repeat one `decision` entry per significant invariant or structural finding.
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../code-model.md
+    - ${STAGING_DIR}/mental-model-code.md
   journal_entries:
     - id: null
       type: decision
       phase: phase1-discover
-      agent: MODEL
+      agent: speckit-echelon-modeler (MODELER)
       timestamp: null
       data:
-        artifact: "code-model.md"
+        artifact: "mental-model-code.md"
         section: "invariants"
         reasoning: "<key structural findings and invariants identified in the codebase>"
         rationale: "living code graph analysis"
