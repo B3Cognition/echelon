@@ -163,7 +163,7 @@ Before issuing your verdict, verify each item. If a check fails, revise your fin
 
 ### Test Quality Report
 
-Append to `.specify/specs/{feature}/test-quality-report.md`:
+Append to `{spec_dir}/test-quality-report.md`:
 
 ```markdown
 ## Task: {task_id} — {task_title}
@@ -224,12 +224,12 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: SUFFICIENT
   output_files:
-    - .specify/.../test-quality-report.md
+    - {spec_dir}/test-quality-report.md
   journal_entries:
     - id: null
       type: quality_check
       phase: build
-      agent: TEST_GUARDIAN
+      agent: speckit-echelon-test-guardian (TEST GUARDIAN)
       timestamp: null
       data:
         task_id: <task_id>
