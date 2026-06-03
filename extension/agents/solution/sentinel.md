@@ -261,9 +261,9 @@ Include one `decision` entry per significant test strategy decision (test layer 
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../test-strategy.md
-    - .specify/.../test-architecture.md
-    - .specify/.../coverage-map.md
+    - {spec_dir}/test-strategy.md
+    - {spec_dir}/test-architecture.md
+    - {spec_dir}/coverage-map.md
   journal_entries:
     - id: null
       type: decision
