@@ -513,6 +513,7 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
     from harness.skills.run_skill import run, _count_tasks
+    from harness.task_validation import TaskValidationError
 
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
@@ -559,7 +560,23 @@ def _cmd_harness_run(args: list[str]) -> None:
     gitops = GitOpsManager(config)
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
 
-    task_count = _count_tasks(spec_id, str(Path.cwd()))
+    try:
+        task_count = _count_tasks(spec_id, str(Path.cwd()))
+    except TaskValidationError as e:
+        tasks_path = (
+            spec_dir / "tasks.md"
+            if spec_dir is not None
+            else Path("specs") / spec_id / "tasks.md"
+        )
+        print(
+            "✗ tasks.md is not in canonical format.\n"
+            f"  Error: {e}\n"
+            f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
+            f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
+            f"  Then rerun:        echelon harness run {spec_id}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
     target_display = str(getattr(config, "target_repo", None) or "local")
     _banner("HARNESS RUN", [
         ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),

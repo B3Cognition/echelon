@@ -6,6 +6,9 @@ where 'echelon harness run 013 strategy=codegen "do X"' silently dropped "do X".
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from harness.run_intent import parse_intent
@@ -62,3 +65,45 @@ class TestHarnessRunArgParsing:
         assert intent.task_description == "do the thing"
         assert intent.mode == "banzai"
         assert "mode=banzai" not in intent.task_description
+
+
+@pytest.mark.unit
+class TestHarnessRunTaskFormatErrors:
+    def test_old_task_format_exits_with_migration_guidance(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        spec_dir = tmp_path / "specs" / "003-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("### T-001: Legacy task\n", encoding="utf-8")
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
+            from echelon.cli import _cmd_harness_run
+
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["003"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "tasks.md is not in canonical format" in err
+        assert "no canonical task rows found" in err
+        assert "python -m harness migrate-tasks" in err
+        assert "--write" in err
