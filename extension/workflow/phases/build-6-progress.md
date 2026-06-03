@@ -29,7 +29,7 @@ Use the Agent tool:
   <instructions>
   You are PROGRESS TRACKER. Read agents/build/progress-tracker.md for your complete protocol.
   Record completion of task {task_id}. Update running totals and check for drift.
-  Append to `progress-report.md`. Update `knowledge-base/estimates-log.yaml` and `knowledge-base/calibration-profile.yaml`. Return drift or budget alerts in `echelon_result.journal_entries`; speckit-echelon-commander (COMMANDER) owns build counter state updates in Section 6.3.
+  Append to `{spec_dir}/progress-report.md`. Update `{spec_dir}/process-metrics.md`, `knowledge-base/estimates-log.yaml`, and `knowledge-base/calibration-profile.yaml`. Return drift or budget alerts in `echelon_result.journal_entries`; speckit-echelon-commander (COMMANDER) owns build counter state updates in Section 6.3.
   </instructions>
   ```
 

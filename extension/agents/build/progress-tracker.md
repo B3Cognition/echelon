@@ -117,7 +117,7 @@ Based on current burn rate, estimate:
 
 ### Progress Report
 
-Append to `.specify/specs/{feature}/progress-report.md`:
+Append to `{spec_dir}/progress-report.md`:
 
 ```markdown
 ## Task Completed: {task_id} — {task_title}
@@ -253,7 +253,7 @@ Append token data to `knowledge-base/estimates-log.yaml` entries:
 
 ## Process Metrics
 
-After each task completion, speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) must also update `.specify/specs/{feature}/process-metrics.md` with quantitative process health indicators. These metrics provide early warning of quality degradation, schedule risk, and architecture erosion.
+After each task completion, speckit-echelon-progress-tracker (PROGRESS TRACKER) must also update `{spec_dir}/process-metrics.md` with quantitative process health indicators. These metrics provide early warning of quality degradation, schedule risk, and architecture erosion.
 
 ### Metrics to Track
 
@@ -327,12 +327,13 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: ON_TRACK
   output_files:
-    - .specify/.../progress-report.md
+    - {spec_dir}/progress-report.md
+    - {spec_dir}/process-metrics.md
   journal_entries:
     - id: null
       type: progress_update
       phase: build
-      agent: PROGRESS_TRACKER
+      agent: speckit-echelon-progress-tracker (PROGRESS TRACKER)
       timestamp: null
       data:
         iteration: <iteration_number>
