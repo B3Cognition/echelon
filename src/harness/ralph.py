@@ -35,7 +35,7 @@ from harness.llm_build_runner import LlmBuildRunner
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
-from harness.spec_frontmatter import find_spec_dir
+from harness.spec_frontmatter import find_spec_dir, write_status
 from harness.state import StateStore
 from harness.task_progress import summarize_task_progress
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
@@ -394,6 +394,7 @@ class RalphController:
                                 final_verify=verify_result,
                                 branch=e.branch,
                             )
+                        self._mark_spec_ready_to_land(worktree_path)
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
 
                         return self._finalize(
@@ -446,6 +447,7 @@ class RalphController:
                                 final_verify=inner_result.get("final_verify"),
                                 branch=e.branch,
                             )
+                        self._mark_spec_ready_to_land(worktree_path)
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
                         return self._finalize(
                             status="converged",
@@ -1412,6 +1414,20 @@ class RalphController:
         )
 
     # === State helpers ===
+
+    def _mark_spec_ready_to_land(self, worktree_path: str) -> None:
+        """Write Python-owned implemented-but-not-landed spec status."""
+        spec_dir = find_spec_dir(self._spec_id, Path(worktree_path))
+        if spec_dir is None:
+            logger.warning(
+                "Could not mark %s ready_to_land: spec directory not found",
+                self._spec_id,
+            )
+            return
+        try:
+            write_status(spec_dir, "ready_to_land")
+        except FileNotFoundError as exc:
+            logger.warning("Could not mark %s ready_to_land: %s", self._spec_id, exc)
 
     def _append_iteration_log(
         self,

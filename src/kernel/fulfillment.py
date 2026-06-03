@@ -1,12 +1,16 @@
 """Fulfillment verification helpers."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import re
+from typing import Any
+
+import yaml
 
 NON_STRICT_BLOCKING = {"MISSING", "PARTIAL", "DEVIATED"}
 STRICT_BLOCKING = NON_STRICT_BLOCKING | {"UNVERIFIED"}
+_FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 
 
 def blocking_statuses(strict: bool = False) -> set[str]:
@@ -63,3 +67,55 @@ def fulfillment_has_blocking_gaps(report_path: Path, strict: bool = False) -> bo
     if not report_path.exists():
         return False
     return bool(_statuses_in_report(report_path) & blocking_statuses(strict))
+
+
+def read_fulfillment_metadata(report_path: Path) -> dict[str, Any]:
+    """Return YAML frontmatter metadata from a fulfillment report."""
+    if not report_path.exists():
+        return {}
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+    match = _FRONTMATTER_RE.match(text)
+    if match is None:
+        return {}
+    try:
+        data = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def stamp_fulfillment_report(
+    report_path: Path,
+    *,
+    spec_id: str,
+    commit: str,
+    run_id: str | None = None,
+) -> None:
+    """Record deterministic verification provenance in a fulfillment report."""
+    text = report_path.read_text(encoding="utf-8", errors="replace")
+    match = _FRONTMATTER_RE.match(text)
+    body = text[match.end():] if match else text
+    metadata = read_fulfillment_metadata(report_path)
+    metadata.update(
+        {
+            "spec_id": spec_id,
+            "verified_commit": commit,
+            "verified_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    if run_id:
+        metadata["verify_run_id"] = run_id
+    frontmatter = yaml.dump(
+        metadata,
+        default_flow_style=False,
+        sort_keys=False,
+        allow_unicode=True,
+    ).rstrip()
+    report_path.write_text(f"---\n{frontmatter}\n---\n{body}", encoding="utf-8")
+
+
+def fulfillment_report_is_current(report_path: Path, *, current_commit: str) -> bool:
+    """Return True when a report was generated for the current code commit."""
+    metadata = read_fulfillment_metadata(report_path)
+    verified_commit = metadata.get("verified_commit")
+    return isinstance(verified_commit, str) and verified_commit == current_commit

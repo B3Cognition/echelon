@@ -14,6 +14,7 @@ from harness.land import (
     LandOptions,
     LandPrepareResult,
     _fulfillment_warning,
+    _land_status_warning,
     _run_land_verify,
     find_pr_url,
     land,
@@ -153,6 +154,39 @@ class TestLand:
         assert "DEVIATED" in fields["problem"]
         assert "echelon reopen 042" in fields["next step"]
 
+    def test_land_blocks_when_spec_not_ready_to_land(self, tmp_path: Path) -> None:
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: In Progress\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        gitops = _make_gitops()
+
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._finish_landing") as finish_landing,
+            patch("harness.land._banner") as banner,
+        ):
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        prepare.assert_not_called()
+        finish_landing.assert_not_called()
+        assert banner.call_args.args[0] == "LAND — SPEC NOT READY"
+        fields = dict(banner.call_args.args[1])
+        assert "ready_to_land" in fields["problem"]
+
+    def test_land_status_warning_accepts_ready_to_land(self, tmp_path: Path) -> None:
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+
+        assert _land_status_warning("042", tmp_path) is None
+
     def test_land_allows_fulfillment_gaps_with_explicit_override(
         self, tmp_path: Path
     ) -> None:
@@ -184,6 +218,43 @@ class TestLand:
         assert result is True
         prepare.assert_called_once()
         assert banner.call_args.args[0] == "LAND — FULFILLMENT GAPS WARNING"
+
+    def test_fulfillment_warning_reports_stale_verified_commit(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        first = _commit(repo, "README.md", "base\n", "base")
+        _commit(repo, "later.txt", "later\n", "later")
+
+        spec_dir = repo / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            "verified_commit: " + first + "\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+
+        warning = _fulfillment_warning("042", repo, strict=False)
+
+        assert warning is not None
+        assert "stale" in warning
+        assert first in warning
+
+    def test_fulfillment_warning_reports_missing_report_for_spec(self, tmp_path: Path) -> None:
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+
+        warning = _fulfillment_warning("042", tmp_path, strict=False)
+
+        assert warning is not None
+        assert "no fulfillment report" in warning
 
     def test_returns_true_when_feature_branch_not_found(self, tmp_path: Path) -> None:
         gitops = _make_gitops(feature_branch=None)
@@ -243,7 +314,16 @@ class TestLand:
     def test_writes_landed_status_to_spec_frontmatter(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-my-feature"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("---\ntargets: []\n---\n# Spec\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets: []\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
         gitops = _make_gitops()
         with patch("harness.land.prepare_feature_branch") as prepare:
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
@@ -1047,6 +1127,7 @@ class TestLandIntegration:
         (tmp_path / "README.md").write_text("hi")
         sp.run(["git", "-C", str(tmp_path), "add", "."], check=True, capture_output=True)
         sp.run(["git", "-C", str(tmp_path), "commit", "-m", "init"], check=True, capture_output=True)
+        verified_commit = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
 
         # State file with PR URL
         state_dir = tmp_path / "runs" / "build-test" / "state"
@@ -1055,7 +1136,19 @@ class TestLandIntegration:
         # Spec dir
         spec_dir = tmp_path / "specs" / "042-my-feature"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("---\ntargets: []\n---\n# Body\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets: []\nstatus: ready_to_land\n---\n# Body\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            f"verified_commit: {verified_commit}\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
 
         # Worktree dir
         worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"

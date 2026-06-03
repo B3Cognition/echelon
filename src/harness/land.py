@@ -14,11 +14,13 @@ from echelon.ui import banner as _banner
 
 from harness.gitops import _run_git
 from harness.paths import runs_dir
-from harness.spec_frontmatter import find_spec_dir, write_status
+from harness.spec_frontmatter import find_spec_dir, read_frontmatter, write_status
 from kernel.fulfillment import (
     blocking_statuses,
+    fulfillment_report_is_current,
     fulfillment_has_blocking_gaps,
     latest_fulfillment_report,
+    read_fulfillment_metadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -272,9 +274,7 @@ def land(
     else:
         pr_url = _find_pr_url_all_builds(spec_id, project_dir)
 
-    if not options.prepare_only and not _check_fulfillment_before_land(
-        spec_id, project_dir, options
-    ):
+    if not options.prepare_only and not _check_ready_before_land(spec_id, project_dir, options):
         return False
 
     if options.prepare_only:
@@ -355,6 +355,38 @@ def land(
         return False
 
     return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+
+
+def _check_ready_before_land(
+    spec_id: str,
+    project_dir: Path,
+    options: LandOptions,
+) -> bool:
+    status_warning = _land_status_warning(spec_id, project_dir)
+    if status_warning:
+        _banner(
+            "LAND — SPEC NOT READY",
+            [
+                ("spec", spec_id),
+                ("problem", status_warning),
+                ("next step", f"rerun harness or verify-spec, then: echelon land {spec_id}"),
+            ],
+            subtitle="Echelon stopped before landing a spec that is not marked ready.",
+        )
+        return False
+
+    return _check_fulfillment_before_land(spec_id, project_dir, options)
+
+
+def _land_status_warning(spec_id: str, project_dir: Path) -> str | None:
+    spec_dir = find_spec_dir(spec_id, project_dir)
+    if spec_dir is None or not (spec_dir / "spec.md").exists():
+        return None
+
+    status = read_frontmatter(spec_dir).get("status")
+    if status in {"ready_to_land", "landed"}:
+        return None
+    return f"spec status must be ready_to_land before landing; current status is {status or '(missing)'}"
 
 
 def _prepare_for_land(
@@ -454,7 +486,23 @@ def _fulfillment_warning(
 
     report = latest_fulfillment_report(spec_dir)
     if report is None:
+        if (spec_dir / "spec.md").exists():
+            return (
+                f"no fulfillment report found for {spec_dir}. "
+                f"Rerun `echelon verify-spec {spec_id}` before landing."
+            )
         return None
+
+    current_commit = _current_git_commit(project_dir)
+    if current_commit and not fulfillment_report_is_current(
+        report, current_commit=current_commit
+    ):
+        metadata = read_fulfillment_metadata(report)
+        verified_commit = metadata.get("verified_commit") or "(missing)"
+        return (
+            f"fulfillment report is stale for current HEAD {current_commit}: {report} "
+            f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
+        )
 
     if not fulfillment_has_blocking_gaps(report, strict=strict):
         return None
@@ -464,6 +512,14 @@ def _fulfillment_warning(
         f"fulfillment report has unresolved statuses ({statuses}): {report}. "
         f"Run `echelon reopen {spec_id}` or rerun `echelon verify-spec {spec_id}`."
     )
+
+
+def _current_git_commit(project_dir: Path) -> str | None:
+    result = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
 
 
 def _run_land_verify(project_dir: Path, gitops: Any) -> tuple[bool, str]:

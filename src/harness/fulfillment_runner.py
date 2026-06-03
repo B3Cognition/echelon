@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 from typing import Mapping, Protocol
 
 from harness.skill_loader import build_skill_prompt, find_skill
+from harness.spec_frontmatter import find_spec_dir
+from kernel.fulfillment import latest_fulfillment_report, stamp_fulfillment_report
 
 
 class PromptExecutor(Protocol):
@@ -39,4 +42,43 @@ class FulfillmentRunner:
             return 127
 
         prompt = build_skill_prompt(skill_path, spec_id)
-        return self._prompt_executor.exec_prompt(worktree_path, prompt)
+        exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+        if exit_code == 0:
+            _stamp_latest_report(Path(worktree_path), spec_id)
+        return exit_code
+
+
+def _stamp_latest_report(worktree: Path, spec_id: str) -> None:
+    spec_dir = find_spec_dir(spec_id, worktree)
+    commit = _current_git_commit(worktree)
+    if spec_dir is None or commit is None:
+        return
+
+    report = latest_fulfillment_report(spec_dir)
+    if report is None:
+        return
+
+    run_id = _current_run_id(worktree)
+    stamp_fulfillment_report(report, spec_id=spec_id, commit=commit, run_id=run_id)
+
+
+def _current_git_commit(worktree: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _current_run_id(worktree: Path) -> str | None:
+    current = worktree / "runs" / ".current"
+    if not current.exists():
+        return None
+    run_id = current.read_text(encoding="utf-8", errors="replace").strip()
+    return run_id or None

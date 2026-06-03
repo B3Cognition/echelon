@@ -237,6 +237,30 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
 
+    def test_convergence_writes_ready_to_land_status(self, tmp_path: Path) -> None:
+        """Ralph owns the implemented-but-not-landed status transition."""
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
+            encoding="utf-8",
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "converged"
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+        assert "**Status**: ready_to_land" in (spec_dir / "spec.md").read_text(
+            encoding="utf-8"
+        )
+
     def test_does_not_converge_when_fulfillment_report_has_gaps(
         self, tmp_path: Path
     ) -> None:

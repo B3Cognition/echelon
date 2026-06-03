@@ -5,9 +5,11 @@ from kernel.fulfillment import (
     NON_STRICT_BLOCKING,
     STRICT_BLOCKING,
     blocking_statuses,
+    fulfillment_report_is_current,
     fulfillment_has_blocking_gaps,
     latest_fulfillment_report,
     make_verify_spec_run_dir,
+    stamp_fulfillment_report,
 )
 
 
@@ -95,4 +97,27 @@ def test_summary_table_status_counts_do_not_count_as_requirement_statuses(tmp_pa
 def test_blocking_statuses_returns_expected_sets():
     assert blocking_statuses() == NON_STRICT_BLOCKING
     assert blocking_statuses(strict=True) == STRICT_BLOCKING
+
+
+def test_stamp_fulfillment_report_records_commit_metadata(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text("# Fulfillment\n", encoding="utf-8")
+
+    stamp_fulfillment_report(report, spec_id="001", commit="abc123", run_id="run-1")
+
+    text = report.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    assert "spec_id: '001'" in text
+    assert "verified_commit: abc123" in text
+    assert "verify_run_id: run-1" in text
+    assert "# Fulfillment" in text
+
+
+def test_fulfillment_report_is_current_rejects_stale_commit(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text("# Fulfillment\n", encoding="utf-8")
+    stamp_fulfillment_report(report, spec_id="001", commit="old", run_id="run-1")
+
+    assert fulfillment_report_is_current(report, current_commit="old") is True
+    assert fulfillment_report_is_current(report, current_commit="new") is False
     assert STRICT_BLOCKING == NON_STRICT_BLOCKING | {"UNVERIFIED"}
