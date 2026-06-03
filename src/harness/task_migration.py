@@ -8,10 +8,10 @@ from kernel.task_contract import parse_task_rows
 
 
 _HEADING_RE = re.compile(
-    r"^(?P<level>#{1,6})\s+(?P<task_id>T-\d{3,4})\s*[:\-]?\s*(?P<title>.*)$"
+    r"^(?P<level>#{1,6})\s+(?P<task_id>T-?\d{3,4})\s*[:\-]?\s*(?P<title>.*)$"
 )
 _CHECKBOX_RE = re.compile(
-    r"^- \[(?P<status>[ xX])\]\s+(?P<task_id>T-\d{3,4})\b\s*[:\-]?\s*(?P<title>.*)$"
+    r"^- \[(?P<status>[ xX])\]\s+(?P<task_id>T-?\d{3,4})\b\s*[:\-]?\s*(?P<title>.*)$"
 )
 
 
@@ -44,9 +44,22 @@ def migrate_tasks_markdown(markdown: str) -> str:
 
 def _canonical_block(data: dict[str, str], newline: str) -> list[str]:
     status = data["status"]
-    task_id = data["task_id"]
+    task_id = _normalize_task_id(data["task_id"])
     title = data["title"].strip()
-    row = f"- [{status}] {task_id} complexity=standard phase=legacy req=UNMAPPED depends=none"
+    parallel = title.endswith("[P]")
+    if parallel:
+        title = title.removesuffix("[P]").rstrip()
+    parallel_marker = " [P]" if parallel else ""
+    row = (
+        f"- [{status}] {task_id}{parallel_marker} "
+        "complexity=standard phase=legacy req=UNMAPPED depends=none"
+    )
     if not title:
         return [row + newline]
     return [row + "\n", "\n", f"  **Title:** {title}{newline}"]
+
+
+def _normalize_task_id(task_id: str) -> str:
+    if "-" in task_id:
+        return task_id
+    return f"T-{task_id[1:]}"

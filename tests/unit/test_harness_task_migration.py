@@ -55,6 +55,26 @@ def test_migrate_legacy_checkbox_rows_to_canonical_rows() -> None:
     assert "**Title:** Test parser" in migrated
 
 
+def test_migrate_compact_legacy_task_ids_to_canonical_rows() -> None:
+    migrated = migrate_tasks_markdown(
+        """
+### T001: Create contracts
+
+### T002: Gather evidence [P]
+"""
+    )
+
+    tasks = parse_task_rows(migrated)
+
+    assert [task.task_id for task in tasks] == ["T-001", "T-002"]
+    assert tasks[0].parallel is False
+    assert tasks[1].parallel is True
+    assert "**Title:** Create contracts" in migrated
+    assert "**Title:** Gather evidence" in migrated
+    assert "**Title:** Gather evidence [P]" not in migrated
+    assert validate_tasks_markdown(migrated).valid is True
+
+
 def test_migrate_leaves_existing_canonical_rows_unchanged() -> None:
     source = "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n"
 
