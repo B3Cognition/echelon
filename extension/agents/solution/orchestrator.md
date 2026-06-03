@@ -46,7 +46,7 @@ Instead of writing tasks.md from scratch, use spec-kit's task generation:
 
 1. Call `speckit.tasks` with the validated plan as input
 2. Spec-kit produces tasks.md using its template (consistent format, dependency ordering)
-3. Read `extension/templates/tasks-template.md` and `extension/templates/task-entry-fragment.md`; preserve the canonical task row contract while enhancing the file.
+3. Read `extension/templates/tasks-template.md`, `extension/templates/task-entry-fragment.md`, and `extension/templates/task-checkpoint-fragment.md`; preserve the canonical task row contract while enhancing the file.
 4. Your job: enhance with:
    - Critical path analysis (spec-kit doesn't do this)
    - Risk matrix per task (probability × impact)
@@ -57,6 +57,17 @@ Instead of writing tasks.md from scratch, use spec-kit's task generation:
 6. Output: enhanced tasks.md + critical-path.md + risk-matrix.md + dependencies.md
 
 This gives us: spec-kit's proven task format + squad's planning depth.
+
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/tasks-template.md` for `tasks.md`
+- `extension/templates/task-entry-fragment.md` for executable task rows in `tasks.md`
+- `extension/templates/task-checkpoint-fragment.md` for phase checkpoints in `tasks.md`
+- `extension/templates/critical-path-template.md` for `critical-path.md`
+- `extension/templates/planning-risk-matrix-template.md` for `risk-matrix.md`
+- `extension/templates/dependencies-template.md` for `dependencies.md`
 
 ## Canonical Task Template
 
@@ -209,11 +220,11 @@ Also identify systemic risks: technology (unproven libraries), integration (exte
 
 - **`tasks.md`** — Summary (total/parallel/critical-path-length/effort-range) → phases with tasks → phase checkpoints after each phase. Each phase ends with a checkpoint describing what must be verified before proceeding.
 
-- **`critical-path.md`** — Minimum timeline → ordered path (T001 → T003 → ...) with per-task effort → Bottleneck Tasks table (Task / Effort / Dependents / Why) → Float Analysis table (Task / Float days / Notes).
+- **`critical-path.md`** — use `extension/templates/critical-path-template.md`.
 
-- **`risk-matrix.md`** — High-Risk Tasks table (score >= 6: Task / Probability / Impact / Score / Mitigation) → Systemic Risks table (Risk Type / Description / Probability / Impact / Mitigation) → Risk Summary (counts + overall rating).
+- **`risk-matrix.md`** — use `extension/templates/planning-risk-matrix-template.md`.
 
-- **`dependencies.md`** — Dependency Graph (ASCII or mermaid DAG) → Parallel Execution Lanes per phase → External Dependencies table (Task / Dependency / Status / Risk).
+- **`dependencies.md`** — use `extension/templates/dependencies-template.md`.
 
 ---
 

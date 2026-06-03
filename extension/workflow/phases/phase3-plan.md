@@ -15,6 +15,9 @@ Read and include in the subagent prompt:
 - `extension/templates/tasks-template.md`
 - `extension/templates/task-entry-fragment.md`
 - `extension/templates/task-checkpoint-fragment.md`
+- `extension/templates/critical-path-template.md`
+- `extension/templates/planning-risk-matrix-template.md`
+- `extension/templates/dependencies-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch
@@ -25,12 +28,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, extension/templates/tasks-template.md, extension/templates/task-entry-fragment.md, extension/templates/task-checkpoint-fragment.md, reasoning-journal.jsonl]
+  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
-  Break the architecture into executable tasks (foundation, features, polish). Use `extension/templates/tasks-template.md` and `extension/templates/task-entry-fragment.md`; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Break the architecture into executable tasks (foundation, features, polish). Use the provided planning templates; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
