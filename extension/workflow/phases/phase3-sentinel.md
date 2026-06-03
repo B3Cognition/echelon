@@ -13,6 +13,9 @@ Read and include in the subagent prompt:
 - `spec.md` (acceptance criteria)
 - `contracts/`
 - `quality-gates.md` — specifically the "Testability Sub-Metrics" section (hard_constraint_ratio, constraint_density, negative_space_coverage) for testability-informed test strategy
+- `extension/templates/test-strategy-template.md`
+- `extension/templates/test-architecture-template.md`
+- `extension/templates/coverage-map-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch
@@ -23,12 +26,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include plan.md, data-model.md, spec.md, contracts/, quality-gates.md, reasoning-journal.jsonl]
+  [include plan.md, data-model.md, spec.md, contracts/, quality-gates.md, sentinel output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol.
-  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

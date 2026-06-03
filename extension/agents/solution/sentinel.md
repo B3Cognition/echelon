@@ -33,6 +33,14 @@ Read these artifacts before starting:
 - `spec.md` — acceptance criteria (your primary input)
 - `contracts/` — API contracts, interface definitions
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/test-strategy-template.md` for `test-strategy.md`
+- `extension/templates/test-architecture-template.md` for `test-architecture.md`
+- `extension/templates/coverage-map-template.md` for `coverage-map.md`
+
 ## Testability-Informed Test Strategy (FR-005)
 
 Before designing test strategy, read the testability sub-metrics from `quality-gates.md` (provided by speckit-echelon-sage (SAGE) via Understanding):
@@ -220,25 +228,15 @@ All three files below MUST be produced in `specs/{NNN}-{feature}/`. Omitting any
 
 ### test-strategy.md
 
-- Test pyramid with ratios and justification
-- Testing approach per component
-- CI/CD pipeline stages with timing targets
-- Test environment requirements
-- Failure policy (what blocks deployment)
+Use `extension/templates/test-strategy-template.md`.
 
 ### test-architecture.md
 
-- Test framework choices with rationale
-- Folder structure for test files
-- Shared test utilities and helpers needed
-- Mocking/stubbing strategy
-- Test naming conventions
+Use `extension/templates/test-architecture-template.md`.
 
 ### coverage-map.md
 
-- Table: requirement ID -> test case ID -> test type -> automation status
-- Gap analysis: which requirements lack test coverage
-- Risk assessment: which untested areas are highest risk
+Use `extension/templates/coverage-map-template.md`.
 
 ## Key Rules
 
