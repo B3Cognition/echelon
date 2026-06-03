@@ -260,6 +260,11 @@ class TestOuterLoopConvergence:
         assert "**Status**: ready_to_land" in (spec_dir / "spec.md").read_text(
             encoding="utf-8"
         )
+        history = json.loads((spec_dir / "run-history.json").read_text(encoding="utf-8"))
+        assert history["authoritative_run"] == "run-1"
+        assert history["runs"][-1]["phase"] == "B"
+        assert history["runs"][-1]["status"] == "ready_to_land"
+        assert history["runs"][-1]["verification_result"] == "PASS"
 
     def test_does_not_converge_when_fulfillment_report_has_gaps(
         self, tmp_path: Path

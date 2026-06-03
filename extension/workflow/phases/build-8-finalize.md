@@ -146,21 +146,11 @@ echelon_result:
     updated_at: "{ISO-8601}"
 ```
 
-**Run History Write (mandatory at BUILD_DONE):**
-1. Read `{spec_dir}/run-history.json` (must exist from Phase A run).
-2. Append to `runs` array:
-   ```json
-   {
-     "run_id": "{state.json.run_id}",
-     "phase": "B",
-     "status": "done",
-     "verification_result": "{PASS|FAIL from verification-summary.md}",
-     "spec_status": "{state.json.spec_status}",
-     "timestamp": "{current UTC ISO-8601}"
-   }
-   ```
-3. If `verification_result` is `"PASS"`: set `authoritative_run` to `"{state.json.run_id}"`.
-4. Write the updated file.
+**Run History Ownership:**
+
+Do not edit `{spec_dir}/run-history.json` in this phase. Ralph writes the
+authoritative Phase B implementation run after build, verify, task progress
+integrity, fulfillment, commit, and publish all converge.
 
 ### 8.4 Run speckit-echelon-scorekeeper (SCOREKEEPER)
 

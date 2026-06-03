@@ -35,6 +35,7 @@ from harness.llm_build_runner import LlmBuildRunner
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
+from harness.run_history import append_implementation_run
 from harness.spec_frontmatter import find_spec_dir, write_status
 from harness.state import StateStore
 from harness.task_progress import summarize_task_progress
@@ -1426,6 +1427,13 @@ class RalphController:
             return
         try:
             write_status(spec_dir, "ready_to_land")
+            state = self._state_store.read()
+            append_implementation_run(
+                spec_dir,
+                run_id=str(state.get("run_id") or ""),
+                spec_status="ready_to_land",
+                verification_result="PASS",
+            )
         except FileNotFoundError as exc:
             logger.warning("Could not mark %s ready_to_land: %s", self._spec_id, exc)
 
