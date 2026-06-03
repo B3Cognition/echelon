@@ -350,7 +350,7 @@ provides:
       behavior:
         execution: agent
         capability: strong
-        tools: write         # writes alternatives.md, risk-opportunities.md
+        tools: write         # writes alternatives.md, risk-opportunities.md, challenge-assumptions.md
         color: cyan
     # Learning layer
     - name: "speckit.echelon.auditor"

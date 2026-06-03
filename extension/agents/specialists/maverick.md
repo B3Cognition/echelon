@@ -22,6 +22,9 @@ Read these artifacts to understand what exists and what is stuck:
 - `reasoning-journal.jsonl` — decision history (look for circular patterns)
 - `quality-report.md` — current scores and identified weaknesses
 - `knowledge-gaps.md` — what is unknown (opportunities for novel approaches)
+- `extension/templates/alternatives-template.md` — required structure for `alternatives.md`
+- `extension/templates/risk-opportunities-template.md` — required structure for `risk-opportunities.md`
+- `extension/templates/challenge-assumptions-template.md` — required structure for `challenge-assumptions.md`
 
 ## Process — Evidence-Based Innovation (3 phases)
 
@@ -134,6 +137,12 @@ See `echelon-config.yml` for tunable values:
 - `specialists.max_active` — maximum concurrent specialists
 
 ## Output Requirements
+
+Use these templates exactly, removing placeholder rows only after replacing them with project-specific content:
+
+- `extension/templates/alternatives-template.md` -> `alternatives.md`
+- `extension/templates/risk-opportunities-template.md` -> `risk-opportunities.md`
+- `extension/templates/challenge-assumptions-template.md` -> `challenge-assumptions.md`
 
 ### alternatives.md
 
@@ -374,7 +383,9 @@ Include one `decision` entry per alternative generated. Reference the TRIZ princ
 echelon_result:
   verdict: ALTERNATIVES_GENERATED
   output_files:
-    - .specify/.../alternatives.md
+    - specs/.../alternatives.md
+    - specs/.../risk-opportunities.md
+    - specs/.../challenge-assumptions.md
   journal_entries:
     - id: null
       type: decision

@@ -188,6 +188,9 @@ Context pack:
 
 - All current artifacts
 - Prior run's `evolution-report.md`
+- `extension/templates/alternatives-template.md`
+- `extension/templates/risk-opportunities-template.md`
+- `extension/templates/challenge-assumptions-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -196,12 +199,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all current artifacts, prior run's evolution-report.md, reasoning-journal.jsonl]
+  [include all current artifacts, prior run's evolution-report.md, maverick output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are MAVERICK. Read agents/specialists/maverick.md for your complete protocol.
-  Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Propose 2-3 fundamentally different approaches using TRIZ, Design Thinking, or First Principles. Challenge established assumptions. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
