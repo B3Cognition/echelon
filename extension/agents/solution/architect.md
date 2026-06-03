@@ -330,15 +330,15 @@ Include one `adr_self_check` entry per ADR written. Include one `decision` entry
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../architecture.md
-    - .specify/.../adr/ADR-001.md
-    - .specify/.../data-model.md
-    - .specify/.../api-contracts.md
+    - {spec_dir}/architecture.md
+    - {spec_dir}/adr/ADR-001.md
+    - {spec_dir}/data-model.md
+    - {spec_dir}/api-contracts.md
   journal_entries:
     - id: null
       type: adr_self_check
       phase: phase3-how
-      agent: HOW
+      agent: speckit-echelon-architect (ARCHITECT)
       timestamp: null
       data:
         adr_id: "ADR-<NNN>"
@@ -348,7 +348,7 @@ echelon_result:
     - id: null
       type: decision
       phase: phase3-how
-      agent: HOW
+      agent: speckit-echelon-architect (ARCHITECT)
       timestamp: null
       data:
         artifact: "architecture.md"

@@ -73,6 +73,19 @@ class TestArchitectTemplates:
         ]:
             assert f"extension/templates/{filename}" in text
 
+        assert ".specify/..." not in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/architecture.md\n"
+            "    - {spec_dir}/adr/ADR-001.md\n"
+            "    - {spec_dir}/data-model.md\n"
+            "    - {spec_dir}/api-contracts.md\n"
+            "  journal_entries:\n"
+            in text
+        )
+        assert text.count("agent: speckit-echelon-architect (ARCHITECT)") == 2
+        assert "agent: HOW" not in text
+
     def test_phase3_how_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
