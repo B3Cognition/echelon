@@ -134,19 +134,7 @@ For each qualifying pattern:
 
 1. Read `knowledge-base/marketplace-index.yaml`.
 2. Check if the pattern `id` already exists in `entries[]`. If yes, update `confidence` and `last_seen` only.
-3. If new, append an entry:
-
-```yaml
-- id: "<PAT-NNN>"
-  name: "<pattern name>"
-  description: "<project-agnostic description>"
-  confidence: <value>
-  promoted_at: "<ISO-8601>"
-  source_fingerprints: ["<fp1>", "<fp2>", "<fp3>"]
-  reuse_count: 0
-  tags: [<from pattern tags>]
-  last_seen: "<ISO-8601>"
-```
+3. If new, append an entry using `extension/templates/marketplace-index-entry-template.yaml`.
 
 4. Respect `max_entries` (500). If at capacity, skip new entries and log a warning.
 
