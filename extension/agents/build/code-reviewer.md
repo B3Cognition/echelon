@@ -258,7 +258,7 @@ Before issuing your verdict, verify each item. If a check fails, revise your fin
 
 ### Code Review Report
 
-Append to `specs/{feature}/code-review-report.md` where {feature} is currently worked on feature provided in input:
+Append to `{spec_dir}/code-review-report.md`:
 
 ```markdown
 ## Task: {task_id} — {task_title}
@@ -310,12 +310,12 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: APPROVED
   output_files:
-    - .specify/.../code-review-report.md
+    - {spec_dir}/code-review-report.md
   journal_entries:
     - id: null
       type: review_finding
       phase: build
-      agent: CODE_REVIEWER
+      agent: speckit-echelon-code-reviewer (CODE REVIEWER)
       timestamp: null
       data:
         task_id: <task_id>
