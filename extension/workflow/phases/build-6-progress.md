@@ -110,23 +110,17 @@ speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` t
    - `DEGRADED` (fix_cycle limit hit) → `DEGRADED`
    - `BLOCKED` → `BLOCKED`
 
-2. Locate the canonical top-level task row in `tasks.md`: find the row that starts with `- [ ] {task_id}` or `- [x] {task_id}`.
+2. Update `tasks.md` with the deterministic harness command:
 
-3. Update the canonical row checkbox:
-   - `DONE`, `DONE_WITH_CONCERNS`, or `DEGRADED` → `- [x] {task_id} ...`
-   - `BLOCKED` → `- [ ] {task_id} ...`
+```bash
+python -m harness mark-task-progress "{spec_dir}/tasks.md" "{task_id}" "{status}"
+```
 
-4. Add or replace `  **Status:** {status}` immediately after the canonical row. Preserve the task row metadata exactly.
+This command owns canonical row checkbox updates, `**Status:**` insertion/replacement,
+and nested verified checkbox updates. Do not hand-edit task rows unless the command
+fails and the failure message identifies malformed input that must be corrected.
 
-5. For `DONE` or `DONE_WITH_CONCERNS`, change nested `  - [ ]` checkboxes within that task block to `  - [x]`.
-   - Only modify nested checkboxes within the target task block.
-   - Stop at the next top-level canonical task row or end of file.
-   - Do not touch already-checked `  - [x]` lines.
-   - For `DEGRADED` or `BLOCKED`, leave nested acceptance/test checkboxes unchanged unless they were actually verified.
-
-6. Write the updated `tasks.md` back to `{spec_dir}/tasks.md`.
-
-7. Validate progress integrity:
+3. Validate progress integrity:
 
 ```bash
 python -m harness validate-task-progress "{spec_dir}/tasks.md" "{state_json_path}"

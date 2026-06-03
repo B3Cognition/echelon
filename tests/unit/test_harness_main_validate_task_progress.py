@@ -75,3 +75,42 @@ class TestHarnessMainValidateTaskProgress:
         assert "invalid task progress" in err
         assert "state completed_tasks=1 but tasks.md has 0 checked task rows" in err
 
+
+@pytest.mark.unit
+class TestHarnessMainMarkTaskProgress:
+    def test_mark_task_progress_updates_tasks_file(self, tmp_path, capsys) -> None:
+        tasks = tmp_path / "tasks.md"
+        tasks.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
+            "\n"
+            "  **Acceptance Criteria:**\n"
+            "  - [ ] Scaffold exists\n",
+            encoding="utf-8",
+        )
+
+        from harness.__main__ import main
+
+        with patch("sys.argv", ["python -m harness", "mark-task-progress", str(tasks), "T-001", "DONE"]):
+            main()
+
+        text = tasks.read_text(encoding="utf-8")
+        assert "- [x] T-001 complexity=standard phase=foundation req=INFRA depends=none" in text
+        assert "  **Status:** DONE" in text
+        assert "  - [x] Scaffold exists" in text
+        assert "OK: marked T-001 as DONE" in capsys.readouterr().out
+
+    def test_mark_task_progress_exits_nonzero_for_unknown_task(self, tmp_path, capsys) -> None:
+        tasks = tmp_path / "tasks.md"
+        tasks.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        from harness.__main__ import main
+
+        with patch("sys.argv", ["python -m harness", "mark-task-progress", str(tasks), "T-999", "DONE"]), \
+             pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 1
+        assert "could not mark task progress" in capsys.readouterr().err

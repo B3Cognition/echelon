@@ -6,6 +6,7 @@ Subcommands:
   gitops  — GitOps operations (find-branch, create-worktree, commit-push, open-pr, merge-pr, local-merge)
   validate-tasks — validate canonical tasks.md rows
   validate-task-progress — reconcile canonical tasks.md progress with state.json
+  mark-task-progress — update one canonical tasks.md row and status
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -155,6 +156,36 @@ def _validate_task_progress() -> None:
     )
 
 
+def _mark_task_progress() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness mark-task-progress <tasks.md> <task-id> <status>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.task_progress import TaskProgressError, update_task_progress_markdown
+
+    tasks_path = Path(sys.argv[2])
+    task_id = sys.argv[3]
+    status = sys.argv[4]
+
+    try:
+        updated = update_task_progress_markdown(
+            tasks_path.read_text(encoding="utf-8", errors="replace"),
+            task_id,
+            status,
+        )
+    except TaskProgressError as exc:
+        print(f"could not mark task progress: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    tasks_path.write_text(updated, encoding="utf-8")
+    print(f"OK: marked {task_id} as {status.upper()}")
+
+
 def _migrate_tasks() -> None:
     if len(sys.argv) < 3:
         print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
@@ -258,6 +289,8 @@ def main() -> None:
         _validate_tasks()
     elif subcommand == "validate-task-progress":
         _validate_task_progress()
+    elif subcommand == "mark-task-progress":
+        _mark_task_progress()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -266,7 +299,7 @@ def main() -> None:
         _migrate_plan()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'mark-task-progress', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)
