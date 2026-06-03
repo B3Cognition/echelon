@@ -11,6 +11,8 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 
 - All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
 - Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
+- `agents/exploration/templates/sage-quality-gates-template.md`
+- `agents/exploration/templates/sage-issues-template.md`
 - `calibration-profile.yaml`
 - `reasoning-journal.jsonl`
 
@@ -41,12 +43,12 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, calibration-profile.yaml, reasoning-journal.jsonl]
+  [include all artifacts in specs/{feature}/, sage WHY3 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
-  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

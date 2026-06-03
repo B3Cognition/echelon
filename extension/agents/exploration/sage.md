@@ -454,7 +454,10 @@ Include one `quality_check` entry always. Include one `challenge` entry per find
 echelon_result:
   verdict: <PASS | FAIL>
   output_files:
-    - .specify/.../assumptions.md
+    - ${STAGING_DIR}/assumption-review.md
+    - ${STAGING_DIR}/issues.md
+    - {spec_dir}/quality-gates.md
+    - {spec_dir}/issues.md
   state_updates:
     quality_scores:
       - pass: <true | false>
@@ -470,7 +473,7 @@ echelon_result:
     - id: null
       type: quality_check
       phase: <phase1-why1 | phase1-why2 | phase3-consensus>
-      agent: WHY
+      agent: speckit-echelon-sage (SAGE)
       timestamp: null
       data:
         pass: <true | false>
@@ -487,7 +490,7 @@ echelon_result:
     - id: null
       type: challenge
       phase: <phase1-why1 | phase1-why2 | phase3-consensus>
-      agent: WHY
+      agent: speckit-echelon-sage (SAGE)
       timestamp: null
       data:
         artifact: "<filename>"

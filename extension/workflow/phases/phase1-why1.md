@@ -18,6 +18,8 @@ Read and include in the subagent prompt:
 | `boundaries.md` | `${STAGING_DIR}/boundaries.md` |
 | `assumptions.md` | `${STAGING_DIR}/assumptions.md` |
 | `unknowns.md` | `${STAGING_DIR}/unknowns.md` |
+| `sage-assumption-review-template.md` | `agents/exploration/templates/sage-assumption-review-template.md` |
+| `sage-issues-template.md` | `agents/exploration/templates/sage-issues-template.md` |
 | `calibration_map entry for speckit-echelon-sage (SAGE)` | Built by speckit-echelon-commander (COMMANDER) at init from `knowledge-base/calibration-profile.yaml`. Mark `[ABSENT]` on cold start — speckit-echelon-commander (COMMANDER) injects it via the Pre-Dispatch Calibration Injection protocol. |
 | `reasoning-journal.jsonl` | `${SQUAD_DIR}/reasoning-journal.jsonl` |
 
@@ -31,12 +33,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.jsonl from ${STAGING_DIR}/; calibration_map entry for speckit-echelon-sage (SAGE) from speckit-echelon-commander (COMMANDER) init (mark [ABSENT] if cold start)]
+  [include glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reasoning-journal.jsonl from ${STAGING_DIR}/; sage WHY1 output templates; calibration_map entry for speckit-echelon-sage (SAGE) from speckit-echelon-commander (COMMANDER) init (mark [ABSENT] if cold start)]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **assumption-challenge mode** (WHY1 — pre-WHAT).
-  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
+  Always challenge assumptions for logical consistency, identify contradictions in the domain map, perform pre-mortem analysis, and flag unknowns needing speckit-echelon-investigator (INVESTIGATOR) investigation. Do NOT run Understanding metrics (no specs exist yet). Produce outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
