@@ -5,6 +5,7 @@ Subcommands:
   resume  — resume a blocked loop with an answer (reads HARNESS_* env vars)
   gitops  — GitOps operations (find-branch, create-worktree, commit-push, open-pr, merge-pr, local-merge)
   validate-tasks — validate canonical tasks.md rows
+  migrate-tasks — migrate legacy tasks.md markers to canonical rows
 
 Environment variables for `run`:
   HARNESS_SPEC          required  spec ID (e.g., "012")
@@ -117,6 +118,39 @@ def _validate_tasks() -> None:
     print(f"OK: {result.task_count} canonical tasks")
 
 
+def _migrate_tasks() -> None:
+    if len(sys.argv) < 3:
+        print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.task_migration import migrate_tasks_markdown
+    from kernel.task_contract import validate_tasks_markdown
+
+    tasks_path = Path(sys.argv[2])
+    write = "--write" in sys.argv[3:]
+    unknown = [arg for arg in sys.argv[3:] if arg != "--write"]
+    if unknown:
+        print(f"Unknown migrate-tasks option: {unknown[0]!r}", file=sys.stderr)
+        sys.exit(1)
+
+    migrated = migrate_tasks_markdown(
+        tasks_path.read_text(encoding="utf-8", errors="replace")
+    )
+    result = validate_tasks_markdown(migrated)
+    if not result.valid:
+        print(f"invalid migrated tasks.md: {'; '.join(result.errors)}", file=sys.stderr)
+        sys.exit(1)
+
+    if write:
+        tasks_path.write_text(migrated, encoding="utf-8")
+        print(f"OK: migrated {result.task_count} canonical tasks")
+        return
+
+    print(migrated, end="")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -133,9 +167,11 @@ def main() -> None:
         sys.exit(gitops_main(sys.argv[2:]))
     elif subcommand == "validate-tasks":
         _validate_tasks()
+    elif subcommand == "migrate-tasks":
+        _migrate_tasks()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', or 'validate-tasks'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', or 'migrate-tasks'.",
             file=sys.stderr,
         )
         sys.exit(1)
