@@ -241,7 +241,7 @@ echelon_result:
     - id: null
       type: decision
       phase: phase1-discover
-      agent: SYNTHESIZER
+      agent: speckit-echelon-synthesizer (SYNTHESIZER)
       timestamp: null
       data:
         artifact: "contradictions-and-gaps.md"
