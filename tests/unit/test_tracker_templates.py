@@ -8,6 +8,7 @@ TEMPLATE_DIR = ROOT / "extension" / "templates"
 AGENT = ROOT / "extension" / "agents" / "control" / "tracker.md"
 PHASE1 = ROOT / "extension" / "workflow" / "phases" / "phase1-tracker.md"
 PHASE2 = ROOT / "extension" / "workflow" / "phases" / "phase2-tracker-alignment.md"
+DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
 POST_BUILD = (
     ROOT
     / "extension"
@@ -78,11 +79,23 @@ class TestTrackerTemplates:
         ]:
             assert f"extension/templates/{filename}" in text
 
+        assert "${STAGING_DIR}/user-intent.md" in text
+        assert "${STAGING_DIR}/stakeholder-model.md" in text
+        assert ".specify/.../user-intent.md" not in text
+        assert "agent: INTENT" not in text
+        assert "agent: speckit-echelon-tracker (TRACKER)" in text
+
     def test_phase1_tracker_dispatch_includes_intent_templates(self) -> None:
         text = PHASE1.read_text(encoding="utf-8")
 
         assert "extension/templates/user-intent-template.md" in text
         assert "extension/templates/stakeholder-model-template.md" in text
+        assert "- `stakeholder-model.md` (if multiple stakeholders are detectable)" in text
+
+    def test_workflow_definition_lists_stakeholder_model_output(self) -> None:
+        text = DEFINITION.read_text(encoding="utf-8")
+
+        assert "stakeholder-model.md" in text
 
     def test_phase2_tracker_alignment_dispatch_includes_alignment_template(self) -> None:
         text = PHASE2.read_text(encoding="utf-8")

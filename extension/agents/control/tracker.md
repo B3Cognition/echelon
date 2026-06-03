@@ -129,12 +129,13 @@ Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders
 echelon_result:
   verdict: <ALIGNED | DRIFTING | ESCALATE>
   output_files:
-    - .specify/.../user-intent.md
+    - ${STAGING_DIR}/user-intent.md
+    - ${STAGING_DIR}/stakeholder-model.md
   journal_entries:
     - id: null
       type: prediction
       phase: <current phase>
-      agent: INTENT
+      agent: speckit-echelon-tracker (TRACKER)
       timestamp: null
       data:
         predicted_intent: "<summary of predicted user intent>"
@@ -148,7 +149,7 @@ echelon_result:
     - id: null
       type: prediction
       phase: <current phase>
-      agent: INTENT
+      agent: speckit-echelon-tracker (TRACKER)
       timestamp: null
       data:
         predicted_intent: "<summary>"
@@ -157,7 +158,7 @@ echelon_result:
     - id: null
       type: tracker_model_update_requested
       phase: <current phase>
-      agent: INTENT
+      agent: speckit-echelon-tracker (TRACKER)
       timestamp: null
       data:
         reason: "<why a model update is needed — what pattern or drift triggered this>"
@@ -167,7 +168,7 @@ echelon_result:
     - id: null
       type: social_prediction_error
       phase: <current phase>
-      agent: INTENT
+      agent: speckit-echelon-tracker (TRACKER)
       timestamp: null
       data:
         expected: "<what you predicted the user would do>"

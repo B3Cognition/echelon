@@ -39,5 +39,6 @@ Use the Agent tool to dispatch a subagent with:
 ### Expected Outputs
 
 - `user-intent.md` (in staging, later moved to spec directory)
+- `stakeholder-model.md` (if multiple stakeholders are detectable)
 
 **Transition:** `phases[phase1-why1]` — see `workflow/definition.yaml`

@@ -330,6 +330,7 @@ phases:
       - assumptions.md
     outputs:
       - user-intent.md
+      - stakeholder-model.md     # if multiple stakeholders are detectable
     transitions:
       - to: phase1-why1
         condition: always
