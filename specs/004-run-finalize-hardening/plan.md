@@ -197,3 +197,15 @@ This runs before any artifact enumeration, so the subsequent checks see the file
 | `extension/workflow/phases/build-1-init.md` | §1.1 resilience insert | Low — pre-check before existing validation |
 
 **Total: 1 new file + 3 targeted edits.**
+
+## Deferred Follow-Up
+
+### TODO — Wire CONSOLIDATOR into FINALIZE orchestration
+
+During prompt-template cleanup, CONSOLIDATOR was given a canonical schema-consolidation output template, but the current FINALIZE orchestration still does not dispatch speckit-echelon-consolidator (CONSOLIDATOR). Treat this as a separate orchestration slice, not part of T-001 through T-004.
+
+Safest follow-up scope:
+- Add CONSOLIDATOR as an explicit FINALIZE/post-build step before speckit-echelon-scorekeeper (SCOREKEEPER).
+- Update `extension/workflow/phases/phase4-document.md` and `extension/workflow/definition.yaml` consistently.
+- Pass `reasoning-journal.jsonl`, relevant `knowledge-base/` or speckit-echelon-veteran (VETERAN) artifacts, and `extension/templates/schema-consolidation-template.md`.
+- Add focused tests for dispatch order and template context, then run the full unit suite.
