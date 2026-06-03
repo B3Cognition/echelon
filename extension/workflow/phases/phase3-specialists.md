@@ -160,6 +160,9 @@ Use the Agent tool:
 Context pack:
 
 - `spec.md` + user-facing requirements
+- `extension/templates/accessibility-requirements-template.md`
+- `extension/templates/user-flow-template.md`
+- `extension/templates/ux-amendments-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -168,12 +171,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, user-facing requirements, reasoning-journal.jsonl]
+  [include spec.md, user-facing requirements, advocate output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ADVOCATE. Read agents/specialists/advocate.md for your complete protocol.
-  Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Analyze WCAG 2.1/2.2 compliance needs, apply Nielsen's heuristics, map user flows. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

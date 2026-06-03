@@ -30,6 +30,9 @@ Read these artifacts before starting:
 - `plan.md` — UI technology choices
 - `mental-model.md` — user mental model from DISCOVER
 - `glossary.md` — domain terminology (must match what users see)
+- `extension/templates/accessibility-requirements-template.md` — required structure for `accessibility-requirements.md`
+- `extension/templates/user-flow-template.md` — required structure for `user-flow.md`
+- `extension/templates/ux-amendments-template.md` — required structure for UX amendments
 
 ## Process
 
@@ -106,6 +109,12 @@ Flag each violation with severity: CRITICAL (blocks users), MAJOR (degrades expe
 
 ## Output Requirements
 
+Use these templates exactly, removing placeholder rows only after replacing them with project-specific content:
+
+- `extension/templates/accessibility-requirements-template.md` -> `accessibility-requirements.md`
+- `extension/templates/user-flow-template.md` -> `user-flow.md`
+- `extension/templates/ux-amendments-template.md` -> UX amendments to `spec.md`
+
 ### accessibility-requirements.md
 
 - WCAG compliance checklist with pass/fail per criterion
@@ -149,7 +158,9 @@ Include one `decision` entry per significant accessibility or UX finding. Use `s
 echelon_result:
   verdict: <COMPLETE | CONCERNS>
   output_files:
-    - .specify/.../ux-report.md
+    - specs/.../accessibility-requirements.md
+    - specs/.../user-flow.md
+    - specs/.../spec.md
   journal_entries:
     - id: null
       type: decision
@@ -157,7 +168,7 @@ echelon_result:
       agent: speckit-echelon-advocate (ADVOCATE)
       timestamp: null
       data:
-        artifact: "ux-report.md"
+        artifact: "<accessibility-requirements.md | user-flow.md | spec.md>"
         section: "<accessibility area or user flow>"
         reasoning: "<accessibility or UX finding and its impact>"
         rationale: "WCAG 2.1 AA compliance and user experience analysis"
