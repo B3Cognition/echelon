@@ -44,6 +44,7 @@ Context pack:
 - All artifacts in `specs/{feature}/`
 - `reasoning-journal.jsonl`
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
+- `extension/templates/knowledge-transfer-assessment-template.md`
 
 Use the Agent tool:
 
@@ -51,12 +52,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml]
+  [include all artifacts in specs/{feature}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, extension/templates/knowledge-transfer-assessment-template.md]
   </context>
 
   <instructions>
   You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
-  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Return journal entries in `echelon_result.journal_entries`.
+  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Produce `knowledge-transfer-assessment.md` using the provided template. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
