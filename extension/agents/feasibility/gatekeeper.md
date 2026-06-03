@@ -55,6 +55,17 @@ If no mode is specified, infer from context:
 - If `plan.md` and `tasks.md` exist → `consensus`
 - If only `spec.md` and WHY2 outputs exist → `first-pass`
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/feasibility-template.md` for `feasibility.md`
+- `extension/templates/prioritization-template.md` for `prioritization.md`
+- `extension/templates/estimates-template.md` for `estimates.md`
+- `extension/templates/mvp-scope-template.md` for `mvp-scope.md`
+- `extension/templates/implementability-report-template.md` for `implementability-report.md`
+- `extension/templates/kill-report.md` for `kill-report.md`
+
 ---
 
 ## Mode 1: First-Pass (ASSESS — Post-WHY2)
@@ -221,7 +232,7 @@ ASSESS2 can flag issues but has restricted blocking power:
 
 ### Outputs (Consensus)
 
-- `implementability-report.md` — per-task scoring: Summary (READY/NEEDS_CLARIFICATION/BLOCKED counts, overall verdict, updated estimates with significant changes), Per-Task Assessment (status + all 6 check results + recommendation), Critical Feasibility Issues section (only if architecture cannot support requirements).
+- `implementability-report.md` — use `extension/templates/implementability-report-template.md`.
 
 ---
 

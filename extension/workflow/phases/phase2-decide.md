@@ -18,6 +18,11 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | `issues.md` | `specs/{NNN}-{feature}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
 | `estimates-log.yaml` | `knowledge-base/estimates-log.yaml` | Mark `[ABSENT]` on cold start |
+| `extension/templates/feasibility-template.md` | `extension/templates/feasibility-template.md` | Required |
+| `extension/templates/prioritization-template.md` | `extension/templates/prioritization-template.md` | Required |
+| `extension/templates/estimates-template.md` | `extension/templates/estimates-template.md` | Required |
+| `extension/templates/mvp-scope-template.md` | `extension/templates/mvp-scope-template.md` | Required |
+| `extension/templates/kill-report.md` | `extension/templates/kill-report.md` | Required |
 | `reasoning-journal.jsonl` | `${SQUAD_DIR}/reasoning-journal.jsonl` | Required |
 
 **Verification before dispatch:** for each row, run `[ -f <path> ] && echo "OK $path" || echo "ABSENT $path"`. Absences are acceptable for `calibration-profile.yaml` and `estimates-log.yaml` only.
@@ -30,12 +35,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include spec.md, glossary.md, assumptions.md, issues.md from WHY2, calibration-profile.yaml, estimates-log.yaml, reasoning-journal.jsonl]
+  [include spec.md, glossary.md, assumptions.md, issues.md from WHY2, calibration-profile.yaml, estimates-log.yaml, gatekeeper first-pass templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol.
-  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `templates/kill-report.md`. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `extension/templates/kill-report.md`. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

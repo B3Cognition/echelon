@@ -19,6 +19,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 - `plan.md` + `data-model.md` + `contracts/`
 - `tasks.md` + `estimates.md`
 - `constitution.md` (team constraints)
+- `extension/templates/implementability-report-template.md`
 - `reasoning-journal.jsonl`
 
 ### 11.3 PLAN2 Context Pack
@@ -57,12 +58,12 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include plan.md, data-model.md, contracts/, tasks.md, estimates.md, constitution.md, reasoning-journal.jsonl]
+  [include plan.md, data-model.md, contracts/, tasks.md, estimates.md, constitution.md, extension/templates/implementability-report-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
-  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` using the provided template (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
