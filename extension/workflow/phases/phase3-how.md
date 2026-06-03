@@ -13,6 +13,10 @@ Read and include in the subagent prompt:
 - `constitution.md` (if exists from prior run or user provided)
 - All specialist outputs (threat-model.md, performance-requirements.md, etc.)
 - `extension/templates/plan-template.md`
+- `extension/templates/architecture-research-template.md`
+- `extension/templates/architecture-adr-template.md`
+- `extension/templates/data-model-template.md`
+- `extension/templates/contracts-template.md`
 - `reasoning-journal.jsonl`
 
 ### Dispatch
@@ -23,12 +27,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include spec.md, feasibility.md, prioritization.md, constitution.md if available, all specialist outputs, extension/templates/plan-template.md, reasoning-journal.jsonl]
+  [include spec.md, feasibility.md, prioritization.md, constitution.md if available, all specialist outputs, architecture output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ARCHITECT. Read agents/solution/architect.md for your complete protocol.
-  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Produce `plan.md` from `extension/templates/plan-template.md`; keep required sections and add domain-specific sections only when useful. Document every decision in ADR format. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Produce `plan.md`, `research.md`, `data-model.md`, and `contracts/` using the provided templates. Keep required sections and add domain-specific sections only when useful. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

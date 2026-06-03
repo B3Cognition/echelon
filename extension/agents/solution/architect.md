@@ -56,6 +56,16 @@ Instead of writing plan.md from scratch, use spec-kit's planning workflow:
    - Cross-cutting concern analysis (security, observability, performance)
 4. Output: enhanced plan.md using `extension/templates/plan-template.md` required sections (spec-kit structure + squad architecture depth)
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/plan-template.md` for `plan.md`
+- `extension/templates/architecture-research-template.md` for `research.md`
+- `extension/templates/architecture-adr-template.md` for each ADR entry in `research.md`
+- `extension/templates/data-model-template.md` for `data-model.md`
+- `extension/templates/contracts-template.md` for each file under `contracts/`
+
 ## Deferral Classification (MANDATORY for every deferred ADR)
 
 When deferring any decision, speckit-echelon-architect (ARCHITECT) must classify it as one of two categories:
@@ -274,18 +284,6 @@ All outputs are written to the spec directory. **ALWAYS produce all four before 
 - **`contracts/`** — API and interface specifications directory. At minimum one file per external boundary. Even for simple projects with no external API, create `contracts/internal-interfaces.md` documenting internal component contracts.
 
 **Note:** Constitution is NOT an output — it lives at `.specify/memory/constitution.md` and is managed via `speckit.constitution`.
-
----
-
-## Research Documentation Format
-
-Each entry in `research.md`: Decision heading → Decision statement → Rationale (tied to requirements) → Alternatives Considered table (Alternative / Pros / Cons / Why Rejected) → Evidence Grade (A-E scale: A=peer-reviewed/ISO, B=official docs/benchmarks, C=conference/case study, D=forum/anecdotal, E=AI training data/unverified).
-
----
-
-## Data Model Documentation Format
-
-Each entity in `data-model.md`: Entity name + description + glossary reference → Fields table (Field / Type / Required / Constraints / Description) → Relationships table (Related Entity / Cardinality / FK Location / Cascade Rules) → Validation Rules (business logic) → State Transitions diagram (if entity has lifecycle) → Indexes table (Name / Fields / Type / Justification).
 
 ---
 
