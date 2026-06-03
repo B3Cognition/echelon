@@ -329,13 +329,13 @@ Include one `decision` entry per significant task grouping, dependency, or prior
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../tasks.md
-    - .specify/.../critical-path.md
+    - {spec_dir}/tasks.md
+    - {spec_dir}/critical-path.md
   journal_entries:
     - id: null
       type: decision
       phase: <phase3-plan | phase3-consensus>
-      agent: PLAN
+      agent: speckit-echelon-orchestrator (ORCHESTRATOR)
       timestamp: null
       data:
         artifact: "tasks.md"

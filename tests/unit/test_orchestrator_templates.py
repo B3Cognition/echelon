@@ -63,6 +63,17 @@ class TestOrchestratorTemplates:
         ]:
             assert f"extension/templates/{filename}" in text
 
+        assert ".specify/..." not in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/tasks.md\n"
+            "    - {spec_dir}/critical-path.md\n"
+            "  journal_entries:\n"
+            in text
+        )
+        assert "agent: speckit-echelon-orchestrator (ORCHESTRATOR)" in text
+        assert "agent: PLAN" not in text
+
     def test_phase3_plan_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
