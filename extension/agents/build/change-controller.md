@@ -116,7 +116,7 @@ Update tasks.md:
 
 ### Change Impact Report
 
-Write to `specs/{feature}/change-impact-report.md` where {feature} is currently worked on feature provided in input:
+Write to `{spec_dir}/change-impact-report.md`:
 
 ```markdown
 ## Change Request: CR-{NNN}
@@ -184,12 +184,12 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: APPROVED
   output_files:
-    - .specify/.../change-impact-report.md
+    - {spec_dir}/change-impact-report.md
   journal_entries:
     - id: null
       type: change_assessment
       phase: build
-      agent: CHANGE_CONTROLLER
+      agent: speckit-echelon-change-controller (CHANGE CONTROLLER)
       timestamp: null
       data:
         change_id: <CR-NNN>
