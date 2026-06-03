@@ -146,7 +146,7 @@ Include one `decision` entry per significant domain-specific insight or knowledg
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../domain-patterns.md
+    - {spec_dir}/domain-patterns.md
   journal_entries:
     - id: null
       type: decision

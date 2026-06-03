@@ -69,6 +69,14 @@ class TestOracleTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert "domain-knowledge.md" not in text
+        assert ".specify/..." not in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/domain-patterns.md\n"
+            "  journal_entries:\n"
+            in text
+        )
+        assert "agent: speckit-echelon-oracle (ORACLE)" in text
 
     def test_phase3_specialist_dispatch_includes_oracle_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
