@@ -13,6 +13,9 @@ Context pack:
 
 - All artifacts in `specs/{feature}/`
 - `calibration-profile.yaml` + `estimates-log.yaml`
+- `extension/templates/reality-check-template.md`
+- `extension/templates/cost-analysis-template.md`
+- `extension/templates/benchmark-data-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -21,12 +24,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, calibration-profile.yaml, estimates-log.yaml, reasoning-journal.jsonl]
+  [include all artifacts in specs/{feature}/, calibration-profile.yaml, estimates-log.yaml, REALIST output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are REALIST. Read agents/learning/realist.md for your complete protocol.
-  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

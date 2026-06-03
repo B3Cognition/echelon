@@ -127,6 +127,12 @@ Assess production readiness:
 
 - **`benchmark-data.md`** — Relevant performance benchmarks with sources. Comparison to plan targets.
 
+Use these templates exactly, removing placeholder rows only after replacing them with project-specific content:
+
+- `extension/templates/reality-check-template.md` -> `reality-check.md`
+- `extension/templates/cost-analysis-template.md` -> `cost-analysis.md`
+- `extension/templates/benchmark-data-template.md` -> `benchmark-data.md`
+
 ### Severity Ratings
 
 - **INFO**: Minor gap, no action needed. "Estimate is 10% below reference class average."
@@ -155,14 +161,14 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: GROUNDED
   output_files:
-    - reality-check.md
-    - cost-analysis.md
-    - benchmark-data.md
+    - {spec_dir}/reality-check.md
+    - {spec_dir}/cost-analysis.md
+    - {spec_dir}/benchmark-data.md
   journal_entries:
     - id: null
       type: assessment
       phase: finalize
-      agent: GROUND
+      agent: speckit-echelon-realist (REALIST)
       timestamp: null
       data:
         historical_comparables: []
