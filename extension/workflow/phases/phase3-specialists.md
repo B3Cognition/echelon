@@ -43,6 +43,10 @@ Context pack:
 
 - Specific question(s) from `unknowns.md`
 - Relevant artifacts (always select based on the question — do not send everything)
+- `extension/templates/investigation-report-template.md`
+- `extension/templates/evidence-grades-template.md`
+- `extension/templates/recommendations-template.md`
+- `extension/templates/knowledge-gaps-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -51,12 +55,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include specific unknowns from unknowns.md, relevant artifacts based on the question, reasoning-journal.jsonl]
+  [include specific unknowns from unknowns.md, relevant artifacts based on the question, investigator output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are INVESTIGATOR. Read agents/specialists/investigator.md for your complete protocol.
-  Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Investigate the following unknowns: [list from unknowns.md]. Follow the full scientific method: QUESTION, RESEARCH, EVALUATE (grade A-E), HYPOTHESIZE, EXPERIMENT (if feasible — use git worktree via `scripts/bash/setup-worktree.sh`), MEASURE, SYNTHESIZE, RECOMMEND. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

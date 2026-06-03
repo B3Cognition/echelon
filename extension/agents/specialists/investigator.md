@@ -110,6 +110,15 @@ Caveats: {limitations, conditions where this breaks}
 Alternatives: {what to do if the recommendation fails}
 ```
 
+## Template Contract
+
+Use these templates for structured outputs:
+
+- `extension/templates/investigation-report-template.md` for `investigation/{topic}.md`
+- `extension/templates/evidence-grades-template.md` for `evidence-grades.md`
+- `extension/templates/recommendations-template.md` for `recommendations.md`
+- `extension/templates/knowledge-gaps-template.md` for `knowledge-gaps.md`
+
 ## Output Requirements
 
 Produce ALL applicable files in the spec directory:
