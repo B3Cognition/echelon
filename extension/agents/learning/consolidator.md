@@ -75,7 +75,7 @@ Uses values from `echelon-config.yml`:
 5. Mark consolidated episodic traces as `consolidated: true` (adaptive forgetting signal — reduces salience weight in future online replay)
 6. Log: `{"type": "consolidator_offline_complete", "schemas_promoted": <N>, "schemas_reinforced": <N>, "traces_consolidated": <N>, "run_id": "<run_id>", "timestamp": "<ISO-8601>"}`
 
-**Output:** Updated speckit-echelon-veteran (VETERAN) schemas, speckit-echelon-veteran (VETERAN) notification entries, consolidation log entry.
+**Output:** Updated speckit-echelon-veteran (VETERAN) schemas, speckit-echelon-veteran (VETERAN) notification entries, and `{spec_dir}/patterns/schema-consolidation.md` using `extension/templates/schema-consolidation-template.md`.
 
 ---
 
@@ -123,7 +123,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: CONSOLIDATED
   output_files:
-    - .specify/specs/<feature>/patterns/
+    - {spec_dir}/patterns/schema-consolidation.md
   journal_entries:
     - id: null
       type: pattern_identified
