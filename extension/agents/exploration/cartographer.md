@@ -483,13 +483,13 @@ Repeat one `decision` entry per major requirement or scope decision.
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../spec.md
-    - .specify/.../00-overview.md
+    - {spec_dir}/spec.md
+    - {spec_dir}/00-overview.md
   journal_entries:
     - id: null
       type: decision
       phase: phase1-what
-      agent: WHAT
+      agent: speckit-echelon-cartographer (CARTOGRAPHER)
       timestamp: null
       data:
         artifact: "spec.md"
