@@ -198,7 +198,7 @@ The build is COMPLETE only when ALL of these are true:
 
 ## Output
 
-- `build-status.md` — running build status with phase gate decisions
+- `{spec_dir}/build-status.md` — running build status with phase gate decisions
 - Rework tasks (RW-* entries appended to tasks.md)
 - Final build sign-off when all criteria met
 - `verification-summary.md` reviewed and signed off by EM
@@ -220,12 +220,12 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: CONVERGING
   output_files:
-    - .specify/.../build-status.md
+    - {spec_dir}/build-status.md
   journal_entries:
     - id: null
       type: decision
       phase: build
-      agent: ENGINEERING_MANAGER
+      agent: speckit-echelon-engineering-manager (ENGINEERING MANAGER)
       timestamp: null
       data:
         iteration: <iteration_number>
