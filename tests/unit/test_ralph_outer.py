@@ -133,6 +133,8 @@ def _make_controller(
     verify_results: Optional[List[Dict[str, Any]]] = None,
     mode: str = "semi",
     llm_provider: Optional[Any] = None,
+    llm_build_runner: Optional[Any] = None,
+    fulfillment_runner: Optional[Any] = None,
 ) -> tuple:
     config = _make_config()
     provider = MockProvider(verify_results=verify_results)
@@ -154,6 +156,8 @@ def _make_controller(
         strategy_id="default",
         config=config,
         llm_provider=llm_provider,
+        llm_build_runner=llm_build_runner,
+        fulfillment_runner=fulfillment_runner,
     )
     return controller, provider, gitops, state_store
 
@@ -231,19 +235,19 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
         gitops.promote_pr_ready.assert_not_called()
 
-    def test_runs_verify_spec_before_fulfillment_gate_when_llm_provider_available(
+    def test_runs_verify_spec_before_fulfillment_gate_when_runner_available(
         self, tmp_path: Path
     ) -> None:
         """Ralph refreshes fulfillment evidence after sandbox verification passes."""
         from harness.build_result import BuildResult
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
 
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
 
-        llm_provider = MagicMock(spec=AICodingCliProvider)
-        llm_provider.exec_build.return_value = BuildResult(
+        llm_build_runner = MagicMock(spec=LlmBuildRunner)
+        llm_build_runner.exec_build.return_value = BuildResult(
             exit_code=0,
             status="done",
             impasse_file=None,
@@ -261,11 +265,13 @@ class TestOuterLoopConvergence:
             )
             return 0
 
-        llm_provider.exec_verify_spec.side_effect = write_fulfillment_gap
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.side_effect = write_fulfillment_gap
         controller, provider, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
-            llm_provider=llm_provider,
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
         )
         controller._config.verify_command = f"{sys.executable} -c \"pass\""
         gitops.create_worktree.return_value = str(worktree)
@@ -277,7 +283,7 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        llm_provider.exec_verify_spec.assert_called_once_with(str(worktree), "spec-001")
+        fulfillment_runner.refresh.assert_called_once_with(str(worktree), "spec-001")
         assert result.status == "failed"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
@@ -307,8 +313,8 @@ class TestOuterLoopConvergence:
         """Missing build status should block gracefully instead of raising."""
         from harness.build_result import BuildResult
 
-        llm_provider = MagicMock()
-        llm_provider.exec_build.return_value = BuildResult(
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
             exit_code=0,
             status="unknown",
             impasse_file=None,
@@ -319,7 +325,7 @@ class TestOuterLoopConvergence:
         controller, provider, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
-            llm_provider=llm_provider,
+            llm_build_runner=llm_build_runner,
         )
 
         result = controller.run_loop(
@@ -449,18 +455,20 @@ class TestSignalHandling:
 
 @pytest.mark.unit
 class TestLlmProviderDispatch:
-    def test_exec_build_uses_llm_provider_when_set(self, tmp_path: Path) -> None:
-        """When llm_provider is set, _exec_build delegates to it."""
-        from harness.llm_provider import AICodingCliProvider
+    def test_exec_build_uses_llm_build_runner_when_set(self, tmp_path: Path) -> None:
+        """When llm_build_runner is set, _exec_build delegates to it."""
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        llm.exec_build.return_value = BuildResult(
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=100,
         )
 
-        controller, provider, _, _ = _make_controller(tmp_path, llm_provider=llm)
+        controller, provider, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
         result = controller._exec_build(
             handle=MagicMock(),
             build_command="echelon build",
@@ -469,12 +477,12 @@ class TestLlmProviderDispatch:
             prompt="build this",
         )
 
-        llm.exec_build.assert_called_once_with(str(tmp_path), "build this")
+        build_runner.exec_build.assert_called_once_with(str(tmp_path), "build this")
         assert result["passed"] is True
 
-    def test_exec_build_falls_back_to_sandbox_when_no_llm_provider(self, tmp_path: Path) -> None:
-        """When llm_provider is None, _exec_build uses provider.exec() even with args."""
-        controller, provider, _, _ = _make_controller(tmp_path, llm_provider=None)
+    def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
+        """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""
+        controller, provider, _, _ = _make_controller(tmp_path, llm_build_runner=None)
 
         result = controller._exec_build(
             handle=MagicMock(),
@@ -487,19 +495,21 @@ class TestLlmProviderDispatch:
         assert provider._exec_count == 1
         assert result["passed"] is True
 
-    def test_exec_feedback_uses_llm_provider_when_set(self, tmp_path):
-        """When llm_provider is set, _exec_feedback delegates to it."""
-        from harness.llm_provider import AICodingCliProvider
+    def test_exec_feedback_uses_llm_build_runner_when_set(self, tmp_path):
+        """When llm_build_runner is set, _exec_feedback delegates to it."""
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
         from harness.verify_result import VerifyResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        llm.exec_feedback.return_value = BuildResult(
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_feedback.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=100,
         )
 
-        controller, _, _, _ = _make_controller(tmp_path, llm_provider=llm)
+        controller, _, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
         verify = VerifyResult(passed=False, failures=[], duration_s=1.0, token_usage=0)
 
         result = controller._exec_feedback(
@@ -511,17 +521,18 @@ class TestLlmProviderDispatch:
             prompt="fix this",
         )
 
-        llm.exec_feedback.assert_called_once_with(str(tmp_path), "fix this")
+        build_runner.exec_feedback.assert_called_once_with(str(tmp_path), "fix this")
         assert result["passed"] is True
         assert result["impasse"] is False
 
     def test_exec_build_falls_back_when_prompt_empty(self, tmp_path: Path) -> None:
-        """When prompt is empty, _exec_build falls back to sandbox even if provider set."""
-        from harness.llm_provider import AICodingCliProvider
-        from harness.build_result import BuildResult
+        """When prompt is empty, _exec_build falls back to sandbox even if build runner set."""
+        from harness.llm_build_runner import LlmBuildRunner
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, provider, _, _ = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, provider, _, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         result = controller._exec_build(
             handle=MagicMock(),
@@ -531,7 +542,7 @@ class TestLlmProviderDispatch:
             prompt="",  # empty → fallback
         )
 
-        llm.exec_build.assert_not_called()
+        build_runner.exec_build.assert_not_called()
         assert provider._exec_count == 1
 
 
@@ -575,11 +586,13 @@ class TestSignalDuringBuild:
 
     def test_sigint_during_build_yields_interrupted_status(self, tmp_path: Path) -> None:
         """_interrupted set inside exec_build → status=interrupted, final_verify=None."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, provider, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, provider, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         def build_sets_interrupted(worktree_path: str, prompt: str) -> BuildResult:
             controller._interrupted = True
@@ -588,7 +601,7 @@ class TestSignalDuringBuild:
                 stdout="", stderr="", duration_ms=500,
             )
 
-        llm.exec_build.side_effect = build_sets_interrupted
+        build_runner.exec_build.side_effect = build_sets_interrupted
 
         result = controller.run_loop(
             max_outer=2,
@@ -623,17 +636,19 @@ class TestVerifyLocallyUnknownProjectType:
 
     def test_unknown_project_type_blocks_with_verify_command_needed(self, tmp_path: Path) -> None:
         """Build succeeds + unknown project type → status=blocked, reason=verify_command_needed."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
         gitops.create_worktree.return_value = str(worktree)
 
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )
@@ -658,16 +673,18 @@ class TestVerifyCommandNeeded:
 
     def test_banner_printed_to_stderr(self, tmp_path: Path, capsys) -> None:
         """Unknown project type → escalation banner printed to stderr."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
         gitops.create_worktree.return_value = str(worktree)
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )
@@ -681,16 +698,18 @@ class TestVerifyCommandNeeded:
 
     def test_state_written_as_blocked(self, tmp_path: Path) -> None:
         """Unknown project type → StateStore reflects blocked + verify_command_needed."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, state_store = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
         gitops.create_worktree.return_value = str(worktree)
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )
@@ -703,16 +722,18 @@ class TestVerifyCommandNeeded:
 
     def test_does_not_iterate_build_loop(self, tmp_path: Path) -> None:
         """Hard-stop after first verify_command_needed — LLM not called again."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, _, gitops, _ = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
         gitops.create_worktree.return_value = str(worktree)
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )
@@ -720,21 +741,23 @@ class TestVerifyCommandNeeded:
         controller.run_loop(max_outer=5, max_inner=3,
                             build_command="echelon codegen", build_prompt="x")
         # Build must only have been called once (hard stop, no retries)
-        assert llm.exec_build.call_count == 1
+        assert build_runner.exec_build.call_count == 1
 
     def test_resume_with_verify_command_configured_reruns(self, tmp_path: Path) -> None:
         """After blocking, resume with verify_command set → loop re-enters."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
         from harness.config import HarnessConfig
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, state_store = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
         gitops.create_worktree.return_value = str(worktree)
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )
@@ -748,8 +771,8 @@ class TestVerifyCommandNeeded:
         controller._config = HarnessConfig(
             **{**controller._config.__dict__, "verify_command": "pytest"}
         )
-        llm.exec_build.reset_mock()
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.reset_mock()
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )
@@ -760,20 +783,22 @@ class TestVerifyCommandNeeded:
                                          build_command="echelon codegen", build_prompt="x")
 
         # Loop re-entered: build was called again
-        assert llm.exec_build.call_count == 1
+        assert build_runner.exec_build.call_count == 1
 
     def test_resume_without_verify_command_still_blocked(self, tmp_path: Path) -> None:
         """Resume without configuring verify_command → still blocked, banner printed."""
-        from harness.llm_provider import AICodingCliProvider
+        from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
-        llm = MagicMock(spec=AICodingCliProvider)
-        controller, _, gitops, state_store = _make_controller(tmp_path, llm_provider=llm)
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, state_store = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
 
         worktree = tmp_path / "worktree"
         worktree.mkdir()
         gitops.create_worktree.return_value = str(worktree)
-        llm.exec_build.return_value = BuildResult(
+        build_runner.exec_build.return_value = BuildResult(
             exit_code=0, status="done", impasse_file=None,
             stdout="", stderr="", duration_ms=500,
         )

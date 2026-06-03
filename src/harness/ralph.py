@@ -30,6 +30,8 @@ from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.failure_signature import detect_same_failure, normalize
+from harness.fulfillment_runner import FulfillmentRunner
+from harness.llm_build_runner import LlmBuildRunner
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
@@ -76,6 +78,8 @@ class RalphController:
         strategy_id: str,
         config: HarnessConfig,
         llm_provider: Optional[AICodingCliProvider] = None,
+        llm_build_runner: Optional[LlmBuildRunner] = None,
+        fulfillment_runner: Optional[FulfillmentRunner] = None,
         build_id: str = "",
     ) -> None:
         self._provider = provider
@@ -87,6 +91,16 @@ class RalphController:
         self._strategy_id = strategy_id
         self._config = config
         self._llm_provider = llm_provider
+        self._llm_build_runner = (
+            llm_build_runner
+            if llm_build_runner is not None
+            else LlmBuildRunner(llm_provider) if llm_provider is not None else None
+        )
+        self._fulfillment_runner = (
+            fulfillment_runner
+            if fulfillment_runner is not None
+            else FulfillmentRunner(llm_provider) if llm_provider is not None else None
+        )
         self._build_id = build_id
 
         self._interrupted = False
@@ -292,7 +306,7 @@ class RalphController:
                     # Hard-stop: if the build did not complete (COMMANDER blocked
                     # early without reaching build-8-finalize, or hit an impasse),
                     # the status file was not written this iteration.
-                    # llm_provider clears the file before each build so a missing
+                    # Ralph clears the file before each build so a missing
                     # or non-"done" status always means this build didn't complete.
                     if not build_result.get("passed", True):
                         preserve_worktree = True
@@ -720,10 +734,10 @@ class RalphController:
         worktree_path: str = "",
         prompt: str = "",
     ) -> Dict[str, Any]:
-        """Execute the strategy's build command in sandbox or via LLM provider.
+        """Execute the strategy's build command in sandbox or via LLM build runner.
 
-        When ``llm_provider`` is set and both ``worktree_path`` and ``prompt``
-        are non-empty, delegates to ``llm_provider.exec_build``.  Otherwise
+        When an LLM build runner is set and both ``worktree_path`` and ``prompt``
+        are non-empty, delegates to it. Otherwise
         falls back to the sandbox provider path.
 
         Args:
@@ -732,15 +746,15 @@ class RalphController:
                 ``echelon codegen``). Declared via strategy file frontmatter.
             strategy_context: Additional context injected via STRATEGY_CONTEXT
                 env var. Empty string = no injection.
-            worktree_path: Path to the git worktree (LLM provider path only).
-            prompt: Prompt text for the LLM (LLM provider path only).
+            worktree_path: Path to the git worktree (LLM build runner path only).
+            prompt: Prompt text for the LLM (LLM build runner path only).
 
         Returns:
             Dict with exit_code, passed, duration_s, tokens, impasse,
             impasse_file.
         """
-        if self._llm_provider and worktree_path and prompt:
-            result = self._llm_provider.exec_build(worktree_path, prompt)
+        if self._llm_build_runner and worktree_path and prompt:
+            result = self._llm_build_runner.exec_build(worktree_path, prompt)
             return {
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,
@@ -767,14 +781,14 @@ class RalphController:
     def _exec_verify(self, handle: SandboxHandle, worktree_path: str = "") -> VerifyResult:
         """Execute verification.
 
-        When llm_provider is set and worktree_path is provided, runs verification
+        When the LLM build runner path is active and worktree_path is provided, runs verification
         locally on the host via the detected package manager's install + test + build
         commands (avoids Docker networking issues where the internal network blocks
         package downloads). Falls back to sandbox provider path otherwise.
 
         Returns parsed VerifyResult.
         """
-        if self._llm_provider and worktree_path:
+        if self._llm_build_runner and worktree_path:
             return self._exec_verify_locally(worktree_path)
 
         result = self._provider.exec(handle, "echelon verify", timeout_ms=600_000)
@@ -835,10 +849,10 @@ class RalphController:
         worktree_path: str,
     ) -> VerifyResult:
         """Run verify-spec after ordinary verification passes, when possible."""
-        if not verify_result.passed or not worktree_path or self._llm_provider is None:
+        if not verify_result.passed or not worktree_path or self._fulfillment_runner is None:
             return verify_result
 
-        exit_code = self._llm_provider.exec_verify_spec(worktree_path, self._spec_id)
+        exit_code = self._fulfillment_runner.refresh(worktree_path, self._spec_id)
         if exit_code == 0:
             return verify_result
 
@@ -1158,16 +1172,16 @@ class RalphController:
         worktree_path: str = "",
         prompt: str = "",
     ) -> Dict[str, Any]:
-        """Execute feedback (fix) step in sandbox or via LLM provider.
+        """Execute feedback (fix) step in sandbox or via LLM build runner.
 
-        When ``llm_provider`` is set and both ``worktree_path`` and ``prompt``
-        are non-empty, delegates to ``llm_provider.exec_feedback``.  Otherwise
+        When an LLM build runner is set and both ``worktree_path`` and ``prompt``
+        are non-empty, delegates to it. Otherwise
         falls back to the sandbox provider path.
 
         Returns dict with exit_code, passed, duration_s, tokens.
         """
-        if self._llm_provider and worktree_path and prompt:
-            result = self._llm_provider.exec_feedback(worktree_path, prompt)
+        if self._llm_build_runner and worktree_path and prompt:
+            result = self._llm_build_runner.exec_feedback(worktree_path, prompt)
             return {
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,

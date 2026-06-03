@@ -7,21 +7,20 @@ import shutil
 import subprocess
 import threading
 import time
-from pathlib import Path
+from typing import Mapping
 
-from harness.build_result import BUILD_STATUS_FILENAME, BuildResult
 from harness.config import HarnessConfig
-from harness.skill_loader import StreamEventPrinter, build_skill_prompt, find_skill
+from harness.skill_loader import StreamEventPrinter
 
 
 class AICodingCliProvider:
-    """Runs LLM build and feedback steps via subprocess.
+    """Runs prompts through an AI coding CLI subprocess.
 
     Supports claude (default), copilot, and opencode. Configured via config.llm.cli
     or the ECHELON_LLM env var (env var takes precedence).
 
-    Not a SandboxProvider — has its own interface because it operates
-    without a sandbox lifecycle (no create/destroy).
+    Not a SandboxProvider: it only owns CLI selection, command construction,
+    environment setup, timeout handling, and stream/plain subprocess execution.
     """
 
     def __init__(self, config: HarnessConfig) -> None:
@@ -31,6 +30,10 @@ class AICodingCliProvider:
         self._cli = os.environ.get("ECHELON_LLM", config.llm.cli)
         # Resolve full path so subprocess inherits our shell's PATH, not a stripped one.
         self._bin = shutil.which(self._cli) or self._cli
+
+    @property
+    def cli(self) -> str:
+        return self._cli
 
     def _build_cmd(self, prompt: str) -> list:
         if self._cli == "opencode":
@@ -47,41 +50,15 @@ class AICodingCliProvider:
             cmd += ["--allow-all-tools"]
         return cmd
 
-    def exec_build(self, worktree_path: str, prompt: str) -> BuildResult:
-        """Run `<cli> -p <prompt>` in worktree_path, return BuildResult."""
-        status_file = self._status_file_path(worktree_path)
-        env = self._build_env(str(status_file))
-        start = time.monotonic()
-
-        if self._cli == "claude":
-            exit_code = self._run_streaming(self._build_cmd(prompt), worktree_path, env, start)
-        else:
-            exit_code = self._run_plain(self._build_cmd(prompt), worktree_path, env, start)
-
-        if exit_code is None:  # timeout
-            duration_ms = int((time.monotonic() - start) * 1000)
-            return BuildResult(
-                exit_code=-1, status="timeout", impasse_file=None,
-                stdout="", stderr="", duration_ms=duration_ms,
-            )
-
-        duration_ms = int((time.monotonic() - start) * 1000)
-        return BuildResult.from_status_file(
-            status_file, exit_code=exit_code, stdout="", stderr="", duration_ms=duration_ms,
-        )
-
-    def exec_feedback(self, worktree_path: str, prompt: str) -> BuildResult:
-        """Run `<cli> -p <prompt>` for a targeted fix. Same mechanics as exec_build."""
-        return self.exec_build(worktree_path, prompt)
-
-    def exec_verify_spec(self, worktree_path: str, spec_id: str) -> int:
-        """Run the verify-spec skill in worktree_path and return the process exit code."""
-        skill_path = find_skill("echelon.verify-spec", Path(worktree_path), self._cli)
-        if skill_path is None:
-            return 127
-
-        prompt = build_skill_prompt(skill_path, spec_id)
-        env = self._build_env()
+    def exec_prompt(
+        self,
+        worktree_path: str,
+        prompt: str,
+        *,
+        extra_env: Mapping[str, str] | None = None,
+    ) -> int:
+        """Run a prompt with the configured LLM CLI and return its process exit code."""
+        env = self._build_env(extra_env)
         start = time.monotonic()
         if self._cli == "claude":
             exit_code = self._run_streaming(self._build_cmd(prompt), worktree_path, env, start)
@@ -135,13 +112,10 @@ class AICodingCliProvider:
         except subprocess.TimeoutExpired:
             return None
 
-    def _status_file_path(self, worktree_path: str) -> Path:
-        return Path(worktree_path) / BUILD_STATUS_FILENAME
-
-    def _build_env(self, status_file: str | None = None) -> dict:
+    def _build_env(self, extra_env: Mapping[str, str] | None = None) -> dict:
         env = {**os.environ}
-        if status_file is not None:
-            env["HARNESS_BUILD_STATUS_FILE"] = status_file
+        if extra_env:
+            env.update(extra_env)
         if self._config_dir and self._cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
         return env
