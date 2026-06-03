@@ -30,6 +30,17 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 - `discovery.*` - Git history lookback, commit counts, hotspots
 - `scoring.*` - Confidence and evidence grades
 
+## Output Templates
+
+Use these templates exactly, removing placeholder rows only after replacing them with project-specific content:
+
+- `extension/templates/glossary-template.md` -> `glossary.md`
+- `extension/templates/mental-model-template.md` -> `mental-model.md`
+- `extension/templates/boundaries-template.md` -> `boundaries.md`
+- `extension/templates/assumptions-template.md` -> `assumptions.md`
+- `extension/templates/unknowns-template.md` -> `unknowns.md`
+- `extension/templates/reference-architectures-template.md` -> `reference-architectures.md` (greenfield only)
+
 ## Mode Detection
 
 You will receive a mode indicator from the MANAGER: either `greenfield` or `brownfield`. Follow the corresponding section below. If no indicator is provided, detect automatically:
@@ -221,146 +232,14 @@ Only after completing Steps 1-4, structure the user's input against the discover
 
 ## Output Requirements
 
-You MUST produce ALL of the following files in the spec directory provided by the speckit-echelon-commander (COMMANDER). Use the exact filenames.
+You MUST produce ALL of the following files in the target directory provided by the speckit-echelon-commander (COMMANDER), normally `${STAGING_DIR}` during DISCOVER. Use the exact filenames.
 
-### glossary.md
-
-```markdown
-# Domain Glossary
-
-## Terms
-
-### <Term>
-- **Definition:** precise, unambiguous definition
-- **Context:** where this term is used
-- **Disambiguation:** how this differs from similar terms (if applicable)
-- **Source:** [code | user | standard | reference-architecture]
-
-### <Term>
-...
-
-## Overloaded Terms
-<!-- Terms that mean different things in different contexts -->
-
-| Term | Context A | Meaning A | Context B | Meaning B |
-|------|-----------|-----------|-----------|-----------|
-```
-
-### mental-model.md
-
-```markdown
-# Mental Model — Entity/Concept Relationship Map
-
-## Core Entities
-
-### <Entity Name>
-- **Description:** what it represents
-- **Key attributes:** list of important properties
-- **Relationships:** connections to other entities
-- **Lifecycle:** creation → states → termination (if applicable)
-
-## Relationships
-
-| Entity A | Relationship | Entity B | Cardinality | Notes |
-|----------|-------------|----------|-------------|-------|
-
-## Concept Map
-<!-- ASCII or text description of how concepts relate -->
-
-## Behavioral Patterns
-<!-- Event flows, state transitions, key workflows -->
-```
-
-### boundaries.md
-
-```markdown
-# System Boundaries
-
-## Internal Boundaries
-<!-- Subsystems, modules, bounded contexts within the system -->
-
-### <Boundary Name>
-- **Responsibility:** what this boundary owns
-- **Interfaces:** how other boundaries interact with it
-- **Data ownership:** what data lives here
-
-## External Boundaries
-<!-- Integrations, dependencies, third-party systems -->
-
-### <External System>
-- **Type:** [API | database | service | library | infrastructure]
-- **Dependency strength:** [hard | soft | optional]
-- **Data flow:** what data crosses this boundary and in which direction
-- **Failure impact:** what happens if this dependency is unavailable
-
-## Trust Boundaries
-<!-- Where authentication, authorization, and data validation occur -->
-```
-
-### assumptions.md
-
-```markdown
-# Assumptions
-
-## Critical Assumptions
-<!-- If wrong, these invalidate significant portions of the design -->
-
-### A-001: <Assumption title>
-- **Statement:** precise statement of what is assumed
-- **Basis:** why we believe this (code evidence, reference architecture, user statement)
-- **Risk if wrong:** impact of this assumption being false
-- **Validation method:** how to confirm or refute this
-- **Status:** [unvalidated | validated | refuted]
-
-## Standard Assumptions
-<!-- Normal project assumptions -->
-
-## Low-Risk Assumptions
-<!-- Unlikely to cause problems if wrong -->
-```
-
-### unknowns.md
-
-```markdown
-# Unknowns
-
-## Known Unknowns
-<!-- Questions we know to ask but cannot answer yet -->
-
-### U-001: <Question>
-- **Why it matters:** impact on design/implementation
-- **Who can answer:** [user | SCIENTIST | domain-expert | experimentation]
-- **Priority:** [must-resolve-before-WHAT | should-resolve-before-HOW | can-defer]
-- **Related assumptions:** links to assumptions.md entries
-
-## Potential Unknown Unknowns
-<!-- Areas where we suspect gaps in our understanding but cannot formulate specific questions -->
-
-- **Area:** <domain area>
-- **Why suspicious:** what signals suggest hidden complexity
-- **Recommended investigation:** what the SCIENTIST should look into
-```
-
-### reference-architectures.md (greenfield only)
-
-```markdown
-# Reference Architectures
-
-## <Architecture/Project Name>
-- **Source:** URL or reference
-- **Relevance:** why this is comparable to our project
-- **Key entities:** entity model summary
-- **Boundaries:** how they separate concerns
-- **Patterns used:** architectural patterns employed
-- **Lessons:** what we can learn (both positive and negative)
-- **Differences from our project:** where our needs diverge
-
-## Common Patterns Across References
-<!-- What all reference architectures agree on — likely domain invariants -->
-
-## Divergence Points
-<!-- Where reference architectures disagree — these are design decision points -->
-```
+- `glossary.md` from `extension/templates/glossary-template.md`
+- `mental-model.md` from `extension/templates/mental-model-template.md`
+- `boundaries.md` from `extension/templates/boundaries-template.md`
+- `assumptions.md` from `extension/templates/assumptions-template.md`
+- `unknowns.md` from `extension/templates/unknowns-template.md`
+- `reference-architectures.md` from `extension/templates/reference-architectures-template.md` (greenfield only)
 
 ---
 
@@ -395,17 +274,17 @@ Artifacts: glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns
 Repeat one entry per significant insight. For externally verifiable findings (code, docs, benchmarks) use `type: evidence` with the same fields. For assumptions use `type: assumption` with fields `artifact`, `section`, `reasoning`, `validation_method`.
 
 For greenfield projects, also include:
-  - .specify/.../reference-architectures.md
+  - ${STAGING_DIR}/reference-architectures.md
 in `output_files` if that artifact was produced.
 
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../glossary.md
-    - .specify/.../mental-model.md
-    - .specify/.../boundaries.md
-    - .specify/.../assumptions.md
-    - .specify/.../unknowns.md
+    - ${STAGING_DIR}/glossary.md
+    - ${STAGING_DIR}/mental-model.md
+    - ${STAGING_DIR}/boundaries.md
+    - ${STAGING_DIR}/assumptions.md
+    - ${STAGING_DIR}/unknowns.md
   state_updates: {}
   journal_entries:
     - id: null

@@ -14,6 +14,12 @@ Read and include in the subagent prompt:
 - User input (the `$ARGUMENTS` from above)
 - `knowledge-base/calibration-profile.yaml`
 - Previous run's `evolution-report.md` (if re-run)
+- `extension/templates/glossary-template.md`
+- `extension/templates/mental-model-template.md`
+- `extension/templates/boundaries-template.md`
+- `extension/templates/assumptions-template.md`
+- `extension/templates/unknowns-template.md`
+- `extension/templates/reference-architectures-template.md`
 - If `state.json.golddigger_artifacts` exists: include artifact paths so the agent knows where to read brownfield data
   - Polyrepo: include `repos-manifest.json` path, `cross-repo.json` path, per-repo directory paths
   - Single-repo: include `analysis.json` path
@@ -27,12 +33,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include user input, knowledge-base/calibration-profile.yaml, previous run's evolution-report.md if re-run, state.json.golddigger_artifacts paths if available]
+  [include user input, knowledge-base/calibration-profile.yaml, scout output templates, previous run's evolution-report.md if re-run, state.json.golddigger_artifacts paths if available]
   </context>
 
   <instructions>
   You are SCOUT. Read agents/exploration/scout.md for your complete protocol.
-  Your mode is `{greenfield|brownfield}`. Produce all outputs in `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries` for every significant insight, assumption, or decision.
+  Your mode is `{greenfield|brownfield}`. Produce all outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for every significant insight, assumption, or decision.
   </instructions>
   ```
 
