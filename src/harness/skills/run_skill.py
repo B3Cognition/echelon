@@ -7,7 +7,6 @@ Acquires lock, runs GC, launches coordinator, prints results.
 from __future__ import annotations
 
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -22,18 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:
-    """Return count of T-NNN task headings in tasks.md, or 0 if unreadable."""
+    """Return count of canonical task rows in tasks.md, or 0 if absent."""
     try:
-        from harness.spec_frontmatter import find_spec_dir
-        spec_dir = find_spec_dir(spec_id, Path(base_dir).resolve())
-        if spec_dir is None:
-            return 0
-        tasks_md = spec_dir / "tasks.md"
-        if not tasks_md.exists():
-            return 0
-        text = tasks_md.read_text(encoding="utf-8", errors="replace")
-        return len(re.findall(r"^#{1,4}\s+T-\d+", text, re.MULTILINE))
-    except Exception:
+        from harness.task_validation import count_tasks_for_spec
+        return count_tasks_for_spec(spec_id, Path(base_dir))
+    except FileNotFoundError:
         return 0
 
 

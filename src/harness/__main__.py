@@ -4,6 +4,7 @@ Subcommands:
   run     — run the ralph-loop for a spec (reads HARNESS_* env vars)
   resume  — resume a blocked loop with an answer (reads HARNESS_* env vars)
   gitops  — GitOps operations (find-branch, create-worktree, commit-push, open-pr, merge-pr, local-merge)
+  validate-tasks — validate canonical tasks.md rows
 
 Environment variables for `run`:
   HARNESS_SPEC          required  spec ID (e.g., "012")
@@ -97,6 +98,25 @@ def _resume() -> None:
     resume(user_message, provider, gitops)
 
 
+def _validate_tasks() -> None:
+    if len(sys.argv) < 3:
+        print("Usage: python -m harness validate-tasks <tasks.md>", file=sys.stderr)
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.task_validation import TaskValidationError, validate_tasks_file
+
+    tasks_path = Path(sys.argv[2])
+    try:
+        result = validate_tasks_file(tasks_path)
+    except TaskValidationError as e:
+        print(f"invalid tasks.md: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"OK: {result.task_count} canonical tasks")
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -111,8 +131,13 @@ def main() -> None:
     elif subcommand == "gitops":
         from harness.skills.gitops_skill import main as gitops_main
         sys.exit(gitops_main(sys.argv[2:]))
+    elif subcommand == "validate-tasks":
+        _validate_tasks()
     else:
-        print(f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', or 'gitops'.", file=sys.stderr)
+        print(
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', or 'validate-tasks'.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 

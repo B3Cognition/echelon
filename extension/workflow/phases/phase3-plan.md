@@ -64,23 +64,7 @@ done
 Also verify `tasks.md` uses canonical task rows:
 
 ```bash
-python - <<'PY'
-import re
-from pathlib import Path
-path = Path("specs/${SPEC_DIR}/tasks.md")
-task_re = re.compile(r"^- \[[ xX]\] T-[0-9]{3,4}(?: \[P\])? complexity=(trivial|standard|complex) phase=[A-Za-z0-9_.-]+ req=[A-Za-z0-9_,.-]+ depends=(none|[A-Za-z0-9_,.-]+)$")
-in_fence = False
-count = 0
-for line in path.read_text().splitlines():
-    if line.startswith("```"):
-        in_fence = not in_fence
-        continue
-    if not in_fence and task_re.match(line):
-        count += 1
-if count == 0:
-    raise SystemExit("ERROR: invalid canonical tasks.md: no canonical task rows found")
-print(f"OK: {count} canonical tasks")
-PY
+python -m harness validate-tasks "specs/${SPEC_DIR}/tasks.md"
 ```
 
 **MANDATORY — run before transitioning to phase3-consensus:**
