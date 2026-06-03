@@ -114,6 +114,8 @@ Context pack:
 - `reasoning-journal.jsonl`
 - Quality scores from all WHY passes (from state.json)
 - speckit-echelon-internalizer (INTERNALIZER) outputs (per-agent composite scores and trends)
+- `agents/learning/appendices/internalizer-output-formats.md`
+- `agents/learning/appendices/internalizer-tier-definitions.md`
 - `agents/learning/appendices/auditor-dashboard-template.md`
 - `agents/learning/appendices/auditor-output-formats.md`
 

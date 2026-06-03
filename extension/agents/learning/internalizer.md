@@ -47,7 +47,7 @@ NEVER modify agent prompts.
 
 - `knowledge-base/internalization-log.yaml` — structured internalization entries per agent per run
 - `knowledge-base/agent-scores.yaml` — per-agent internalization composite scores and trends
-- `internalization-metrics.md` — human-readable summary of internalization results for the current run
+- `{spec_dir}/internalization-metrics.md` — human-readable summary of internalization results for the current run
 - `knowledge-base/evolution-signals.yaml` — evolution signals when internalization thresholds are breached
 
 ## Tier 1 KB Bootstrap Protocol
@@ -408,12 +408,12 @@ echelon_result:
   output_files:
     - knowledge-base/internalization-log.yaml
     - knowledge-base/agent-scores.yaml
-    - internalization-metrics.md
+    - {spec_dir}/internalization-metrics.md
   journal_entries:
     - id: null
       type: internalization_score
       phase: finalize
-      agent: INTERNALIZE_METRICS
+      agent: speckit-echelon-internalizer (INTERNALIZER)
       timestamp: null
       data:
         overall_score: 0.0
