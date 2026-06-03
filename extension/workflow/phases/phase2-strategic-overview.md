@@ -13,13 +13,13 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md]
+  [include spec.md, feasibility.md, estimates.md, prioritization.md, unknowns.md, extension/templates/strategic-overview-template.md]
   </context>
 
   <instructions>
   You are STRATEGIST. Read agents/control/strategist.md for your complete protocol.
   Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated.
-  Produce `strategic-overview.md` in `.specify/specs/{NNN}-{feature}/`.
+  Produce `strategic-overview.md` in `specs/{NNN}-{feature}/` using the provided template.
   </instructions>
   ```
 
