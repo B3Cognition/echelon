@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CHECKPOINT = ROOT / "extension" / "agents" / "control" / "checkpoint.md"
 PHASE2_DECIDE = ROOT / "extension" / "workflow" / "phases" / "phase2-decide.md"
 BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
+PHASE3_SPECIALISTS = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
 
 
 class TestPhaseOutputPaths:
@@ -31,3 +32,9 @@ class TestPhaseOutputPaths:
         ]:
             assert f"specs/{{feature}}/{filename}" not in text
             assert f"{{spec_dir}}/{filename}" in text
+
+    def test_phase3_specialists_uses_canonical_context_artifact_path(self) -> None:
+        text = PHASE3_SPECIALISTS.read_text(encoding="utf-8")
+
+        assert "specs/{feature}/" not in text
+        assert "artifacts from `{spec_dir}/`" in text

@@ -104,7 +104,7 @@ Use the Agent tool:
 
 Context pack:
 
-- Domain-relevant artifacts from `specs/{feature}/`
+- Domain-relevant artifacts from `{spec_dir}/`
 - `extension/templates/domain-patterns-template.md`
 - `extension/templates/domain-amendments-template.md`
 - `extension/templates/compliance-gaps-template.md`
@@ -117,7 +117,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include domain-relevant artifacts from specs/{feature}/, oracle output templates, reasoning-journal.jsonl]
+  [include domain-relevant artifacts from {spec_dir}/, oracle output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
