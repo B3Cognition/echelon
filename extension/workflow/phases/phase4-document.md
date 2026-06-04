@@ -29,7 +29,7 @@ Use the Agent tool:
 
   <instructions>
   You are REALIST. Read agents/learning/realist.md for your complete protocol.
-  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Reality-check all artifacts. Connect plans to real-world data: infrastructure costs, production benchmarks, team capacity. Compare estimates to past outcomes via FEEDBACK data. Check architectural decisions against operational constraints. Flag disconnects. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -86,7 +86,7 @@ Use the Agent tool:
 
   <instructions>
   You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
-  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `specs/{NNN}-{feature}/`; when prompt recommendations are produced, use the provided template. Return journal entries in `echelon_result.journal_entries`.
+  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `{spec_dir}/`; when prompt recommendations are produced, use the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -104,7 +104,7 @@ speckit-echelon-internalizer (INTERNALIZER) must run first so speckit-echelon-au
 2. Dispatch speckit-echelon-internalizer (INTERNALIZER) (Measurement pass — 16 metrics per agent)
 3. Dispatch speckit-echelon-internalizer (INTERNALIZER) (Per-Agent Scoring pass)
 4. **Then** dispatch speckit-echelon-auditor (AUDITOR) (Calibration Dashboard Generation — uses speckit-echelon-internalizer (INTERNALIZER) results)
-5. speckit-echelon-auditor (AUDITOR) writes `calibration-dashboard.md` to `specs/{NNN}-{feature}/`
+5. speckit-echelon-auditor (AUDITOR) writes `calibration-dashboard.md` to `{spec_dir}/`
 
 Context pack:
 
@@ -130,7 +130,7 @@ Use the Agent tool:
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `specs/{NNN}-{feature}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
+  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -277,7 +277,7 @@ QUALITY SCORES (final WHY pass):
 
 SPECIALISTS SUMMONED: {list}
 
-ARTIFACTS: {count} files in specs/{NNN}-{feature}/
+ARTIFACTS: {count} files in {spec_dir}/
 
 AGENT SCORECARD:
   Top performer: {agent} (+{score}) — {highlight}

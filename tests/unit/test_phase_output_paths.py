@@ -79,8 +79,16 @@ class TestPhaseOutputPaths:
         text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
 
         assert "specs/{feature}/" not in text
+        assert "specs/{NNN}-{feature}/" not in text
         assert "artifacts in `{spec_dir}/`" in text
         assert "expected artifacts exist in `{spec_dir}/`" in text
+        assert text.count("Produce outputs in `{spec_dir}/`") == 2
+        assert "writes `calibration-dashboard.md` to `{spec_dir}/`" in text
+        assert (
+            "Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/`"
+            in text
+        )
+        assert "ARTIFACTS: {count} files in {spec_dir}/" in text
 
     def test_license_exception_paths_use_canonical_spec_dir(self) -> None:
         for path in [BUILD_VERIFY_GATES, CODEGEN_SECURITY]:
