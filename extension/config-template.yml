@@ -442,7 +442,7 @@ internalization_legacy:
 # int-Calibration (I-09..I-12), int-Transfer (I-13..I-16).
 #
 # AUDITOR computes these metrics; CHECKPOINT doubt scores are informational only.
-# See .specify/specs/003-internalization-metrics/data-model.md for full schema.
+# See specs/003-internalization-metrics/data-model.md for full schema.
 #
 
 internalization:

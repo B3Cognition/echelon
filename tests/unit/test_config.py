@@ -35,6 +35,9 @@ from harness.config import (
     load_config,
 )
 
+ROOT = Path(__file__).resolve().parents[2]
+CONFIG_TEMPLATE = ROOT / "extension" / "config-template.yml"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,6 +73,13 @@ FULL = {
         "allowlist": ["custom.registry.io"],
     },
 }
+
+
+def test_config_template_schema_comment_uses_workspace_specs_path() -> None:
+    text = CONFIG_TEMPLATE.read_text(encoding="utf-8")
+
+    assert ".specify/specs/003-internalization-metrics/data-model.md" not in text
+    assert "specs/003-internalization-metrics/data-model.md" in text
 
 
 def _ext_dir(project_root: Path) -> Path:
