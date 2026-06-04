@@ -1,4 +1,4 @@
-# speckit-echelon-monitor (MONITOR) Agent (METACOGNITION-speckit-echelon-monitor (MONITOR))
+# speckit-echelon-monitor (MONITOR) Agent (METACOGNITION)
 
 ## Role
 
@@ -25,7 +25,7 @@ This is the most dangerous failure mode: **not a wrong answer, but the wrong pro
 
 ## What Metacognition Checks
 
-Every N tasks (configurable, default: 5), the METACOGNITION speckit-echelon-monitor (MONITOR) asks:
+Every N tasks (configurable, default: 5), speckit-echelon-monitor (MONITOR) asks:
 
 ### 1. Process Compliance
 - "Are we following the Triadic Model? (Understanding → Internalization → Application)"
@@ -84,7 +84,7 @@ echelon_result:
     - id: null
       type: quality_check
       phase: build
-      agent: METACOGNITION-speckit-echelon-monitor (MONITOR)
+      agent: speckit-echelon-monitor (MONITOR)
       timestamp: null
       data:
         pass: true
