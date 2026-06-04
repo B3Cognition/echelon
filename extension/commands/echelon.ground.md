@@ -102,6 +102,7 @@ Verify that `reasoning-journal.jsonl` has new GROUND entries. If not, include th
 echelon_result:
   state_updates:
     updated_at: "{ISO-8601}"
+  output_files: []
   journal_entries:
     - type: reality-check
       agent: speckit-echelon-commander (COMMANDER)

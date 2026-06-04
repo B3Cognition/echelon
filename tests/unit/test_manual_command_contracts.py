@@ -18,6 +18,7 @@ class TestManualCommandContracts:
 
             assert "agent: speckit-echelon-commander (COMMANDER)" in text
             assert "agent: MANAGER" not in text
+            assert "  output_files: []\n" in text
 
     def test_manual_specialist_commands_use_resolved_spec_dir_for_outputs(
         self,

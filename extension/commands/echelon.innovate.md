@@ -102,6 +102,7 @@ echelon_result:
   state_updates:
     active_specialists: <existing active_specialists plus INNOVATE>
     updated_at: "{ISO-8601}"
+  output_files: []
   journal_entries:
     - type: note
       agent: speckit-echelon-commander (COMMANDER)
