@@ -168,7 +168,7 @@ Include one `decision` entry per significant research finding or experiment resu
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../research.md
+    - {spec_dir}/research.md
   journal_entries:
     - id: null
       type: decision

@@ -64,6 +64,15 @@ class TestInvestigatorTemplates:
         ]:
             assert f"extension/templates/{filename}" in text
 
+        assert ".specify/..." not in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/research.md\n"
+            "  journal_entries:\n"
+            in text
+        )
+        assert "agent: speckit-echelon-investigator (INVESTIGATOR)" in text
+
     def test_phase3_specialist_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
