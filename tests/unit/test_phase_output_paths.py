@@ -53,6 +53,8 @@ class TestPhaseOutputPaths:
 
         assert "specs/{feature}/" not in text
         assert "artifacts in `{spec_dir}/`" in text
+        assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
+        assert text.count("Produce outputs in `{spec_dir}/`") == 3
 
     def test_phase4_document_uses_canonical_context_artifact_path(self) -> None:
         text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
