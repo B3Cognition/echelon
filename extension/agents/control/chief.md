@@ -149,7 +149,7 @@ echelon_result:
     - id: null
       type: constitution_created
       phase: phase1-constitution
-      agent: CHIEF
+      agent: speckit-echelon-chief (CHIEF)
       timestamp: null
       data:
         mode: <Creation | Amendment>
