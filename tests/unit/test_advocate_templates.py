@@ -61,6 +61,13 @@ class TestAdvocateTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert "ux-report.md" not in text
+        assert "specs/..." not in text
+        for filename in [
+            "accessibility-requirements.md",
+            "user-flow.md",
+            "spec.md",
+        ]:
+            assert f"{{spec_dir}}/{filename}" in text
 
     def test_phase3_specialist_dispatch_includes_advocate_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

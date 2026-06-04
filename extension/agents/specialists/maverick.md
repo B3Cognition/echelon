@@ -383,9 +383,9 @@ Include one `decision` entry per alternative generated. Reference the TRIZ princ
 echelon_result:
   verdict: ALTERNATIVES_GENERATED
   output_files:
-    - specs/.../alternatives.md
-    - specs/.../risk-opportunities.md
-    - specs/.../challenge-assumptions.md
+    - {spec_dir}/alternatives.md
+    - {spec_dir}/risk-opportunities.md
+    - {spec_dir}/challenge-assumptions.md
   journal_entries:
     - id: null
       type: decision

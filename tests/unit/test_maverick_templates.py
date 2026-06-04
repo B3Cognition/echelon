@@ -61,6 +61,13 @@ class TestMaverickTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert ".specify/.../alternatives.md" not in text
+        assert "specs/..." not in text
+        for filename in [
+            "alternatives.md",
+            "risk-opportunities.md",
+            "challenge-assumptions.md",
+        ]:
+            assert f"{{spec_dir}}/{filename}" in text
 
     def test_phase3_specialist_dispatch_includes_maverick_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

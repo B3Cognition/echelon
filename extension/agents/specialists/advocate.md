@@ -158,9 +158,9 @@ Include one `decision` entry per significant accessibility or UX finding. Use `s
 echelon_result:
   verdict: <COMPLETE | CONCERNS>
   output_files:
-    - specs/.../accessibility-requirements.md
-    - specs/.../user-flow.md
-    - specs/.../spec.md
+    - {spec_dir}/accessibility-requirements.md
+    - {spec_dir}/user-flow.md
+    - {spec_dir}/spec.md
   journal_entries:
     - id: null
       type: decision
