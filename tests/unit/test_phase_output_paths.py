@@ -8,6 +8,7 @@ PHASE1_WHY2 = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
 BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
 PHASE3_CONSENSUS = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
 PHASE3_SPECIALISTS = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
+PHASE4_DOCUMENT = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
 
 
 class TestPhaseOutputPaths:
@@ -52,3 +53,10 @@ class TestPhaseOutputPaths:
 
         assert "specs/{feature}/" not in text
         assert "artifacts in `{spec_dir}/`" in text
+
+    def test_phase4_document_uses_canonical_context_artifact_path(self) -> None:
+        text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
+
+        assert "specs/{feature}/" not in text
+        assert "artifacts in `{spec_dir}/`" in text
+        assert "expected artifacts exist in `{spec_dir}/`" in text

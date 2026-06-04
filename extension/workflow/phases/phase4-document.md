@@ -11,7 +11,7 @@
 
 Context pack:
 
-- All artifacts in `specs/{feature}/`
+- All artifacts in `{spec_dir}/`
 - `calibration-profile.yaml` + `estimates-log.yaml`
 - `extension/templates/reality-check-template.md`
 - `extension/templates/cost-analysis-template.md`
@@ -24,7 +24,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, calibration-profile.yaml, estimates-log.yaml, REALIST output templates, reasoning-journal.jsonl]
+  [include all artifacts in {spec_dir}/, calibration-profile.yaml, estimates-log.yaml, REALIST output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -41,7 +41,7 @@ Expected outputs: `reality-check.md`, `cost-analysis.md`, `benchmark-data.md`
 
 Context pack:
 
-- All artifacts in `specs/{feature}/`
+- All artifacts in `{spec_dir}/`
 - `reasoning-journal.jsonl`
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
 - `extension/templates/knowledge-transfer-assessment-template.md`
@@ -52,7 +52,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, extension/templates/knowledge-transfer-assessment-template.md]
+  [include all artifacts in {spec_dir}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, extension/templates/knowledge-transfer-assessment-template.md]
   </context>
 
   <instructions>
@@ -108,7 +108,7 @@ speckit-echelon-internalizer (INTERNALIZER) must run first so speckit-echelon-au
 
 Context pack:
 
-- All artifacts in `specs/{feature}/`
+- All artifacts in `{spec_dir}/`
 - `knowledge-base/calibration-profile.yaml`
 - `knowledge-base/estimates-log.yaml`
 - `reasoning-journal.jsonl`
@@ -125,7 +125,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores, auditor appendices]
+  [include all artifacts in {spec_dir}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores, auditor appendices]
   </context>
 
   <instructions>
@@ -145,7 +145,7 @@ After CALIBRATE completes, read `confidence-flags.md`:
 
 ### 12.6 Collect Final Artifacts
 
-Verify all expected artifacts exist in `specs/{feature}/`. Create a manifest:
+Verify all expected artifacts exist in `{spec_dir}/`. Create a manifest:
 
 ```
 Artifact                          | Producer        | Status
