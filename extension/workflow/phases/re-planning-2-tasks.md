@@ -28,8 +28,7 @@ echelon_result:
   state_updates:
     status: done
   output_files:
-    - specs/001-re-auth/tasks.md
-    - specs/002-re-api/tasks.md
+    - specs/NNN-re-{domain}/tasks.md
   journal_entries:
     - type: phase_complete
       phase: re-planning-2-tasks
