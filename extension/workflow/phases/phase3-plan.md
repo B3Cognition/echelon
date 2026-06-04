@@ -33,7 +33,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
-  Break the architecture into executable tasks (foundation, features, polish). Use the provided planning templates; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `specs/{NNN}-{feature}/`. Return journal entries in `echelon_result.journal_entries`.
+  Break the architecture into executable tasks (foundation, features, polish). Use the provided planning templates; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -41,7 +41,7 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Expected Outputs — EXACT FILENAMES
 
-speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `specs/{NNN}-{feature}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
+speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `{spec_dir}/` with **exactly** these names. Naming variants break downstream consumers (CONSENSUS, build phase, harness).
 
 | Required filename | Purpose |
 | --- | --- |

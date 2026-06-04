@@ -83,3 +83,7 @@ class TestOrchestratorTemplates:
         assert "extension/templates/critical-path-template.md" in text
         assert "extension/templates/planning-risk-matrix-template.md" in text
         assert "extension/templates/dependencies-template.md" in text
+        assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
+        assert "Produce outputs in `{spec_dir}/`" in text
+        assert "files in `specs/{NNN}-{feature}/`" not in text
+        assert "files in `{spec_dir}/`" in text
