@@ -48,7 +48,7 @@ Always produce a scoped feasibility note referencing the calibration confidence 
 - `knowledge-base/estimates-log.yaml` (past project actual outcomes)
 - `knowledge-base/calibration-profile.yaml` (accuracy per domain)
 - `knowledge-base/feedback/` (past project feedback)
-- Constitution constraints (team size, budget, timeline from `.specify/specs/{feature}/constitution.md`)
+- Constitution constraints (team size, budget, timeline from `{spec_dir}/constitution.md`)
 
 ---
 

@@ -60,6 +60,8 @@ class TestRealistTemplates:
         ]:
             assert f"extension/templates/{filename}" in text
 
+        assert ".specify/specs/{feature}/constitution.md" not in text
+        assert "{spec_dir}/constitution.md" in text
         assert "{spec_dir}/reality-check.md" in text
         assert "{spec_dir}/cost-analysis.md" in text
         assert "{spec_dir}/benchmark-data.md" in text
