@@ -20,6 +20,11 @@ $ARGUMENTS
 
 Resume a loop that blocked waiting for human input. Incorporates the user's answer into the escalation file and re-launches from the current iteration (not from scratch).
 
+For recoverable incomplete runs (`build_incomplete` or `publish_failed`),
+resume recovery also inspects recorded target repo metadata. If implementation
+work was already committed in the target repo branch, report that preserved
+commit instead of asking the user to salvage it from the polyrepo wrapper.
+
 ---
 
 ## Step 1: Check Initialized

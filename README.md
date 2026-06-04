@@ -81,12 +81,13 @@ echelon resume "your clarification"        # unblock a paused run
 echelon harness run 001                    # echelon squad build (default)
 echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
-# Polyrepo: run against multiple sub-repos from a polyrepo root
-echelon spec target 001 og-platform fet-frontend-libs   # set target repos in spec frontmatter
-echelon harness run 001                                  # auto-dispatches to each sub-repo in parallel
+# Polyrepo: record the implementation repo before build
+echelon spec target 001 og-platform            # explicit target in spec frontmatter
+echelon harness run 001 mode=semi              # recommends a target and stops if missing
+echelon harness run 001 mode=banzai            # writes a high-confidence target and continues
 
 # After build converges, fulfillment passes, and PR is open
-echelon land 001                           # merge PR, delete branch, clean worktrees, mark landed
+echelon land 001                           # lands the target repo branch, then marks the spec landed
 
 # After PR is open — review triage runs automatically via harness Phase 3
 # but can also be invoked directly:
@@ -441,7 +442,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
 | `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
-| `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; blocks on unresolved fulfillment gaps |
+| `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
 | `echelon land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
 | *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
 | *(spec-kit only)* | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
@@ -456,7 +457,7 @@ This keeps commands readable and makes individual phases independently editable 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
 | `echelon harness init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
-| `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy) |
+| `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build |
 | `echelon harness run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
 | `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on escalation or missing `verify_command` |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |

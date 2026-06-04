@@ -26,7 +26,14 @@ Runs the harness loop for a spec. Architecture:
 
 The harness works **on the echelon feature branch** (e.g., `001-weather-dashboard`), not on a separate `harness/*` branch. This keeps all implementation history on the same branch that echelon created, so the PR to `main` is a single coherent branch.
 
-Requires `harness.init` to have been run first.
+Requires `harness.init` to have been run first in the implementation repo.
+
+In a polyrepo root, the spec frontmatter `targets:` is authoritative. Normal
+implementation specs use exactly one target repo. If `targets:` is missing,
+`echelon harness run` performs deterministic target detection before local
+harness checks: `semi` mode recommends the target and stops for confirmation;
+`banzai` mode writes a high-confidence target and continues. If detection is
+ambiguous, stop and ask the user to run `echelon spec target <spec_id> <repo>`.
 
 ---
 
