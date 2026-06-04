@@ -6,6 +6,7 @@ CHECKPOINT = ROOT / "extension" / "agents" / "control" / "checkpoint.md"
 PHASE2_DECIDE = ROOT / "extension" / "workflow" / "phases" / "phase2-decide.md"
 PHASE1_WHY2 = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
 BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
+PHASE3_CONSENSUS = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
 PHASE3_SPECIALISTS = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
 
 
@@ -42,6 +43,12 @@ class TestPhaseOutputPaths:
 
     def test_phase1_why2_uses_canonical_context_artifact_path(self) -> None:
         text = PHASE1_WHY2.read_text(encoding="utf-8")
+
+        assert "specs/{feature}/" not in text
+        assert "artifacts in `{spec_dir}/`" in text
+
+    def test_phase3_consensus_uses_canonical_context_artifact_path(self) -> None:
+        text = PHASE3_CONSENSUS.read_text(encoding="utf-8")
 
         assert "specs/{feature}/" not in text
         assert "artifacts in `{spec_dir}/`" in text

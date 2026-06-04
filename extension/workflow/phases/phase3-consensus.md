@@ -9,7 +9,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 
 ### 11.1 WHY3 Context Pack
 
-- All artifacts in `specs/{feature}/` (spec, plan, tasks, specialist outputs)
+- All artifacts in `{spec_dir}/` (spec, plan, tasks, specialist outputs)
 - Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `agents/exploration/templates/sage-quality-gates-template.md`
 - `agents/exploration/templates/sage-issues-template.md`
@@ -43,7 +43,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include all artifacts in specs/{feature}/, sage WHY3 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
+  [include all artifacts in {spec_dir}/, sage WHY3 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
