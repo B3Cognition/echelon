@@ -39,7 +39,10 @@ def validate_targets(
             sys.exit(1)
         if not (target / _ECHELON_YML_REL).exists():
             print(
-                f"✗ {rel}: not initialised — run 'echelon harness init' inside {rel} first.",
+                f"✗ {rel}: not initialised for harness.\n"
+                f"  Fix:\n"
+                f"    cd {rel}\n"
+                f"    echelon harness init .",
                 file=sys.stderr,
             )
             sys.exit(1)

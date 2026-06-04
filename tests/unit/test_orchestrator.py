@@ -37,11 +37,14 @@ class TestValidateTargets:
             validate_targets(["does-not-exist"], tmp_path)
         assert exc.value.code == 1
 
-    def test_uninitialised_target_exits(self, tmp_path: Path) -> None:
+    def test_uninitialised_target_exits(self, tmp_path: Path, capsys) -> None:
         _make_target(tmp_path, "repo-b", initialised=False)
         with pytest.raises(SystemExit) as exc:
             validate_targets(["repo-b"], tmp_path)
         assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "cd repo-b" in err
+        assert "echelon harness init ." in err
 
     def test_multiple_valid_targets(self, tmp_path: Path) -> None:
         a = _make_target(tmp_path, "repo-a")
