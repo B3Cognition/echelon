@@ -36,7 +36,7 @@ Before dispatching, verify:
    - If build has not started: No tasks to impact — update spec and re-plan.
    - If workflow is `CHANGE_PENDING`: continue change handling and resolve re-entry target.
 
-2. **Spec is baselined** — Confirm `spec.md` exists in `.specify/specs/{feature}/`.
+2. **Spec is baselined** — Confirm `{spec_dir}/spec.md` exists.
 
 3. **Tasks exist** — Confirm `tasks.md` exists with at least one task.
 
@@ -54,7 +54,7 @@ Compile a context pack for the speckit-echelon-change-controller agent:
 - Current `spec.md`
 - Current `tasks.md` with all task statuses
 - Current `estimates.md`
-- All ADR files from `.specify/specs/{feature}/adrs/`
+- All ADR files from `{spec_dir}/adrs/`
 - Current `progress-report.md` (if exists)
 - `constitution.md`
 

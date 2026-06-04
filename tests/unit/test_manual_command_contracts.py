@@ -42,3 +42,10 @@ class TestManualCommandContracts:
             assert ".specify/specs/{spec_dir}/investigation/{topic}.md" not in text
             for expected_line in expected_lines:
                 assert expected_line in text
+
+    def test_change_command_uses_resolved_spec_dir_for_context(self) -> None:
+        text = (COMMAND_DIR / "echelon.change.md").read_text(encoding="utf-8")
+
+        assert ".specify/specs/{feature}/" not in text
+        assert "`{spec_dir}/spec.md`" in text
+        assert "`{spec_dir}/adrs/`" in text
