@@ -37,5 +37,5 @@ class TestStrategistTemplates:
 
         assert "extension/templates/strategic-overview-template.md" in text
         assert "using the provided template" in text
-        assert ".specify/specs/{NNN}-{feature}" not in text
-        assert "specs/{NNN}-{feature}/" in text
+        assert "specs/{NNN}-{feature}/" not in text
+        assert "{spec_dir}/" in text

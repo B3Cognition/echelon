@@ -19,7 +19,7 @@ Use the Agent tool:
   <instructions>
   You are STRATEGIST. Read agents/control/strategist.md for your complete protocol.
   Build a risk-weighted strategic map of the project. Identify which components carry the highest business + technical risk. Flag where effort allocation should be concentrated.
-  Produce `strategic-overview.md` in `specs/{NNN}-{feature}/` using the provided template.
+  Produce `strategic-overview.md` in `{spec_dir}/` using the provided template.
   </instructions>
   ```
 
