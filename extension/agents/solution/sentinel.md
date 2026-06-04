@@ -224,7 +224,7 @@ Review quarantined tests weekly — fix or remove. Tests quarantined for more th
 
 ## Output Requirements — ALL THREE FILES MANDATORY
 
-All three files below MUST be produced in `specs/{NNN}-{feature}/`. Omitting any one is a speckit-echelon-sentinel (SENTINEL) failure — speckit-echelon-commander (COMMANDER) will flag it and route back.
+All three files below MUST be produced in `{spec_dir}/`. Omitting any one is a speckit-echelon-sentinel (SENTINEL) failure — speckit-echelon-commander (COMMANDER) will flag it and route back.
 
 ### test-strategy.md
 

@@ -63,6 +63,8 @@ class TestSentinelTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert ".specify/..." not in text
+        assert "produced in `specs/{NNN}-{feature}/`" not in text
+        assert "produced in `{spec_dir}/`" in text
         assert (
             "  output_files:\n"
             "    - {spec_dir}/test-strategy.md\n"
