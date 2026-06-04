@@ -296,9 +296,9 @@ Before computing deferred metrics for an agent:
    - Match agent to their build task verdicts
    - Determine downstream_outcome:
      - If ALL verdicts PASS: `downstream_outcome: passed`
-     - If SPEC_GUARD FAIL: `downstream_outcome: rework_spec`, `downstream_agent: SPEC_GUARD`
-     - If CODE_REVIEWER FAIL: `downstream_outcome: rework_code`, `downstream_agent: CODE_REVIEWER`
-     - If TEST_GUARDIAN FAIL: `downstream_outcome: rework_test`, `downstream_agent: TEST_GUARDIAN`
+     - If SPEC_GUARD FAIL: set `downstream_outcome` to `rework_spec` and `downstream_agent` to `SPEC_GUARD`
+     - If CODE_REVIEWER FAIL: set `downstream_outcome` to `rework_code` and `downstream_agent` to `CODE_REVIEWER`
+     - If TEST_GUARDIAN FAIL: set `downstream_outcome` to `rework_test` and `downstream_agent` to `TEST_GUARDIAN`
      - If multiple FAIL: use first in chain order (SPEC_GUARD > CODE_REVIEWER > TEST_GUARDIAN)
      - If agent has no build tasks: `downstream_outcome: null`
 3. Update entries in internalization-log.yaml

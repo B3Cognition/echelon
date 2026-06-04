@@ -56,6 +56,9 @@ class TestInternalizerTemplates:
         assert "knowledge-base/evolution-signals.yaml" in text
         assert "agent: speckit-echelon-internalizer (INTERNALIZER)" in text
         assert "agent: INTERNALIZE_METRICS" not in text
+        assert "downstream_agent: SPEC_GUARD" not in text
+        assert "downstream_agent: CODE_REVIEWER" not in text
+        assert "downstream_agent: TEST_GUARDIAN" not in text
 
     def test_finalize_mentions_internalizer_appendices(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
