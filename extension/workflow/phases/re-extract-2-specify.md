@@ -35,7 +35,7 @@ echelon_result:
     domains: [auth, api, data-layer]
   output_files:
     - specs/000-re-overview/overview.md
-    - specs/001-re-auth/spec.md
+    - specs/NNN-re-{domain}/spec.md
   journal_entries:
     - type: phase_complete
       phase: re-extract-2-specify
