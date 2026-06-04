@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "extension" / "templates"
 AGENT = ROOT / "extension" / "agents" / "exploration" / "scout.md"
 PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-discover.md"
+DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
 
 
 class TestScoutTemplates:
@@ -74,3 +75,17 @@ class TestScoutTemplates:
         assert "extension/templates/assumptions-template.md" in text
         assert "extension/templates/unknowns-template.md" in text
         assert "extension/templates/reference-architectures-template.md" in text
+
+    def test_workflow_definition_lists_discovery_outputs_without_placeholders(
+        self,
+    ) -> None:
+        text = DEFINITION.read_text(encoding="utf-8")
+
+        assert ".specify/.../glossary.md" not in text
+        assert ".specify/.../reference-architectures.md" not in text
+        assert "      - glossary.md\n" in text
+        assert "      - mental-model.md\n" in text
+        assert "      - boundaries.md\n" in text
+        assert "      - assumptions.md\n" in text
+        assert "      - unknowns.md\n" in text
+        assert "      - reference-architectures.md   # greenfield only\n" in text

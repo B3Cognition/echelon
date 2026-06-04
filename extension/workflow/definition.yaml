@@ -263,12 +263,12 @@ phases:
         # speckit-echelon-guardian (GUARDIAN) is dispatched during phase3-specialists, not here —
         # this entry documents the trigger so speckit-echelon-commander (COMMANDER) doesn't need to remember it.
     outputs:
-      - .specify/.../glossary.md
-      - .specify/.../mental-model.md
-      - .specify/.../boundaries.md
-      - .specify/.../assumptions.md
-      - .specify/.../unknowns.md
-      - .specify/.../reference-architectures.md   # greenfield only
+      - glossary.md
+      - mental-model.md
+      - boundaries.md
+      - assumptions.md
+      - unknowns.md
+      - reference-architectures.md   # greenfield only
     transitions:
       - to: phase1-synthesizer
         condition: always
