@@ -72,11 +72,17 @@ class TestSingleRepoPathUnchanged:
         finally:
             os.chdir(orig)
 
-    def test_spec_without_targets_falls_through_to_init_error(self, tmp_path: Path) -> None:
-        """Spec found but no targets: still shows the init error, not orchestrator."""
+    def test_spec_without_targets_in_polyrepo_blocks_before_wrapper_harness(
+        self, tmp_path: Path, capsys
+    ) -> None:
         spec_dir = tmp_path / "specs" / "024-test"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# No frontmatter\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text("# Wrapper spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("Fix `src/service.ts`\n", encoding="utf-8")
+
+        for name in ["repo-a", "repo-b"]:
+            repo = tmp_path / name
+            (repo / ".git").mkdir(parents=True)
 
         import os
         orig = os.getcwd()
@@ -88,6 +94,10 @@ class TestSingleRepoPathUnchanged:
             assert exc.value.code == 1
         finally:
             os.chdir(orig)
+
+        err = capsys.readouterr().err
+        assert "No implementation target configured" in err
+        assert "echelon spec target" in err
 
     def test_find_spec_dir_local_takes_precedence(self, tmp_path: Path) -> None:
         """Local spec shadows parent-level spec of same id."""

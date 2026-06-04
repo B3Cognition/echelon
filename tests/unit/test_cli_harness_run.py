@@ -149,3 +149,87 @@ class TestHarnessRunTaskFormatErrors:
         assert "plan.md is not in canonical format" in err
         assert "python -m harness migrate-plan" in err
         assert "--write" in err
+
+
+@pytest.mark.unit
+class TestHarnessTargetPreflight:
+    def test_semi_mode_recommends_detected_target_and_stops(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        root = tmp_path
+        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        spec_dir = root / "specs" / "001-opta-points-perf-fix"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# OptaPoints\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=complex phase=foundation req=FR-001 depends=none "
+            "Fix `src/lib/sdapi/services/shared-promise.ts`\n",
+            encoding="utf-8",
+        )
+
+        target = root / "rbf-opta-points"
+        (target / ".git").mkdir(parents=True)
+        (target / "src/lib/sdapi/services").mkdir(parents=True)
+        (target / "src/lib/sdapi/services/shared-promise.ts").write_text(
+            "export {}\n",
+            encoding="utf-8",
+        )
+        other = root / "qag-load-testing-framework"
+        (other / ".git").mkdir(parents=True)
+
+        monkeypatch.chdir(root)
+        from echelon.cli import _cmd_harness_run
+
+        with pytest.raises(SystemExit) as exc:
+            _cmd_harness_run(["001", "mode=semi"])
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Recommended implementation target: rbf-opta-points" in err
+        assert "echelon spec target 001-opta-points-perf-fix rbf-opta-points" in err
+
+    def test_banzai_mode_writes_detected_target_and_dispatches(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        spec_dir = root / "specs" / "001-opta-points-perf-fix"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# OptaPoints\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "Fix `src/lib/sdapi/services/shared-promise.ts`\n",
+            encoding="utf-8",
+        )
+
+        target = root / "rbf-opta-points"
+        (target / ".git").mkdir(parents=True)
+        yml = target / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        yml.parent.mkdir(parents=True)
+        yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (target / "src/lib/sdapi/services").mkdir(parents=True)
+        (target / "src/lib/sdapi/services/shared-promise.ts").write_text(
+            "export {}\n",
+            encoding="utf-8",
+        )
+
+        other = root / "qag-load-testing-framework"
+        (other / ".git").mkdir(parents=True)
+
+        monkeypatch.chdir(root)
+        from echelon.cli import _cmd_harness_run
+        from harness.spec_frontmatter import read_frontmatter
+
+        with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001", "mode=banzai"])
+
+        assert exc.value.code == 0
+        assert read_frontmatter(spec_dir)["targets"] == ["rbf-opta-points"]
+        mock_run.assert_called_once()

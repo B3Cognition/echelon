@@ -519,17 +519,59 @@ def _cmd_harness_run(args: list[str]) -> None:
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
-    from harness.spec_frontmatter import find_spec_dir, read_frontmatter, write_status as _write_spec_status
-    from echelon.orchestrator import validate_targets, run_multi_target
+    from harness.spec_frontmatter import (
+        find_spec_dir,
+        read_frontmatter,
+        write_status as _write_spec_status,
+        write_targets,
+    )
+    from echelon.orchestrator import run_multi_target, validate_single_target
+    from echelon.target_detection import detect_target
 
     spec_dir = find_spec_dir(spec_id, Path.cwd())
     if spec_dir is not None:
+        resolved_spec_id = spec_dir.name
         frontmatter = read_frontmatter(spec_dir)
         targets_rel: list[str] = frontmatter.get("targets") or []
+        polyrepo_root = spec_dir.parent.parent
         if targets_rel:
-            polyrepo_root = spec_dir.parent.parent
-            targets = validate_targets(targets_rel, polyrepo_root)
-            sys.exit(run_multi_target(spec_id, targets, args[1:]))
+            target = validate_single_target(targets_rel, polyrepo_root)
+            sys.exit(run_multi_target(spec_id, [target], args[1:]))
+
+        detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
+        if detection.decision == "recommend":
+            if mode == "banzai" and detection.recommended_target:
+                write_targets(spec_dir, [detection.recommended_target])
+                target = validate_single_target([detection.recommended_target], polyrepo_root)
+                print(
+                    f"✓ Wrote inferred implementation target: {detection.recommended_target} "
+                    f"(confidence {detection.confidence:.2f})"
+                )
+                sys.exit(run_multi_target(spec_id, [target], args[1:]))
+            print(
+                f"✗ No implementation target configured.\n"
+                f"  Recommended implementation target: {detection.recommended_target} "
+                f"(confidence {detection.confidence:.2f})\n"
+                "  Evidence:\n"
+                + "".join(
+                    f"  - {item}\n"
+                    for item in (
+                        detection.candidates[0].evidence
+                        if detection.candidates else []
+                    )
+                )
+                + f"  Confirm with: echelon spec target {resolved_spec_id} {detection.recommended_target}\n"
+                + f"  Then rerun:  echelon harness run {resolved_spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if detection.decision == "ambiguous":
+            print(
+                "✗ No implementation target configured and target detection was ambiguous.\n"
+                f"  Fix: run 'echelon spec target {spec_id} <repo>'.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Single-repo mode: require local echelon-config.yml (harness config).
     echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
