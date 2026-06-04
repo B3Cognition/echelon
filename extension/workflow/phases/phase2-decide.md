@@ -11,11 +11,11 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 
 | File | Path | Notes |
 | --- | --- | --- |
-| `spec.md` | `specs/{NNN}-{feature}/spec.md` | Required |
-| `glossary.md` | `specs/{NNN}-{feature}/glossary.md` (or `${STAGING_DIR}/glossary.md` if not yet moved) | Required |
-| `00-overview.md` | `specs/{NNN}-{feature}/00-overview.md` | Required |
-| `assumptions.md` | `specs/{NNN}-{feature}/assumptions.md` (or staging) | Required |
-| `issues.md` | `specs/{NNN}-{feature}/issues.md` | From WHY2 |
+| `spec.md` | `{spec_dir}/spec.md` | Required |
+| `glossary.md` | `{spec_dir}/glossary.md` (or `${STAGING_DIR}/glossary.md` if not yet moved) | Required |
+| `00-overview.md` | `{spec_dir}/00-overview.md` | Required |
+| `assumptions.md` | `{spec_dir}/assumptions.md` (or staging) | Required |
+| `issues.md` | `{spec_dir}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |
 | `estimates-log.yaml` | `knowledge-base/estimates-log.yaml` | Mark `[ABSENT]` on cold start |
 | `extension/templates/feasibility-template.md` | `extension/templates/feasibility-template.md` | Required |
@@ -40,7 +40,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol.
-  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `extension/templates/kill-report.md`. Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `extension/templates/kill-report.md`. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

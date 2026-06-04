@@ -26,7 +26,17 @@ class TestPhaseOutputPaths:
         text = PHASE2_DECIDE.read_text(encoding="utf-8")
 
         assert "specs/{feature}/kill-report.md" not in text
+        assert "specs/{NNN}-{feature}/" not in text
         assert "{spec_dir}/kill-report.md" in text
+        for filename in [
+            "spec.md",
+            "glossary.md",
+            "00-overview.md",
+            "assumptions.md",
+            "issues.md",
+        ]:
+            assert f"{{spec_dir}}/{filename}" in text
+        assert "Produce outputs in `{spec_dir}/`" in text
 
     def test_build_init_uses_canonical_report_paths(self) -> None:
         text = BUILD_INIT.read_text(encoding="utf-8")
