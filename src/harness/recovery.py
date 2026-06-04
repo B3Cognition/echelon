@@ -47,6 +47,31 @@ def recover_blocked_run(
         raise HarnessRecoveryError(f"Cannot recover blocked reason: {reason!r}")
 
     project_dir = project_dir.resolve()
+
+    target_repo_raw = state.get("target_repo_path") or state.get("target_path")
+    target_branch_raw = state.get("target_branch")
+    target_commit_raw = state.get("target_commit")
+    if target_repo_raw and target_branch_raw and target_commit_raw:
+        target_repo = Path(str(target_repo_raw))
+        if target_repo.exists():
+            inside = _run_git(
+                ["rev-parse", "--is-inside-work-tree"],
+                cwd=str(target_repo),
+                check=False,
+            )
+            current = _run_git(
+                ["rev-parse", "HEAD"],
+                cwd=str(target_repo),
+                check=False,
+            )
+            if inside.returncode == 0 and current.returncode == 0:
+                return RecoveryResult(
+                    source="target_repo",
+                    commit=str(target_commit_raw),
+                    target_branch=str(target_branch_raw),
+                    applied=False,
+                )
+
     target_branch = _resolve_target_branch(project_dir, spec_id, state, gitops)
 
     source = _find_preserved_worktree_source(

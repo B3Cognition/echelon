@@ -185,3 +185,40 @@ def test_recover_blocked_run_treats_empty_cherry_pick_as_already_applied(
     assert result.applied is False
     assert _git(project, "rev-parse", "HEAD") == applied_once
     assert _git(project, "status", "--porcelain", "--untracked-files=no") == ""
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_reports_existing_target_repo_commit(
+    tmp_path: Path,
+) -> None:
+    wrapper = tmp_path / "wrapper"
+    _init_repo(wrapper)
+    _commit_file(wrapper, "README.md", "wrapper\n", "wrapper base")
+
+    target = wrapper / "rbf-opta-points"
+    _init_repo(target)
+    _commit_file(target, "README.md", "target\n", "target base")
+    _git(target, "checkout", "-b", "001-opta-points-perf-fix")
+    recovered = _commit_file(
+        target,
+        "src/fix.ts",
+        "fix\n",
+        "fix(perf): OptaPoints performance stabilization",
+    )
+
+    result = recover_blocked_run(
+        project_dir=wrapper,
+        spec_id="001-opta-points-perf-fix",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "target_repo_path": str(target),
+            "target_branch": "001-opta-points-perf-fix",
+            "target_commit": recovered,
+        },
+        gitops=_make_gitops(wrapper),
+    )
+
+    assert result.source == "target_repo"
+    assert result.commit == recovered
+    assert result.applied is False
