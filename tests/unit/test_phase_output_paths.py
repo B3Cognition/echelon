@@ -31,6 +31,9 @@ class TestPhaseOutputPaths:
     def test_build_init_uses_canonical_report_paths(self) -> None:
         text = BUILD_INIT.read_text(encoding="utf-8")
 
+        assert "Read and verify these files exist in `specs/{NNN}-{feature}/`" not in text
+        assert "Read and verify these files exist in `{spec_dir}/`" in text
+
         for filename in [
             "spec-compliance-report.md",
             "code-review-report.md",

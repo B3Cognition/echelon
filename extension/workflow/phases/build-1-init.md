@@ -35,7 +35,7 @@ If exit code is non-zero, HARD STOP. Always stop and follow the error output fix
 
 ### 1.1 Validate Phase A Artifacts
 
-Read and verify these files exist in `specs/{NNN}-{feature}/`:
+Read and verify these files exist in `{spec_dir}/`:
 
 **Required:**
 
