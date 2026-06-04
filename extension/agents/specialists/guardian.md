@@ -202,8 +202,8 @@ Include one `decision` entry per security finding. Use `severity` in the data fi
 echelon_result:
   verdict: <COMPLETE | FINDINGS>
   output_files:
-    - .specify/.../security-findings.md
-    - .specify/.../risk-acceptance-log.md
+    - {spec_dir}/security-findings.md
+    - {spec_dir}/risk-acceptance-log.md
   journal_entries:
     - id: null
       type: decision
