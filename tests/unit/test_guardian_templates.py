@@ -77,6 +77,8 @@ class TestGuardianTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert ".specify/..." not in text
+        assert "security-checklist.md` in `specs/{NNN}-{feature}/`" not in text
+        assert "security-checklist.md` in `{spec_dir}/`" in text
         assert (
             "  output_files:\n"
             "    - {spec_dir}/security-findings.md\n"

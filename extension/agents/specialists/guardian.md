@@ -50,7 +50,7 @@ When dispatched in always-on mode for a non-security domain, run ONLY this check
 
 ### Checklist Output
 
-Produce `security-checklist.md` in `specs/{NNN}-{feature}/` using `extension/templates/security-checklist-template.md`.
+Produce `security-checklist.md` in `{spec_dir}/` using `extension/templates/security-checklist-template.md`.
 
 If any item is FAIL, return this entry in the `echelon_result` block at the end of your response.
 
