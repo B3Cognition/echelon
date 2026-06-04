@@ -61,7 +61,7 @@ If the skill is unavailable, always return `dependency_checks.understanding.stat
 
 Read and include in the subagent prompt:
 
-- All current artifacts in `specs/{feature}/`
+- All current artifacts in `{spec_dir}/`
 - Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
 - `agents/exploration/templates/sage-quality-gates-template.md`
 - `agents/exploration/templates/sage-issues-template.md`
@@ -76,7 +76,7 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include all current artifacts in specs/{feature}/, sage WHY2 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
+  [include all current artifacts in {spec_dir}/, sage WHY2 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
