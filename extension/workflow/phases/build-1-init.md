@@ -117,9 +117,9 @@ echelon_result:
 
 Create empty report files (or clear prior content):
 
-- `specs/{feature}/spec-compliance-report.md`
-- `specs/{feature}/code-review-report.md`
-- `specs/{feature}/test-quality-report.md`
-- `specs/{feature}/progress-report.md`
+- `{spec_dir}/spec-compliance-report.md`
+- `{spec_dir}/code-review-report.md`
+- `{spec_dir}/test-quality-report.md`
+- `{spec_dir}/progress-report.md`
 
 **Transition:** Proceed to task iteration.

@@ -147,7 +147,7 @@ Doubts are **valuable signal** — they expose gaps that would have caused rewor
 
 ### Step 5: Record Internalization Scores
 
-Save to `specs/{feature}/internalization-report.md`.
+Save to `{spec_dir}/internalization-report.md`.
 
 ---
 
