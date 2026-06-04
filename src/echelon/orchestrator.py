@@ -47,6 +47,25 @@ def validate_targets(
     return resolved
 
 
+def validate_single_target(targets_rel: List[str], polyrepo_root: Path) -> Path:
+    """Validate that a normal implementation spec has exactly one target repo."""
+    if not targets_rel:
+        print(
+            "✗ No implementation target configured.\n"
+            "  Fix: run 'echelon spec target <spec_id> <repo>'.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if len(targets_rel) > 1:
+        print(
+            "✗ Multiple targets configured for single-target harness build.\n"
+            "  Fix: keep exactly one target in spec frontmatter, or use explicit multi-target mode.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return validate_targets(targets_rel, polyrepo_root)[0]
+
+
 def run_multi_target(
     spec_id: str,
     targets: List[Path],

@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from echelon.orchestrator import run_multi_target, validate_targets
+from echelon.orchestrator import (
+    run_multi_target,
+    validate_single_target,
+    validate_targets,
+)
 
 _ECHELON_YML = ".specify/extensions/echelon/echelon-config.yml"
 
@@ -44,6 +48,33 @@ class TestValidateTargets:
         b = _make_target(tmp_path, "repo-b")
         result = validate_targets(["repo-a", "repo-b"], tmp_path)
         assert result == [a, b]
+
+
+@pytest.mark.unit
+class TestValidateSingleTarget:
+    def test_one_target_returns_resolved_path(self, tmp_path: Path) -> None:
+        target = _make_target(tmp_path, "repo-a")
+        result = validate_single_target(["repo-a"], tmp_path)
+        assert result == target
+
+    def test_zero_targets_exits_one(self, tmp_path: Path, capsys) -> None:
+        with pytest.raises(SystemExit) as exc:
+            validate_single_target([], tmp_path)
+
+        assert exc.value.code == 1
+        assert "No implementation target configured" in capsys.readouterr().err
+
+    def test_multiple_targets_exits_one(self, tmp_path: Path, capsys) -> None:
+        _make_target(tmp_path, "repo-a")
+        _make_target(tmp_path, "repo-b")
+
+        with pytest.raises(SystemExit) as exc:
+            validate_single_target(["repo-a", "repo-b"], tmp_path)
+
+        assert exc.value.code == 1
+        assert "Multiple targets configured for single-target harness build" in (
+            capsys.readouterr().err
+        )
 
 
 @pytest.mark.unit
