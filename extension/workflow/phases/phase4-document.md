@@ -1,11 +1,11 @@
 # Phase: phase4-document
 # Source: echelon.run.md §12 — FINALIZE Phase
-# Agent: speckit-echelon-commander (COMMANDER) internal (sequential: speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), speckit-echelon-auditor (AUDITOR), speckit-echelon-scorekeeper (SCOREKEEPER))
+# Agent: speckit-echelon-commander (COMMANDER) internal (sequential: speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), speckit-echelon-auditor (AUDITOR), speckit-echelon-consolidator (CONSOLIDATOR), speckit-echelon-scorekeeper (SCOREKEEPER))
 # Read by: speckit-echelon-commander (COMMANDER) before executing finalization sequence
 
 ## 12. FINALIZE Phase
 
-> **Always execute steps 12.1–12.7 in order before step 12.8. NEVER skip to step 12.8.** The learning agents (speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-auditor (AUDITOR), speckit-echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, and failure modes repeat. Each step below is mandatory.
+> **Always execute steps 12.1–12.7 in order before step 12.8. NEVER skip to step 12.8.** The learning agents (speckit-echelon-realist (REALIST), speckit-echelon-mirror (MIRROR), speckit-echelon-auditor (AUDITOR), speckit-echelon-consolidator (CONSOLIDATOR), speckit-echelon-scorekeeper (SCOREKEEPER)) are the system's only mechanism for improving accuracy and pattern knowledge across runs. Skipping them means every run starts cold, estimates drift uncorrected, schemas fail to consolidate, and failure modes repeat. Each step below is mandatory.
 
 ### 12.1 GROUND Agent — MANDATORY
 
@@ -199,6 +199,39 @@ Additional artifacts (conditional):
 - `alternatives.md` (if INNOVATE ran)
 - `evolution-report.md` (if EVOLVE ran)
 - `risk-acceptance-log.md` (if speckit-echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
+
+### 12.6b Run speckit-echelon-consolidator (CONSOLIDATOR) — MANDATORY
+
+Dispatch speckit-echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode before speckit-echelon-scorekeeper (SCOREKEEPER). This turns run episodes and learning outputs into reusable schemas while the full run context is still available.
+
+Context pack:
+
+- All artifacts in `{spec_dir}/`
+- `reasoning-journal.jsonl`
+- `knowledge-base/patterns.yaml`
+- `knowledge-base/pitfalls.yaml`
+- `knowledge-base/calibration-profile.yaml`
+- speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), and speckit-echelon-auditor (AUDITOR) outputs from this FINALIZE run
+- `extension/templates/schema-consolidation-template.md`
+
+Use the Agent tool:
+
+- **prompt:**
+
+  ```xml
+  <context>
+  [include all artifacts in {spec_dir}/, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, knowledge-base/calibration-profile.yaml, FINALIZE learning outputs, extension/templates/schema-consolidation-template.md]
+  </context>
+
+  <instructions>
+  You are CONSOLIDATOR. Read agents/learning/consolidator.md for your complete protocol.
+  Run offline consolidation. Promote cross-run patterns into schemas, reinforce or decay existing schemas, mark consolidated traces, and produce `{spec_dir}/patterns/schema-consolidation.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
+  </instructions>
+  ```
+
+- **description:** "speckit-echelon-consolidator (CONSOLIDATOR): offline schema consolidation before scoring"
+
+If speckit-echelon-consolidator (CONSOLIDATOR) is unavailable, record the skip in the final warnings and continue to speckit-echelon-scorekeeper (SCOREKEEPER). Do not block run completion on consolidation availability.
 
 ### 12.7 Run speckit-echelon-scorekeeper (SCOREKEEPER) — MANDATORY
 

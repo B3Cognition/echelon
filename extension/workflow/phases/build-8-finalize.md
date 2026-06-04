@@ -164,6 +164,30 @@ Do not edit `{spec_dir}/run-history.json` in this phase. Ralph writes the
 authoritative Phase B implementation run after build, verify, task progress
 integrity, fulfillment, commit, and publish all converge.
 
+### 8.3b Run speckit-echelon-consolidator (CONSOLIDATOR)
+
+After the implementation is verified and before speckit-echelon-scorekeeper (SCOREKEEPER), dispatch speckit-echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode so build-phase lessons become reusable schemas.
+
+Use the Agent tool:
+
+- **subagent_type:** `speckit-echelon-consolidator`
+- **prompt:**
+
+  ```xml
+  <context>
+  [include state.json, tasks.md, spec.md, progress-report.md, integration-report.md, verification-summary.md, gap-report.md, reasoning-journal.jsonl, knowledge-base/patterns.yaml, knowledge-base/pitfalls.yaml, knowledge-base/calibration-profile.yaml, extension/templates/schema-consolidation-template.md]
+  </context>
+
+  <instructions>
+  You are CONSOLIDATOR. Read agents/learning/consolidator.md for your complete protocol.
+  Run offline consolidation for this build. Promote repeated implementation lessons into schemas, reinforce or decay existing schemas, mark consolidated traces, and produce `{spec_dir}/patterns/schema-consolidation.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
+  </instructions>
+  ```
+
+- **description:** "speckit-echelon-consolidator (CONSOLIDATOR): build-phase schema consolidation before scoring"
+
+If speckit-echelon-consolidator (CONSOLIDATOR) is unavailable, record a warning and continue to speckit-echelon-scorekeeper (SCOREKEEPER). Do not block BUILD_DONE on consolidation availability.
+
 ### 8.4 Run speckit-echelon-scorekeeper (SCOREKEEPER)
 
 After all build tasks complete, dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the build phase scorecard:
