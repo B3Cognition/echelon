@@ -60,3 +60,10 @@ class TestManualCommandContracts:
 
             assert ".specify/specs/{spec_id}-*/" not in text
             assert "specs/{spec_id}-*/" in text
+
+    def test_feedback_command_locates_specs_from_workspace_specs_dir(self) -> None:
+        text = (COMMAND_DIR / "echelon.feedback.md").read_text(encoding="utf-8")
+
+        assert ".specify/specs/" not in text
+        assert "Scan `specs/`" in text
+        assert "Check specs/ for available IDs." in text

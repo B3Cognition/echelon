@@ -37,9 +37,9 @@ Extract `{spec-id}` from `$ARGUMENTS` (first token, e.g., "001").
 
 ## Step 2: Locate Original Artifacts
 
-Scan `.specify/specs/` for a directory matching `{spec-id}-*` (e.g., `001-real-time-chat`).
+Scan `specs/` for a directory matching `{spec-id}-*` (e.g., `001-real-time-chat`).
 
-- If not found, report **"No spec directory found for ID '{spec-id}'. Check .specify/specs/ for available IDs."** and stop.
+- If not found, report **"No spec directory found for ID '{spec-id}'. Check specs/ for available IDs."** and stop.
 - Extract the full directory name as `{spec-dir}` and the feature name as `{project-name}`.
 
 ---
