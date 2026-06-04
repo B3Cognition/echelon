@@ -28,7 +28,7 @@ NEVER delete learning history outright or fabricate comparisons on first runs.
 
 ## Inputs
 
-- Current run artifacts (`specs/{feature}/`)
+- Current run artifacts (`{spec_dir}/`)
 - Prior run artifacts (if re-run — loaded from `${SQUAD_DIR}/prior-runs/`)
 - `knowledge-base/calibration-profile.yaml`
 - `reasoning-journal.jsonl` (current + prior if available)

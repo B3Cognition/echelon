@@ -28,6 +28,8 @@ class TestAdaptiveTemplates:
 
         assert "extension/templates/prompt-recommendation-template.md" in text
         assert ".specify/specs/" not in text
+        assert "specs/{feature}/" not in text
+        assert "{spec_dir}/" in text
         assert "{spec_dir}/evolution-report.md" in text
         assert "{spec_dir}/improvement-metrics.md" in text
         assert "agent: speckit-echelon-adaptive (ADAPTIVE)" in text
