@@ -18,6 +18,10 @@ RE_CHECKLISTER = ROOT / "extension" / "agents" / "re" / "checklister.md"
 RE_EXTRACT_6_CHECKLIST = (
     ROOT / "extension" / "workflow" / "phases" / "re-extract-6-checklist.md"
 )
+RE_EXPANDER = ROOT / "extension" / "agents" / "re" / "expander.md"
+RE_EXTRACT_4_EXPAND = (
+    ROOT / "extension" / "workflow" / "phases" / "re-extract-4-expand.md"
+)
 
 
 class TestRePromptOutputContracts:
@@ -51,3 +55,10 @@ class TestRePromptOutputContracts:
             assert "specs/001-re-auth/checklist.md" not in text
             assert "specs/000-re-overview/checklist.md" in text
             assert "specs/NNN-re-{domain}/checklist.md" in text
+
+    def test_re_expander_uses_domain_placeholder_in_output_examples(self) -> None:
+        for path in [RE_EXPANDER, RE_EXTRACT_4_EXPAND]:
+            text = path.read_text(encoding="utf-8")
+
+            assert "specs/004-re-utils/spec.md" not in text
+            assert "specs/NNN-re-{domain}/spec.md" in text

@@ -25,7 +25,7 @@ echelon_result:
   state_updates:
     domains: [auth, api, data-layer, utils]
   output_files:
-    - specs/004-re-utils/spec.md
+    - specs/NNN-re-{domain}/spec.md
   journal_entries:
     - type: phase_complete
       phase: re-extract-4-expand
