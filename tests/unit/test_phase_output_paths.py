@@ -9,6 +9,10 @@ BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
 PHASE3_CONSENSUS = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
 PHASE3_SPECIALISTS = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
 PHASE4_DOCUMENT = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
+BUILD_VERIFY_GATES = (
+    ROOT / "extension" / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md"
+)
+CODEGEN_SECURITY = ROOT / "extension" / "workflow" / "phases" / "codegen-6b-security.md"
 
 
 class TestPhaseOutputPaths:
@@ -64,3 +68,10 @@ class TestPhaseOutputPaths:
         assert "specs/{feature}/" not in text
         assert "artifacts in `{spec_dir}/`" in text
         assert "expected artifacts exist in `{spec_dir}/`" in text
+
+    def test_license_exception_paths_use_canonical_spec_dir(self) -> None:
+        for path in [BUILD_VERIFY_GATES, CODEGEN_SECURITY]:
+            text = path.read_text(encoding="utf-8")
+
+            assert "specs/{NNN}-{feature}/license-exceptions.md" not in text
+            assert "{spec_dir}/license-exceptions.md" in text

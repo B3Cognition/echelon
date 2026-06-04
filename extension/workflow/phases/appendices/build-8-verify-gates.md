@@ -98,4 +98,4 @@ License check commands:
 
 `pip-licenses` reports display names rather than SPDX identifiers, so its allow list must use pip-licenses names.
 
-For polyglot projects, run checks for every detected ecosystem. If a vulnerability or non-permissive license is found, print the finding, exit 1, and require the squad to update the dependency or document an exception in `specs/{NNN}-{feature}/license-exceptions.md` before the build can proceed.
+For polyglot projects, run checks for every detected ecosystem. If a vulnerability or non-permissive license is found, print the finding, exit 1, and require the squad to update the dependency or document an exception in `{spec_dir}/license-exceptions.md` before the build can proceed.
