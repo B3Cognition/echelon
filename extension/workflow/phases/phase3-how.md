@@ -40,7 +40,7 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Expected Outputs — ALL REQUIRED
 
-speckit-echelon-architect (ARCHITECT) produces these files in `specs/{NNN}-{feature}/`. Missing any of them breaks downstream phases: speckit-echelon-sentinel (SENTINEL) needs `plan.md`, speckit-echelon-orchestrator (ORCHESTRATOR) needs `contracts/`.
+speckit-echelon-architect (ARCHITECT) produces these files in `{spec_dir}/`. Missing any of them breaks downstream phases: speckit-echelon-sentinel (SENTINEL) needs `plan.md`, speckit-echelon-orchestrator (ORCHESTRATOR) needs `contracts/`.
 
 | Output | Notes |
 | --- | --- |

@@ -94,3 +94,5 @@ class TestArchitectTemplates:
         assert "extension/templates/architecture-adr-template.md" in text
         assert "extension/templates/data-model-template.md" in text
         assert "extension/templates/contracts-template.md" in text
+        assert "files in `specs/{NNN}-{feature}/`" not in text
+        assert "files in `{spec_dir}/`" in text
