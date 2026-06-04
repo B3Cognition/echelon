@@ -61,6 +61,15 @@ class TestBenchmarkTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert "performance-model.md" not in text
+        assert ".specify/..." not in text
+        assert (
+            "  output_files:\n"
+            "    - {spec_dir}/performance-requirements.md\n"
+            "    - {spec_dir}/capacity-model.md\n"
+            "  journal_entries:\n"
+            in text
+        )
+        assert "agent: speckit-echelon-benchmark (BENCHMARK)" in text
 
     def test_phase3_specialist_dispatch_includes_benchmark_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

@@ -170,8 +170,8 @@ Include one `decision` entry per significant performance finding or capacity con
 echelon_result:
   verdict: COMPLETE
   output_files:
-    - .specify/.../performance-requirements.md
-    - .specify/.../capacity-model.md
+    - {spec_dir}/performance-requirements.md
+    - {spec_dir}/capacity-model.md
   journal_entries:
     - id: null
       type: decision
