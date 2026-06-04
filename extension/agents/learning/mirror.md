@@ -26,7 +26,7 @@ NEVER modify agent prompts, squad configuration, or human-defined principles dir
 
 ## Inputs
 
-- All artifacts from the current run (`specs/{feature}/`)
+- All artifacts from the current run (`{spec_dir}/`)
 - `reasoning-journal.jsonl` (full run history)
 - `knowledge-base/patterns.yaml` (existing patterns to compare against)
 - `knowledge-base/pitfalls.yaml` (existing pitfalls)

@@ -28,6 +28,8 @@ class TestMirrorTemplates:
 
         assert "extension/templates/knowledge-transfer-assessment-template.md" in text
         assert ".specify/specs/" not in text
+        assert "specs/{feature}/" not in text
+        assert "{spec_dir}/" in text
         assert "{spec_dir}/knowledge-transfer-assessment.md" in text
         assert "knowledge-base/patterns.yaml" in text
         assert "knowledge-base/pitfalls.yaml" in text
