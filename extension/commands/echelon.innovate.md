@@ -70,7 +70,7 @@ Read the INNOVATE agent prompt from `.specify/extensions/echelon/agents/speciali
 Use the **Agent tool** to dispatch speckit-echelon-maverick as a subagent:
 
 - **subagent_type:** `speckit-echelon-maverick`
-- **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts and maverick output templates]. Produce outputs in `.specify/specs/{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
+- **prompt:** Read the file `.specify/extensions/echelon/agents/specialists/maverick.md` for your complete instructions. You are the INNOVATE specialist, triggered manually by the user. Your focus area: `{$ARGUMENTS or "broad sweep -- challenge all major decisions"}`. Apply TRIZ contradiction resolution, Design Thinking divergent exploration, and First Principles decomposition. Here is your context pack: [include all gathered artifacts and maverick output templates]. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
 - **description:** "speckit-echelon-maverick: manual trigger -- {$ARGUMENTS summary or 'broad alternative exploration'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**

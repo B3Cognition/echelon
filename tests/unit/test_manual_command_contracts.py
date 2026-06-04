@@ -18,3 +18,27 @@ class TestManualCommandContracts:
 
             assert "agent: speckit-echelon-commander (COMMANDER)" in text
             assert "agent: MANAGER" not in text
+
+    def test_manual_specialist_commands_use_resolved_spec_dir_for_outputs(
+        self,
+    ) -> None:
+        expected_outputs = {
+            "echelon.innovate.md": ["Produce outputs in `{spec_dir}/`"],
+            "echelon.ground.md": [
+                "Produce outputs in `{spec_dir}/`",
+                "Full report:      {spec_dir}/reality-check.md",
+            ],
+            "echelon.investigate.md": [
+                "Produce outputs in `{spec_dir}/`",
+                "Full report:     {spec_dir}/investigation/{topic}.md",
+            ],
+        }
+
+        for filename, expected_lines in expected_outputs.items():
+            text = (COMMAND_DIR / filename).read_text(encoding="utf-8")
+
+            assert "Produce outputs in `.specify/specs/{spec_dir}/`" not in text
+            assert ".specify/specs/{spec_dir}/reality-check.md" not in text
+            assert ".specify/specs/{spec_dir}/investigation/{topic}.md" not in text
+            for expected_line in expected_lines:
+                assert expected_line in text

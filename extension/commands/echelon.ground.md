@@ -72,7 +72,7 @@ Read the GROUND agent prompt from `.specify/extensions/echelon/agents/learning/r
 Use the **Agent tool** to dispatch speckit-echelon-realist as a subagent:
 
 - **subagent_type:** `speckit-echelon-realist`
-- **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{$ARGUMENTS or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `.specify/specs/{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
+- **prompt:** Read the file `.specify/extensions/echelon/agents/learning/realist.md` for your complete instructions. You are the GROUND agent. Perform a comprehensive reality check on all current artifacts. Focus area: `{$ARGUMENTS or "full sweep"}`. Connect plans to real-world data: check infrastructure costs against actual cloud pricing, validate performance claims against published benchmarks, compare effort estimates to historical data in estimates-log.yaml, check architectural decisions against production operational constraints. Apply reference class forecasting where applicable. Here is your context pack: [include all gathered artifacts and knowledge base files]. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries` for `reasoning-journal.jsonl`.
 - **description:** "speckit-echelon-realist: reality check -- {$ARGUMENTS summary or 'full artifact sweep'}"
 
 > **After the subagent returns, always proceed immediately to Step 4. Do not end your response here.**
@@ -127,6 +127,6 @@ Benchmark gaps:   {count of claims without supporting benchmarks}
 
 Key disconnects:  {1-3 bullet summary of biggest reality gaps}
 
-Full report:      .specify/specs/{spec_dir}/reality-check.md
+Full report:      {spec_dir}/reality-check.md
 ============================================
 ```
