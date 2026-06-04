@@ -11,6 +11,7 @@ Uses stdlib concurrent.futures.ThreadPoolExecutor (CS2: no external deps).
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -246,6 +247,8 @@ class StrategyCoordinator:
         # Initialize state
         import uuid
         run_id = str(uuid.uuid4())
+        target_repo_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
+        target_repo_path = os.environ.get("ECHELON_TARGET_REPO_PATH")
         state_store.acquire_lock(run_id)
 
         try:
@@ -271,6 +274,8 @@ class StrategyCoordinator:
                     max_outer=intent.max_outer,
                     max_inner=intent.max_inner,
                     token_budget=budget or 0,
+                    target_repo=target_repo_name,
+                    target_path=target_repo_path,
                 )
                 state_store.transition("running")
 

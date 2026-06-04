@@ -257,6 +257,8 @@ class StateStore:
         max_outer: int = 5,
         max_inner: int = 3,
         token_budget: int = 0,
+        target_repo: str | None = None,
+        target_path: str | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -296,6 +298,8 @@ class StateStore:
             "cancel_requested": False,
             "pr_url": None,
             "branch_name": None,
+            "target_repo": target_repo,
+            "target_path": target_path,
             "last_verify_result": None,
             "termination_reason": None,
             "escalation_file": None,

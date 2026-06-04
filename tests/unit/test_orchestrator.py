@@ -84,7 +84,7 @@ class TestValidateSingleTarget:
 class TestRunMultiTarget:
     def _make_popen_factory(self, outputs: dict[str, str], exit_codes: dict[str, int]):
         """Return a Popen factory that simulates per-target output."""
-        def popen_factory(cmd, cwd, stdout, stderr, text):
+        def popen_factory(cmd, cwd, stdout, stderr, text, env=None):
             name = Path(cwd).name
             mock = MagicMock()
             lines = outputs.get(name, "").splitlines(keepends=True)
@@ -129,7 +129,7 @@ class TestRunMultiTarget:
         target = tmp_path / "r"
         target.mkdir()
         captured_cmd: dict = {}
-        def fake_popen(cmd, cwd, stdout, stderr, text):
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
             captured_cmd["cmd"] = cmd
             m = MagicMock()
             m.stdout = iter([])
@@ -141,3 +141,25 @@ class TestRunMultiTarget:
                              echelon_bin="echelon")
         assert captured_cmd["cmd"] == ["echelon", "harness", "run", "024",
                                        "strategy=codegen", "max_outer=3"]
+
+    def test_target_metadata_env_forwarded(self, tmp_path: Path) -> None:
+        target = tmp_path / "r"
+        target.mkdir()
+        captured: dict = {}
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            captured["env"] = env
+            captured["cwd"] = cwd
+            m = MagicMock()
+            m.stdout = iter([])
+            m.returncode = 0
+            m.wait.return_value = None
+            return m
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            run_multi_target("024", [target], [], echelon_bin="echelon")
+
+        assert captured["cwd"] == str(target)
+        assert captured["env"]["ECHELON_POLYREPO_ROOT"] == str(tmp_path)
+        assert captured["env"]["ECHELON_TARGET_REPO_PATH"] == str(target)
+        assert captured["env"]["ECHELON_TARGET_REPO_NAME"] == "r"

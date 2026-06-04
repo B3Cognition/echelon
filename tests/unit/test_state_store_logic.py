@@ -80,3 +80,15 @@ class TestStateStoreInvariants:
         store.write(data)
         bak_file = store.state_file.with_suffix(".json.bak")
         assert bak_file.exists()
+
+    def test_initialize_records_target_metadata(self, tmp_path: Path) -> None:
+        store = StateStore(tmp_path, "001", "default")
+        state = store.initialize(
+            run_id="run-1",
+            mode="banzai",
+            target_repo="rbf-opta-points",
+            target_path="rbf-opta-points",
+        )
+
+        assert state["target_repo"] == "rbf-opta-points"
+        assert state["target_path"] == "rbf-opta-points"

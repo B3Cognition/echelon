@@ -1,6 +1,7 @@
 """Multi-target orchestrator: run 'echelon harness run' in parallel across sub-repos."""
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -95,12 +96,17 @@ def run_multi_target(
     def _run_one(target: Path) -> None:
         name = target.name
         cmd = [echelon_bin, "harness", "run", spec_id] + extra_args
+        env = os.environ.copy()
+        env["ECHELON_POLYREPO_ROOT"] = str(target.parent)
+        env["ECHELON_TARGET_REPO_PATH"] = str(target)
+        env["ECHELON_TARGET_REPO_NAME"] = name
         proc = subprocess.Popen(
             cmd,
             cwd=str(target),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            env=env,
         )
         assert proc.stdout is not None
         for line in proc.stdout:

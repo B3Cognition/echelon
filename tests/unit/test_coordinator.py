@@ -558,6 +558,36 @@ class TestSmartResumeDetection:
             f"outer_iter should be 0 after forced reset, got {final_state.get('outer_iter')}"
         )
 
+    def test_target_env_metadata_is_recorded_in_state(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Polyrepo dispatch target metadata is persisted in harness state."""
+        target = tmp_path / "rbf-opta-points"
+        target.mkdir()
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "rbf-opta-points")
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            coord.start(intent)
+
+        from harness.state import StateStore
+        state_dir = tmp_path / "runs" / "state"
+        store = StateStore(state_dir, "spec-001", "default")
+        final_state = store.read()
+        assert final_state["target_repo"] == "rbf-opta-points"
+        assert final_state["target_path"] == str(target)
+
     def test_blocked_state_not_affected_by_resume_logic(self, tmp_path: Path) -> None:
         """A blocked state with no escalation file is not resumed by the smart resume path;
         it flows through to ralph (which handles blocked resume internally)."""
