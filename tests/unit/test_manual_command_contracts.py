@@ -67,3 +67,9 @@ class TestManualCommandContracts:
         assert ".specify/specs/" not in text
         assert "Scan `specs/`" in text
         assert "Check specs/ for available IDs." in text
+
+    def test_investigate_command_uses_workspace_specs_for_standalone_runs(self) -> None:
+        text = (COMMAND_DIR / "echelon.investigate.md").read_text(encoding="utf-8")
+
+        assert ".specify/specs/investigation-{timestamp}/" not in text
+        assert "specs/investigation-{timestamp}/" in text

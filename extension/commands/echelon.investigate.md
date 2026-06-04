@@ -44,7 +44,7 @@ If `$ARGUMENTS` is empty or missing, report **"Please provide a question to inve
 Read `${SQUAD_DIR}/state.json`.
 
 - If the file exists and has an active run: use that run's spec directory for context and output.
-- If no active run: create a standalone investigation directory at `.specify/specs/investigation-{timestamp}/`. The SCIENTIST can still operate without a full squad run.
+- If no active run: create a standalone investigation directory at `specs/investigation-{timestamp}/`. The SCIENTIST can still operate without a full squad run.
 
 Extract the spec directory path for subsequent steps.
 
