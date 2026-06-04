@@ -49,3 +49,14 @@ class TestManualCommandContracts:
         assert ".specify/specs/{feature}/" not in text
         assert "`{spec_dir}/spec.md`" in text
         assert "`{spec_dir}/adrs/`" in text
+
+    def test_active_run_commands_locate_specs_from_workspace_specs_dir(self) -> None:
+        for filename in [
+            "echelon.innovate.md",
+            "echelon.ground.md",
+            "echelon.status.md",
+        ]:
+            text = (COMMAND_DIR / filename).read_text(encoding="utf-8")
+
+            assert ".specify/specs/{spec_id}-*/" not in text
+            assert "specs/{spec_id}-*/" in text

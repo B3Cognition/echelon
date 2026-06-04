@@ -39,7 +39,7 @@ Read `${SQUAD_DIR}/state.json`.
 - If the file does not exist, report **"No active squad run. Run speckit.echelon.run first."** and stop.
 - If `status` is `"killed"`, report **"Squad run was killed. Start a new run."** and stop.
 
-Extract `spec_id` and locate the spec directory: `.specify/specs/{spec_id}-*/`.
+Extract `spec_id` and locate the spec directory: `specs/{spec_id}-*/`.
 
 ---
 

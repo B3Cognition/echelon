@@ -109,7 +109,7 @@ If no issues, print: `Issues: None logged.`
 
 ## Step 6: Artifact Inventory
 
-Derive the spec directory from `state.json` fields: `.specify/specs/{spec_id}-*/`.
+Derive the spec directory from `state.json` fields: `specs/{spec_id}-*/`.
 
 Scan the spec directory and list all files found, grouped by producer:
 
