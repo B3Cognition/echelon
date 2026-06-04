@@ -101,6 +101,8 @@ class TestTrackerTemplates:
         text = PHASE2.read_text(encoding="utf-8")
 
         assert "extension/templates/intent-alignment-check-template.md" in text
+        assert "intent-alignment-check.md` in `specs/{NNN}-{feature}/`" not in text
+        assert "intent-alignment-check.md` in `{spec_dir}/`" in text
 
     def test_post_build_alignment_dispatch_includes_final_template(self) -> None:
         text = POST_BUILD.read_text(encoding="utf-8")
