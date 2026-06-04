@@ -79,3 +79,7 @@ class TestSentinelTemplates:
         assert "extension/templates/test-strategy-template.md" in text
         assert "extension/templates/test-architecture-template.md" in text
         assert "extension/templates/coverage-map-template.md" in text
+        assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
+        assert "Produce outputs in `{spec_dir}/`" in text
+        assert "three files in `specs/{NNN}-{feature}/`" not in text
+        assert "three files in `{spec_dir}/`" in text

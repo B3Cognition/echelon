@@ -31,7 +31,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol.
-  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `specs/{NNN}-{feature}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -52,7 +52,7 @@ Use the Agent tool to dispatch a subagent with:
 
 ### Expected Outputs — ALL THREE REQUIRED
 
-The phase produces exactly three files in `specs/{NNN}-{feature}/`. Skipping any of them is a phase failure.
+The phase produces exactly three files in `{spec_dir}/`. Skipping any of them is a phase failure.
 
 - `test-strategy.md` — overall strategy, pyramid, prioritization
 - `test-architecture.md` — per-module test layout, harness configuration, fixture topology
