@@ -104,7 +104,7 @@ echelon_result:
     updated_at: "{ISO-8601}"
   journal_entries:
     - type: reality-check
-      agent: MANAGER
+      agent: speckit-echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
       content: "GROUND dispatched manually. Focus: {$ARGUMENTS or 'full sweep'}. Check reality-check.md for findings."
 ```

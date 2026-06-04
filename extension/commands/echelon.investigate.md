@@ -108,7 +108,7 @@ echelon_result:
     updated_at: "{ISO-8601}"
   journal_entries:
     - type: investigation
-      agent: MANAGER
+      agent: speckit-echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
       content: "SCIENTIST dispatched for: {$ARGUMENTS}. See investigation/ for outputs."
 ```

@@ -104,7 +104,7 @@ echelon_result:
     updated_at: "{ISO-8601}"
   journal_entries:
     - type: note
-      agent: MANAGER
+      agent: speckit-echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
       content: "INNOVATE dispatched manually. Focus: {$ARGUMENTS or 'broad'}. Check alternatives.md for outputs."
 ```
