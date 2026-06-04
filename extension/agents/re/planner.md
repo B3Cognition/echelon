@@ -224,8 +224,7 @@ echelon_result:
   phase_id: re-planning-1-plan
   state_updates: {}
   output_files:
-    - specs/001-re-auth/plan.md
-    - specs/002-re-api/plan.md
+    - specs/NNN-re-{domain}/plan.md
   journal_entries:
     - type: phase_complete
       phase: re-planning-1-plan
