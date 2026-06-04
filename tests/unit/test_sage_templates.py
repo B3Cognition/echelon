@@ -89,6 +89,8 @@ class TestSageTemplates:
         assert "agents/exploration/templates/sage-quality-gates-template.md" in text
         assert "agents/exploration/templates/sage-issues-template.md" in text
         assert "using the provided templates" in text
+        assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
+        assert "Produce outputs in `{spec_dir}/`" in text
 
     def test_why3_dispatch_includes_sage_templates(self) -> None:
         text = WHY3_PHASE.read_text(encoding="utf-8")
