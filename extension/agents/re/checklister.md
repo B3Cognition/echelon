@@ -225,7 +225,7 @@ echelon_result:
   state_updates: {}
   output_files:
     - specs/000-re-overview/checklist.md
-    - specs/001-re-auth/checklist.md
+    - specs/NNN-re-{domain}/checklist.md
   journal_entries:
     - type: phase_complete
       phase: re-extract-6-checklist
