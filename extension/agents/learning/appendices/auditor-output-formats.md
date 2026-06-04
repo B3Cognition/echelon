@@ -64,7 +64,7 @@ critical_findings: []
 
 ## Feedback Report Sections
 
-Write `specs/{feature}/feedback-report.md` with:
+Write `{spec_dir}/feedback-report.md` with:
 
 - Effort accuracy summary
 - Architecture decision outcomes table

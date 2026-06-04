@@ -52,6 +52,12 @@ class TestAuditorTemplates:
         assert "agent: speckit-echelon-auditor (AUDITOR)" in text
         assert "agent: CALIBRATE" not in text
 
+    def test_auditor_output_appendix_uses_canonical_feedback_report_path(self) -> None:
+        text = (APPENDIX_DIR / "auditor-output-formats.md").read_text(encoding="utf-8")
+
+        assert "specs/{feature}/feedback-report.md" not in text
+        assert "{spec_dir}/feedback-report.md" in text
+
     def test_finalize_dispatch_includes_auditor_appendices(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
