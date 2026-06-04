@@ -74,3 +74,11 @@ class TestManualCommandContracts:
 
         assert ".specify/specs/investigation-{timestamp}/" not in text
         assert "specs/investigation-{timestamp}/" in text
+
+    def test_investigate_command_tracks_registered_investigator_role(self) -> None:
+        text = (COMMAND_DIR / "echelon.investigate.md").read_text(encoding="utf-8")
+
+        assert 'Add `"SCIENTIST"` to `active_specialists`' not in text
+        assert 'Add `"INVESTIGATOR"` to `active_specialists`' in text
+        assert "active_specialists: <existing active_specialists plus SCIENTIST>" not in text
+        assert "active_specialists: <existing active_specialists plus INVESTIGATOR>" in text

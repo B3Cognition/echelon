@@ -96,7 +96,7 @@ If any are missing, log which outputs were not produced.
 ## Step 6: Return State and Journal Updates
 
 If an active squad run exists, return these updates in `echelon_result`; the harness applies state and journal writes:
-- Add `"SCIENTIST"` to `active_specialists` if not already present
+- Add `"INVESTIGATOR"` to `active_specialists` if not already present
 - Update `updated_at` timestamp
 
 Verify that `reasoning-journal.jsonl` has new SCIENTIST entries. If not, include this MANAGER entry in `echelon_result.journal_entries`:
@@ -104,7 +104,7 @@ Verify that `reasoning-journal.jsonl` has new SCIENTIST entries. If not, include
 ```yaml
 echelon_result:
   state_updates:
-    active_specialists: <existing active_specialists plus SCIENTIST>
+    active_specialists: <existing active_specialists plus INVESTIGATOR>
     updated_at: "{ISO-8601}"
   output_files: []
   journal_entries:
