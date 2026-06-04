@@ -18,6 +18,7 @@ from harness.land import (
     _run_land_verify,
     find_pr_url,
     land,
+    resolve_land_repo,
 )
 
 
@@ -90,6 +91,33 @@ class TestFindPrUrl:
         (tmp_path / "bad.json").write_text("{not json}", encoding="utf-8")
         _write_state(tmp_path, "042", "good", "https://github.com/o/r/pull/9")
         assert find_pr_url("042", tmp_path) == "https://github.com/o/r/pull/9"
+
+
+@pytest.mark.unit
+class TestResolveLandRepo:
+    def test_uses_single_spec_target_repo(self, tmp_path: Path) -> None:
+        target = tmp_path / "rbf-opta-points"
+        target.mkdir()
+        spec_dir = tmp_path / "specs" / "001-opta-points-perf-fix"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\n"
+            "targets:\n"
+            "  - rbf-opta-points\n"
+            "status: ready_to_land\n"
+            "---\n"
+            "# Spec\n",
+            encoding="utf-8",
+        )
+
+        assert resolve_land_repo(tmp_path, spec_dir) == target.resolve()
+
+    def test_no_targets_uses_project_dir(self, tmp_path: Path) -> None:
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+        assert resolve_land_repo(tmp_path, spec_dir) == tmp_path.resolve()
 
 
 @pytest.mark.unit
@@ -186,6 +214,35 @@ class TestLand:
         )
 
         assert _land_status_warning("042", tmp_path) is None
+
+    def test_land_prepare_uses_spec_target_repo(self, tmp_path: Path) -> None:
+        target = tmp_path / "rbf-opta-points"
+        target.mkdir()
+        spec_dir = tmp_path / "specs" / "042-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\n"
+            "targets:\n"
+            "  - rbf-opta-points\n"
+            "status: ready_to_land\n"
+            "---\n"
+            "# Spec\n",
+            encoding="utf-8",
+        )
+        gitops = _make_gitops()
+
+        with patch("harness.land.prepare_feature_branch") as prepare:
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
+
+            result = land(
+                "042",
+                project_dir=tmp_path,
+                gitops=gitops,
+                options=LandOptions(prepare_only=True),
+            )
+
+        assert result is True
+        assert prepare.call_args.kwargs["project_dir"] == target.resolve()
 
     def test_land_allows_fulfillment_gaps_with_explicit_override(
         self, tmp_path: Path

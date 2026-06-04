@@ -248,6 +248,21 @@ def _find_pr_url_all_builds(spec_id: str, project_dir: Path) -> Optional[str]:
     return None
 
 
+def resolve_land_repo(project_dir: Path, spec_dir: Path) -> Path:
+    """Return the repo where git land operations should run for a spec."""
+    frontmatter = read_frontmatter(spec_dir)
+    targets = frontmatter.get("targets") or []
+    if not targets:
+        return project_dir.resolve()
+    if len(targets) != 1:
+        raise RuntimeError("land requires exactly one target repo for normal specs")
+    target_rel = str(targets[0])
+    target = (project_dir / target_rel).resolve()
+    if not target.exists():
+        raise RuntimeError(f"target repo not found: {target_rel}")
+    return target
+
+
 def land(
     spec_id: str,
     *,
@@ -262,19 +277,24 @@ def land(
     Returns False only when PR merge is blocked — caller must retry or merge manually.
     """
     options = options or LandOptions()
+    wrapper_project_dir = project_dir
+    spec_dir = find_spec_dir(spec_id, wrapper_project_dir)
+    if spec_dir is not None:
+        project_dir = resolve_land_repo(wrapper_project_dir, spec_dir)
+
     feature_branch = gitops.find_feature_branch(spec_id)
     if feature_branch is None:
         logger.info("land: %s — feature branch not found, already landed", spec_id)
-        _cleanup_worktrees(spec_id, project_dir, gitops)
+        _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)
         _delete_harness_branches(spec_id, project_dir)
         return True
 
     if state_dir is not None:
         pr_url = find_pr_url(spec_id, state_dir)
     else:
-        pr_url = _find_pr_url_all_builds(spec_id, project_dir)
+        pr_url = _find_pr_url_all_builds(spec_id, wrapper_project_dir)
 
-    if not options.prepare_only and not _check_ready_before_land(spec_id, project_dir, options):
+    if not options.prepare_only and not _check_ready_before_land(spec_id, wrapper_project_dir, options):
         return False
 
     if options.prepare_only:
@@ -303,7 +323,13 @@ def land(
             return False
         merged = gitops.merge_pr(pr_url)
         if merged:
-            return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+            return _finish_landing(
+                spec_id,
+                feature_branch,
+                project_dir,
+                gitops,
+                spec_project_dir=wrapper_project_dir,
+            )
         prepare_result = _prepare_for_land(
             spec_id=spec_id,
             feature_branch=feature_branch,
@@ -354,7 +380,13 @@ def land(
         )
         return False
 
-    return _finish_landing(spec_id, feature_branch, project_dir, gitops)
+    return _finish_landing(
+        spec_id,
+        feature_branch,
+        project_dir,
+        gitops,
+        spec_project_dir=wrapper_project_dir,
+    )
 
 
 def _check_ready_before_land(
@@ -579,8 +611,16 @@ def _trim_verify_output(output: str) -> str:
     return output.strip()[-2000:]
 
 
-def _finish_landing(spec_id: str, feature_branch: str, project_dir: Path, gitops: Any) -> bool:
+def _finish_landing(
+    spec_id: str,
+    feature_branch: str,
+    project_dir: Path,
+    gitops: Any,
+    *,
+    spec_project_dir: Path | None = None,
+) -> bool:
     """Clean up after a feature branch has merged."""
+    spec_project_dir = spec_project_dir or project_dir
 
     if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
         _banner(
@@ -597,7 +637,7 @@ def _finish_landing(spec_id: str, feature_branch: str, project_dir: Path, gitops
     _delete_harness_branches(spec_id, project_dir)
     gitops.ensure_on_default_branch(str(project_dir))
 
-    spec_dir = find_spec_dir(spec_id, project_dir)
+    spec_dir = find_spec_dir(spec_id, spec_project_dir)
     if spec_dir:
         write_status(spec_dir, "landed")
 
