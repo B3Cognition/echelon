@@ -72,6 +72,30 @@ services:
         assert result.profile is None
         assert result.confidence == "ambiguous"
 
+    def test_detects_unique_web_compose_service_among_infra_ports(self, tmp_path: Path) -> None:
+        (tmp_path / "docker-compose.yml").write_text(
+            """
+services:
+  postgres:
+    image: postgres:16-alpine
+    ports: ["5432:5432"]
+  api:
+    build: ./api
+    ports: ["3101:3101"]
+  web:
+    build: ./web
+    ports: ["3100:3100"]
+""",
+            encoding="utf-8",
+        )
+
+        result = detect_app_runtime(tmp_path)
+
+        assert result.confidence == "high"
+        assert result.profile is not None
+        assert result.profile["service"] == "web"
+        assert result.profile["url"] == "http://localhost:3100"
+
     def test_detects_dockerfile_with_expose(self, tmp_path: Path) -> None:
         (tmp_path / "Dockerfile").write_text(
             "FROM node:20-slim\nEXPOSE 4173\nCMD [\"npm\", \"run\", \"preview\"]\n",
@@ -99,6 +123,7 @@ services:
 
     def test_detects_single_nx_next_frontend_dev_target(self, tmp_path: Path) -> None:
         (tmp_path / "nx.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
         app_dir = tmp_path / "apps" / "frontend"
         app_dir.mkdir(parents=True)
         (app_dir / "project.json").write_text(
@@ -126,6 +151,7 @@ services:
             "enabled": True,
             "mode": "command",
             "app": "frontend",
+            "setup_commands": ["npm ci"],
             "start_commands": ["npx nx dev frontend"],
             "url": "http://localhost:3000",
             "readiness_timeout_ms": 120000,
@@ -161,8 +187,48 @@ services:
         assert result.profile is None
         assert result.confidence == "ambiguous"
 
+    def test_discovers_nested_nx_projects_from_nx_json_mapping(self, tmp_path: Path) -> None:
+        (tmp_path / "nx.json").write_text(
+            '{"projects":{"cpp-frontend":"cpp/frontend"}}',
+            encoding="utf-8",
+        )
+        (tmp_path / "package-lock.json").write_text("{}", encoding="utf-8")
+        project_dir = tmp_path / "cpp" / "frontend"
+        project_dir.mkdir(parents=True)
+        (project_dir / "project.json").write_text(
+            """
+{
+  "name": "cpp-frontend",
+  "projectType": "application",
+  "targets": {
+    "serve": {
+      "executor": "@nx/next:dev",
+      "options": {
+        "dev": true,
+        "port": 4200
+      }
+    }
+  }
+}
+""",
+            encoding="utf-8",
+        )
+
+        result = detect_app_runtime(tmp_path)
+
+        assert result.profile == {
+            "enabled": True,
+            "mode": "command",
+            "app": "cpp-frontend",
+            "setup_commands": ["npm ci"],
+            "start_commands": ["npx nx serve cpp-frontend"],
+            "url": "http://localhost:4200",
+            "readiness_timeout_ms": 120000,
+        }
+
     def test_enriches_nx_frontend_with_api_and_db_compose_lifecycle(self, tmp_path: Path) -> None:
         (tmp_path / "nx.json").write_text("{}", encoding="utf-8")
+        (tmp_path / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
         (tmp_path / "compose.db.yml").write_text(
             "services:\n  postgres:\n    image: postgres:16-alpine\n    ports: ['5432:5432']\n",
             encoding="utf-8",
@@ -210,7 +276,10 @@ services:
         result = detect_app_runtime(tmp_path)
 
         assert result.profile is not None
-        assert result.profile["setup_commands"] == ["docker compose -f compose.db.yml up -d"]
+        assert result.profile["setup_commands"] == [
+            "pnpm install --frozen-lockfile",
+            "docker compose -f compose.db.yml up -d",
+        ]
         assert result.profile["start_commands"] == [
             "npx nx serve api",
             "npx nx dev frontend",

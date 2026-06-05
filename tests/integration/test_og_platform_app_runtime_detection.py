@@ -25,7 +25,10 @@ def test_og_platform_detects_frontend_command_profile() -> None:
     assert result.profile is not None
     assert result.profile["mode"] == "command"
     assert result.profile["app"] == "frontend"
-    assert result.profile["setup_commands"] == ["docker compose -f compose.db.yml up -d"]
+    assert result.profile["setup_commands"] == [
+        "npm ci",
+        "docker compose -f compose.db.yml up -d",
+    ]
     assert result.profile["start_commands"] == [
         "npx nx serve api",
         "npx nx dev frontend",

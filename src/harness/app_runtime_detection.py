@@ -137,7 +137,43 @@ def _detect_compose(repo: Path) -> AppRuntimeDetectionResult:
 def _select_compose_candidate(candidates: list[tuple[str, int]]) -> tuple[str, int] | None:
     if len(candidates) == 1:
         return candidates[0]
+    browser_candidates = [
+        candidate for candidate in candidates
+        if _looks_like_browser_service(candidate[0])
+    ]
+    unknown_candidates = [
+        candidate for candidate in candidates
+        if not _looks_like_non_browser_service(candidate[0])
+    ]
+    if len(browser_candidates) == 1 and len(unknown_candidates) == 1:
+        return browser_candidates[0]
     return None
+
+
+def _looks_like_browser_service(name: str) -> bool:
+    normalized = name.lower().replace("_", "-")
+    return normalized in {"web", "web-app", "frontend", "front-end", "ui", "client"}
+
+
+def _looks_like_non_browser_service(name: str) -> bool:
+    normalized = name.lower().replace("_", "-")
+    if normalized in {
+        "api",
+        "backend",
+        "server",
+        "db",
+        "database",
+        "postgres",
+        "postgresql",
+        "mysql",
+        "mariadb",
+        "redis",
+        "localstack",
+        "migrate",
+        "migration",
+    }:
+        return True
+    return normalized.endswith("-api") or normalized.endswith("-db")
 
 
 def _first_host_port(ports: Any) -> int | None:
@@ -215,7 +251,7 @@ def _detect_nx_browser_app(repo: Path) -> AppRuntimeDetectionResult:
         return AppRuntimeDetectionResult(profile=None, confidence="none")
 
     candidates: list[dict[str, Any]] = []
-    for project_file in sorted((repo / "apps").glob("*/project.json")):
+    for project_file in _nx_project_files(repo):
         candidate = _nx_browser_candidate(repo, project_file)
         if candidate is not None:
             candidates.append(candidate)
@@ -230,12 +266,15 @@ def _detect_nx_browser_app(repo: Path) -> AppRuntimeDetectionResult:
         start_commands: list[str] = []
         stop_commands: list[str] = []
 
+        install_command = _node_install_command(repo)
+        if install_command:
+            setup_commands.append(install_command)
         if db_compose:
             setup_commands.append(f"docker compose -f {db_compose} up -d")
             stop_commands.append(f"docker compose -f {db_compose} down")
         if api:
             start_commands.append(f"npx nx serve {api}")
-        start_commands.append(f"npx nx dev {name}")
+        start_commands.append(f"npx nx {candidate['target']} {name}")
         if db_compose or api:
             stop_commands.append("npx nx reset")
 
@@ -276,6 +315,32 @@ def _detect_nx_browser_app(repo: Path) -> AppRuntimeDetectionResult:
     return AppRuntimeDetectionResult(profile=None, confidence="none")
 
 
+def _nx_project_files(repo: Path) -> list[Path]:
+    project_files: set[Path] = set()
+    nx_json = repo / "nx.json"
+    try:
+        nx_data = json.loads(nx_json.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        nx_data = {}
+
+    projects = nx_data.get("projects") if isinstance(nx_data, dict) else None
+    if isinstance(projects, dict):
+        for value in projects.values():
+            if isinstance(value, str):
+                project_file = repo / value / "project.json"
+                if project_file.exists():
+                    project_files.add(project_file)
+            elif isinstance(value, dict):
+                root = value.get("root")
+                if isinstance(root, str):
+                    project_file = repo / root / "project.json"
+                    if project_file.exists():
+                        project_files.add(project_file)
+
+    project_files.update((repo / "apps").glob("*/project.json"))
+    return sorted(project_files, key=lambda p: p.relative_to(repo).as_posix())
+
+
 def _nx_browser_candidate(repo: Path, project_file: Path) -> dict[str, Any] | None:
     try:
         project = json.loads(project_file.read_text(encoding="utf-8"))
@@ -290,25 +355,36 @@ def _nx_browser_candidate(repo: Path, project_file: Path) -> dict[str, Any] | No
     if not isinstance(targets, dict):
         return None
 
-    dev = targets.get("dev")
-    if not isinstance(dev, dict):
+    target_name = ""
+    target: dict[str, Any] | None = None
+    for candidate_name in ("dev", "serve"):
+        raw_target = targets.get(candidate_name)
+        if isinstance(raw_target, dict) and _nx_target_runs_next_dev(raw_target):
+            target_name = candidate_name
+            target = raw_target
+            break
+    if target is None:
         return None
 
-    options = dev.get("options")
-    if not isinstance(options, dict):
-        return None
-
-    command = str(options.get("command", ""))
-    if "next dev" not in command:
-        return None
-
-    port = _nx_target_port(dev) or _next_config_port(project_file.parent) or 3000
+    port = _nx_target_port(target) or _next_config_port(project_file.parent) or 3000
     rel_project = project_file.relative_to(repo).as_posix()
     return {
         "name": str(name),
+        "target": target_name,
         "port": int(port),
-        "evidence": f"{rel_project} dev target uses next dev on port {port}",
+        "evidence": f"{rel_project} {target_name} target uses next dev on port {port}",
     }
+
+
+def _nx_target_runs_next_dev(target: dict[str, Any]) -> bool:
+    executor = str(target.get("executor", ""))
+    if executor == "@nx/next:dev":
+        return True
+    options = target.get("options")
+    if not isinstance(options, dict):
+        return False
+    command = str(options.get("command", ""))
+    return "next dev" in command
 
 
 def _nx_target_port(target: dict[str, Any]) -> int | None:
@@ -326,6 +402,16 @@ def _nx_target_port(target: dict[str, Any]) -> int | None:
             if match:
                 return int(match.group(1))
 
+    return None
+
+
+def _node_install_command(repo: Path) -> str | None:
+    if (repo / "pnpm-lock.yaml").exists():
+        return "pnpm install --frozen-lockfile"
+    if (repo / "package-lock.json").exists():
+        return "npm ci"
+    if (repo / "yarn.lock").exists():
+        return "yarn install --frozen-lockfile"
     return None
 
 

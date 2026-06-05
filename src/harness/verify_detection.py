@@ -123,7 +123,8 @@ def _detect_python(repo: Path) -> _Candidate | None:
 
     has_pytest_marker = "pytest" in marker_text.lower()
     has_pytest_files = (
-        (repo / "tests").is_dir()
+        any((repo / "tests").glob("**/test_*.py"))
+        or any((repo / "tests").glob("**/*_test.py"))
         or any(repo.glob("test_*.py"))
         or any(repo.glob("*_test.py"))
     )

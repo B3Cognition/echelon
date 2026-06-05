@@ -52,6 +52,20 @@ class TestVerifyCommandDetection:
         assert result.confidence == "high"
         assert "pytest marker" in result.evidence
 
+    def test_does_not_treat_non_python_tests_directory_as_pytest(self, tmp_path: Path) -> None:
+        (tmp_path / "package.json").write_text(
+            json.dumps({"scripts": {"units": "jest"}}),
+            encoding="utf-8",
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "smoke.wdio.conf.ts").write_text("export const config = {}\n", encoding="utf-8")
+
+        result = detect_verify_command(tmp_path)
+
+        assert result.command is None
+        assert result.confidence == "none"
+
     def test_detects_go_test(self, tmp_path: Path) -> None:
         (tmp_path / "go.mod").write_text("module example.test/app\ngo 1.22\n", encoding="utf-8")
 
