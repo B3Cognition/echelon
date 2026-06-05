@@ -74,6 +74,7 @@ Both `echelon init` and `echelon harness init` are pure Python — no AI session
 # Phase A — spec authoring (default: Claude)
 echelon run "Build a photo album app with sharing and tagging"
 echelon status                             # re-orient: run state, artifacts, cost, next step
+echelon artifacts 001                      # generate specs/001-*/ARTIFACTS.md
 echelon continue                           # advance to next pending phase automatically
 echelon resume "your clarification"        # unblock a paused run
 
@@ -188,6 +189,16 @@ my-project/
       harness/
         config.yml         ← target_repo: "."
         mirror.git/        ← local bare clone of this repo
+```
+
+### How to read a spec folder
+
+Start with `specs/<id>-*/ARTIFACTS.md`. Echelon generates this file deterministically, without LLM tokens, as a concise map of known spec artifacts, what each file is for, when it is updated, and which expected files are missing for the current lifecycle stage.
+
+Refresh it manually with:
+
+```bash
+echelon artifacts <id>
 ```
 
 **Two-repo (advanced):** A dedicated control-plane repo manages one or more target repos. Useful when build infrastructure should be separate from product code, or when managing multiple products from one place.
@@ -440,6 +451,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
 | `echelon cicd` | `speckit.echelon.cicd` | Auto-detect and write `verify_command` into `echelon-config.yml` |
 | `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
+| `echelon artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
 | `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
 | `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
 | `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
