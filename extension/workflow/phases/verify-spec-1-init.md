@@ -18,6 +18,7 @@ Create a verification runtime directory:
 
 Write `state.json` in the verification runtime directory with:
 - `spec_id`
+- `project_root` as the absolute current project root
 - `spec_dir`
 - `strict`
 - `reconcile`

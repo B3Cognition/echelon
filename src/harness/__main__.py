@@ -9,6 +9,7 @@ Subcommands:
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
+  write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -292,6 +293,34 @@ def _apply_progress_reconciliation() -> None:
     print(f"OK: progress reconciliation applied {result.applied_count} task updates")
 
 
+def _write_codegraph_evidence() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness write-codegraph-evidence <project-root> <verify-run-dir> <spec-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.codegraph_evidence import (
+        CodeGraphEvidenceError,
+        write_codegraph_evidence,
+    )
+
+    try:
+        result = write_codegraph_evidence(
+            project_root=Path(sys.argv[2]),
+            verify_run_dir=Path(sys.argv[3]),
+            spec_dir=Path(sys.argv[4]),
+        )
+    except CodeGraphEvidenceError as exc:
+        print(f"CodeGraph evidence degraded; see {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"OK: wrote CodeGraph evidence to {result.analysis_path}")
+
+
 def _migrate_tasks() -> None:
     if len(sys.argv) < 3:
         print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
@@ -401,6 +430,8 @@ def main() -> None:
         _write_progress_integrity()
     elif subcommand == "apply-progress-reconciliation":
         _apply_progress_reconciliation()
+    elif subcommand == "write-codegraph-evidence":
+        _write_codegraph_evidence()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -409,7 +440,11 @@ def main() -> None:
         _migrate_plan()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'mark-task-progress', 'write-progress-integrity', 'apply-progress-reconciliation', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', "
+            "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
+            "'write-progress-integrity', 'apply-progress-reconciliation', "
+            "'write-codegraph-evidence', 'migrate-tasks', 'validate-plan', "
+            "or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)

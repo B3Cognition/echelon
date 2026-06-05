@@ -9,13 +9,24 @@ brownfield RE artifacts.
 
 ## Instructions
 
-Run the existing RE CodeGraph bridge against the current project root.
+Run exactly:
+
+```bash
+python -m harness write-codegraph-evidence "{project_root}" "{verify_run_dir}" "{spec_dir}"
+```
+
+ALWAYS use this deterministic harness command for verify-spec CodeGraph evidence.
+NEVER locate, inspect, or infer CodeGraph bridge invocation from the prompt.
+The harness command owns the installed extension path and writes the normalized
+artifacts. The bridge path is fixed relative to `project_root`:
+`.specify/extensions/echelon/scripts/node/re/codegraph-bridge.js`.
 
 Write:
 - `{verify_run_dir}/codegraph-analysis.json`
 - `{verify_run_dir}/codegraph-summary.json`
 
-If CodeGraph fails, write `{verify_run_dir}/codegraph-error.txt` and continue
+If the command exits non-zero, do not attempt fallback discovery. Treat
+`{verify_run_dir}/codegraph-error.txt` as the diagnostic artifact and continue
 with `structural_evidence: degraded`.
 
 ## Output
