@@ -411,6 +411,14 @@ If exit code is non-zero, always report the error and stop. Do not proceed to §
 
 The script handles: copying constitution.md, staging, conditional commit (skipped if nothing changed), and `git checkout <default-branch>`.
 
+After `finalize-run.sh` succeeds, refresh the human artifact map deterministically:
+
+```bash
+echelon artifacts "${SPEC_ID}"
+```
+
+ALWAYS use `echelon artifacts` to generate `{spec_dir}/ARTIFACTS.md` after finalization. NEVER hand-author `ARTIFACTS.md`; it is Python-owned and overwritten on regeneration.
+
 ### 12.11 Branch Stacking (Next Spec)
 
 When the user starts a new squad run while implementation of the current spec is in progress:

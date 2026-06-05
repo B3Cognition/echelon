@@ -90,6 +90,20 @@ class TestPhaseOutputPaths:
         )
         assert "ARTIFACTS: {count} files in {spec_dir}/" in text
 
+    def test_phase4_document_generates_artifact_index_deterministically(self) -> None:
+        text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
+
+        assert "echelon artifacts" in text
+        assert "NEVER hand-author `ARTIFACTS.md`" in text
+
+    def test_build_finalize_generates_artifact_index_deterministically(self) -> None:
+        text = (
+            ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
+        ).read_text(encoding="utf-8")
+
+        assert "echelon artifacts" in text
+        assert "NEVER hand-author `ARTIFACTS.md`" in text
+
     def test_license_exception_paths_use_canonical_spec_dir(self) -> None:
         for path in [BUILD_VERIFY_GATES, CODEGEN_SECURITY]:
             text = path.read_text(encoding="utf-8")

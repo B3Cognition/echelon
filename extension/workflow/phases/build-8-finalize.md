@@ -257,6 +257,14 @@ Load `workflow/phases/appendices/build-8-feedback-reference.md` and run its Cons
 
 ### 8.7 Print Summary
 
+Before printing the final build summary, refresh the human artifact map deterministically:
+
+```bash
+echelon artifacts "${SPEC_ID}"
+```
+
+ALWAYS use `echelon artifacts` to generate `{spec_dir}/ARTIFACTS.md` after build finalization. NEVER hand-author `ARTIFACTS.md`; it is Python-owned and overwritten on regeneration.
+
 Print the final build summary after BUILD_DONE. Always include quality gates, effort, auto-feedback, reports, agent scorecard, warnings, autonomous risk acceptances, and the HUMAN ACTIONS REQUIRED section.
 
 For the complete summary template, load `workflow/phases/appendices/build-8-summary-reference.md`.
