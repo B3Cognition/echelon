@@ -85,6 +85,7 @@ Commands:
   change  <spec_id> <description>           Plan a scope change
   codegen <spec_id>                         Run SOAR codegen pipeline
   cicd    <spec_id>                         Detect project type and configure verify_command
+  artifacts <spec_id>                       Generate specs/<id>/ARTIFACTS.md
   land    <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
                                             Land a spec: merge PR, clean up
@@ -2177,6 +2178,24 @@ def _cmd_spec_target(args: list[str]) -> None:
         print(f"    - {r}")
 
 
+def _cmd_artifacts(args: list[str]) -> None:
+    if not args:
+        print("echelon artifacts: missing spec_id", file=sys.stderr)
+        sys.exit(1)
+
+    from echelon.artifact_index import write_artifact_index
+    from harness.spec_frontmatter import find_spec_dir
+
+    spec_id = args[0]
+    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    if spec_dir is None:
+        print(f"✗ Spec not found: {spec_id}", file=sys.stderr)
+        sys.exit(1)
+
+    path = write_artifact_index(spec_dir)
+    print(f"✓ Wrote artifact map: {path}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -2202,6 +2221,10 @@ def main() -> None:
 
     if command == "spec":
         _cmd_spec(args[1:])
+        return
+
+    if command == "artifacts":
+        _cmd_artifacts(args[1:])
         return
 
     if command == "land":
