@@ -1212,6 +1212,42 @@ harness:
     screenshot_dir: "playwright-report"
     max_iterations: 3
 
+  # --- App Runtime (brownfield browser/screenshot checks) ---
+  #
+  # Written by `echelon harness init` only when Docker-backed startup is
+  # high-confidence. Leave disabled/absent for non-browser or unclear projects.
+  #
+  # Docker Compose example:
+  # app:
+  #   enabled: true
+  #   mode: docker_compose
+  #   compose_file: docker-compose.yml
+  #   service: web
+  #   url: http://localhost:3000
+  #
+  # Dockerfile example:
+  # app:
+  #   enabled: true
+  #   mode: dockerfile
+  #   dockerfile: Dockerfile
+  #   container_port: 3000
+  #   url: http://localhost:3000
+  #
+  # Command example (runs inside the harness sandbox/worktree):
+  # app:
+  #   enabled: true
+  #   mode: command
+  #   app: frontend
+  #   setup_commands:
+  #     - docker compose -f compose.db.yml up -d postgres
+  #   start_commands:
+  #     - npx nx dev frontend
+  #   stop_commands:
+  #     - docker compose -f compose.db.yml down
+  #     - npx nx reset
+  #   url: http://localhost:3000
+  #   readiness_timeout_ms: 120000
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Brownfield extraction (re-* commands)
 # ─────────────────────────────────────────────────────────────────────────────

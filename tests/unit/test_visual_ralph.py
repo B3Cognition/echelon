@@ -6,7 +6,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.config import GCConfig, HarnessConfig, NetworkConfig, ResourceLimits, VisualTestsConfig
+from harness.config import (
+    AppRuntimeConfig,
+    GCConfig,
+    HarnessConfig,
+    NetworkConfig,
+    ResourceLimits,
+    VisualTestsConfig,
+)
 from harness.exec_result import ExecResult, ResourceStats
 from harness.loop_result import LoopResult
 from harness.provider import SandboxHandle
@@ -29,10 +36,25 @@ def _make_config(enabled=True, max_iterations=2) -> HarnessConfig:
     )
 
 
-def _exec_result(stdout="", exit_code=0, duration_ms=1000) -> ExecResult:
+def _make_command_app_config() -> HarnessConfig:
+    config = _make_config(enabled=True, max_iterations=1)
+    config.app = AppRuntimeConfig(
+        enabled=True,
+        mode="command",
+        app="frontend",
+        setup_commands=["docker compose -f compose.db.yml up -d postgres"],
+        start_commands=["npx nx dev frontend"],
+        stop_commands=["npx nx reset"],
+        url="http://localhost:3000",
+        readiness_timeout_ms=120_000,
+    )
+    return config
+
+
+def _exec_result(stdout="", stderr="", exit_code=0, duration_ms=1000) -> ExecResult:
     return ExecResult(
         stdout=stdout,
-        stderr="",
+        stderr=stderr,
         exit_code=exit_code,
         duration_ms=duration_ms,
         resource_stats=ResourceStats(peak_memory_bytes=0, cpu_time_ms=0, wall_time_ms=duration_ms),
@@ -154,6 +176,132 @@ def test_run_loop_converges_on_first_pass():
     assert result.status == "converged"
     assert result.termination_reason == "converged"
     assert result.outer_iterations == 1
+    provider.destroy.assert_called_once()
+
+
+def test_run_loop_starts_waits_and_stops_command_app_runtime():
+    """command app profile starts before Playwright and stops during cleanup."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.side_effect = [
+        _exec_result(stdout="db ready", exit_code=0),  # setup command
+        _exec_result(stdout="123\n", exit_code=0),  # start command backgrounded
+        _exec_result(stdout="ready", exit_code=0),  # readiness curl
+        _exec_result(stdout=PLAYWRIGHT_PASS_JSON, exit_code=0),  # playwright
+        _exec_result(stdout="", exit_code=0),  # explicit stop command
+        _exec_result(stdout="", exit_code=0),  # pid cleanup
+    ]
+
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_command_app_config(),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=".",
+    )
+
+    result = ctrl.run_loop(worktree_path="/tmp/wt")
+
+    assert result.status == "converged"
+    executed = [call.args[1] for call in provider.exec.call_args_list]
+    assert executed[0] == "docker compose -f compose.db.yml up -d postgres"
+    assert "npx nx dev frontend" in executed[1]
+    assert "curl -fsS http://localhost:3000" in executed[2]
+    assert executed[3] == "npx playwright test --reporter=json"
+    assert executed[4] == "npx nx reset"
+
+
+def test_run_loop_stops_command_app_runtime_when_visual_verify_fails():
+    """command app profile stops even when Playwright fails."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.side_effect = [
+        _exec_result(stdout="db ready", exit_code=0),
+        _exec_result(stdout="123\n", exit_code=0),
+        _exec_result(stdout="ready", exit_code=0),
+        _exec_result(stdout=PLAYWRIGHT_FAIL_JSON, exit_code=1),
+        _exec_result(stdout="", exit_code=0),
+        _exec_result(stdout="", exit_code=0),
+        _exec_result(stdout="", exit_code=0),
+    ]
+
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_command_app_config(),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=".",
+    )
+
+    with patch.object(ctrl, "_retrieve_screenshots", return_value=[]):
+        result = ctrl.run_loop(worktree_path="/tmp/wt")
+
+    assert result.status == "failed"
+    executed = [call.args[1] for call in provider.exec.call_args_list]
+    assert "npx nx reset" in executed
+
+
+def test_run_loop_reports_failure_when_command_app_never_ready():
+    """readiness failure returns structured visual_failed and still cleans up."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.side_effect = [
+        _exec_result(stdout="db ready", exit_code=0),
+        _exec_result(stdout="123\n", exit_code=0),
+        _exec_result(stdout="", stderr="curl failed", exit_code=1),
+        _exec_result(stdout="", exit_code=0),
+        _exec_result(stdout="", exit_code=0),
+    ]
+
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_command_app_config(),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=".",
+    )
+
+    result = ctrl.run_loop(worktree_path="/tmp/wt")
+
+    assert result.status == "failed"
+    assert result.termination_reason == "app_runtime_failed"
+    assert result.final_verify is not None
+    assert result.final_verify.failures[0].id == "app-runtime"
+    provider.destroy.assert_called_once()
+
+
+def test_run_loop_reports_failure_when_setup_command_fails():
+    """setup command failure returns structured app_runtime_failed."""
+    from harness.visual_ralph import VisualRalphController
+
+    provider = MagicMock()
+    provider.create.return_value = SandboxHandle(id="ctr1", session_id="s1")
+    provider.exec.side_effect = [
+        _exec_result(stdout="", stderr="compose failed", exit_code=1),
+        _exec_result(stdout="", exit_code=0),
+        _exec_result(stdout="", exit_code=0),
+    ]
+
+    ctrl = VisualRalphController(
+        provider=provider,
+        config=_make_command_app_config(),
+        spec_id="001",
+        strategy_id="default",
+        base_dir=".",
+    )
+
+    result = ctrl.run_loop(worktree_path="/tmp/wt")
+
+    assert result.status == "failed"
+    assert result.termination_reason == "app_runtime_failed"
+    assert result.final_verify is not None
+    assert "setup command failed" in result.final_verify.failures[0].error
     provider.destroy.assert_called_once()
 
 

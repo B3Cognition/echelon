@@ -253,6 +253,79 @@ class TestVisualTestsConfig:
         assert cfg.visual_tests.test_command == "npx playwright test --reporter=json"
 
 
+@pytest.mark.unit
+def test_app_runtime_config_parsed() -> None:
+    """harness.app block is parsed for brownfield Docker-backed app runtime."""
+    cfg = _parse_config({
+        "target_repo": "https://github.com/x/y",
+        "target_default_branch": "main",
+        "provider": "docker",
+        "app": {
+            "enabled": True,
+            "mode": "docker_compose",
+            "compose_file": "docker-compose.yml",
+            "service": "web",
+            "url": "http://localhost:3000",
+        },
+    })
+
+    assert cfg.app.enabled is True
+    assert cfg.app.mode == "docker_compose"
+    assert cfg.app.compose_file == "docker-compose.yml"
+    assert cfg.app.service == "web"
+    assert cfg.app.url == "http://localhost:3000"
+
+
+@pytest.mark.unit
+def test_app_runtime_command_profile_parsed() -> None:
+    """harness.app supports explicit command profiles for brownfield apps."""
+    cfg = _parse_config({
+        "target_repo": "https://github.com/x/y",
+        "target_default_branch": "main",
+        "provider": "docker",
+        "app": {
+            "enabled": True,
+            "mode": "command",
+            "app": "frontend",
+            "setup_commands": ["docker compose -f compose.db.yml up -d postgres"],
+            "start_commands": ["npx nx dev frontend"],
+            "stop_commands": ["pkill -f 'nx dev frontend'"],
+            "url": "http://localhost:3000",
+            "readiness_timeout_ms": 120000,
+        },
+    })
+
+    assert cfg.app.enabled is True
+    assert cfg.app.mode == "command"
+    assert cfg.app.app == "frontend"
+    assert cfg.app.setup_commands == ["docker compose -f compose.db.yml up -d postgres"]
+    assert cfg.app.start_commands == ["npx nx dev frontend"]
+    assert cfg.app.stop_commands == ["pkill -f 'nx dev frontend'"]
+    assert cfg.app.url == "http://localhost:3000"
+    assert cfg.app.readiness_timeout_ms == 120000
+
+
+@pytest.mark.unit
+def test_app_runtime_command_profile_accepts_single_command_strings() -> None:
+    """Single command values are normalized to one-item lists."""
+    cfg = _parse_config({
+        "target_repo": "https://github.com/x/y",
+        "target_default_branch": "main",
+        "provider": "docker",
+        "app": {
+            "enabled": True,
+            "mode": "command",
+            "setup_commands": "docker compose -f compose.db.yml up -d postgres",
+            "start_commands": "npx nx dev frontend",
+            "stop_commands": "npx nx reset",
+        },
+    })
+
+    assert cfg.app.setup_commands == ["docker compose -f compose.db.yml up -d postgres"]
+    assert cfg.app.start_commands == ["npx nx dev frontend"]
+    assert cfg.app.stop_commands == ["npx nx reset"]
+
+
 # ---------------------------------------------------------------------------
 # LlmConfig tests
 # ---------------------------------------------------------------------------

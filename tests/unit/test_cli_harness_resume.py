@@ -86,7 +86,8 @@ class TestCmdHarnessResume:
         assert rc == 1
         err = capsys.readouterr().err
         assert "verify_command" in err
-        assert "echelon cicd" in err
+        assert "echelon harness init" in err
+        assert "echelon cicd" not in err
 
     def test_valid_resume_prints_banner_and_calls_run(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")

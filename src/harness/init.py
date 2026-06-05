@@ -29,18 +29,125 @@ try:
 except ImportError:
     yaml = None  # type: ignore[assignment]
 
+from harness.app_runtime_detection import AppRuntimeDetectionResult, detect_app_runtime
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, SandboxCreationError, SelfTargetError
 from harness.fingerprint import fingerprint_repo, detect_playwright
 from harness.gitops import GitOpsManager
 from harness.image_resolver import resolve_image, ImageResolutionError
 from harness.paths import runs_dir, strategies_dir as _strategies_dir_fn, mirror_path as _mirror_path_fn
+from harness.verify_detection import VerifyDetectionResult, detect_verify_command
 
 logger = logging.getLogger(__name__)
 
 
 class InitError(Exception):
     """Raised when harness initialization fails."""
+
+
+def _write_app_runtime_detection(
+    config_file: Path,
+    result: AppRuntimeDetectionResult,
+) -> AppRuntimeDetectionResult:
+    """Merge harness.app detection metadata into echelon-config.yml."""
+    if yaml is None:
+        return result
+
+    existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    harness = existing.setdefault("harness", {})
+
+    existing_app = harness.get("app")
+    if existing_app:
+        harness["app_detection"] = "existing"
+        config_file.write_text(
+            yaml.dump(existing, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        return AppRuntimeDetectionResult(
+            profile=existing_app,
+            confidence="existing",
+            evidence=["existing harness.app profile"],
+        )
+
+    harness["app_detection"] = result.confidence
+    if result.profile and result.confidence == "high":
+        harness["app"] = result.profile
+        harness["app_evidence"] = result.evidence
+    elif result.reason:
+        harness["app_reason"] = result.reason
+        if result.evidence:
+            harness["app_evidence"] = result.evidence
+
+    config_file.write_text(
+        yaml.dump(existing, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    return result
+
+
+def _apply_app_runtime_detection(
+    config_file: Path,
+    repo_path: Path,
+) -> AppRuntimeDetectionResult:
+    """Detect and write harness.app when confidence is high."""
+    return _write_app_runtime_detection(
+        config_file=config_file,
+        result=detect_app_runtime(repo_path),
+    )
+
+
+def _write_verify_command_detection(
+    config_file: Path,
+    result: VerifyDetectionResult,
+) -> VerifyDetectionResult:
+    """Merge verify_command detection metadata into echelon-config.yml."""
+    if yaml is None:
+        return result
+
+    existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    harness = existing.setdefault("harness", {})
+
+    existing_command = existing.get("verify_command")
+    if existing_command:
+        command = str(existing_command)
+        harness["detected_verify_command"] = command
+        harness["verify_command_detection"] = "existing"
+        config_file.write_text(
+            yaml.dump(existing, default_flow_style=False, sort_keys=False),
+            encoding="utf-8",
+        )
+        return VerifyDetectionResult(
+            command=command,
+            confidence="existing",
+            evidence=["existing top-level verify_command"],
+        )
+
+    harness["verify_command_detection"] = result.confidence
+    if result.command and result.confidence == "high":
+        existing["verify_command"] = result.command
+        harness["detected_verify_command"] = result.command
+        harness["verify_command_evidence"] = result.evidence
+    elif result.reason:
+        harness["verify_command_reason"] = result.reason
+        if result.evidence:
+            harness["verify_command_evidence"] = result.evidence
+
+    config_file.write_text(
+        yaml.dump(existing, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    return result
+
+
+def _apply_verify_command_detection(
+    config_file: Path,
+    repo_path: Path,
+) -> VerifyDetectionResult:
+    """Detect and write verify_command when confidence is high."""
+    return _write_verify_command_detection(
+        config_file=config_file,
+        result=detect_verify_command(repo_path),
+    )
 
 
 
@@ -250,10 +357,31 @@ def init_harness(
     except GitOpsError as e:
         raise InitError(f"Failed to create worktree for fingerprinting: {e}")
 
+    verify_detection = VerifyDetectionResult(
+        command=None,
+        confidence="none",
+        reason="fingerprint worktree unavailable",
+    )
+    app_detection = AppRuntimeDetectionResult(
+        profile=None,
+        confidence="none",
+        reason="fingerprint worktree unavailable",
+    )
+
     try:
         # Step 8: Language/framework fingerprint
         fp = fingerprint_repo(Path(worktree_path))
         logger.info("Detected language: %s, playwright: %s", fp.language, fp.has_playwright)
+        verify_detection = detect_verify_command(Path(worktree_path))
+        if verify_detection.command:
+            logger.info("Detected verify_command: %s", verify_detection.command)
+        else:
+            logger.info("No verify_command detected: %s", verify_detection.reason)
+        app_detection = detect_app_runtime(Path(worktree_path))
+        if app_detection.profile:
+            logger.info("Detected harness.app runtime: %s", app_detection.profile)
+        else:
+            logger.info("No harness.app runtime detected: %s", app_detection.reason)
 
         # Step 9: Image resolution
         try:
@@ -357,6 +485,8 @@ def init_harness(
         existing["harness"] = harness_data
         config_file.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
+    verify_detection = _write_verify_command_detection(config_file, verify_detection)
+    app_detection = _write_app_runtime_detection(config_file, app_detection)
     logger.info("Harness config written to %s (harness: section)", config_file)
 
     # Create runs/ and strategies dir so codegen preflight finds them without noise

@@ -42,7 +42,6 @@ SKILL_MAP = {
     "review":  "echelon.review",
     "change":  "echelon.change",
     "codegen": "echelon.codegen",
-    "cicd":    "echelon.cicd",
     "verify-spec": "echelon.verify-spec",
     "reopen":  "echelon.reopen",
 }
@@ -84,7 +83,7 @@ Commands:
   review  <spec_id> [pr_url=<url>]          Triage PR review comments
   change  <spec_id> <description>           Plan a scope change
   codegen <spec_id>                         Run SOAR codegen pipeline
-  cicd    <spec_id>                         Detect project type and configure verify_command
+  cicd                                      Retired; use 'echelon harness init'
   artifacts <spec_id>                       Generate specs/<id>/ARTIFACTS.md
   land    <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
@@ -476,8 +475,73 @@ def _cmd_harness_init(args: list[str]) -> None:
     ]
     if image_note.strip():
         fields.append(("Base image", image_note.strip()))
+    fields.extend(_harness_init_detection_fields(config_file))
     fields.append(("Next step", "echelon run \"<feature>\"\n  echelon harness run <spec_id>"))
     _banner("HARNESS INIT — COMPLETE", fields)
+
+
+def _harness_init_detection_fields(config_file: Path) -> list[tuple[str, str]]:
+    """Summarize auto-detected harness commands for the init banner."""
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+
+    harness_raw = raw.get("harness", {})
+    if not isinstance(harness_raw, dict):
+        harness_raw = {}
+
+    fields: list[tuple[str, str]] = []
+
+    verify_command = raw.get("verify_command")
+    verify_detection = harness_raw.get("verify_command_detection")
+    verify_reason = harness_raw.get("verify_command_reason")
+    if verify_command:
+        source = "auto-detected" if verify_detection == "high" else "configured"
+        fields.append(("Verify", f"{verify_command} ({source})"))
+    elif verify_detection or verify_reason:
+        status = str(verify_detection or "none")
+        detail = f"{status}: {verify_reason}" if verify_reason else status
+        fields.append(("Verify", f"not configured - {detail}"))
+
+    app_raw = harness_raw.get("app")
+    app_detection = harness_raw.get("app_detection")
+    app_reason = harness_raw.get("app_reason")
+    if isinstance(app_raw, dict) and app_raw:
+        mode = app_raw.get("mode", "manual")
+        app_name = app_raw.get("app") or app_raw.get("service") or app_raw.get("compose_file") or "app"
+        url = app_raw.get("url")
+        source = "auto-detected" if app_detection == "high" else "configured"
+        detail = f"{app_name} via {mode}"
+        if url:
+            detail += f" at {url}"
+        fields.append(("App runtime", f"{detail} ({source})"))
+    elif app_detection or app_reason:
+        status = str(app_detection or "none")
+        detail = f"{status}: {app_reason}" if app_reason else status
+        fields.append(("App runtime", f"not configured - {detail}"))
+
+    return fields
+
+
+def _cmd_cicd(args: list[str]) -> None:
+    """Retired CI/CD auto-generation command."""
+    print(
+        "✗ echelon cicd is retired.\n\n"
+        "  The old command launched a full LLM squad and could create new specs or\n"
+        "  mutate Docker/deploy/CI files when the harness only needed verification.\n\n"
+        "  For harness verification, run:\n"
+        "    echelon harness init\n\n"
+        "  If auto-detection cannot make a high-confidence choice, add a top-level\n"
+        "  verify_command to .specify/extensions/echelon/echelon-config.yml, for example:\n"
+        "    verify_command: pytest\n"
+        "    verify_command: npm test\n"
+        "    verify_command: go test ./...",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _cmd_harness_run(args: list[str]) -> None:
@@ -660,7 +724,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
             "recovery from build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
             "  1. For verify_command_needed: add verify_command to echelon-config.yml\n"
-            "     (or run 'echelon cicd').\n"
+            "     (or re-run 'echelon harness init' to auto-detect high-confidence commands).\n"
             "  2. Run: echelon harness resume <spec_id>\n",
         )
         return
@@ -776,8 +840,8 @@ def _cmd_harness_resume(args: list[str]) -> None:
     if not config.verify_command:
         print(
             "✗ verify_command is still not set in echelon-config.yml.\n\n"
-            "  Option 1 — auto-configure:  echelon cicd\n"
-            "  Option 2 — manual:          add to echelon-config.yml:\n"
+            "  Option 1 — auto-detect:  echelon harness init\n"
+            "  Option 2 — manual:       add to echelon-config.yml:\n"
             "    verify_command: swift test --package-path Packages/MyLib\n"
             "    verify_command: pytest\n"
             "    verify_command: go test ./...\n\n"
@@ -2217,6 +2281,10 @@ def main() -> None:
 
     if command == "harness":
         _cmd_harness(args[1:])
+        return
+
+    if command == "cicd":
+        _cmd_cicd(args[1:])
         return
 
     if command == "spec":

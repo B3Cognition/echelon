@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 import subprocess
 import tempfile
 from pathlib import Path
@@ -65,6 +66,33 @@ class VisualRalphController:
             handle = self._provider.create(sandbox_spec)
 
             try:
+                try:
+                    self._setup_app_runtime(handle)
+                    self._start_app_runtime(handle)
+                    self._wait_for_app_runtime(handle)
+                except RuntimeError as exc:
+                    failure = VerifyResult(
+                        passed=False,
+                        failures=[
+                            FailureEntry(
+                                category=FailureCategory.OTHER,
+                                id="app-runtime",
+                                error=str(exc),
+                            )
+                        ],
+                        duration_s=0.0,
+                        token_usage=0,
+                    )
+                    return LoopResult(
+                        status="failed",
+                        termination_reason="app_runtime_failed",
+                        outer_iterations=iteration + 1,
+                        inner_iterations=0,
+                        pr_url=None,
+                        tokens_used=tokens_used,
+                        final_verify=failure,
+                    )
+
                 verify_result = self._exec_visual_verify(handle)
                 tokens_used += verify_result.token_usage
 
@@ -84,6 +112,7 @@ class VisualRalphController:
                 tokens_used += fix_result.get("tokens", 0)
 
             finally:
+                self._stop_app_runtime(handle)
                 self._provider.destroy(handle)
 
         return LoopResult(
@@ -124,6 +153,107 @@ class VisualRalphController:
             duration_s=result.duration_ms / 1000.0,
             token_usage=_estimate_tokens(result),
         )
+
+    # === App runtime ===
+
+    def _setup_app_runtime(self, handle: SandboxHandle) -> None:
+        """Run configured foreground setup commands inside the visual sandbox."""
+        app = self._config.app
+        if not app.enabled or app.mode != "command":
+            return
+
+        for command in app.setup_commands:
+            if not command:
+                continue
+            result = self._provider.exec(
+                handle,
+                command,
+                cwd="/workspace",
+                timeout_ms=app.readiness_timeout_ms,
+            )
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"harness.app setup command failed: {command}\n{result.stderr or result.stdout}"
+                )
+
+    def _start_app_runtime(self, handle: SandboxHandle) -> None:
+        """Start configured app runtime inside the visual sandbox."""
+        app = self._config.app
+        if not app.enabled or app.mode != "command":
+            return
+
+        commands = app.start_commands or ([app.start_command] if app.start_command else [])
+        for index, command in enumerate(commands):
+            if not command:
+                continue
+            log_path = f"/tmp/echelon-app-{index}.log"
+            pid_path = f"/tmp/echelon-app-{index}.pid"
+            background_cmd = (
+                f"sh -lc {shlex.quote(f'({command}) > {log_path} 2>&1 & echo $! > {pid_path}')}"
+            )
+            result = self._provider.exec(
+                handle,
+                background_cmd,
+                cwd="/workspace",
+                timeout_ms=30_000,
+            )
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"harness.app start command failed: {command}\n{result.stderr or result.stdout}"
+                )
+
+    def _wait_for_app_runtime(self, handle: SandboxHandle) -> None:
+        """Wait for configured app URL to become reachable."""
+        app = self._config.app
+        if not app.enabled or app.mode != "command" or not app.url:
+            return
+
+        timeout_s = max(1, app.readiness_timeout_ms // 1000)
+        wait_cmd = (
+            "sh -lc "
+            + shlex.quote(
+                f"deadline=$((SECONDS+{timeout_s})); "
+                f"until curl -fsS {shlex.quote(app.url)} >/tmp/echelon-app-ready.txt; do "
+                f"  if [ $SECONDS -ge $deadline ]; then exit 1; fi; "
+                f"  sleep 1; "
+                f"done; cat /tmp/echelon-app-ready.txt"
+            )
+        )
+        result = self._provider.exec(
+            handle,
+            wait_cmd,
+            cwd="/workspace",
+            timeout_ms=app.readiness_timeout_ms + 5_000,
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(
+                f"harness.app URL did not become ready: {app.url}\n{result.stderr or result.stdout}"
+            )
+
+    def _stop_app_runtime(self, handle: SandboxHandle) -> None:
+        """Stop configured app runtime, best-effort."""
+        app = self._config.app
+        if not app.enabled or app.mode != "command":
+            return
+
+        for command in app.stop_commands:
+            if not command:
+                continue
+            self._provider.exec(
+                handle,
+                command,
+                cwd="/workspace",
+                timeout_ms=30_000,
+            )
+
+        commands = app.start_commands or ([app.start_command] if app.start_command else [])
+        for index, _ in enumerate(commands):
+            self._provider.exec(
+                handle,
+                f"sh -lc 'test ! -f /tmp/echelon-app-{index}.pid || kill $(cat /tmp/echelon-app-{index}.pid) 2>/dev/null || true'",
+                cwd="/workspace",
+                timeout_ms=30_000,
+            )
 
     # === Screenshots ===
 

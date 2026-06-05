@@ -82,3 +82,9 @@ class TestManualCommandContracts:
         assert 'Add `"INVESTIGATOR"` to `active_specialists`' in text
         assert "active_specialists: <existing active_specialists plus SCIENTIST>" not in text
         assert "active_specialists: <existing active_specialists plus INVESTIGATOR>" in text
+
+    def test_cicd_command_is_retired_and_does_not_delegate_to_run(self) -> None:
+        text = (COMMAND_DIR / "echelon.cicd.md").read_text(encoding="utf-8")
+
+        assert "Retired" in text
+        assert "speckit-echelon-run" not in text

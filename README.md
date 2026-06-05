@@ -103,7 +103,7 @@ Set `ECHELON_LLM` to switch AI provider for any command above — see [AI Provid
 echelon change  001 "scope change description"   # mid-build spec change
 echelon codegen 001                              # SOAR pipeline directly (no harness)
 echelon build   001                              # agent-driven build (no harness)
-echelon cicd                                     # auto-detect + write verify_command into echelon-config.yml
+echelon harness init                            # re-run to auto-detect high-confidence verify_command
 ```
 
 ### Spec-kit skills (Claude session)
@@ -449,7 +449,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon verify-spec <id> [strict=true]` | `speckit.echelon.verify-spec` | Audit whether the current implementation fulfills a spec |
 | `echelon reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
 | `echelon change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
-| `echelon cicd` | `speckit.echelon.cicd` | Auto-detect and write `verify_command` into `echelon-config.yml` |
+| `echelon cicd` | — | Retired; re-run `echelon harness init` to auto-detect high-confidence `verify_command` |
 | `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
 | `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |

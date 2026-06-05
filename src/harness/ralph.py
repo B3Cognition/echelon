@@ -1741,7 +1741,7 @@ def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
             ("strategy", strategy_id),
             ("problem",
              "The harness could not detect a test runner in the built worktree.\n"
-             "Run 'echelon cicd' to auto-configure verification, or add\n"
+             "Run 'echelon harness init' to auto-detect high-confidence verification, or add\n"
              "verify_command manually to echelon-config.yml, for example:\n\n"
              "  verify_command: swift test --package-path Packages/MyLib\n"
              "  verify_command: pytest\n"

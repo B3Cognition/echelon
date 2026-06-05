@@ -27,6 +27,7 @@ VALID_TERMINATION_REASONS = {
     "user_cancel",
     "killed_by_coordinator",
     "visual_failed",
+    "app_runtime_failed",
     "review_fix_queued",
     "no_progress",
     "publish_failed",

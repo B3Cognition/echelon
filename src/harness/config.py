@@ -125,6 +125,25 @@ class VisualTestsConfig:
 
 
 @dataclass
+class AppRuntimeConfig:
+    """Docker-backed app runtime profile for browser/screenshot checks."""
+    enabled: bool = False
+    mode: str = ""
+    app: Optional[str] = None
+    url: Optional[str] = None
+    compose_file: Optional[str] = None
+    service: Optional[str] = None
+    dockerfile: Optional[str] = None
+    container_port: Optional[int] = None
+    health_check: Optional[str] = None
+    start_command: Optional[str] = None
+    setup_commands: List[str] = field(default_factory=list)
+    start_commands: List[str] = field(default_factory=list)
+    stop_commands: List[str] = field(default_factory=list)
+    readiness_timeout_ms: int = 120_000
+
+
+@dataclass
 class LlmConfig:
     """Configuration for the LLM CLI provider (claude -p or copilot -p subprocess)."""
     enabled: bool = False              # true when llm section is present in config
@@ -171,6 +190,7 @@ class HarnessConfig:
     bind_mount_ack: bool = False
     pr_host: str = "none"
     visual_tests: VisualTestsConfig = field(default_factory=VisualTestsConfig)
+    app: AppRuntimeConfig = field(default_factory=AppRuntimeConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     review_loop: ReviewLoopConfig = field(default_factory=ReviewLoopConfig)
     verify_command: Optional[str] = None
@@ -228,7 +248,12 @@ def _get_merged_config(project_root: Path) -> Dict[str, Any]:
     if _SpecKitConfigManager is not None:
         mgr = _SpecKitConfigManager(project_root=project_root, extension_id="echelon")
         full = mgr.get_config()
-        return full.get("harness", full)
+        if isinstance(full.get("harness"), dict):
+            harness = dict(full["harness"])
+            if "verify_command" in full and "verify_command" not in harness:
+                harness["verify_command"] = full["verify_command"]
+            return harness
+        return full
 
     # Inline fallback — same 4-layer logic as ConfigManager.
     # Layer 1 (extension.yml defaults) is not read here: extension.yml is not
@@ -240,6 +265,8 @@ def _get_merged_config(project_root: Path) -> Dict[str, Any]:
     # Layer 2: project config — harness: section of echelon-config.yml
     raw = _load_yaml_file(ext_dir / "echelon-config.yml")
     config = _merge(config, raw.get("harness", raw))
+    if "verify_command" in raw and "verify_command" not in config:
+        config["verify_command"] = raw["verify_command"]
 
     # Layer 3: local config (gitignored)
     raw_local = _load_yaml_file(ext_dir / "local-config.yml")
@@ -351,6 +378,42 @@ def _parse_review_loop(data: Dict[str, Any]) -> ReviewLoopConfig:
     )
 
 
+def _parse_command_list(value: Any) -> List[str]:
+    if isinstance(value, str):
+        command = value.strip()
+        return [command] if command else []
+    if isinstance(value, list):
+        return [str(command) for command in value if str(command).strip()]
+    return []
+
+
+def _parse_app_runtime(data: Dict[str, Any]) -> AppRuntimeConfig:
+    raw = data.get("app", {})
+    if not isinstance(raw, dict):
+        raw = {}
+
+    container_port = raw.get("container_port")
+    if container_port is not None:
+        container_port = int(container_port)
+
+    return AppRuntimeConfig(
+        enabled=bool(raw.get("enabled", False)),
+        mode=str(raw.get("mode", "")),
+        app=raw.get("app") or None,
+        url=raw.get("url") or None,
+        compose_file=raw.get("compose_file") or None,
+        service=raw.get("service") or None,
+        dockerfile=raw.get("dockerfile") or None,
+        container_port=container_port,
+        health_check=raw.get("health_check") or None,
+        start_command=raw.get("start_command") or None,
+        setup_commands=_parse_command_list(raw.get("setup_commands", [])),
+        start_commands=_parse_command_list(raw.get("start_commands", [])),
+        stop_commands=_parse_command_list(raw.get("stop_commands", [])),
+        readiness_timeout_ms=int(raw.get("readiness_timeout_ms", 120_000)),
+    )
+
+
 def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
     raw = data.get("llm", {})
     if not isinstance(raw, dict):
@@ -424,6 +487,7 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
         bind_mount_ack=bool(data.get("bind_mount_ack", False)),
         pr_host=pr_host,
         visual_tests=_parse_visual_tests(data),
+        app=_parse_app_runtime(data),
         llm=_parse_llm(data),
         review_loop=_parse_review_loop(data),
         verify_command=data.get("verify_command") or None,
