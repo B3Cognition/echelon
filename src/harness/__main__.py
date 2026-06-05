@@ -8,6 +8,7 @@ Subcommands:
   validate-task-progress — reconcile canonical tasks.md progress with state.json
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
+  apply-progress-reconciliation — apply verify-spec task-progress reconciliation
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -248,6 +249,49 @@ def _progress_integrity_markdown(payload: dict[str, object]) -> str:
     )
 
 
+def _apply_progress_reconciliation() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness apply-progress-reconciliation <tasks.md> <candidate.json> <out-dir> [--dry-run]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.progress_reconciliation import reconcile_progress
+
+    tasks_path = Path(sys.argv[2])
+    candidate_path = Path(sys.argv[3])
+    out_dir = Path(sys.argv[4])
+    dry_run = "--dry-run" in sys.argv[5:]
+    unknown = [arg for arg in sys.argv[5:] if arg != "--dry-run"]
+    if unknown:
+        print(f"Unknown apply-progress-reconciliation option: {unknown[0]!r}", file=sys.stderr)
+        sys.exit(1)
+
+    result = reconcile_progress(
+        tasks_path=tasks_path,
+        candidate_path=candidate_path,
+        out_plan_json=out_dir / "progress-reconciliation-plan.json",
+        out_plan_md=out_dir / "progress-reconciliation-plan.md",
+        out_applied_json=None
+        if dry_run
+        else out_dir / "progress-reconciliation-applied.json",
+        out_applied_md=None
+        if dry_run
+        else out_dir / "progress-reconciliation-applied.md",
+        dry_run=dry_run,
+    )
+    if dry_run:
+        print(
+            "OK: progress reconciliation dry-run wrote "
+            f"{out_dir / 'progress-reconciliation-plan.md'}"
+        )
+        return
+    print(f"OK: progress reconciliation applied {result.applied_count} task updates")
+
+
 def _migrate_tasks() -> None:
     if len(sys.argv) < 3:
         print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
@@ -355,6 +399,8 @@ def main() -> None:
         _mark_task_progress()
     elif subcommand == "write-progress-integrity":
         _write_progress_integrity()
+    elif subcommand == "apply-progress-reconciliation":
+        _apply_progress_reconciliation()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -363,7 +409,7 @@ def main() -> None:
         _migrate_plan()
     else:
         print(
-            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'mark-task-progress', 'write-progress-integrity', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
+            f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', 'validate-tasks', 'validate-task-progress', 'mark-task-progress', 'write-progress-integrity', 'apply-progress-reconciliation', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)
