@@ -1616,6 +1616,22 @@ verify_spec:
         - "{spec_dir}/fulfillment-report.md"
         - "{spec_dir}/fulfillment-gaps.md"
       transitions:
+        - to: verify-spec-6-reconcile
+          condition: reconcile = true
+        - to: DONE
+          condition: always
+
+    - id: verify-spec-6-reconcile
+      label: "Progress Reconciliation"
+      spec_file: workflow/phases/verify-spec-6-reconcile.md
+      type: commander_internal
+      outputs:
+        - "{verify_run_dir}/progress-reconciliation-candidates.json"
+        - "{verify_run_dir}/progress-reconciliation-plan.json"
+        - "{verify_run_dir}/progress-reconciliation-plan.md"
+        - "{verify_run_dir}/progress-reconciliation-applied.json"
+        - "{verify_run_dir}/progress-reconciliation-applied.md"
+      transitions:
         - to: DONE
           condition: always
 
