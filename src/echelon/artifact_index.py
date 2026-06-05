@@ -370,6 +370,8 @@ def infer_lifecycle_stage(spec_dir: Path) -> str:
         status = ""
     if str(status).lower() == "landed":
         return "landed"
+    if str(status).lower() == "ready_to_land":
+        return "verified"
     if (spec_dir / "verification-summary.md").exists() or (
         spec_dir / "fulfillment-report.md"
     ).exists():

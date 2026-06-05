@@ -108,6 +108,17 @@ def test_landed_stage_detected_from_frontmatter_status(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_ready_to_land_stage_detected_as_verified(tmp_path: Path) -> None:
+    spec_dir = _make_spec_dir(tmp_path)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+
+    assert infer_lifecycle_stage(spec_dir) == "verified"
+
+
+@pytest.mark.unit
 def test_write_artifact_index_overwrites_only_artifacts_md(tmp_path: Path) -> None:
     spec_dir = _make_spec_dir(tmp_path)
     spec_path = spec_dir / "spec.md"

@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from echelon.artifact_index import write_artifact_index
 from harness.build_result import BUILD_STATUS_FILENAME
 from harness.config import HarnessConfig
 from harness.llm_provider import AICodingCliProvider
@@ -1434,6 +1435,7 @@ class RalphController:
                 spec_status="ready_to_land",
                 verification_result="PASS",
             )
+            write_artifact_index(spec_dir)
         except FileNotFoundError as exc:
             logger.warning("Could not mark %s ready_to_land: %s", self._spec_id, exc)
 

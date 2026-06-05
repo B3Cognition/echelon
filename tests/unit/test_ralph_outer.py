@@ -265,6 +265,11 @@ class TestOuterLoopConvergence:
         assert history["runs"][-1]["phase"] == "B"
         assert history["runs"][-1]["status"] == "ready_to_land"
         assert history["runs"][-1]["verification_result"] == "PASS"
+        artifacts = spec_dir / "ARTIFACTS.md"
+        assert artifacts.exists()
+        text = artifacts.read_text(encoding="utf-8")
+        assert "Lifecycle stage: verified" in text
+        assert "`run-history.json`" in text
 
     def test_does_not_converge_when_fulfillment_report_has_gaps(
         self, tmp_path: Path
