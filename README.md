@@ -446,7 +446,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
 | `echelon review <id> [pr_url=…]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
-| `echelon verify-spec <id> [strict=true]` | `speckit.echelon.verify-spec` | Audit whether the current implementation fulfills a spec |
+| `echelon verify-spec <id> [strict=true] [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
 | `echelon reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
 | `echelon change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
 | `echelon cicd` | `speckit.echelon.cicd` | Auto-detect and write `verify_command` into `echelon-config.yml` |
