@@ -77,7 +77,8 @@ Commands:
                                             and continue it. Use when the run printed
                                             "blocked — human input required".
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
-  verify-spec <spec_id> [strict=true]        Audit implementation against spec
+  verify-spec <spec_id> [strict=true] [--reconcile] [--dry-run]
+                                            Audit implementation against spec
   reopen  <spec_id> [from=<report>]          Reopen spec from fulfillment gaps
   build   <spec_id>                         Build implementation for a spec
   review  <spec_id> [pr_url=<url>]          Triage PR review comments

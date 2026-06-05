@@ -1,25 +1,39 @@
 ---
 name: speckit.echelon.verify-spec
-description: "Read-only audit: verify whether current implementation fulfills a spec"
+description: "Audit whether current implementation fulfills a spec; optionally reconcile task-progress bookkeeping"
 behavior:
   invocation: explicit
 ---
 
 ## Role
 
-You are COMMANDER executing a read-only spec fulfillment audit.
+You are COMMANDER executing a spec fulfillment audit.
 
 Read `agents/control/commander.md` first. Then read `workflow/definition.yaml`
 `verify_spec:` section. Start at `verify-spec-1-init`.
 
-ALWAYS treat this command as read-only for application source files.
-NEVER modify source code, spec status, or `tasks.md`.
+ALWAYS treat this command as read-only by default.
+ALWAYS remember: source code is always read-only, including when `--reconcile`
+is present.
+NEVER modify source code or spec status.
+
+When `--reconcile` is absent, NEVER modify `tasks.md`.
+When `--reconcile` is present, `tasks.md` may change only through deterministic
+harness task-progress helpers; never hand-edit task rows.
+
+Supported reconciliation flags:
+- `--reconcile` — after verification, reconcile deterministic task-progress
+  bookkeeping from fresh verify-spec evidence.
+- `--dry-run` — with `--reconcile`, write the reconciliation plan without
+  changing `tasks.md`.
 
 Allowed writes:
 - `specs/<spec-id>-*/fulfillment-report.md`
 - `specs/<spec-id>-*/fulfillment-gaps.md`
 - `runs/<run-id>/verify-spec/<spec-id>/...`
 - `runs/verify-spec-<spec-id>-<timestamp>/...`
+- With `--reconcile`: `specs/<spec-id>-*/tasks.md`, but only through harness
+  task-progress helpers.
 
 ## User Input
 
