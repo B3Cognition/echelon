@@ -1040,6 +1040,15 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         except Exception:
             pass
 
+    if result_status == "blocked" and run_state.get("escalation_question"):
+        fields = [
+            ("reason", str(run_state.get("blocked_reason") or "human answer required").strip()),
+            ("question", str(run_state.get("escalation_question") or "").strip()),
+            ("next", 'echelon resume "<your answer>"'),
+        ]
+        _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
+        return
+
     if quality_gates_file is None and run_state:
         staging_dir = Path(run_state.get("staging_dir") or str(run_dir / "staging"))
         staging_qg = staging_dir / "quality-gates.md"
