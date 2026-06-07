@@ -150,7 +150,7 @@ class ConditionEvaluator:
         for p in parts:
             if not isinstance(val, dict):
                 return default
-            val = val.get(p)
+            val = val.get(p, val.get(p.replace("-", "_")))
             if val is None:
                 return default
         return val

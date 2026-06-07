@@ -134,6 +134,12 @@ class TestConditionEvaluator:
             {"why3_verdict": "PASS", "assess2_verdict": "FAIL"},
         ) is False
 
+    def test_hyphenated_verdict_conditions_read_underscored_state_keys(self):
+        assert self.ev.evaluate(
+            "why3-verdict = FAIL OR assess2-verdict = REJECTED",
+            {"why3_verdict": "FAIL", "assess2_verdict": "PASS"},
+        ) is True
+
     def test_unknown_condition_returns_none(self):
         assert self.ev.evaluate("some_unknown_thing xyz", {}) is None
 
