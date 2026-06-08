@@ -131,6 +131,42 @@ def test_commands_use_jsonl_reasoning_journal_name():
     assert not stale, "\n".join(stale)
 
 
+def test_spec_glob_fallbacks_are_guarded_by_authoritative_spec_dir_contract():
+    """Prompts may locate specs only as a documented fallback."""
+    violations = []
+    roots = [
+        EXTENSION_ROOT / "commands",
+        EXTENSION_ROOT / "workflow" / "phases",
+    ]
+    guarded_patterns = (
+        "spec_dir` is present",
+        "state.json.spec_dir` is present",
+        "spec_dir=` is present",
+        "spec_dir` is provided",
+    )
+    fallback_patterns = (
+        "spec_dir` is absent",
+        "state.json.spec_dir` is absent",
+        "spec_dir=` is absent",
+    )
+
+    for root in roots:
+        for prompt in root.rglob("*.md"):
+            text = prompt.read_text()
+            if "specs/{spec_id}-*/" not in text:
+                continue
+            if not any(pattern in text for pattern in guarded_patterns):
+                violations.append(
+                    f"{prompt.relative_to(REPO_ROOT)}: specs/{{spec_id}}-* fallback lacks authoritative spec_dir guard"
+                )
+            if not any(pattern in text for pattern in fallback_patterns):
+                violations.append(
+                    f"{prompt.relative_to(REPO_ROOT)}: specs/{{spec_id}}-* fallback lacks explicit spec_dir-absent condition"
+                )
+
+    assert not violations, "\n".join(violations)
+
+
 def test_re_single_phase_commands_use_shared_contract():
     commands = [
         "echelon.re-analyze.md",
