@@ -4,8 +4,11 @@
 
 ## Objective
 
-Parse `spec_id`, optional `strict=true`, optional `--reconcile`, and optional
-`--dry-run`. Locate `specs/{spec_id}-*/`.
+Parse `spec_id`, optional `spec_dir=<absolute-or-repo-relative-path>`,
+optional `strict=true`, optional `--reconcile`, and optional `--dry-run`.
+When `spec_dir=` is present, treat it as authoritative and do not locate or
+glob `specs/{spec_id}-*/`. When `spec_dir=` is absent, locate
+`specs/{spec_id}-*/` from the current project root.
 
 `--dry-run` only has meaning with `--reconcile`; if `--dry-run` is present
 without `--reconcile`, set `dry_run: true` but keep `reconcile: false` and do

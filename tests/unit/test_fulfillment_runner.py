@@ -69,3 +69,39 @@ class TestFulfillmentRunner:
         metadata = read_fulfillment_metadata(report)
         assert metadata["spec_id"] == "spec-001"
         assert metadata["verified_commit"] == "abc123"
+
+    def test_refresh_uses_orchestration_spec_dir_for_polyrepo_runs(self, tmp_path):
+        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        skill_dir = worktree / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+            encoding="utf-8",
+        )
+        orchestration_root = tmp_path / "polyrepo"
+        spec_dir = orchestration_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        report = spec_dir / "fulfillment-report.md"
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text("# Fulfillment\n", encoding="utf-8")
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                orchestration_root=orchestration_root,
+            )
+
+        assert result == 0
+        _worktree_path, prompt = provider.exec_prompt.call_args.args
+        assert f"verify spec-001 spec_dir={spec_dir}" in prompt
+        metadata = read_fulfillment_metadata(report)
+        assert metadata["spec_id"] == "spec-001"
+        assert metadata["verified_commit"] == "abc123"

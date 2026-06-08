@@ -14,6 +14,14 @@ def test_verify_spec_init_records_project_root_for_deterministic_commands() -> N
     assert "- `project_root`" in text
 
 
+def test_verify_spec_init_accepts_authoritative_spec_dir_argument() -> None:
+    text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
+
+    assert "optional `spec_dir=<absolute-or-repo-relative-path>`" in text
+    assert "When `spec_dir=` is present, treat it as authoritative" in text
+    assert "do not locate or\nglob `specs/{spec_id}-*/`" in text
+
+
 def test_verify_spec_codegraph_uses_deterministic_harness_command() -> None:
     text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
 

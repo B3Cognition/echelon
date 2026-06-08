@@ -34,15 +34,32 @@ PROJECT_ROOT=$(pwd)
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 ```
 
-When running under `echelon harness run`, use the exact `state_file` path
-provided in the prompt's `Harness Context` if orchestration context is needed.
-Do not search for `state.json`, `${SQUAD_DIR}`, `runs/`, or legacy
-`.specify/squad` paths. The harness state is owned by Ralph; read it only for
-context and return state changes through `echelon_result.state_updates`.
+When running under `echelon harness run`, use the exact paths provided in the
+prompt's `Harness Context`:
 
-All paths used in file operations and passed to agents **must be absolute paths**
-derived from `${PROJECT_ROOT}`. Always use `${PROJECT_ROOT}/specs/{NNN}-{feature}`
-for the feature directory — never a bare relative path.
+- `worktree` / `target_repo_worktree` — implementation project root for code reads, searches, edits, and tests
+- `spec_dir` — authoritative spec artifact directory
+- `spec_file` — authoritative spec markdown file
+- `tasks_file` — authoritative tasks markdown file
+- `state_file` — harness state path, for read-only orchestration context only
+
+Do not search for `state.json`, `${SQUAD_DIR}`, `runs/`, legacy `.specify/squad`
+paths, `tasks.md`, `spec.md`, or `specs/` directories. Do not use `find`, `ls`,
+globbing, or parent-directory scans to discover spec artifacts. If `spec_dir`,
+`spec_file`, or `tasks_file` is `MISSING`, STOP and report a harness setup
+failure.
+
+All implementation paths used in file operations and passed to agents **must be
+absolute paths** derived from `${PROJECT_ROOT}`. All spec artifact paths must be
+absolute paths derived from `spec_dir`.
+
+Before running any snippet that references `${SPEC_DIR}`, set it to the exact
+`spec_dir` value from `Harness Context`:
+
+```bash
+SPEC_DIR="<spec_dir from Harness Context>"
+echo "SPEC_DIR=${SPEC_DIR}"
+```
 
 ### 1.0b Validate Deploy Infrastructure
 

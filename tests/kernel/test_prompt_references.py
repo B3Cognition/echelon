@@ -310,6 +310,10 @@ def test_build_1_init_routes_build_state_through_echelon_result():
     assert "Update `${SQUAD_DIR}/state.json`" not in text
     assert "echelon_result.state_updates" in text
     assert "tasks_completed_pct: 0" in text
+    assert "`spec_dir` — authoritative spec artifact directory" in text
+    assert "Do not search for `state.json`, `${SQUAD_DIR}`, `runs/`" in text
+    assert "Do not use `find`, `ls`,\nglobbing, or parent-directory scans to discover spec artifacts" in text
+    assert "Always use `${PROJECT_ROOT}/specs/{NNN}-{feature}`" not in text
 
 
 def test_build_6_progress_routes_build_state_through_echelon_result():

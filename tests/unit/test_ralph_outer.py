@@ -126,6 +126,7 @@ def _make_gitops() -> MagicMock:
     gitops.push.return_value = None
     gitops.create_draft_pr.return_value = "https://github.com/test/repo/pull/1"
     gitops.promote_pr_ready.return_value = None
+    gitops.base_dir = Path("/tmp/project")
     return gitops
 
 
@@ -190,6 +191,34 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "fulfillment-gaps"
         assert "echelon reopen spec-001" in result.failures[0].error
 
+    def test_fulfillment_gate_reads_orchestration_spec_dir_for_polyrepo(
+        self, tmp_path: Path
+    ) -> None:
+        """Fulfillment gate uses orchestration spec artifacts, not target worktree discovery."""
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        orchestration_root = tmp_path / "polyrepo"
+        spec_dir = orchestration_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | MISSING | none | high | absent |\n",
+            encoding="utf-8",
+        )
+        gitops.base_dir = orchestration_root
+        verify = VerifyResult(passed=True, failures=[])
+
+        result = controller._apply_fulfillment_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "fulfillment-gaps"
+        assert str(spec_dir / "fulfillment-report.md") in result.failures[0].error
+
     def test_task_progress_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Ralph does not converge when state progress disagrees with tasks.md."""
         controller, provider, gitops, state_store = _make_controller(
@@ -219,6 +248,40 @@ class TestOuterLoopConvergence:
         assert result.passed is False
         assert result.failures[0].id == "task-progress-mismatch"
         assert "state completed_tasks=1 but tasks.md has 0 checked task rows" in result.failures[0].error
+
+    def test_task_progress_gate_reads_orchestration_tasks_for_polyrepo(
+        self, tmp_path: Path
+    ) -> None:
+        """Task-progress gate uses orchestration tasks.md when target worktree has no specs."""
+        controller, _, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": 1,
+            "completed_tasks": 1,
+            "tasks_completed_pct": 100,
+            "task_results": {"T-001": {"status": "DONE"}},
+        }
+        state_store.write(state)
+
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        orchestration_root = tmp_path / "polyrepo"
+        spec_dir = orchestration_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+        gitops.base_dir = orchestration_root
+        verify = VerifyResult(passed=True, failures=[])
+
+        result = controller._apply_task_progress_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "task-progress-mismatch"
 
     def test_converges_first_iteration(self, tmp_path: Path) -> None:
         """Verify passes on first try -> converged."""
@@ -272,6 +335,35 @@ class TestOuterLoopConvergence:
         assert "Lifecycle stage: verified" in text
         assert "`run-history.json`" in text
 
+    def test_convergence_writes_ready_status_to_orchestration_spec_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """Polyrepo harness convergence updates the orchestration spec, not target worktree."""
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        orchestration_root = tmp_path / "polyrepo"
+        spec_dir = orchestration_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
+            encoding="utf-8",
+        )
+        controller, _, gitops, _ = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = orchestration_root
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "converged"
+        from harness.spec_frontmatter import read_frontmatter
+
+        assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
+        assert (spec_dir / "run-history.json").exists()
+        assert (spec_dir / "ARTIFACTS.md").exists()
+
     def test_does_not_converge_when_fulfillment_report_has_gaps(
         self, tmp_path: Path
     ) -> None:
@@ -321,7 +413,12 @@ class TestOuterLoopConvergence:
             duration_ms=100,
         )
 
-        def write_fulfillment_gap(worktree_path: str, spec_id: str) -> int:
+        def write_fulfillment_gap(
+            worktree_path: str,
+            spec_id: str,
+            *,
+            orchestration_root: Path | str | None = None,
+        ) -> int:
             (spec_dir / "fulfillment-report.md").write_text(
                 "| ID | Status | Evidence | Confidence | Notes |\n"
                 "|---|---|---|---|---|\n"
@@ -348,7 +445,11 @@ class TestOuterLoopConvergence:
             build_prompt="implement something",
         )
 
-        fulfillment_runner.refresh.assert_called_once_with(str(worktree), "spec-001")
+        fulfillment_runner.refresh.assert_called_once_with(
+            str(worktree),
+            "spec-001",
+            orchestration_root=str(worktree),
+        )
         assert result.status == "failed"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
@@ -997,6 +1098,42 @@ class TestLlmProviderDispatch:
         assert f"state_dir: {state_store.state_dir}" in sent_prompt
         assert "Do not search for state.json" in sent_prompt
         assert "build this" in sent_prompt
+
+    def test_exec_build_injects_authoritative_spec_paths(self, tmp_path: Path) -> None:
+        """LLM build prompts receive spec paths from the harness, not discovery."""
+        from harness.llm_build_runner import LlmBuildRunner
+        from harness.build_result import BuildResult
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=100,
+        )
+
+        controller, _, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        project_root = tmp_path / "polyrepo"
+        spec_dir = project_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("- [ ] T-001 req=FR-001\n", encoding="utf-8")
+        gitops.base_dir = project_root
+        worktree = tmp_path / "polyrepo" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+
+        controller._exec_build(
+            handle=MagicMock(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            prompt="build this",
+        )
+
+        sent_prompt = build_runner.exec_build.call_args.args[1]
+        assert f"spec_dir: {spec_dir}" in sent_prompt
+        assert f"tasks_file: {spec_dir / 'tasks.md'}" in sent_prompt
+        assert f"spec_file: {spec_dir / 'spec.md'}" in sent_prompt
+        assert "Do not discover spec artifacts with `find`, `ls`, globbing" in sent_prompt
 
     def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
         """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""

@@ -900,7 +900,7 @@ class RalphController:
         if not verify_result.passed or not worktree_path:
             return verify_result
 
-        spec_dir = find_spec_dir(self._spec_id, Path(worktree_path))
+        spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
             return verify_result
 
@@ -937,7 +937,7 @@ class RalphController:
         if not verify_result.passed or not worktree_path:
             return verify_result
 
-        spec_dir = find_spec_dir(self._spec_id, Path(worktree_path))
+        spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
             return verify_result
 
@@ -978,7 +978,11 @@ class RalphController:
         if not verify_result.passed or not worktree_path or self._fulfillment_runner is None:
             return verify_result
 
-        exit_code = self._fulfillment_runner.refresh(worktree_path, self._spec_id)
+        exit_code = self._fulfillment_runner.refresh(
+            worktree_path,
+            self._spec_id,
+            orchestration_root=getattr(self._gitops, "base_dir", None),
+        )
         if exit_code == 0:
             return verify_result
 
@@ -1344,17 +1348,44 @@ class RalphController:
         """Attach deterministic harness paths for LLM build/fix prompts."""
         if "## Harness Context\n" in prompt:
             return prompt
+        project_root = Path(worktree_path)
+        orchestration_root = self._orchestration_root(project_root)
+        spec_dir = self._find_spec_dir(worktree_path)
+        spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
+        spec_file_text = str(spec_dir / "spec.md") if spec_dir is not None else "MISSING"
+        tasks_file_text = str(spec_dir / "tasks.md") if spec_dir is not None else "MISSING"
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
+            f"target_repo_worktree: {worktree_path}\n"
+            f"orchestration_root: {orchestration_root}\n"
+            f"spec_dir: {spec_dir_text}\n"
+            f"spec_file: {spec_file_text}\n"
+            f"tasks_file: {tasks_file_text}\n"
             f"state_file: {self._state_store.state_file}\n"
             f"state_dir: {self._state_store.state_dir}\n"
+            "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
+            "Use `spec_dir`, `spec_file`, and `tasks_file` for spec artifacts and progress/report updates.\n"
+            "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "The harness state file is owned by Ralph and may be outside the worktree.\n"
             "Read it only when the build phase explicitly needs orchestration context.\n"
             "Do not search for state.json; use this exact state_file path.\n"
             "Do not write harness state directly; return state_updates in echelon_result.\n"
         )
         return f"{block}\n{prompt}"
+
+    def _orchestration_root(self, fallback: Path | None = None) -> Path:
+        base_dir = getattr(self._gitops, "base_dir", None)
+        if base_dir:
+            return Path(base_dir).resolve()
+        return (fallback or Path.cwd()).resolve()
+
+    def _find_spec_dir(self, worktree_path: str | Path) -> Path | None:
+        worktree = Path(worktree_path)
+        spec_dir = find_spec_dir(self._spec_id, self._orchestration_root(worktree))
+        if spec_dir is not None:
+            return spec_dir
+        return find_spec_dir(self._spec_id, worktree)
 
     def _make_iter_prompt(self, base: str, outer_iter: int, last_failures: str) -> str:
         """Augment base prompt with iteration context for outer loop."""
@@ -1599,7 +1630,7 @@ class RalphController:
 
     def _mark_spec_ready_to_land(self, worktree_path: str) -> None:
         """Write Python-owned implemented-but-not-landed spec status."""
-        spec_dir = find_spec_dir(self._spec_id, Path(worktree_path))
+        spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
             logger.warning(
                 "Could not mark %s ready_to_land: spec directory not found",
