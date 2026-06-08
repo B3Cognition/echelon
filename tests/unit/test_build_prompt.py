@@ -18,6 +18,30 @@ class TestBuildPromptBuilder:
         )
         assert "/wt/001" in prompt
 
+    def test_build_prompt_forbids_global_filesystem_search(self):
+        prompt = self.builder.build_prompt(
+            worktree_path="/wt/001",
+            spec_content="spec",
+            tasks_content="tasks",
+            build_skill="speckit.echelon.build",
+        )
+
+        assert "Do not search outside the worktree" in prompt
+        assert "do not run global `find`" in prompt
+        assert "If required Echelon files are missing" in prompt
+
+    def test_build_prompt_forbids_stopping_on_next_phase(self):
+        prompt = self.builder.build_prompt(
+            worktree_path="/wt/001",
+            spec_content="spec",
+            tasks_content="tasks",
+            build_skill="speckit.echelon.build",
+        )
+
+        assert "Ralph does not consume `next_phase`" in prompt
+        assert "Do not end after build-1-init" in prompt
+        assert ".harness-build-status.json" in prompt
+
     def test_build_prompt_contains_spec(self):
         prompt = self.builder.build_prompt(
             worktree_path="/wt/001",

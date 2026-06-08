@@ -150,6 +150,54 @@ class TestHarnessRunTaskFormatErrors:
         assert "python -m harness migrate-plan" in err
         assert "--write" in err
 
+    def test_docker_unavailable_exits_with_actionable_message(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        spec_dir = tmp_path / "specs" / "003-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+
+        from harness.errors import SandboxExecError
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
+            mock_run.side_effect = SandboxExecError(
+                "Docker command failed: docker network create: failed to connect "
+                "to the docker API at unix:///Users/me/.docker/run/docker.sock; "
+                "check if the path is correct and if the daemon is running"
+            )
+            from echelon.cli import _cmd_harness_run
+
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["003"])
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "Docker is not running" in err
+        assert "start Docker" in err
+        assert "echelon harness run 003" in err
+        assert "Traceback" not in err
+
 
 @pytest.mark.unit
 class TestHarnessTargetPreflight:

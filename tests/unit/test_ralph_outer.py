@@ -374,7 +374,9 @@ class TestOuterLoopConvergence:
         assert state["termination_reason"] == "publish_failed"
         assert state["branch"] == "harness/spec-001-default-iter-0"
 
-    def test_llm_build_incomplete_returns_blocked_result(self, tmp_path: Path) -> None:
+    def test_llm_build_incomplete_returns_blocked_result(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         """Missing build status should block gracefully instead of raising."""
         from harness.build_result import BuildResult
 
@@ -401,10 +403,14 @@ class TestOuterLoopConvergence:
 
         assert result.status == "blocked"
         assert result.termination_reason == "build_incomplete"
+        captured = capsys.readouterr()
+        assert "missing build status marker" in captured.err
+        assert ".harness-build-status.json" in captured.err
+        assert "echelon harness resume spec-001" in captured.err
+        assert "missing Phase A artifacts" not in captured.err
         assert provider.destroyed is True
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
-
 
     def test_llm_build_blocks_when_real_repo_gets_dirty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -459,6 +465,367 @@ class TestOuterLoopConvergence:
         assert "escaped.txt" in captured.err
         assert state_store.read()["termination_reason"] == "containment_violation"
         gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_build_incomplete_salvages_dirty_worktree_to_commit(
+        self, tmp_path: Path
+    ) -> None:
+        """Useful build output is committed before blocking on missing status marker."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        (worktree / "generated.txt").write_text("salvaged\n", encoding="utf-8")
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="unknown",
+            impasse_file=None,
+            stdout="done without status file",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=5,
+            max_inner=3,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        state = state_store.read()
+        salvage_commit = state["salvage_commit"]
+        assert len(salvage_commit) == 40
+        assert state["salvage_branch"] == "main"
+        assert state["salvage_verified"] == "not_run"
+        assert state["branch"] == "main"
+        assert (
+            subprocess.run(
+                ["git", "show", f"{salvage_commit}:generated.txt"],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            == "salvaged\n"
+        )
+        assert subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout == ""
+
+    def test_checkpoint_commit_records_task_progress_delta(self, tmp_path: Path) -> None:
+        """Ralph commits a dirty worktree when build state shows task progress."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "generated.txt").write_text("new code\n", encoding="utf-8")
+        gitops.commit.return_value = "abc123def456"
+
+        before = {
+            "build": {
+                "completed_tasks": 1,
+                "current_phase_group": "phase-2-foundation",
+                "task_results": {"T-001": {"status": "DONE"}},
+            }
+        }
+        after = {
+            "build": {
+                "completed_tasks": 2,
+                "current_phase_group": "phase-2-foundation",
+                "task_results": {
+                    "T-001": {"status": "DONE"},
+                    "T-002": {"status": "DONE"},
+                },
+            }
+        }
+
+        with patch.object(controller, "_has_file_changes", return_value=True):
+            checkpoint = controller._checkpoint_progress_commit(
+                worktree_path=str(worktree),
+                before_state=before,
+                after_state=after,
+                outer_iter=0,
+                inner_iter=0,
+                phase="build",
+            )
+
+        assert checkpoint is not None
+        gitops.commit.assert_called_once()
+        message = gitops.commit.call_args.args[1]
+        assert "harness-checkpoint:" in message
+        assert "T-002" in message
+        assert "phase-2-foundation" in message
+        state = state_store.read()
+        assert state["checkpoint_commits"][0]["commit"] == "abc123def456"
+        assert state["checkpoint_commits"][0]["task_ids"] == ["T-002"]
+
+    def test_checkpoint_commit_uses_phase_when_task_ids_unknown(self, tmp_path: Path) -> None:
+        """Stage 1 records truthful phase/wave metadata instead of fake task IDs."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.commit.return_value = "feedface"
+        before = {"build": {"completed_tasks": 0}}
+        after = {
+            "build": {
+                "completed_tasks": 1,
+                "current_phase_group": "phase-3-play-loop",
+                "task_results": {},
+            }
+        }
+
+        with patch.object(controller, "_has_file_changes", return_value=True):
+            checkpoint = controller._checkpoint_progress_commit(
+                worktree_path="/tmp/worktree",
+                before_state=before,
+                after_state=after,
+                outer_iter=1,
+                inner_iter=2,
+                phase="fix",
+            )
+
+        assert checkpoint is not None
+        message = gitops.commit.call_args.args[1]
+        assert "phase-3-play-loop" in message
+        assert "tasks-unknown" in message
+        state = state_store.read()
+        assert state["checkpoint_commits"][0]["task_ids"] == []
+        assert state["checkpoint_commits"][0]["phase_group"] == "phase-3-play-loop"
+
+    def test_checkpoint_commit_skips_when_no_file_changes(self, tmp_path: Path) -> None:
+        """Progress metadata alone does not create empty checkpoint commits."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+
+        with patch.object(controller, "_has_file_changes", return_value=False):
+            checkpoint = controller._checkpoint_progress_commit(
+                worktree_path="/tmp/worktree",
+                before_state={"build": {"completed_tasks": 0}},
+                after_state={"build": {"completed_tasks": 1}},
+                outer_iter=0,
+                inner_iter=0,
+                phase="build",
+            )
+
+        assert checkpoint is None
+        gitops.commit.assert_not_called()
+        assert "checkpoint_commits" not in state_store.read()
+
+    def test_run_loop_checkpoints_after_successful_build_progress(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph checkpoints progress after a build invocation before verification."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=worktree, check=True)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+
+        def complete_one_task(_worktree_path: str, _prompt: str):
+            state = state_store.read()
+            state["build"] = {
+                "completed_tasks": 1,
+                "current_phase_group": "phase-2-foundation",
+                "task_results": {"T-001": {"status": "DONE"}},
+            }
+            state_store.write(state)
+            (worktree / "generated.txt").write_text("task output\n", encoding="utf-8")
+            (worktree / ".harness-build-status.json").write_text(
+                '{"status":"done"}\n',
+                encoding="utf-8",
+            )
+            return BuildResult(
+                exit_code=0,
+                status="done",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = complete_one_task
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        def commit_worktree(_path: str, message: str) -> str:
+            subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Echelon Harness",
+                    "-c",
+                    "user.email=echelon-harness@example.invalid",
+                    "commit",
+                    "-m",
+                    message,
+                    "--allow-empty",
+                ],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        gitops.commit.side_effect = commit_worktree
+
+        with patch.object(
+            controller,
+            "_exec_verify",
+            return_value=VerifyResult(passed=True, failures=[]),
+        ):
+            result = controller.run_loop(
+                max_outer=1,
+                max_inner=0,
+                build_prompt="implement one task",
+            )
+
+        assert result.status == "converged"
+        state = state_store.read()
+        assert state["checkpoint_commits"][0]["task_ids"] == ["T-001"]
+
+    def test_build_incomplete_keeps_checkpoint_before_blocking(
+        self, tmp_path: Path
+    ) -> None:
+        """If a build advances progress then misses the marker, recovery has a checkpoint."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=worktree, check=True)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+
+        def advance_progress_without_marker(_worktree_path: str, _prompt: str):
+            state = state_store.read()
+            state["build"] = {
+                "completed_tasks": 1,
+                "current_phase_group": "phase-2-foundation",
+                "task_results": {"T-001": {"status": "DONE"}},
+            }
+            state_store.write(state)
+            (worktree / "generated.txt").write_text("partial task output\n", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="unknown",
+                impasse_file=None,
+                stdout="missing marker",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = advance_progress_without_marker
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        def commit_worktree(_path: str, message: str) -> str:
+            subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Echelon Harness",
+                    "-c",
+                    "user.email=echelon-harness@example.invalid",
+                    "commit",
+                    "-m",
+                    message,
+                    "--allow-empty",
+                ],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        gitops.commit.side_effect = commit_worktree
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement one task",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        state = state_store.read()
+        checkpoint = state["checkpoint_commits"][0]
+        assert checkpoint["task_ids"] == ["T-001"]
+        assert checkpoint["commit"]
+        assert "salvage_commit" not in state
+        assert subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout == ""
+
     def test_converges_second_outer_iteration(self, tmp_path: Path) -> None:
         """Verify fails first outer, passes on second outer -> converged."""
         # First outer: verify fails, inner loop fails (different errors to avoid same-failure)

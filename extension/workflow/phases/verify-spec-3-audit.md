@@ -20,6 +20,15 @@ criteria, user stories, edge cases, and measurable non-functional requirements.
 Use `plan.md` for intended architecture and phase commitments. Use
 `progress-integrity.json` and `progress-integrity.md` as the authoritative
 task-progress integrity evidence. Do not recalculate task progress by hand.
+Task-progress integrity is bookkeeping evidence, not implementation evidence:
+it can reveal stale or inconsistent task tracking, but it does not decide
+whether source code fulfills a requirement.
+
+NEVER instruct downstream agents to downgrade source-backed implementation
+evidence solely because the corresponding task checkbox is still pending.
+If task progress and code evidence disagree, preserve the requirement checklist
+as extracted from the spec and record the disagreement as a task-progress
+integrity note.
 
 ## Expected Output
 

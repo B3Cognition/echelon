@@ -9,7 +9,7 @@ import pytest
 
 from harness.config import HarnessConfig
 from harness.gitops import GitOpsManager
-from harness.recovery import recover_blocked_run
+from harness.recovery import _find_branch_without_fetch, recover_blocked_run
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -138,6 +138,106 @@ def test_recover_blocked_run_prefers_preserved_worktree(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    recovered = _commit_file(
+        worktree,
+        "src/salvaged.txt",
+        "salvaged\n",
+        "manual salvage commit with non-matching subject",
+    )
+
+    _git(project, "checkout", "001-feature")
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "salvage_commit": recovered,
+            "salvage_branch": "001-feature",
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.source == "worktree"
+    assert result.commit == recovered
+    assert result.applied is True
+    assert (project / "src" / "salvaged.txt").read_text(encoding="utf-8") == "salvaged\n"
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_prefers_checkpoint_commit_over_salvage(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    checkpoint = _commit_file(
+        worktree,
+        "src/checkpoint.txt",
+        "checkpoint\n",
+        "harness-checkpoint: 001-feature/default iter-0 build T-001",
+    )
+    salvage = _commit_file(
+        worktree,
+        "src/salvage.txt",
+        "salvage\n",
+        "harness-salvage: 001-feature default iter-0",
+    )
+
+    _git(project, "checkout", "001-feature")
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "checkpoint_commits": [{"commit": checkpoint, "task_ids": ["T-001"]}],
+            "salvage_commit": salvage,
+            "salvage_branch": "001-feature",
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.source == "worktree"
+    assert result.commit == checkpoint
+    assert result.applied is True
+    assert (project / "src" / "checkpoint.txt").read_text(encoding="utf-8") == "checkpoint\n"
+    assert not (project / "src" / "salvage.txt").exists()
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_treats_empty_cherry_pick_as_already_applied(
     tmp_path: Path,
 ) -> None:
@@ -222,3 +322,17 @@ def test_recover_blocked_run_reports_existing_target_repo_commit(
     assert result.source == "target_repo"
     assert result.commit == recovered
     assert result.applied is False
+
+
+@pytest.mark.unit
+def test_find_branch_without_fetch_accepts_origin_remote_branch(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_file(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    feature_head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "main")
+    _git(repo, "branch", "-D", "001-feature")
+    _git(repo, "update-ref", "refs/remotes/origin/001-feature", feature_head)
+
+    assert _find_branch_without_fetch(repo, "001-feature") == "001-feature"

@@ -711,7 +711,101 @@ def _cmd_harness_run(args: list[str]) -> None:
     if spec_dir is not None:
         _write_spec_status(spec_dir, "In Progress")
 
-    run(user_message, provider, gitops)
+    try:
+        run(user_message, provider, gitops)
+    except Exception as exc:
+        if _is_docker_unavailable_error(exc):
+            _mark_current_harness_state_blocked(
+                Path.cwd(),
+                spec_id,
+                strategy,
+                "docker_unavailable",
+            )
+            print(
+                "✗ Docker is not running or is unreachable.\n"
+                f"  Error: {exc}\n"
+                "  Fix: start Docker Desktop, wait until it reports running, then rerun:\n"
+                f"       echelon harness run {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _print_harness_error_and_exit(
+            project_root=Path.cwd(),
+            spec_id=spec_id,
+            strategy=strategy,
+            command="echelon harness run",
+            exc=exc,
+        )
+
+
+def _is_docker_unavailable_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "docker" in message
+        and (
+            "daemon is running" in message
+            or "docker api" in message
+            or "docker.sock" in message
+            or "cannot connect to the docker daemon" in message
+            or "failed to connect" in message
+        )
+    )
+
+
+def _mark_current_harness_state_blocked(
+    project_root: Path,
+    spec_id: str,
+    strategy: str,
+    reason: str,
+    error: str = "",
+) -> None:
+    try:
+        import json as _json
+        from harness.paths import build_dir, current_build_marker, runs_dir
+
+        marker = current_build_marker(project_root, spec_id)
+        if marker.exists():
+            state_dir = build_dir(project_root, marker.read_text().strip()) / "state"
+        else:
+            state_dir = runs_dir(project_root) / "state"
+        state_file = state_dir / f"{strategy}.json"
+        if not state_file.exists():
+            return
+        data = _json.loads(state_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return
+        data["status"] = "blocked"
+        data["termination_reason"] = reason
+        if error:
+            data["harness_error"] = error
+        state_file.write_text(_json.dumps(data, indent=4) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _print_harness_error_and_exit(
+    *,
+    project_root: Path,
+    spec_id: str,
+    strategy: str,
+    command: str,
+    exc: Exception,
+) -> None:
+    _mark_current_harness_state_blocked(
+        project_root,
+        spec_id,
+        strategy,
+        "harness_error",
+        str(exc),
+    )
+    print(
+        "✗ Harness run failed before completion.\n"
+        f"  Error: {exc}\n"
+        "  State was marked blocked instead of left running.\n"
+        f"  Next:  {command} {spec_id}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _cmd_harness_resume(args: list[str]) -> None:
@@ -835,7 +929,31 @@ def _cmd_harness_resume(args: list[str]) -> None:
         from harness.skills.run_skill import run
         provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
         user_message = f"spec {spec_id} {strategy} mode resume"
-        run(user_message, provider, gitops)
+        try:
+            run(user_message, provider, gitops)
+        except Exception as exc:
+            if _is_docker_unavailable_error(exc):
+                _mark_current_harness_state_blocked(
+                    cwd,
+                    spec_id,
+                    strategy,
+                    "docker_unavailable",
+                )
+                print(
+                    "✗ Docker is not running or is unreachable.\n"
+                    f"  Error: {exc}\n"
+                    "  Fix: start Docker Desktop, wait until it reports running, then rerun:\n"
+                    f"       echelon harness resume {spec_id}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _print_harness_error_and_exit(
+                project_root=cwd,
+                spec_id=spec_id,
+                strategy=strategy,
+                command="echelon harness resume",
+                exc=exc,
+            )
         return
 
     if not config.verify_command:
@@ -860,7 +978,31 @@ def _cmd_harness_resume(args: list[str]) -> None:
     from harness.skills.run_skill import run
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
     user_message = f"spec {spec_id} {strategy} mode resume"
-    run(user_message, provider, gitops)
+    try:
+        run(user_message, provider, gitops)
+    except Exception as exc:
+        if _is_docker_unavailable_error(exc):
+            _mark_current_harness_state_blocked(
+                cwd,
+                spec_id,
+                strategy,
+                "docker_unavailable",
+            )
+            print(
+                "✗ Docker is not running or is unreachable.\n"
+                f"  Error: {exc}\n"
+                "  Fix: start Docker Desktop, wait until it reports running, then rerun:\n"
+                f"       echelon harness resume {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _print_harness_error_and_exit(
+            project_root=cwd,
+            spec_id=spec_id,
+            strategy=strategy,
+            command="echelon harness resume",
+            exc=exc,
+        )
 
 
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
@@ -918,11 +1060,11 @@ def _iter_run_dirs(project_root: Path) -> list[Path]:
     return dirs
 
 
-def _find_converged_harness_build(project_root: Path) -> Optional[tuple[str, Optional[str]]]:
-    """Return (spec_id, pr_url) for the most recent converged harness build, or None.
+def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
+    """Return the newest readable harness build state, unless newer spec work exists.
 
-    Returns None when a newer squad run exists than the harness build — that
-    means new spec work has been done since the last harness run.
+    Returns None when a newer squad run exists than the newest harness build;
+    that means new spec work has been done since the last harness run.
     """
     import json as _json
     runs = project_root / "runs"
@@ -952,11 +1094,37 @@ def _find_converged_harness_build(project_root: Path) -> Optional[tuple[str, Opt
         for state_file in sorted(state_dir.glob("*.json")):
             try:
                 data = _json.loads(state_file.read_text(encoding="utf-8"))
-                if data.get("status") == "converged":
-                    return data.get("spec_id", ""), data.get("pr_url")
+                if isinstance(data, dict):
+                    data.setdefault("build_id", build.name)
+                    return data
             except Exception:
                 pass
     return None
+
+
+def _find_converged_harness_build(project_root: Path) -> Optional[tuple[str, Optional[str]]]:
+    """Return (spec_id, pr_url) when the most recent harness build converged."""
+    data = _find_latest_harness_build_state(project_root)
+    if data and data.get("status") == "converged":
+        return data.get("spec_id", ""), data.get("pr_url")
+    return None
+
+
+def _has_tracked_checkout_changes(project_root: Path) -> bool:
+    import subprocess as _subprocess
+
+    try:
+        result = _subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return False
+    return bool(result.stdout.strip())
 
 
 def _print_next_steps(project_root: Path, result_status: str) -> None:
@@ -972,17 +1140,63 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     if result_status not in ("done", "blocked", "interrupted"):
         return
 
-    # ── Phase B already done? Skip Phase A checks entirely ─────────────────
-    harness = _find_converged_harness_build(project_root)
-    if harness:
-        spec_id, pr_url = harness
+    # ── Latest harness build owns next-step guidance when present ───────────
+    harness_state = _find_latest_harness_build_state(project_root)
+    if harness_state:
+        spec_id = str(harness_state.get("spec_id") or "")
+        pr_url = harness_state.get("pr_url")
+        harness_status = str(harness_state.get("status") or "unknown")
+        termination_reason = str(harness_state.get("termination_reason") or "")
         fields: list[tuple[str, str]] = [("spec", spec_id)] if spec_id else []
-        if pr_url:
-            fields.append(("PR", pr_url))
-            fields.append(("next", f"echelon land {spec_id}"))
+        if harness_status == "converged":
+            if pr_url:
+                fields.append(("PR", pr_url))
+                fields.append(("next", f"echelon land {spec_id}"))
+            else:
+                fields.append(("next", f"echelon land {spec_id}"))
+            _banner("NEXT STEP", fields, subtitle="Harness build converged — ready to land")
+            return
+        fields.append(("harness status", harness_status))
+        if termination_reason:
+            fields.append(("reason", termination_reason))
+        salvage_commit = str(harness_state.get("salvage_commit") or "")
+        salvage_branch = str(harness_state.get("salvage_branch") or "")
+        salvage_verified = str(harness_state.get("salvage_verified") or "")
+        if salvage_commit:
+            fields.append(("salvage commit", salvage_commit[:12]))
+        if salvage_branch:
+            fields.append(("salvage branch", salvage_branch))
+        if salvage_verified:
+            fields.append(("salvage verified", salvage_verified))
+        if termination_reason in {"build_incomplete", "publish_failed"}:
+            if _has_tracked_checkout_changes(project_root):
+                fields.append(
+                    (
+                        "blocked by",
+                        "tracked checkout changes block harness recovery",
+                    )
+                )
+                fields.append(
+                    (
+                        "next",
+                        f"commit or stash tracked changes, then echelon harness resume {spec_id}",
+                    )
+                )
+            else:
+                fields.append(("next", f"echelon harness resume {spec_id}"))
+        elif termination_reason == "docker_unavailable":
+            fields.append(("fix", "start Docker Desktop and wait until it reports running"))
+            fields.append(("next", f"echelon harness run {spec_id}"))
+            subtitle = "HARNESS BUILD BLOCKED"
+        elif harness_status in {"running", "in_progress"}:
+            fields.append(("next", "echelon status"))
+            subtitle = "HARNESS BUILD IN PROGRESS"
         else:
-            fields.append(("next", f"echelon land {spec_id}"))
-        _banner("NEXT STEP", fields, subtitle="Harness build converged — ready to land")
+            fields.append(("next", f"echelon harness run {spec_id} --reset"))
+            subtitle = "HARNESS BUILD BLOCKED"
+        if termination_reason in {"build_incomplete", "publish_failed"}:
+            subtitle = "HARNESS BUILD BLOCKED"
+        _banner("NEXT STEP", fields, subtitle=subtitle)
         return
 
     # ── Gather signals ──────────────────────────────────────────────────────

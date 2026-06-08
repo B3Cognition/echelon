@@ -53,6 +53,13 @@ class TestPhaseOutputPaths:
             assert f"specs/{{feature}}/{filename}" not in text
             assert f"{{spec_dir}}/{filename}" in text
 
+    def test_build_init_warns_harness_not_to_stop_on_next_phase(self) -> None:
+        text = BUILD_INIT.read_text(encoding="utf-8")
+
+        assert "Do not return `next_phase: build-2-implement` and stop" in text
+        assert "Ralph does not consume `next_phase`" in text
+        assert ".harness-build-status.json" in text
+
     def test_phase3_specialists_uses_canonical_context_artifact_path(self) -> None:
         text = PHASE3_SPECIALISTS.read_text(encoding="utf-8")
 

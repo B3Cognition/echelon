@@ -12,7 +12,13 @@ class BuildPromptBuilder:
     SYSTEM_PREAMBLE = (
         "You are invoked by an external orchestrator to implement or fix code.\n"
         "Write all files to the worktree path shown below.\n"
+        "Treat that worktree as the only project root for reads, searches, and edits.\n"
+        "Do not search outside the worktree; do not run global `find` commands or scan parent/user directories.\n"
+        "If required Echelon files are missing from the worktree, report the setup failure instead of using copies from another path.\n"
         "Do not run git commands. Do not commit. Do not push.\n"
+        "Ralph does not consume `next_phase` from your final message; do not stop at phase boundaries.\n"
+        "Do not end after build-1-init or any intermediate build phase. Continue the build workflow until true BUILD_DONE, BLOCKED, or ERROR.\n"
+        "A successful build must write `.harness-build-status.json`; a missing marker is treated as build_incomplete.\n"
         "Signal completion by running the skill shown in the prompt.\n"
     )
 
@@ -48,7 +54,9 @@ class BuildPromptBuilder:
 
         parts.append(
             f"## Action\nRun `/{build_skill}` to implement the tasks above.\n"
-            f"Write all output files to: {worktree_path}"
+            f"Write all output files to: {worktree_path}\n"
+            "Do not return only an `echelon_result.state_updates.next_phase` handoff. "
+            "The harness process running this prompt will not dispatch that handoff for you."
         )
 
         return "\n\n".join(parts)

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from harness.errors import GitOpsError
-from harness.gitops import _run_git
+from harness.gitops import _clean_branch_listing, _run_git
 
 
 RECOVERABLE_REASONS = {"build_incomplete", "publish_failed"}
@@ -79,6 +79,8 @@ def recover_blocked_run(
         strategy_id=strategy_id,
         gitops=gitops,
         build_id=build_id,
+        checkpoint_commits=state.get("checkpoint_commits"),
+        salvage_commit=str(state.get("salvage_commit") or ""),
     )
     if source is not None:
         source_path, commit = source
@@ -120,6 +122,8 @@ def _find_preserved_worktree_source(
     strategy_id: str,
     gitops: Any,
     build_id: str,
+    checkpoint_commits: Any = None,
+    salvage_commit: str = "",
 ) -> Optional[tuple[Path, str]]:
     try:
         worktree = gitops.get_latest_worktree(spec_id, strategy_id, build_id=build_id)
@@ -150,6 +154,22 @@ def _find_preserved_worktree_source(
             f"Preserved worktree has uncommitted tracked changes: {worktree_path}"
         )
 
+    checkpoint_commit = _latest_existing_checkpoint_commit(
+        worktree_path,
+        checkpoint_commits,
+    )
+    if checkpoint_commit:
+        return worktree_path, checkpoint_commit
+
+    if salvage_commit:
+        exists = _run_git(
+            ["cat-file", "-e", f"{salvage_commit}^{{commit}}"],
+            cwd=str(worktree_path),
+            check=False,
+        )
+        if exists.returncode == 0:
+            return worktree_path, salvage_commit
+
     commit = _find_strategy_commit(
         repo=worktree_path,
         ref="HEAD",
@@ -159,6 +179,25 @@ def _find_preserved_worktree_source(
     if commit is None:
         return None
     return worktree_path, commit
+
+
+def _latest_existing_checkpoint_commit(repo: Path, checkpoint_commits: Any) -> Optional[str]:
+    if not isinstance(checkpoint_commits, list):
+        return None
+    for entry in reversed(checkpoint_commits):
+        if not isinstance(entry, dict):
+            continue
+        commit = str(entry.get("commit") or "").strip()
+        if not commit:
+            continue
+        exists = _run_git(
+            ["cat-file", "-e", f"{commit}^{{commit}}"],
+            cwd=str(repo),
+            check=False,
+        )
+        if exists.returncode == 0:
+            return commit
+    return None
 
 
 def _resolve_target_branch(
@@ -188,9 +227,21 @@ def _find_branch_without_fetch(repo: Path, spec_id: str) -> Optional[str]:
         return None
     for pattern in (spec_id, f"{spec_id}-*"):
         result = _run_git(["branch", "--list", pattern], cwd=str(repo), check=False)
-        branches = [b.strip().lstrip("* ") for b in result.stdout.splitlines() if b.strip()]
+        branches = [_clean_branch_listing(b) for b in result.stdout.splitlines() if b.strip()]
         if branches:
             return branches[0]
+        remote_result = _run_git(
+            ["branch", "--remotes", "--list", f"origin/{pattern}"],
+            cwd=str(repo),
+            check=False,
+        )
+        remote_branches = [
+            _clean_branch_listing(b)
+            for b in remote_result.stdout.splitlines()
+            if b.strip()
+        ]
+        if remote_branches:
+            return remote_branches[0].removeprefix("origin/")
     return None
 
 

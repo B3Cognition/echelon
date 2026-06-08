@@ -31,6 +31,12 @@ logger = logging.getLogger(__name__)
 
 # Command timeout for git operations (seconds)
 GIT_CMD_TIMEOUT = 120
+RUNTIME_EXTENSION_REL = Path(".specify") / "extensions" / "echelon"
+RUNTIME_EXTENSION_REQUIRED = (
+    Path("agents") / "control" / "commander.md",
+    Path("workflow") / "definition.yaml",
+)
+RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
 
 
 def _run_git(
@@ -69,6 +75,14 @@ def _run_git(
 def _check_tool_available(tool: str) -> bool:
     """Check if a CLI tool is available on PATH."""
     return shutil.which(tool) is not None
+
+
+def _clean_branch_listing(line: str) -> str:
+    """Normalize one `git branch --list` output line to a branch name."""
+    stripped = line.strip()
+    if stripped.startswith(("* ", "+ ")):
+        return stripped[2:].strip()
+    return stripped
 
 
 class GitOpsManager:
@@ -234,7 +248,7 @@ class GitOpsManager:
                     ["branch", "--list", pattern],
                     cwd=str(self._mirror_path),
                 )
-                return [b.strip().lstrip("* ") for b in result.stdout.splitlines() if b.strip()]
+                return [_clean_branch_listing(b) for b in result.stdout.splitlines() if b.strip()]
             except GitOpsError as e:
                 logger.warning("Could not list branches (pattern=%r) for spec %s: %s", pattern, spec_id, e)
                 return []
@@ -354,6 +368,7 @@ class GitOpsManager:
                             )
                         except GitOpsError as e:
                             logger.warning("Could not update upstream URL: %s", e)
+                    self.sync_runtime_extension(Path(existing_path))
                     return existing_path
                 raise
         else:
@@ -415,7 +430,75 @@ class GitOpsManager:
             except GitOpsError as e:
                 logger.warning("Could not set receive.denyCurrentBranch on %s: %s", target_url, e)
 
+        self.sync_runtime_extension(worktree_dir)
         return str(worktree_dir)
+
+    def sync_runtime_extension(self, worktree_dir: str | Path) -> None:
+        """Make Echelon's local runtime prompts available inside a harness worktree.
+
+        Installed Spec-Kit extensions are often local, untracked project files. Git
+        worktrees only contain tracked files, so a harness worktree may otherwise
+        start without `.specify/extensions/echelon` and cause the LLM to improvise
+        broad filesystem searches. Copy the local extension into the ephemeral
+        worktree as ignored runtime support, not as product source.
+        """
+        worktree = Path(worktree_dir)
+        source = self._base_dir / RUNTIME_EXTENSION_REL
+        dest = worktree / RUNTIME_EXTENSION_REL
+
+        if self._runtime_extension_ready(dest):
+            self._exclude_runtime_extension(worktree)
+            return
+
+        if not source.exists() or not self._runtime_extension_ready(source):
+            raise GitOpsError(
+                "Harness runtime extension is missing. Expected "
+                f"{source / 'agents' / 'control' / 'commander.md'} and "
+                f"{source / 'workflow' / 'definition.yaml'}. "
+                "Run `echelon init` from the project root before `echelon harness run`.",
+                command="sync_runtime_extension",
+            )
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            source,
+            dest,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                ".git",
+                "__pycache__",
+                ".pytest_cache",
+                "node_modules",
+            ),
+        )
+        self._exclude_runtime_extension(worktree)
+        logger.info("Synced runtime Echelon extension into worktree at %s", dest)
+
+    @staticmethod
+    def _runtime_extension_ready(path: Path) -> bool:
+        return all((path / required).exists() for required in RUNTIME_EXTENSION_REQUIRED)
+
+    @staticmethod
+    def _append_unique_line(path: Path, line: str) -> None:
+        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        if line in existing.splitlines():
+            return
+        suffix = "" if not existing or existing.endswith("\n") else "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{existing}{suffix}{line}\n", encoding="utf-8")
+
+    def _exclude_runtime_extension(self, worktree: Path) -> None:
+        try:
+            result = _run_git(
+                ["rev-parse", "--git-path", "info/exclude"],
+                cwd=str(worktree),
+            )
+            exclude_path = Path(result.stdout.strip())
+            if not exclude_path.is_absolute():
+                exclude_path = worktree / exclude_path
+            self._append_unique_line(exclude_path, RUNTIME_EXTENSION_EXCLUDE)
+        except GitOpsError as e:
+            logger.warning("Could not exclude runtime extension from git status: %s", e)
 
     def destroy_worktree(
         self,

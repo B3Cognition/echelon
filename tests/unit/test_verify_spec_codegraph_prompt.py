@@ -30,3 +30,13 @@ def test_verify_spec_codegraph_forbids_prompt_side_discovery() -> None:
 
     assert "NEVER locate, inspect, or infer CodeGraph bridge invocation" in text
     assert "do not attempt fallback discovery" in text
+
+
+def test_verify_spec_progress_integrity_does_not_override_fulfillment_status() -> None:
+    audit_text = (PHASE_DIR / "verify-spec-3-audit.md").read_text(encoding="utf-8")
+    judge_text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+
+    assert "bookkeeping evidence, not implementation evidence" in audit_text
+    assert "NEVER instruct downstream agents to downgrade" in audit_text
+    assert "MUST NOT downgrade an item from `IMPLEMENTED`" in judge_text
+    assert "source and executable test evidence satisfy" in judge_text

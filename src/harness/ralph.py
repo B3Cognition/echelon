@@ -261,6 +261,7 @@ class RalphController:
 
                     # Run build
                     iter_prompt = self._make_iter_prompt(build_prompt, outer_iter, last_verify_failures_text)
+                    before_build_state = self._state_store.read()
                     containment_before = _snapshot_project_status(
                         getattr(self._gitops, "base_dir", None),
                         worktree_path,
@@ -304,6 +305,14 @@ class RalphController:
                         build_result.get("duration_s", 0.0),
                         build_result.get("tokens", 0),
                     )
+                    self._try_checkpoint_progress_commit(
+                        worktree_path=worktree_path,
+                        before_state=before_build_state,
+                        after_state=self._state_store.read(),
+                        outer_iter=outer_iter,
+                        inner_iter=0,
+                        phase="build",
+                    )
 
                     # Check mode boundary
                     if self._mode.should_pause_at_boundary("after_build"):
@@ -341,15 +350,43 @@ class RalphController:
                     # or non-"done" status always means this build didn't complete.
                     if not build_result.get("passed", True):
                         preserve_worktree = True
+                        salvage = _salvage_build_worktree(
+                            worktree_path=worktree_path,
+                            spec_id=self._spec_id,
+                            strategy_id=self._strategy_id,
+                            outer_iter=outer_iter,
+                        )
                         from echelon.ui import banner as _ui_banner
+                        fields = [
+                            ("spec", self._spec_id),
+                            ("strategy", self._strategy_id),
+                            (
+                                "why",
+                                "missing build status marker: .harness-build-status.json",
+                            ),
+                        ]
+                        if salvage:
+                            fields.extend(
+                                [
+                                    ("salvage commit", salvage["salvage_commit"][:12]),
+                                    ("salvage branch", salvage["salvage_branch"]),
+                                ]
+                            )
+                        fields.extend(
+                            [
+                                (
+                                    "meaning",
+                                    "COMMANDER may have changed files, but did not write the harness completion marker",
+                                ),
+                                (
+                                    "next",
+                                    f"echelon harness resume {self._spec_id}  (recover and finalize this build)",
+                                ),
+                            ]
+                        )
                         _ui_banner(
                             "HARNESS — BUILD DID NOT COMPLETE",
-                            [
-                                ("spec", self._spec_id),
-                                ("strategy", self._strategy_id),
-                                ("hint", "COMMANDER may have blocked on missing Phase A artifacts"),
-                                ("next", "echelon run  (complete Phase A first, then re-run harness)"),
-                            ],
+                            fields,
                             file=sys.stderr,
                         )
                         return self._finalize(
@@ -360,6 +397,8 @@ class RalphController:
                             pr_url=pr_url,
                             tokens_used=tokens_used,
                             final_verify=None,
+                            branch=salvage.get("salvage_branch") if salvage else None,
+                            extra_state=salvage,
                         )
 
                     # Run verify
@@ -661,6 +700,7 @@ class RalphController:
 
             # Run feedback (fix)
             feedback_prompt = self._make_feedback_prompt(build_prompt, current_verify, inner_iter)
+            before_fix_state = self._state_store.read()
             fix_result = self._exec_feedback(
                 handle, current_verify, build_command, strategy_context,
                 worktree_path=worktree_path,
@@ -674,6 +714,14 @@ class RalphController:
                 fix_result.get("passed", True),
                 fix_result.get("duration_s", 0.0),
                 fix_result.get("tokens", 0),
+            )
+            self._try_checkpoint_progress_commit(
+                worktree_path=worktree_path,
+                before_state=before_fix_state,
+                after_state=self._state_store.read(),
+                outer_iter=outer_iter,
+                inner_iter=inner_iter,
+                phase="fix",
             )
 
             # Check termination
@@ -1336,6 +1384,92 @@ class RalphController:
 
     # === Git operations ===
 
+    def _try_checkpoint_progress_commit(
+        self,
+        *,
+        worktree_path: str,
+        before_state: Dict[str, Any],
+        after_state: Dict[str, Any],
+        outer_iter: int,
+        inner_iter: int,
+        phase: str,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            return self._checkpoint_progress_commit(
+                worktree_path=worktree_path,
+                before_state=before_state,
+                after_state=after_state,
+                outer_iter=outer_iter,
+                inner_iter=inner_iter,
+                phase=phase,
+            )
+        except Exception as exc:
+            logger.warning("Could not create harness checkpoint commit: %s", exc)
+            return None
+
+    def _checkpoint_progress_commit(
+        self,
+        *,
+        worktree_path: str,
+        before_state: Dict[str, Any],
+        after_state: Dict[str, Any],
+        outer_iter: int,
+        inner_iter: int,
+        phase: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Commit a dirty worktree when build progress advanced.
+
+        Stage 1 checkpointing records truthful metadata only: task IDs when
+        state identifies newly completed tasks, otherwise phase/wave context.
+        """
+        before_build = before_state.get("build") if isinstance(before_state, dict) else {}
+        after_build = after_state.get("build") if isinstance(after_state, dict) else {}
+        if not isinstance(before_build, dict):
+            before_build = {}
+        if not isinstance(after_build, dict):
+            after_build = {}
+
+        before_completed = int(before_build.get("completed_tasks") or 0)
+        after_completed = int(after_build.get("completed_tasks") or 0)
+        phase_group = str(after_build.get("current_phase_group") or "").strip()
+
+        if after_completed <= before_completed and not phase_group:
+            return None
+        if not self._has_file_changes(worktree_path):
+            return None
+
+        task_ids = _newly_completed_task_ids(before_build, after_build)
+        label = ",".join(task_ids) if task_ids else (phase_group or "tasks-unknown")
+        if task_ids and phase_group:
+            label = f"{phase_group} {label}"
+        if not task_ids and phase_group:
+            label = f"{phase_group} tasks-unknown"
+        message = (
+            f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
+            f"iter-{outer_iter} {phase} {label}"
+        )
+        commit = self._gitops.commit(worktree_path, message)
+        checkpoint = {
+            "commit": commit,
+            "outer_iter": outer_iter,
+            "inner_iter": inner_iter,
+            "phase": phase,
+            "task_ids": task_ids,
+            "phase_group": phase_group,
+            "completed_tasks_before": before_completed,
+            "completed_tasks_after": after_completed,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        state = self._state_store.read()
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list):
+            checkpoints = []
+        checkpoints.append(checkpoint)
+        state["checkpoint_commits"] = checkpoints
+        self._state_store.write(state)
+        logger.info("Committed harness checkpoint %s for %s", commit[:12], label)
+        return checkpoint
+
     def _has_file_changes(self, worktree_path: str) -> bool:
         """Return True if any files were added or modified since last commit.
 
@@ -1942,13 +2076,107 @@ def _print_containment_violation_banner(
                 "The LLM build changed the real target repo while Ralph was managing an isolated worktree.",
             ),
             ("changed", changed or "(status changed, no changed lines captured)"),
-            (
-                "next",
-                f"inspect/salvage the real repo changes, then rerun: echelon harness run {spec_id}",
-            ),
+            ("next", f"inspect/salvage the real repo changes, then rerun: echelon harness run {spec_id}"),
         ],
         file=sys.stderr,
     )
+
+
+def _salvage_build_worktree(
+    *,
+    worktree_path: str,
+    spec_id: str,
+    strategy_id: str,
+    outer_iter: int,
+) -> Optional[Dict[str, str]]:
+    """Commit dirty harness worktree output before blocking on build_incomplete."""
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if status.returncode != 0 or not status.stdout.strip():
+            return None
+
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        )
+        message = f"harness-salvage: {spec_id} {strategy_id} iter-{outer_iter}"
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Echelon Harness",
+                "-c",
+                "user.email=echelon-harness@example.invalid",
+                "commit",
+                "-m",
+                message,
+            ],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=True,
+        )
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=True,
+        ).stdout.strip()
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        ).stdout.strip()
+        return {
+            "salvage_commit": commit,
+            "salvage_branch": branch,
+            "salvage_verified": "not_run",
+        }
+    except Exception as exc:
+        logger.warning("Could not salvage dirty harness worktree %s: %s", worktree_path, exc)
+        return None
+
+
+def _newly_completed_task_ids(
+    before_build: Dict[str, Any],
+    after_build: Dict[str, Any],
+) -> List[str]:
+    """Return task IDs newly marked done between two build state snapshots."""
+    before_results = before_build.get("task_results")
+    after_results = after_build.get("task_results")
+    if not isinstance(before_results, dict):
+        before_results = {}
+    if not isinstance(after_results, dict):
+        return []
+
+    def _is_done(value: Any) -> bool:
+        if isinstance(value, dict):
+            status = str(value.get("status") or value.get("verdict") or "").upper()
+            return status in {"DONE", "PASS", "PASSED", "COMPLETE", "COMPLETED"}
+        return str(value).upper() in {"DONE", "PASS", "PASSED", "COMPLETE", "COMPLETED"}
+
+    newly_done: List[str] = []
+    for task_id, result in after_results.items():
+        if _is_done(result) and not _is_done(before_results.get(task_id)):
+            newly_done.append(str(task_id))
+    return sorted(newly_done)
 
 
 def _estimate_tokens(result: ExecResult) -> int:

@@ -51,6 +51,14 @@ Stop only when: (a) the state machine reaches DONE, (b) a BLOCKED/ERROR conditio
 cannot be self-resolved, or (c) a human checkpoint is reached in `guided`/`semi`
 mode.
 
+When invoked by `echelon harness run`, there is no external squad phase runner
+consuming `echelon_result.state_updates.next_phase` from your final response.
+Returning `next_phase: build-2-implement` after `build-1-init` is not progress;
+it leaves Ralph without `.harness-build-status.json` and the build is marked
+`build_incomplete`. Continue through the build phases in this same invocation.
+If the Agent/subagent tool is unavailable, perform the required role inline and
+continue to the next quality gate.
+
 ---
 
 ## User Input

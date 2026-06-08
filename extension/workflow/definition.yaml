@@ -1626,6 +1626,11 @@ verify_spec:
       spec_file: workflow/phases/verify-spec-6-reconcile.md
       type: commander_internal
       outputs:
+        - "{verify_run_dir}/task-requirement-map.candidates.json"
+        - "{verify_run_dir}/task-requirement-map-plan.json"
+        - "{verify_run_dir}/task-requirement-map-plan.md"
+        - "{verify_run_dir}/task-requirement-map-applied.json"
+        - "{verify_run_dir}/task-requirement-map-applied.md"
         - "{verify_run_dir}/progress-reconciliation-candidates.json"
         - "{verify_run_dir}/progress-reconciliation-plan.json"
         - "{verify_run_dir}/progress-reconciliation-plan.md"

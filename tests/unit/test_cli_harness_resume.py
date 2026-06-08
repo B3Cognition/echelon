@@ -134,6 +134,84 @@ class TestCmdHarnessResume:
         mock_recover.assert_called_once()
         mock_run.assert_called_once()
 
+    def test_recoverable_resume_handles_docker_unavailable_gracefully(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        from harness.errors import SandboxExecError
+
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "build_incomplete",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            mock_recover.return_value = MagicMock(
+                source="worktree",
+                commit="abc123",
+                target_branch="001-feature",
+                applied=True,
+            )
+            mock_run.side_effect = SandboxExecError(
+                "Docker command failed: failed to connect to the docker API at "
+                "unix:///Users/example/.docker/run/docker.sock; check if the daemon is running"
+            )
+            from echelon.cli import _cmd_harness_resume
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_resume(["001"])
+
+        assert exc.value.code == 1
+        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        assert state["status"] == "blocked"
+        assert state["termination_reason"] == "docker_unavailable"
+        err = capsys.readouterr().err
+        assert "Docker is not running or is unreachable" in err
+        assert "echelon harness resume 001" in err
+        assert "Traceback" not in err
+
+    def test_recoverable_resume_marks_unexpected_harness_error_blocked(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "build_incomplete",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            mock_recover.return_value = MagicMock(
+                source="worktree",
+                commit="abc123",
+                target_branch="001-feature",
+                applied=True,
+            )
+            mock_run.side_effect = RuntimeError("fatal: invalid reference")
+            from echelon.cli import _cmd_harness_resume
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_resume(["001"])
+
+        assert exc.value.code == 1
+        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        assert state["status"] == "blocked"
+        assert state["termination_reason"] == "harness_error"
+        assert "fatal: invalid reference" in state["harness_error"]
+        err = capsys.readouterr().err
+        assert "Harness run failed before completion" in err
+        assert "echelon harness resume 001" in err
+        assert "Traceback" not in err
+
     def test_recoverable_reason_recovers_even_when_status_was_overwritten_done(
         self,
         tmp_path: Path,

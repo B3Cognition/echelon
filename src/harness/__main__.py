@@ -8,7 +8,9 @@ Subcommands:
   validate-task-progress — reconcile canonical tasks.md progress with state.json
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
+  apply-task-requirement-mapping — apply deterministic req= metadata mappings
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
+  plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
@@ -293,6 +295,76 @@ def _apply_progress_reconciliation() -> None:
     print(f"OK: progress reconciliation applied {result.applied_count} task updates")
 
 
+def _apply_task_requirement_mapping() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness apply-task-requirement-mapping <tasks.md> <candidate.json> <out-dir> [--dry-run]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.task_requirement_mapping import apply_task_requirement_mapping
+
+    tasks_path = Path(sys.argv[2])
+    candidate_path = Path(sys.argv[3])
+    out_dir = Path(sys.argv[4])
+    dry_run = "--dry-run" in sys.argv[5:]
+    unknown = [arg for arg in sys.argv[5:] if arg != "--dry-run"]
+    if unknown:
+        print(f"Unknown apply-task-requirement-mapping option: {unknown[0]!r}", file=sys.stderr)
+        sys.exit(1)
+
+    result = apply_task_requirement_mapping(
+        tasks_path=tasks_path,
+        candidate_path=candidate_path,
+        out_plan_json=out_dir / "task-requirement-map-plan.json",
+        out_plan_md=out_dir / "task-requirement-map-plan.md",
+        out_applied_json=None if dry_run else out_dir / "task-requirement-map-applied.json",
+        out_applied_md=None if dry_run else out_dir / "task-requirement-map-applied.md",
+        dry_run=dry_run,
+    )
+    if dry_run:
+        print(
+            "OK: task requirement mapping dry-run wrote "
+            f"{out_dir / 'task-requirement-map-plan.md'}"
+        )
+        return
+    print(f"OK: applied {result.applied_count} task requirement mappings")
+
+
+def _plan_reopen_gaps() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness plan-reopen-gaps <fulfillment-gaps.md> <tasks.md> <out-dir> [reopen-*.md ...]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.reopen_planner import plan_reopen_gaps
+
+    gaps_path = Path(sys.argv[2])
+    tasks_path = Path(sys.argv[3])
+    out_dir = Path(sys.argv[4])
+    existing_reopen_paths = [Path(arg) for arg in sys.argv[5:]]
+
+    result = plan_reopen_gaps(
+        gaps_path=gaps_path,
+        tasks_path=tasks_path,
+        existing_reopen_paths=existing_reopen_paths,
+        out_plan_json=out_dir / "reopen-plan.json",
+        out_plan_md=out_dir / "reopen-plan.md",
+    )
+    print(
+        "OK: reopen gap plan wrote "
+        f"{out_dir / 'reopen-plan.md'} "
+        f"({result.status}, {len(result.clusters)} clusters)"
+    )
+
+
 def _write_codegraph_evidence() -> None:
     if len(sys.argv) < 5:
         print(
@@ -428,8 +500,12 @@ def main() -> None:
         _mark_task_progress()
     elif subcommand == "write-progress-integrity":
         _write_progress_integrity()
+    elif subcommand == "apply-task-requirement-mapping":
+        _apply_task_requirement_mapping()
     elif subcommand == "apply-progress-reconciliation":
         _apply_progress_reconciliation()
+    elif subcommand == "plan-reopen-gaps":
+        _plan_reopen_gaps()
     elif subcommand == "write-codegraph-evidence":
         _write_codegraph_evidence()
     elif subcommand == "migrate-tasks":
@@ -442,7 +518,8 @@ def main() -> None:
         print(
             f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', "
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
-            "'write-progress-integrity', 'apply-progress-reconciliation', "
+            "'write-progress-integrity', 'apply-task-requirement-mapping', "
+            "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'write-codegraph-evidence', 'migrate-tasks', 'validate-plan', "
             "or 'migrate-plan'.",
             file=sys.stderr,

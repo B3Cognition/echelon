@@ -19,6 +19,11 @@ Run SPEC-GUARD in fulfillment mode. Assign exactly one status per item:
 `IMPLEMENTED`, `PARTIAL`, `UNVERIFIED`, `MISSING`, `DEVIATED`, or
 `OBSOLETE_SPEC`.
 
+Judge item fulfillment from the implementation evidence map and the requirement's
+acceptance signal. Task progress is bookkeeping integrity evidence only. SPEC-GUARD
+MUST NOT downgrade an item from `IMPLEMENTED` to `PARTIAL`, `UNVERIFIED`, or
+`MISSING` solely because `tasks.md` marks the related task pending, when source and executable test evidence satisfy the requirement and acceptance signal.
+
 Also judge task-progress integrity from `progress-integrity.json` and
 `progress-integrity.md`. If progress integrity is invalid or incomplete, write a
 `TASK-PROGRESS` row with status `PARTIAL` and include the mismatch in

@@ -4,6 +4,20 @@
 
 ---
 
+## Harness Continuity Rule
+
+When this phase is executed by `echelon harness run`, Ralph invokes one
+LLM-backed build process and waits for `.harness-build-status.json`.
+Ralph does not consume `next_phase` from the final message and does not
+automatically re-dispatch `build-2-implement` after this response.
+
+Do not return `next_phase: build-2-implement` and stop. After initialization,
+continue directly into `build-2-implement` in the same build invocation. If an
+Agent/subagent tool is unavailable, execute the required build role inline in
+the main conversation and continue through the quality gates. Stop only on true
+BUILD_DONE, BLOCKED, or ERROR, and write `.harness-build-status.json` according
+to the harness contract.
+
 ## 1. Initialization (BUILD_INIT)
 
 **Build Start State Update (mandatory, runs once before first task):**
@@ -130,4 +144,5 @@ Create empty report files (or clear prior content):
 - `{spec_dir}/test-quality-report.md`
 - `{spec_dir}/progress-report.md`
 
-**Transition:** Proceed to task iteration.
+**Transition:** Proceed immediately to task iteration in this same build
+invocation. Do not end the response at BUILD_INIT.

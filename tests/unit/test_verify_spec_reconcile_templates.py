@@ -37,6 +37,8 @@ def test_verify_spec_workflow_has_optional_reconcile_phase() -> None:
 
     assert "verify-spec-6-reconcile" in text
     assert "condition: reconcile = true" in text
+    assert "task-requirement-map.candidates.json" in text
+    assert "task-requirement-map-applied.md" in text
     assert "progress-reconciliation-plan.md" in text
 
 
@@ -47,6 +49,15 @@ def test_reconcile_phase_requires_harness_apply_command() -> None:
     assert "progress-reconciliation-candidates.json" in text
     assert "progress-reconciliation-plan.md" in text
     assert "progress-reconciliation-applied.md" in text
+
+
+def test_reconcile_phase_maps_unmapped_task_requirements_before_done_updates() -> None:
+    text = VERIFY_RECONCILE.read_text(encoding="utf-8")
+
+    assert "task-requirement-map.candidates.json" in text
+    assert "apply-task-requirement-mapping" in text
+    assert "req=UNMAPPED" in text
+    assert "Run task requirement mapping before progress reconciliation" in text
 
 
 def test_reconcile_phase_forbids_direct_tasks_editing() -> None:
