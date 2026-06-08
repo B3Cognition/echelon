@@ -762,6 +762,7 @@ class RalphController:
             impasse_file.
         """
         if self._llm_build_runner and worktree_path and prompt:
+            prompt = self._with_harness_context(prompt, worktree_path)
             result = self._llm_build_runner.exec_build(worktree_path, prompt)
             return {
                 "exit_code": result.exit_code,
@@ -1230,6 +1231,7 @@ class RalphController:
         Returns dict with exit_code, passed, duration_s, tokens.
         """
         if self._llm_build_runner and worktree_path and prompt:
+            prompt = self._with_harness_context(prompt, worktree_path)
             result = self._llm_build_runner.exec_feedback(worktree_path, prompt)
             return {
                 "exit_code": result.exit_code,
@@ -1261,6 +1263,22 @@ class RalphController:
             "impasse": False,
             "impasse_file": None,
         }
+
+    def _with_harness_context(self, prompt: str, worktree_path: str) -> str:
+        """Attach deterministic harness paths for LLM build/fix prompts."""
+        if "## Harness Context\n" in prompt:
+            return prompt
+        block = (
+            "## Harness Context\n"
+            f"worktree: {worktree_path}\n"
+            f"state_file: {self._state_store.state_file}\n"
+            f"state_dir: {self._state_store.state_dir}\n"
+            "The harness state file is owned by Ralph and may be outside the worktree.\n"
+            "Read it only when the build phase explicitly needs orchestration context.\n"
+            "Do not search for state.json; use this exact state_file path.\n"
+            "Do not write harness state directly; return state_updates in echelon_result.\n"
+        )
+        return f"{block}\n{prompt}"
 
     def _make_iter_prompt(self, base: str, outer_iter: int, last_failures: str) -> str:
         """Augment base prompt with iteration context for outer loop."""

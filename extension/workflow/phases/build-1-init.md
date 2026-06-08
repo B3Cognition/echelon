@@ -20,7 +20,15 @@ PROJECT_ROOT=$(pwd)
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 ```
 
-Read `project_root` from `${SQUAD_DIR}/state.json` and verify it matches. All paths used in file operations and passed to agents **must be absolute paths** derived from `${PROJECT_ROOT}`. Always use `${PROJECT_ROOT}/specs/{NNN}-{feature}` for the feature directory — never a bare relative path.
+When running under `echelon harness run`, use the exact `state_file` path
+provided in the prompt's `Harness Context` if orchestration context is needed.
+Do not search for `state.json`, `${SQUAD_DIR}`, `runs/`, or legacy
+`.specify/squad` paths. The harness state is owned by Ralph; read it only for
+context and return state changes through `echelon_result.state_updates`.
+
+All paths used in file operations and passed to agents **must be absolute paths**
+derived from `${PROJECT_ROOT}`. Always use `${PROJECT_ROOT}/specs/{NNN}-{feature}`
+for the feature directory — never a bare relative path.
 
 ### 1.0b Validate Deploy Infrastructure
 

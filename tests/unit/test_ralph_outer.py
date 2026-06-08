@@ -541,8 +541,40 @@ class TestLlmProviderDispatch:
             prompt="build this",
         )
 
-        build_runner.exec_build.assert_called_once_with(str(tmp_path), "build this")
+        build_runner.exec_build.assert_called_once()
+        assert build_runner.exec_build.call_args.args[0] == str(tmp_path)
+        assert "build this" in build_runner.exec_build.call_args.args[1]
         assert result["passed"] is True
+
+    def test_exec_build_injects_deterministic_harness_context(self, tmp_path: Path) -> None:
+        """LLM build prompts receive the exact state file instead of discovering it."""
+        from harness.llm_build_runner import LlmBuildRunner
+        from harness.build_result import BuildResult
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=100,
+        )
+
+        controller, _, _, state_store = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        worktree = tmp_path / "worktree"
+
+        controller._exec_build(
+            handle=MagicMock(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            prompt="build this",
+        )
+
+        sent_prompt = build_runner.exec_build.call_args.args[1]
+        assert f"state_file: {state_store.state_file}" in sent_prompt
+        assert f"state_dir: {state_store.state_dir}" in sent_prompt
+        assert "Do not search for state.json" in sent_prompt
+        assert "build this" in sent_prompt
 
     def test_exec_build_falls_back_to_sandbox_when_no_llm_build_runner(self, tmp_path: Path) -> None:
         """When llm_build_runner is None, _exec_build uses provider.exec() even with args."""
@@ -585,7 +617,9 @@ class TestLlmProviderDispatch:
             prompt="fix this",
         )
 
-        build_runner.exec_feedback.assert_called_once_with(str(tmp_path), "fix this")
+        build_runner.exec_feedback.assert_called_once()
+        assert build_runner.exec_feedback.call_args.args[0] == str(tmp_path)
+        assert "fix this" in build_runner.exec_feedback.call_args.args[1]
         assert result["passed"] is True
         assert result["impasse"] is False
 
