@@ -56,3 +56,33 @@ def test_blocked_squad_escalation_prioritizes_resume(
     assert 'echelon resume "<your answer>"' in captured.out
     assert "Q1: confirm widget team intent?" in captured.out
     assert "echelon continue" not in captured.out
+
+
+def test_ready_next_step_has_clear_subtitle_and_next_command(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    _print_next_steps(tmp_path, "done")
+
+    captured = capsys.readouterr()
+    assert "READY TO BUILD" in captured.out
+    assert "ready" in captured.out
+    assert "constitution.md" in captured.out
+    assert "HOW artifacts" in captured.out
+    assert "tasks.md" in captured.out
+    assert "next" in captured.out
+    assert "echelon harness run 001-demo" in captured.out
+    assert "\n  build\n" not in captured.out

@@ -1213,13 +1213,15 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # ── Print ──────────────────────────────────────────────────────────────
     fields: list[tuple[str, str]] = []
+    subtitle = "BUILD BLOCKED — fix blockers before running" if blockers else ""
     if not blockers:
-        for item in ready_items:
-            fields.append(("✓", item))
+        if ready_items:
+            fields.append(("ready", "\n".join(f"✓ {item}" for item in ready_items)))
         harness_cmd = f"echelon harness run {newest_spec_id}" if newest_spec_id else "echelon harness run <spec-id>"
-        fields.append(("build", harness_cmd))
+        fields.append(("next", harness_cmd))
         if warnings:
             fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
+        subtitle = "READY TO BUILD"
     else:
         if blockers:
             fields.append(("blockers", "\n".join(f"{i}. {b}" for i, b in enumerate(blockers, 1))))
@@ -1228,7 +1230,6 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if ready_items:
             fields.append(("already done", ", ".join(ready_items)))
 
-    subtitle = "BUILD BLOCKED — fix blockers before running" if blockers else ""
     _banner("NEXT STEP", fields, subtitle=subtitle)
 
 
