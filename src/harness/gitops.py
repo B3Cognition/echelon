@@ -336,41 +336,57 @@ class GitOpsManager:
                     worktree_dir, branch_name,
                 )
             except GitOpsError as e:
-                # Branch is already checked out in another working tree (typically
-                # the main project directory when echelon.run left it on the feature
-                # branch). Reuse that existing path rather than failing.
+                # Branch is already checked out somewhere else. Stale harness
+                # runs/* worktrees must be removed and retried; non-harness
+                # checkouts can still be reused for compatibility.
                 match = re.search(
                     r"already used by worktree at '([^']+)'", str(e)
                 )
                 if match:
                     existing_path = match.group(1)
-                    logger.warning(
-                        "Branch %s already checked out at %s — reusing that path",
-                        branch_name, existing_path,
-                    )
-                    # Add upstream remote to the existing path if not already present.
-                    target_url = self._config.target_repo
-                    if target_url == ".":
-                        target_url = str(self._base_dir)
-                    try:
-                        _run_git(
-                            ["remote", "add", "upstream", target_url],
-                            cwd=existing_path,
-                        )
-                    except GitOpsError:
+                    if self._is_harness_runs_worktree(existing_path):
                         logger.warning(
-                            "'upstream' remote may already exist at %s, updating URL", existing_path
+                            "Branch %s already checked out in stale harness worktree %s — removing and retrying",
+                            branch_name, existing_path,
                         )
+                        self._remove_registered_worktree(existing_path)
+                        _run_git(
+                            ["worktree", "add", str(worktree_dir), branch_name],
+                            cwd=str(self._mirror_path),
+                        )
+                        logger.info(
+                            "Created worktree at %s on feature branch %s after stale checkout cleanup",
+                            worktree_dir, branch_name,
+                        )
+                    else:
+                        logger.warning(
+                            "Branch %s already checked out at %s — reusing that path",
+                            branch_name, existing_path,
+                        )
+                        # Add upstream remote to the existing path if not already present.
+                        target_url = self._config.target_repo
+                        if target_url == ".":
+                            target_url = str(self._base_dir)
                         try:
                             _run_git(
-                                ["remote", "set-url", "upstream", target_url],
+                                ["remote", "add", "upstream", target_url],
                                 cwd=existing_path,
                             )
-                        except GitOpsError as e:
-                            logger.warning("Could not update upstream URL: %s", e)
-                    self.sync_runtime_extension(Path(existing_path))
-                    return existing_path
-                raise
+                        except GitOpsError:
+                            logger.warning(
+                                "'upstream' remote may already exist at %s, updating URL", existing_path
+                            )
+                            try:
+                                _run_git(
+                                    ["remote", "set-url", "upstream", target_url],
+                                    cwd=existing_path,
+                                )
+                            except GitOpsError as e:
+                                logger.warning("Could not update upstream URL: %s", e)
+                        self.sync_runtime_extension(Path(existing_path))
+                        return existing_path
+                else:
+                    raise
         else:
             # Legacy mode: create a new harness/* branch from default branch HEAD.
             default_branch = self.get_default_branch()
@@ -432,6 +448,28 @@ class GitOpsManager:
 
         self.sync_runtime_extension(worktree_dir)
         return str(worktree_dir)
+
+    def _is_harness_runs_worktree(self, worktree_path: str) -> bool:
+        try:
+            path = Path(worktree_path).resolve()
+            runs = _runs_dir_fn(self._base_dir).resolve()
+            return path.is_relative_to(runs)
+        except OSError:
+            return False
+
+    def _remove_registered_worktree(self, worktree_path: str) -> None:
+        try:
+            _run_git(
+                ["worktree", "remove", "--force", worktree_path],
+                cwd=str(self._mirror_path),
+            )
+        except GitOpsError as e:
+            logger.warning("Could not remove stale registered worktree at %s: %s", worktree_path, e)
+            path = Path(worktree_path)
+            if path.exists():
+                shutil.rmtree(str(path))
+                logger.info("Force-removed stale worktree directory %s from disk", path)
+        _run_git(["worktree", "prune"], cwd=str(self._mirror_path))
 
     def sync_runtime_extension(self, worktree_dir: str | Path) -> None:
         """Make Echelon's local runtime prompts available inside a harness worktree.

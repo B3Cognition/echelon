@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from harness.config import HarnessConfig
+from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager, _clean_branch_listing
 
 
@@ -93,6 +94,54 @@ def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path
         assert "Run `echelon init`" in str(exc)
     else:
         raise AssertionError("expected missing runtime extension to fail")
+
+
+def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
+    """Feature-branch mode must not reuse old harness worktrees from prior builds."""
+    mirror = tmp_path / "runs" / "mirror.git"
+    mirror.mkdir(parents=True)
+    stale = tmp_path / "runs" / "build-old" / "worktrees" / "default" / "iter-0"
+    stale.mkdir(parents=True)
+
+    gitops = _make_gitops(tmp_path)
+
+    add_error = GitOpsError(
+        f"fatal: '001-feature' is already used by worktree at '{stale}'",
+        command="git worktree add",
+    )
+
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run_git(args, cwd=None, **_kwargs):
+        calls.append((args, cwd))
+        if args[:2] == ["worktree", "add"] and len(
+            [call for call in calls if call[0][:2] == ["worktree", "add"]]
+        ) == 1:
+            raise add_error
+        return SimpleNamespace(stdout="")
+
+    with patch("harness.gitops._run_git", side_effect=fake_run_git), patch.object(
+        gitops, "sync_runtime_extension"
+    ) as sync_runtime:
+        result = gitops.create_worktree(
+            "001-feature",
+            "default",
+            0,
+            base_branch="001-feature",
+            build_id="build-new",
+        )
+
+    expected = tmp_path / "runs" / "build-new" / "worktrees" / "default" / "iter-0"
+    assert result == str(expected)
+    assert (
+        ["worktree", "remove", "--force", str(stale)],
+        str(mirror),
+    ) in calls
+    assert (
+        ["worktree", "add", str(expected), "001-feature"],
+        str(mirror),
+    ) in calls
+    sync_runtime.assert_called_once_with(expected)
 
 
 def test_clean_branch_listing_strips_git_worktree_marker():
