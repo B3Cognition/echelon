@@ -219,6 +219,25 @@ class TestSquadControllerBasics:
         # Provider must have been called (COMMANDER judgment)
         assert provider.exec_agent.called
 
+    def test_iterative_phase3_consensus_uses_max_iterations_not_generic_cap(
+        self,
+        tmp_path,
+    ):
+        """phase3-consensus can legitimately repeat up to max_iterations."""
+        provider = _mock_provider("PASS")
+        ctrl, store = _controller(tmp_path, provider, mode="semi")
+        store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=10)
+        state = store.load()
+        state["iteration"] = 4
+        state["phase_dispatch_counts"] = {"phase3-consensus": 5}
+        store.save(state)
+
+        result = ctrl.run("msg", "semi")
+
+        assert provider.exec_agent.called
+        assert result.status == "done"
+        assert store.load().get("blocked_reason") != "phase_dispatch_limit"
+
     def test_why_fail_increments_on_fail(self, tmp_path):
         """why_fail_count increments when a WHY phase returns quality_gates.fail."""
         from harness.squad_provider import SquadAgentResult

@@ -25,6 +25,14 @@ from harness.squad_state import SquadStateStore
 PHASE_TERMINAL_BLOCKED = "terminal-blocked"
 TERMINAL_PHASES = {"DONE", "done", PHASE_TERMINAL_BLOCKED}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
+ITERATIVE_PHASES = WHY_PHASES | frozenset(
+    {
+        "phase3-how",
+        "phase3-sentinel",
+        "phase3-plan",
+        "phase3-consensus",
+    }
+)
 
 # Max times the convergence guard may redirect to the same recommended phase before
 # force-advancing. Protects against agents that re-assert convergence on every dispatch.
@@ -316,7 +324,9 @@ class SquadController:
             # All other phases use MAX_PHASE_DISPATCHES.
             dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
             phase_limit = (
-                self._max_iterations if phase in WHY_PHASES else MAX_PHASE_DISPATCHES
+                self._max_iterations + 1
+                if phase in ITERATIVE_PHASES
+                else MAX_PHASE_DISPATCHES
             )
             if dispatch_count > phase_limit:
                 escalation_q = (
