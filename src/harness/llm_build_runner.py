@@ -46,6 +46,7 @@ class LlmBuildRunner:
                 exit_code=-1,
                 status="timeout",
                 impasse_file=None,
+                reason=None,
                 stdout="",
                 stderr="",
                 duration_ms=duration_ms,

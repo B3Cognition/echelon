@@ -513,6 +513,47 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_impasse_reports_marker_status(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Explicit impasse marker must not be reported as a missing marker."""
+        from harness.build_result import BuildResult
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="impasse",
+            impasse_file=None,
+            reason="scope exceeds build budget",
+            stdout="",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+
+        result = controller.run_loop(
+            max_outer=5,
+            max_inner=3,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        captured = capsys.readouterr()
+        assert "build reported status 'impasse'" in captured.err
+        assert "scope exceeds build budget" in captured.err
+        assert "missing build status marker" not in captured.err
+        state = state_store.read()
+        assert state["build_status"] == "impasse"
+        assert state["build_reason"] == "scope exceeds build budget"
+        assert provider.destroyed is True
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
     def test_llm_build_blocks_when_real_repo_gets_dirty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

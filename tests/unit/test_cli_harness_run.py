@@ -69,6 +69,36 @@ class TestHarnessRunArgParsing:
 
 @pytest.mark.unit
 class TestHarnessRunTaskFormatErrors:
+    def test_harness_run_snapshots_spec_before_preflight_exit(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "003-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+
+        from echelon.cli import _cmd_harness_run
+
+        with pytest.raises(SystemExit) as exc:
+            _cmd_harness_run(["003"])
+
+        assert exc.value.code == 1
+        capsys.readouterr()
+        snapshots = list((tmp_path / "runs" / "spec-snapshots").glob("003-test-*"))
+        assert len(snapshots) == 1
+        assert (snapshots[0] / "spec" / "spec.md").read_text(encoding="utf-8") == "# Spec\n"
+        assert (snapshots[0] / "spec" / "tasks.md").exists()
+        manifest = snapshots[0] / "snapshot.json"
+        assert manifest.exists()
+
     def test_old_task_format_exits_with_migration_guidance(
         self,
         tmp_path: Path,

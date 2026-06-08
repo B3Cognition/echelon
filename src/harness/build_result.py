@@ -26,6 +26,7 @@ class BuildResult:
     stdout: str
     stderr: str
     duration_ms: int
+    reason: Optional[str] = None
 
     @property
     def succeeded(self) -> bool:
@@ -54,6 +55,7 @@ class BuildResult:
                 exit_code=exit_code,
                 status=str(data.get("status", "unknown")),
                 impasse_file=data.get("impasse_file"),
+                reason=data.get("reason"),
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
@@ -63,6 +65,7 @@ class BuildResult:
                 exit_code=exit_code,
                 status="unknown",
                 impasse_file=None,
+                reason=None,
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,

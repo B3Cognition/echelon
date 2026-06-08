@@ -591,15 +591,26 @@ def _cmd_harness_run(args: list[str]) -> None:
         write_status as _write_spec_status,
         write_targets,
     )
+    from harness.spec_snapshot import snapshot_spec_dir
     from echelon.orchestrator import run_multi_target, validate_single_target
     from echelon.target_detection import detect_target
 
     spec_dir = find_spec_dir(spec_id, Path.cwd())
     if spec_dir is not None:
         resolved_spec_id = spec_dir.name
+        polyrepo_root = spec_dir.parent.parent
+        try:
+            snapshot_spec_dir(spec_dir, polyrepo_root)
+        except OSError as e:
+            print(
+                "✗ Could not preserve spec artifacts before harness run.\n"
+                f"  Error: {e}\n"
+                "  Refusing to continue because untracked spec work could be lost.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         frontmatter = read_frontmatter(spec_dir)
         targets_rel: list[str] = frontmatter.get("targets") or []
-        polyrepo_root = spec_dir.parent.parent
         if targets_rel:
             target = validate_single_target(targets_rel, polyrepo_root)
             sys.exit(run_multi_target(spec_id, [target], args[1:]))
@@ -1159,6 +1170,12 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         fields.append(("harness status", harness_status))
         if termination_reason:
             fields.append(("reason", termination_reason))
+        build_status = str(harness_state.get("build_status") or "")
+        build_reason = str(harness_state.get("build_reason") or "")
+        if build_status:
+            fields.append(("build status", build_status))
+        if build_reason and build_reason != "None":
+            fields.append(("build reason", build_reason))
         salvage_commit = str(harness_state.get("salvage_commit") or "")
         salvage_branch = str(harness_state.get("salvage_branch") or "")
         salvage_verified = str(harness_state.get("salvage_verified") or "")

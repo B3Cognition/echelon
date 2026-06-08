@@ -343,11 +343,10 @@ class RalphController:
                             final_verify=None,
                         )
 
-                    # Hard-stop: if the build did not complete (COMMANDER blocked
-                    # early without reaching build-8-finalize, or hit an impasse),
-                    # the status file was not written this iteration.
-                    # Ralph clears the file before each build so a missing
-                    # or non-"done" status always means this build didn't complete.
+                    # Hard-stop: if the build did not complete. Ralph clears
+                    # the status file before each build; "unknown" means the
+                    # marker was missing/unreadable, while other statuses (for
+                    # example "impasse") are explicit build outcomes.
                     if not build_result.get("passed", True):
                         preserve_worktree = True
                         salvage = _salvage_build_worktree(
@@ -357,14 +356,29 @@ class RalphController:
                             outer_iter=outer_iter,
                         )
                         from echelon.ui import banner as _ui_banner
+                        build_status = str(
+                            build_result.get("build_status") or "unknown"
+                        )
+                        build_reason = build_result.get("build_reason")
+                        if build_status == "unknown":
+                            why = "missing build status marker: .harness-build-status.json"
+                            meaning = (
+                                "COMMANDER may have changed files, but did not write "
+                                "the harness completion marker"
+                            )
+                        else:
+                            why = f"build reported status '{build_status}'"
+                            meaning = (
+                                "COMMANDER wrote the harness completion marker, "
+                                "but did not report BUILD_DONE"
+                            )
                         fields = [
                             ("spec", self._spec_id),
                             ("strategy", self._strategy_id),
-                            (
-                                "why",
-                                "missing build status marker: .harness-build-status.json",
-                            ),
+                            ("why", why),
                         ]
+                        if build_reason:
+                            fields.append(("reason", str(build_reason)))
                         if salvage:
                             fields.extend(
                                 [
@@ -374,10 +388,7 @@ class RalphController:
                             )
                         fields.extend(
                             [
-                                (
-                                    "meaning",
-                                    "COMMANDER may have changed files, but did not write the harness completion marker",
-                                ),
+                                ("meaning", meaning),
                                 (
                                     "next",
                                     f"echelon harness resume {self._spec_id}  (recover and finalize this build)",
@@ -389,6 +400,11 @@ class RalphController:
                             fields,
                             file=sys.stderr,
                         )
+                        blocked_state = {
+                            **(salvage or {}),
+                            "build_status": build_status,
+                            "build_reason": build_reason,
+                        }
                         return self._finalize(
                             status="blocked",
                             reason="build_incomplete",
@@ -398,7 +414,7 @@ class RalphController:
                             tokens_used=tokens_used,
                             final_verify=None,
                             branch=salvage.get("salvage_branch") if salvage else None,
-                            extra_state=salvage,
+                            extra_state=blocked_state,
                         )
 
                     # Run verify
@@ -843,6 +859,8 @@ class RalphController:
             return {
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,
+                "build_status": result.status,
+                "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": 0,
                 "impasse": result.is_impasse,
@@ -857,6 +875,8 @@ class RalphController:
         return {
             "exit_code": result.exit_code,
             "passed": result.exit_code == 0,
+            "build_status": "done" if result.exit_code == 0 else "unknown",
+            "build_reason": None,
             "duration_s": result.duration_ms / 1000.0,
             "tokens": _estimate_tokens(result),
             "impasse": False,
