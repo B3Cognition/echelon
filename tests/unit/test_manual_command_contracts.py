@@ -76,6 +76,22 @@ class TestManualCommandContracts:
         assert "treat it as authoritative" in text
         assert "do not locate, glob, or\nsearch for `specs/{spec_id}-*/`" in text
 
+    def test_harness_run_command_accepts_authoritative_spec_dir(self) -> None:
+        text = (COMMAND_DIR / "echelon.harness-run.md").read_text(encoding="utf-8")
+
+        assert "| `spec_dir` |" in text
+        assert "When `spec_dir` is provided, treat it as authoritative" in text
+        assert "do not locate or glob `specs/{spec_id}-*/`" in text
+        assert "`{spec_dir}/spec.md`" in text
+        assert "`{spec_dir}/tasks.md`" in text
+        assert "`{spec_dir}/coverage-map.md`" in text
+        assert 'LESSONS_FILE="{spec_dir}/lessons.md"' in text
+        assert 'SPEC_DIR_REL="${SPEC_DIR#$(pwd)/}"' in text
+        assert 'SPEC_DIR_REL="${SPEC_DIR_REL#$(pwd)/}"' in text
+        assert "`specs/{spec_id}-*/spec.md`" not in text
+        assert "`specs/{spec_id}-*/tasks.md`" not in text
+        assert "LESSONS_FILE=\"specs/{spec_id}-{spec_name}/lessons.md\"" not in text
+
     def test_investigate_command_uses_workspace_specs_for_standalone_runs(self) -> None:
         text = (COMMAND_DIR / "echelon.investigate.md").read_text(encoding="utf-8")
 

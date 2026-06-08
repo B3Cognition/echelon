@@ -75,12 +75,13 @@ Extract from `$ARGUMENTS`:
 | `max_outer` | `3` | Max build→verify→feedback cycles |
 | `auto_merge` | `true` | Merge PR automatically on convergence |
 | `strategy` | `default` | `default` \| `codegen` — which build engine to use for Step 5 |
+| `spec_dir` | — | Optional. Authoritative spec artifact directory supplied by Python harness/CLI. |
 
 If `spec_id` is missing, ask: **"Which spec? Provide a spec ID (e.g., `001`)."** and stop.
 
 Recognised `strategy` patterns in `$ARGUMENTS`: `strategy=codegen`, `strategy=default`. Anything not recognised defaults to `default`.
 
-Locate the spec directory: find `specs/{spec_id}-*/` (e.g., `specs/001-weather-dashboard/`). If not found, report: **"Spec `{spec_id}` not found in `specs/`."** and stop.
+When `spec_dir` is provided, treat it as authoritative and do not locate or glob `specs/{spec_id}-*/`. If `spec_dir` is absent, locate the spec directory: find `specs/{spec_id}-*/` (e.g., `specs/001-weather-dashboard/`). If not found, report: **"Spec `{spec_id}` not found in `specs/`."** and stop.
 
 Extract `{spec_name}` from the directory name (e.g., `weather-dashboard` from `001-weather-dashboard`).
 
@@ -115,14 +116,15 @@ The worktree is a checkout of the feature branch. All build output goes into the
 After creating the worktree, sync any spec files present in CWD but missing from the worktree (e.g., `coverage-map.md` written by echelon but not yet committed to the branch):
 
 ```bash
-SPEC_DIR="specs/{spec_id}-{spec_name}"
+SPEC_DIR="{spec_dir}"
+SPEC_DIR_REL="${SPEC_DIR#$(pwd)/}"
 if [ -d "${SPEC_DIR}" ]; then
-  mkdir -p "{worktree_path}/${SPEC_DIR}"
+  mkdir -p "{worktree_path}/${SPEC_DIR_REL}"
   for f in "${SPEC_DIR}"/*; do
     [ -f "${f}" ] || continue
     base="${f##*/}"
-    if [ ! -f "{worktree_path}/${SPEC_DIR}/${base}" ]; then
-      cp "${f}" "{worktree_path}/${SPEC_DIR}/${base}"
+    if [ ! -f "{worktree_path}/${SPEC_DIR_REL}/${base}" ]; then
+      cp "${f}" "{worktree_path}/${SPEC_DIR_REL}/${base}"
     fi
   done
 fi
@@ -189,7 +191,7 @@ This makes the fix durable — it is now in the worktree's git history and canno
 
 Read the lessons file for this spec and the project-wide pitfalls with the Read tool. The lessons file records invariants learned from previous failed runs.
 
-- `specs/{spec_id}-{spec_name}/lessons.md` (if missing, treat as `(no lessons yet)`)
+- `{spec_dir}/lessons.md` (if missing, treat as `(no lessons yet)`)
 - `.specify/knowledge-base/pitfalls.yaml` (if missing, treat as `(no pitfalls yet)`)
 
 **If either file has content:** these are HARD constraints for the build step. Every lesson is an invariant that MUST NOT be violated by any implementation. Pass them verbatim to the strategy:
@@ -205,10 +207,10 @@ Always pass lessons through even if they seem obvious. Do not skip this step; le
 
 Read from the **worktree path** (synced in Step 4 — this is the single source of truth):
 
-- `specs/{spec_id}-*/spec.md` — the feature requirements
-- `specs/{spec_id}-*/tasks.md` — the implementation tasks (may include `## Bugfix N:` sections appended by `echelon.bugfix`)
-- `specs/{spec_id}-*/bugfix-*.md` — if any exist, read the latest one. This is the diagnosis report from `echelon.bugfix`: root cause, fix scope, test strategy. Pass it to the build step as additional context so the implementer knows exactly what to fix and what test to write.
-- `specs/{spec_id}-*/fulfillment-gaps.md` — if present, read it as mandatory implementation context. These are verified missing spec-coverage tasks and must be addressed before convergence.
+- `{spec_dir}/spec.md` — the feature requirements
+- `{spec_dir}/tasks.md` — the implementation tasks (may include `## Bugfix N:` sections appended by `echelon.bugfix`)
+- `{spec_dir}/bugfix-*.md` — if any exist, read the latest one. This is the diagnosis report from `echelon.bugfix`: root cause, fix scope, test strategy. Pass it to the build step as additional context so the implementer knows exactly what to fix and what test to write.
+- `{spec_dir}/fulfillment-gaps.md` — if present, read it as mandatory implementation context. These are verified missing spec-coverage tasks and must be addressed before convergence.
 
 **Dispatch on `strategy`:**
 
@@ -284,7 +286,7 @@ Parse the Docker exit code:
 
 After Docker verification passes, check whether any requirements lack automated coverage.
 
-Look for `specs/{spec_id}-*/coverage-map.md` in the current working directory.
+Look for `{spec_dir}/coverage-map.md` in the current working directory.
 
 **If coverage-map.md does not exist:**
 - Warn: **"No coverage-map.md found for spec {spec_id}. Proceeding without coverage check."**
@@ -317,10 +319,10 @@ Read the verification failure output from Step 6. Follow `echelon.feedback` inst
 
 ## Step 7b: Write Lessons
 
-If `outer_iter > 0` (at least one feedback cycle was needed) or Docker verification failed at any point, extract the invariants learned and append them to `specs/{spec_id}-{spec_name}/lessons.md` in CWD:
+If `outer_iter > 0` (at least one feedback cycle was needed) or Docker verification failed at any point, extract the invariants learned and append them to `{spec_dir}/lessons.md` in CWD:
 
 ```bash
-LESSONS_FILE="specs/{spec_id}-{spec_name}/lessons.md"
+LESSONS_FILE="{spec_dir}/lessons.md"
 touch "${LESSONS_FILE}"
 ```
 
@@ -349,7 +351,10 @@ Example from the SPA base path bug:
 Copy the updated `lessons.md` into the worktree so it is committed with the build:
 
 ```bash
-cp "${LESSONS_FILE}" "{worktree_path}/specs/{spec_id}-{spec_name}/lessons.md"
+SPEC_DIR_REL="{spec_dir}"
+SPEC_DIR_REL="${SPEC_DIR_REL#$(pwd)/}"
+mkdir -p "{worktree_path}/${SPEC_DIR_REL}"
+cp "${LESSONS_FILE}" "{worktree_path}/${SPEC_DIR_REL}/lessons.md"
 ```
 
 If `outer_iter = 0` and verification passed on the first attempt: skip this step.

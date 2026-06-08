@@ -8,7 +8,10 @@ Convert verified fulfillment gaps into harness-ready follow-up tasks.
 
 ## Instructions
 
-Parse `spec_id` and optional `from=<path>`. Locate `specs/{spec_id}-*/`.
+Parse `spec_id`, optional `spec_dir=<absolute-or-repo-relative-path>`, and
+optional `from=<path>`.
+
+When `spec_dir` is present, treat it as authoritative and do not locate or glob `specs/{spec_id}-*/`. When `spec_dir` is absent, locate `specs/{spec_id}-*/`.
 When `from` is absent, use `{spec_dir}/fulfillment-gaps.md`.
 
 ALWAYS require an existing fulfillment gaps file before mutating artifacts.

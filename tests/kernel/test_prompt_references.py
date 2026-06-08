@@ -358,6 +358,33 @@ def test_manual_specialist_commands_route_state_and_journal_through_echelon_resu
         assert "journal_entries:" in text
 
 
+def test_active_run_specialist_commands_reuse_state_spec_dir_when_present():
+    for prompt in [
+        EXTENSION_ROOT / "commands" / "echelon.innovate.md",
+        EXTENSION_ROOT / "commands" / "echelon.ground.md",
+    ]:
+        text = prompt.read_text()
+
+        assert "If `state.json.spec_dir` is present, treat it as authoritative" in text
+        assert "do not locate or glob `specs/{spec_id}-*/`" in text
+
+
+def test_bugfix_and_reopen_phases_accept_authoritative_spec_dir():
+    expected = {
+        EXTENSION_ROOT / "workflow" / "phases" / "bugfix-1-init.md":
+            "Optional. Authoritative spec artifact directory",
+        EXTENSION_ROOT / "workflow" / "phases" / "reopen-1-apply-gaps.md":
+            "optional `spec_dir=<absolute-or-repo-relative-path>`",
+    }
+
+    for prompt, marker in expected.items():
+        text = prompt.read_text()
+
+        assert marker in text
+        assert "When `spec_dir` is present, treat it as authoritative" in text
+        assert "do not locate or glob `specs/{spec_id}-*/`" in text
+
+
 def test_init_routes_post_creation_state_updates_through_echelon_result():
     prompt = EXTENSION_ROOT / "workflow" / "phases" / "init.md"
     text = prompt.read_text()

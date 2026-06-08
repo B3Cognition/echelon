@@ -44,18 +44,24 @@ Extract from `$ARGUMENTS`:
 | Parameter | Default | Description |
 | --------- | ------- | ----------- |
 | `spec_id` | — | Required if multiple specs exist (e.g. `001`). |
+| `spec_dir` | — | Optional. Authoritative spec artifact directory supplied by the harness or resume state. |
 | `description` | — | Required. What is broken or what needs to change. |
 
 If `description` is missing: ask **"What needs to be fixed or changed?"** and stop.
 
-If `spec_id` is absent and multiple specs exist under `specs/`, list them and ask which one. If only one spec exists, use it automatically.
+When `spec_dir` is present, treat it as authoritative and do not locate or glob `specs/{spec_id}-*/`. Extract `{spec_name}` from the `spec_dir` basename.
 
-Locate `specs/{spec_id}-*/`. Extract `{spec_name}`. If not found: report **"Spec `{spec_id}` not found."** and stop.
+If `spec_dir` is absent and `spec_id` is absent and multiple specs exist under
+`specs/`, list them and ask which one. If only one spec exists, use it
+automatically.
+
+If `spec_dir` is absent, locate `specs/{spec_id}-*/`. Extract `{spec_name}`. If
+not found: report **"Spec `{spec_id}` not found."** and stop.
 
 Read the following — pass to every agent dispatch:
 
-- `specs/{spec_id}-{spec_name}/spec.md`
-- `specs/{spec_id}-{spec_name}/coverage-map.md` (if exists)
-- `specs/{spec_id}-{spec_name}/tasks.md` (if exists)
+- `{spec_dir}/spec.md`
+- `{spec_dir}/coverage-map.md` (if exists)
+- `{spec_dir}/tasks.md` (if exists)
 - Active run `deploy-state.json` if it exists (`runs/.current`, `squad/.current`, legacy `.specify/squad` fallback)
 - The relevant source files based on `description` (the component, hook, API call, config file, or test most likely related to the issue)
