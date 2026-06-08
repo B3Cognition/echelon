@@ -99,9 +99,9 @@ write `{"status": "blocked", "reason": "spec {spec_id} not found"}` to
 
 Read the following — pass to every agent dispatch:
 
-- `specs/{spec_id}-{spec_name}/spec.md`
-- `specs/{spec_id}-{spec_name}/coverage-map.md` (if exists)
-- `specs/{spec_id}-{spec_name}/tasks.md` (if exists)
+- `{spec_dir}/spec.md`
+- `{spec_dir}/coverage-map.md` (if exists)
+- `{spec_dir}/tasks.md` (if exists)
 
 If `worktree` was provided, use it as the base path when reading source files in Steps 3–5. Otherwise read source files from the main project directory.
 
@@ -235,12 +235,12 @@ If the feature branch does not exist: write `{"status": "blocked", "reason": "fe
 Determine the next review-fix index:
 
 ```bash
-ls specs/{spec_id}-{spec_name}/review-fix-*.md 2>/dev/null | wc -l
+ls "{spec_dir}"/review-fix-*.md 2>/dev/null | wc -l
 ```
 
 Let `{n}` = count + 1. Each diagnosed group increments `{n}` by one.
 
-For each group `G{i}` that produced a diagnosis, write `specs/{spec_id}-{spec_name}/review-fix-{n}.md`:
+For each group `G{i}` that produced a diagnosis, write `{spec_dir}/review-fix-{n}.md`:
 
 ```markdown
 # Review Fix {n}: {reviewer} — {one-line summary of the group's concern}
@@ -267,7 +267,7 @@ Comments:
 {from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
-Then append tasks to `specs/{spec_id}-{spec_name}/tasks.md` using `extension/templates/review-fix-task-fragment.md` and the canonical task row contract:
+Then append tasks to `{spec_dir}/tasks.md` using `extension/templates/review-fix-task-fragment.md` and the canonical task row contract:
 
 ```markdown
 ---
@@ -325,8 +325,8 @@ Print the handoff block and stop:
          Fix: {what changes}
 
   Artifacts written
-    specs/{spec_id}-{spec_name}/review-fix-{n}.md  (×{diagnosed})
-    specs/{spec_id}-{spec_name}/tasks.md  (RF{n}-T* appended)
+    {spec_dir}/review-fix-{n}.md  (×{diagnosed})
+    {spec_dir}/tasks.md  (RF{n}-T* appended)
 ════════════════════════════════════════════════
 ```
 

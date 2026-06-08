@@ -62,6 +62,12 @@ class TestManualCommandContracts:
             assert ".specify/specs/{spec_id}-*/" not in text
             assert "specs/{spec_id}-*/" in text
 
+    def test_status_command_prefers_state_spec_dir_for_artifact_inventory(self) -> None:
+        text = (COMMAND_DIR / "echelon.status.md").read_text(encoding="utf-8")
+
+        assert "If `state.json.spec_dir` is present, use it as the spec directory" in text
+        assert "Only fall back to `specs/{spec_id}-*/`" in text
+
     def test_feedback_command_locates_specs_from_workspace_specs_dir(self) -> None:
         text = (COMMAND_DIR / "echelon.feedback.md").read_text(encoding="utf-8")
 
@@ -75,6 +81,11 @@ class TestManualCommandContracts:
         assert "`spec_dir`" in text
         assert "treat it as authoritative" in text
         assert "do not locate, glob, or\nsearch for `specs/{spec_id}-*/`" in text
+        assert "`{spec_dir}/spec.md`" in text
+        assert "`{spec_dir}/tasks.md`" in text
+        assert 'ls "{spec_dir}"/review-fix-*.md' in text
+        assert "`specs/{spec_id}-{spec_name}/spec.md`" not in text
+        assert "`specs/{spec_id}-{spec_name}/tasks.md`" not in text
 
     def test_harness_run_command_accepts_authoritative_spec_dir(self) -> None:
         text = (COMMAND_DIR / "echelon.harness-run.md").read_text(encoding="utf-8")

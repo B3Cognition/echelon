@@ -56,12 +56,12 @@ Proceed with the rest of Step 5 on the newly created (or existing) feature branc
 Determine the next bugfix index:
 
 ```bash
-ls specs/{spec_id}-{spec_name}/bugfix-*.md 2>/dev/null | wc -l
+ls "{spec_dir}"/bugfix-*.md 2>/dev/null | wc -l
 ```
 
 Let `{n}` = count + 1 (e.g. `bugfix-1.md` if none exist yet).
 
-Write `specs/{spec_id}-{spec_name}/bugfix-{n}.md`:
+Write `{spec_dir}/bugfix-{n}.md`:
 
 ```markdown
 # Bugfix {n}: {description}
@@ -82,7 +82,7 @@ Write `specs/{spec_id}-{spec_name}/bugfix-{n}.md`:
 {from speckit-echelon-spec-guard (SPEC GUARD): which requirement(s) this addresses, any scope notes}
 ```
 
-Then append the bugfix tasks to `specs/{spec_id}-{spec_name}/tasks.md`. Use `extension/templates/bugfix-task-fragment.md` and the canonical task row contract. Add a clearly delimited section at the end:
+Then append the bugfix tasks to `{spec_dir}/tasks.md`. Use `extension/templates/bugfix-task-fragment.md` and the canonical task row contract. Add a clearly delimited section at the end:
 
 ```markdown
 ---
@@ -128,8 +128,8 @@ Print the handoff block and stop:
   Risk:       {risk surface summary}
 
   Artifacts written
-    specs/{spec_id}-{spec_name}/bugfix-{n}.md
-    specs/{spec_id}-{spec_name}/tasks.md  (BF{n} tasks appended)
+    {spec_dir}/bugfix-{n}.md
+    {spec_dir}/tasks.md  (BF{n} tasks appended)
 
   Next step — choose your build strategy:
 

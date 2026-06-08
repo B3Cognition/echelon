@@ -385,6 +385,18 @@ def test_bugfix_and_reopen_phases_accept_authoritative_spec_dir():
         assert "do not locate or glob `specs/{spec_id}-*/`" in text
 
 
+def test_bugfix_finalize_writes_to_authoritative_spec_dir():
+    text = (
+        EXTENSION_ROOT / "workflow" / "phases" / "bugfix-5-finalize.md"
+    ).read_text()
+
+    assert 'ls "{spec_dir}"/bugfix-*.md' in text
+    assert "Write `{spec_dir}/bugfix-{n}.md`" in text
+    assert "append the bugfix tasks to `{spec_dir}/tasks.md`" in text
+    assert "specs/{spec_id}-{spec_name}/bugfix-{n}.md" not in text
+    assert "specs/{spec_id}-{spec_name}/tasks.md" not in text
+
+
 def test_init_routes_post_creation_state_updates_through_echelon_result():
     prompt = EXTENSION_ROOT / "workflow" / "phases" / "init.md"
     text = prompt.read_text()
