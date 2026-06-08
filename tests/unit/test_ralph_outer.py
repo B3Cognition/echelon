@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -404,6 +405,60 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+
+    def test_llm_build_blocks_when_real_repo_gets_dirty(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Harness detects when the LLM writes outside the isolated worktree."""
+        from harness.build_result import BuildResult
+
+        project = tmp_path / "project"
+        project.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=project, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=project, check=True)
+        (project / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=project, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=project, check=True)
+
+        worktree = project / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+
+        llm_build_runner = MagicMock()
+
+        def dirty_real_repo(_worktree_path: str, _prompt: str):
+            (project / "escaped.txt").write_text("wrong root\n", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="done",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = dirty_real_repo
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.base_dir = project
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        captured = capsys.readouterr()
+        assert "CONTAINMENT VIOLATION" in captured.err
+        assert "escaped.txt" in captured.err
+        assert state_store.read()["termination_reason"] == "containment_violation"
+        gitops.commit.assert_not_called()
     def test_converges_second_outer_iteration(self, tmp_path: Path) -> None:
         """Verify fails first outer, passes on second outer -> converged."""
         # First outer: verify fails, inner loop fails (different errors to avoid same-failure)

@@ -32,6 +32,7 @@ VALID_TERMINATION_REASONS = {
     "no_progress",
     "publish_failed",
     "verify_command_needed",
+    "containment_violation",
 }
 
 

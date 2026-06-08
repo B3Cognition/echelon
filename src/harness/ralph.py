@@ -261,11 +261,39 @@ class RalphController:
 
                     # Run build
                     iter_prompt = self._make_iter_prompt(build_prompt, outer_iter, last_verify_failures_text)
+                    containment_before = _snapshot_project_status(
+                        getattr(self._gitops, "base_dir", None),
+                        worktree_path,
+                    )
                     build_result = self._exec_build(
                         handle, build_command, strategy_context,
                         worktree_path=worktree_path,
                         prompt=iter_prompt,
                     )
+                    containment_violation = _detect_containment_violation(
+                        containment_before,
+                        getattr(self._gitops, "base_dir", None),
+                        worktree_path,
+                    )
+                    if containment_violation is not None:
+                        preserve_worktree = True
+                        _print_containment_violation_banner(
+                            self._spec_id,
+                            self._strategy_id,
+                            containment_violation,
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason="containment_violation",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=None,
+                            extra_state={
+                                "containment_violation": containment_violation,
+                            },
+                        )
                     tokens_used += build_result.get("tokens", 0)
 
                     # Log build iteration
@@ -1503,6 +1531,7 @@ class RalphController:
         tokens_used: int,
         final_verify: Optional[VerifyResult],
         branch: Optional[str] = None,
+        extra_state: Optional[Dict[str, Any]] = None,
     ) -> LoopResult:
         """Write final state and return LoopResult."""
         # Map to state status
@@ -1531,6 +1560,8 @@ class RalphController:
             state["last_verify_result"] = (
                 _verify_to_dict(final_verify) if final_verify else None
             )
+            if extra_state:
+                state.update(extra_state)
             self._state_store.write(state)
         except Exception as e:
             logger.warning("Failed to update final state: %s", e)
@@ -1797,6 +1828,127 @@ def _clear_build_status(worktree_path: str) -> None:
         (Path(worktree_path) / BUILD_STATUS_FILENAME).unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def _snapshot_project_status(
+    project_dir: Any,
+    worktree_path: str,
+) -> Optional[Dict[str, Any]]:
+    """Return the real target repo status before an LLM step.
+
+    The harness worktree may live under ``runs/`` inside the target repo. That
+    is okay: we compare snapshots instead of requiring the target repo to be
+    pristine. A changed snapshot means the LLM wrote somewhere outside the
+    isolated worktree Ralph is managing.
+    """
+    try:
+        project = Path(project_dir)
+    except TypeError:
+        return None
+    if not project.exists():
+        return None
+    try:
+        if project.resolve() == Path(worktree_path).resolve():
+            return None
+    except OSError:
+        return None
+    status = _git_status_lines(project)
+    if status is None:
+        return None
+    return {
+        "project_dir": str(project),
+        "before_status": status,
+    }
+
+
+def _detect_containment_violation(
+    before: Optional[Dict[str, Any]],
+    project_dir: Any,
+    worktree_path: str,
+) -> Optional[Dict[str, Any]]:
+    """Detect writes to the real target repo during an isolated harness step."""
+    if before is None:
+        return None
+    try:
+        project = Path(project_dir)
+    except TypeError:
+        return None
+    after = _git_status_lines(project)
+    if after is None:
+        return None
+    before_lines = list(before.get("before_status") or [])
+    if after == before_lines:
+        return None
+    return {
+        "project_dir": str(project),
+        "worktree_path": str(worktree_path),
+        "before_status": before_lines,
+        "after_status": after,
+        "changed_status": _status_delta(before_lines, after),
+    }
+
+
+def _git_status_lines(project: Path) -> Optional[List[str]]:
+    try:
+        inside = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return None
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all"],
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if status.returncode != 0:
+            return None
+        return [line for line in status.stdout.splitlines() if line.strip()]
+    except Exception:
+        return None
+
+
+def _status_delta(before: List[str], after: List[str]) -> List[str]:
+    before_set = set(before)
+    return [line for line in after if line not in before_set]
+
+
+def _print_containment_violation_banner(
+    spec_id: str,
+    strategy_id: str,
+    violation: Dict[str, Any],
+) -> None:
+    from echelon.ui import banner as _ui_banner
+
+    changed = "\n".join(violation.get("changed_status") or [])
+    if not changed:
+        changed = "\n".join(violation.get("after_status") or [])
+    _ui_banner(
+        "HARNESS — CONTAINMENT VIOLATION",
+        [
+            ("spec", spec_id),
+            ("strategy", strategy_id),
+            ("project", str(violation.get("project_dir") or "")),
+            ("worktree", str(violation.get("worktree_path") or "")),
+            (
+                "why",
+                "The LLM build changed the real target repo while Ralph was managing an isolated worktree.",
+            ),
+            ("changed", changed or "(status changed, no changed lines captured)"),
+            (
+                "next",
+                f"inspect/salvage the real repo changes, then rerun: echelon harness run {spec_id}",
+            ),
+        ],
+        file=sys.stderr,
+    )
 
 
 def _estimate_tokens(result: ExecResult) -> int:

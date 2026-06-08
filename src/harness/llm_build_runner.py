@@ -32,7 +32,12 @@ class LlmBuildRunner:
         exit_code = self._prompt_executor.exec_prompt(
             worktree_path,
             prompt,
-            extra_env={"HARNESS_BUILD_STATUS_FILE": str(status_file)},
+            extra_env={
+                "HARNESS_BUILD_STATUS_FILE": str(status_file),
+                "HARNESS_WORKTREE": worktree_path,
+                "PROJECT_ROOT": worktree_path,
+                "SPEC_KIT_ROOT": worktree_path,
+            },
         )
         duration_ms = int((time.monotonic() - start) * 1000)
 
