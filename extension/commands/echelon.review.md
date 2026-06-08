@@ -86,11 +86,16 @@ Extract from `$ARGUMENTS`:
 | --------- | ------- | ----------- |
 | `spec_id` | — | Required. The spec being reviewed (e.g. `006`). |
 | `pr_url` | — | Required. Full GitHub or GitLab PR/MR URL. |
+| `spec_dir` | — | Optional. Authoritative spec artifact directory supplied by the harness. |
 | `worktree` | — | Optional. Absolute path to the harness worktree containing the built code. |
 
 If `spec_id` or `pr_url` is missing: write `{"status": "blocked", "reason": "missing spec_id or pr_url"}` to `$HARNESS_BUILD_STATUS_FILE` and stop.
 
-Locate `specs/{spec_id}-*/`. Extract `{spec_name}`. If not found: write `{"status": "blocked", "reason": "spec {spec_id} not found"}` to `$HARNESS_BUILD_STATUS_FILE` and stop.
+If `spec_dir` is present, treat it as authoritative and do not locate, glob, or
+search for `specs/{spec_id}-*/`. Extract `{spec_name}` from the `spec_dir`
+basename. If `spec_dir` is absent, locate `specs/{spec_id}-*/`. If not found:
+write `{"status": "blocked", "reason": "spec {spec_id} not found"}` to
+`$HARNESS_BUILD_STATUS_FILE` and stop.
 
 Read the following — pass to every agent dispatch:
 

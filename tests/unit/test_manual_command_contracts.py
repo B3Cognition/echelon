@@ -69,6 +69,13 @@ class TestManualCommandContracts:
         assert "Scan `specs/`" in text
         assert "Check specs/ for available IDs." in text
 
+    def test_review_command_accepts_authoritative_spec_dir(self) -> None:
+        text = (COMMAND_DIR / "echelon.review.md").read_text(encoding="utf-8")
+
+        assert "`spec_dir`" in text
+        assert "treat it as authoritative" in text
+        assert "do not locate, glob, or\nsearch for `specs/{spec_id}-*/`" in text
+
     def test_investigate_command_uses_workspace_specs_for_standalone_runs(self) -> None:
         text = (COMMAND_DIR / "echelon.investigate.md").read_text(encoding="utf-8")
 

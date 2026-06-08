@@ -123,6 +123,11 @@ def _parse_pr_url(pr_url: str, pr_host: str) -> Optional[_PrRef]:
     return None
 
 
+def _find_review_spec_dir(base_dir: Path, spec_id: str) -> Path | None:
+    matches = sorted(base_dir.glob(f"specs/{spec_id}-*"))
+    return matches[0] if matches else None
+
+
 # ---------------------------------------------------------------------------
 # ReviewLoopController
 # ---------------------------------------------------------------------------
@@ -220,7 +225,11 @@ class ReviewLoopController:
                 last_comment_time = newest
 
             # Invoke echelon.review to produce review-fix-N.md + tasks
-            fix_tokens = self._invoke_review_skill(pr_url, comments)
+            fix_tokens = self._invoke_review_skill(
+                pr_url,
+                comments,
+                worktree_path=worktree_path,
+            )
             tokens_used += fix_tokens
 
             # Mark all processed comments as seen so we don't re-process them
@@ -679,6 +688,8 @@ class ReviewLoopController:
         self,
         pr_url: str,
         comments: List[ReviewComment],
+        *,
+        worktree_path: str = "",
     ) -> int:
         """Invoke echelon.review via claude -p subprocess.
 
@@ -697,6 +708,11 @@ class ReviewLoopController:
 
         from harness.skill_loader import resolve_llm_prompt
         args = f"{self._spec_id} pr_url={pr_url}"
+        spec_dir = _find_review_spec_dir(self._base_dir, self._spec_id)
+        if spec_dir is not None:
+            args += f" spec_dir={spec_dir}"
+        if worktree_path:
+            args += f" worktree={worktree_path}"
         prompt = resolve_llm_prompt(
             build_command="echelon review",
             arguments=args,
