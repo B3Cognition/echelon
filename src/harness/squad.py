@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import signal
 import time
 from dataclasses import dataclass
@@ -71,12 +72,14 @@ def _constitution_artifact_is_real(project_root: Path) -> bool:
     text = path.read_text(errors="replace")
     template_markers = (
         "[PROJECT_NAME]",
-        "[PRINCIPLE_1_NAME]",
         "[CONSTITUTION_VERSION]",
         "[RATIFICATION_DATE]",
         "[LAST_AMENDED_DATE]",
     )
-    return not any(marker in text for marker in template_markers)
+    return not any(marker in text for marker in template_markers) and not re.search(
+        r"\[PRINCIPLE_[0-9]+_NAME\]",
+        text,
+    )
 
 
 def _blocked_banner(phase: str, reason: str, question: str) -> None:

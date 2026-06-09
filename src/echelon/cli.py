@@ -1140,6 +1140,20 @@ def _has_tracked_checkout_changes(project_root: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def _constitution_template_markers(text: str) -> list[str]:
+    import re as _re
+
+    explicit_markers = (
+        "[PROJECT_NAME]",
+        "[CONSTITUTION_VERSION]",
+        "[RATIFICATION_DATE]",
+        "[LAST_AMENDED_DATE]",
+    )
+    markers = [marker for marker in explicit_markers if marker in text]
+    markers.extend(sorted(set(_re.findall(r"\[PRINCIPLE_[0-9]+_NAME\]", text))))
+    return markers
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -1247,12 +1261,14 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             "       (CHIEF will invoke speckit.constitution and fill it)"
         )
     else:
-        text = const_path.read_text(errors="replace")
-        if "[PROJECT_NAME]" in text or "[PRINCIPLE_1_NAME]" in text:
+        markers = _constitution_template_markers(const_path.read_text(errors="replace"))
+        if markers:
             blockers.append(
-                "constitution.md is still the blank template\n"
+                "unresolved constitution template markers remain: "
+                + ", ".join(markers)
+                + "\n"
                 "     → echelon continue\n"
-                "       (CHIEF will invoke speckit.constitution and fill it)"
+                "       (CHIEF will repair constitution.md before continuing)"
             )
         else:
             ready_items.append("constitution.md ✓")
@@ -1913,16 +1929,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if not const_path.exists():
         return "phase1-constitution"
     const_text = const_path.read_text(errors="replace")
-    if any(
-        marker in const_text
-        for marker in (
-            "[PROJECT_NAME]",
-            "[PRINCIPLE_1_NAME]",
-            "[CONSTITUTION_VERSION]",
-            "[RATIFICATION_DATE]",
-            "[LAST_AMENDED_DATE]",
-        )
-    ):
+    if _constitution_template_markers(const_text):
         return "phase1-constitution"
 
     # 1. WHY2 failures — fix spec first, so CARTOGRAPHER runs before HOW

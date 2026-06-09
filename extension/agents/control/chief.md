@@ -45,7 +45,14 @@ matching protocol below.
 ### Creation Mode
 
 **Entry condition:** `.specify/memory/constitution.md` does not exist or still
-contains the blank template marker `[PROJECT_NAME]`.
+contains any blank template marker.
+
+Treat these markers as incomplete constitution output:
+- `[PROJECT_NAME]`
+- `[PRINCIPLE_1_NAME]` and any `[PRINCIPLE_N_NAME]`
+- `[CONSTITUTION_VERSION]`
+- `[RATIFICATION_DATE]`
+- `[LAST_AMENDED_DATE]`
 
 **Protocol:**
 
@@ -71,11 +78,15 @@ contains the blank template marker `[PROJECT_NAME]`.
 4. **Verify the result:**
    ```bash
    ls -la .specify/memory/constitution.md && \
-   grep -E '\[PROJECT_NAME\]|\[PRINCIPLE_1_NAME\]' .specify/memory/constitution.md \
+   grep -nE '\[PROJECT_NAME\]|\[PRINCIPLE_[0-9]+_NAME\]|\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' .specify/memory/constitution.md \
      && echo "PLACEHOLDERS_FOUND" || echo "CLEAN"
    ```
 
 5. **Fix remaining placeholders** if `PLACEHOLDERS_FOUND`:
+   - If a line contains a placeholder followed by a concrete replacement, such as `[PRINCIPLE_1_NAME] -> I. Single-Repo Scope Fence`, remove the placeholder and arrow so only the concrete replacement remains.
+   - Replace date/version/project markers with concrete values.
+   - Re-run the verification command. Do not emit `verdict: DONE` while any marker remains.
+
    ```bash
    TODAY=$(date +%Y-%m-%d)
    sed -i '' \

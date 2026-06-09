@@ -86,3 +86,35 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     assert "next" in captured.out
     assert "echelon harness run 001-demo" in captured.out
     assert "\n  build\n" not in captured.out
+
+
+def test_partial_constitution_placeholders_are_reported_precisely(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text(
+        "# Constitution\n\n[PRINCIPLE_1_NAME] -> I. Real Principle\n",
+        encoding="utf-8",
+    )
+    run_dir = tmp_path / "runs" / "spec-20260609-152410-385227"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "completed_phases": ["phase1-constitution"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "unresolved constitution template marker" in captured.out
+    assert "[PRINCIPLE_1_NAME]" in captured.out
+    assert "blank template" not in captured.out
