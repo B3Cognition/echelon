@@ -335,21 +335,17 @@ echelon_result:
     - {spec_dir}/data-model.md
     - {spec_dir}/api-contracts.md
   journal_entries:
-    - id: null
-      type: adr_self_check
+    - type: adr_self_check
       phase: phase3-how
       agent: speckit-echelon-architect (ARCHITECT)
-      timestamp: null
       data:
         adr_id: "ADR-<NNN>"
         never_rule_result: "<PASS | CONCERN>"
         consistency_result: "<PASS | CONFLICT>"
         concerns: ["<concern if any — omit array if none>"]
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-how
       agent: speckit-echelon-architect (ARCHITECT)
-      timestamp: null
       data:
         artifact: "architecture.md"
         section: "<decision area>"

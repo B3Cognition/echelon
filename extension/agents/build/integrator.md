@@ -202,11 +202,9 @@ echelon_result:
   output_files:
     - {spec_dir}/integration-report.md
   journal_entries:
-    - id: null
-      type: integration_finding
+    - type: integration_finding
       phase: build
       agent: speckit-echelon-integrator (INTEGRATOR)
-      timestamp: null
       data:
         components_checked: []
         failures: []

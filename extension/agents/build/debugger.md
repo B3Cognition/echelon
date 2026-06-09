@@ -142,11 +142,9 @@ echelon_result:
   output_files:
     - {spec_dir}/debug-report.md
   journal_entries:
-    - id: null
-      type: debug_finding
+    - type: debug_finding
       phase: build
       agent: speckit-echelon-debugger (DEBUGGER)
-      timestamp: null
       data:
         task_id: <task_id>
         root_cause: <root_cause_summary>

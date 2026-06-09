@@ -125,11 +125,9 @@ echelon_result:
   output_files:
     - {spec_dir}/patterns/schema-consolidation.md
   journal_entries:
-    - id: null
-      type: pattern_identified
+    - type: pattern_identified
       phase: finalize
       agent: speckit-echelon-consolidator (CONSOLIDATOR)
-      timestamp: null
       data:
         schema_name: ""
         pattern_type: ""

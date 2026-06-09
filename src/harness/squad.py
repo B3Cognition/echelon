@@ -701,9 +701,12 @@ class SquadController:
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
-                entry.setdefault("id", next_id)
-                entry.setdefault("timestamp", ts)
-                entry.setdefault("phase", phase_id)
+                if entry.get("id") is None:
+                    entry["id"] = next_id
+                if entry.get("timestamp") is None:
+                    entry["timestamp"] = ts
+                if entry.get("phase") is None:
+                    entry["phase"] = phase_id
                 fh.write(_json.dumps(entry) + "\n")
                 next_id += 1
 

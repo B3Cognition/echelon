@@ -222,11 +222,9 @@ echelon_result:
   output_files:
     - {spec_dir}/build-status.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: build
       agent: speckit-echelon-engineering-manager (ENGINEERING MANAGER)
-      timestamp: null
       data:
         iteration: <iteration_number>
         tasks_complete: <count>

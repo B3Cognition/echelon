@@ -173,11 +173,9 @@ echelon_result:
     - {spec_dir}/performance-requirements.md
     - {spec_dir}/capacity-model.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-benchmark (BENCHMARK)
-      timestamp: null
       data:
         artifact: "performance-requirements.md"
         section: "<load scenario or capacity area>"

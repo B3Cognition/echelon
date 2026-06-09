@@ -270,11 +270,9 @@ echelon_result:
     - {spec_dir}/spec-compliance-report.md
     - {spec_dir}/traceability-matrix.md
   journal_entries:
-    - id: null
-      type: quality_check
+    - type: quality_check
       phase: build
       agent: speckit-echelon-spec-guard (SPEC GUARD)
-      timestamp: null
       data:
         task_id: <task_id>
         pass: true

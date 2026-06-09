@@ -460,7 +460,7 @@ echelon_result:
     - {spec_dir}/issues.md
   state_updates:
     quality_scores:
-      - pass: <true | false>
+      - pass: "WHY2-iter-{N}"
         overall: <0.0-1.0>
         structure: <0.0-1.0>
         testability: <0.0-1.0>
@@ -470,11 +470,9 @@ echelon_result:
         behavioral: <0.0-1.0>
         depth: <0.0-1.0>
   journal_entries:
-    - id: null
-      type: quality_check
+    - type: quality_check
       phase: <phase1-why1 | phase1-why2 | phase3-consensus>
       agent: speckit-echelon-sage (SAGE)
-      timestamp: null
       data:
         pass: <true | false>
         scores:
@@ -487,11 +485,9 @@ echelon_result:
           behavioral: <0.0-1.0>
           depth: <0.0-1.0>
         issues: []
-    - id: null
-      type: challenge
+    - type: challenge
       phase: <phase1-why1 | phase1-why2 | phase3-consensus>
       agent: speckit-echelon-sage (SAGE)
-      timestamp: null
       data:
         artifact: "<filename>"
         section: "<section>"

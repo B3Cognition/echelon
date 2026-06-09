@@ -162,11 +162,9 @@ echelon_result:
     - {spec_dir}/user-flow.md
     - {spec_dir}/spec.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-advocate (ADVOCATE)
-      timestamp: null
       data:
         artifact: "<accessibility-requirements.md | user-flow.md | spec.md>"
         section: "<accessibility area or user flow>"

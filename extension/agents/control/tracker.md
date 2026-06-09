@@ -132,11 +132,9 @@ echelon_result:
     - ${STAGING_DIR}/user-intent.md
     - ${STAGING_DIR}/stakeholder-model.md
   journal_entries:
-    - id: null
-      type: prediction
+    - type: prediction
       phase: <current phase>
       agent: speckit-echelon-tracker (TRACKER)
-      timestamp: null
       data:
         predicted_intent: "<summary of predicted user intent>"
         confidence: <0.0-1.0>
@@ -146,30 +144,24 @@ The block above shows the base case. Use additional entry types as needed:
 **When the active-learning threshold is met** (prediction_confidence >= 0.5 in Learning mode), add a second journal entry to the array:
 echelon_result:
   journal_entries:
-    - id: null
-      type: prediction
+    - type: prediction
       phase: <current phase>
       agent: speckit-echelon-tracker (TRACKER)
-      timestamp: null
       data:
         predicted_intent: "<summary>"
         confidence: <0.0-1.0>
         evidence: "<signals>"
-    - id: null
-      type: tracker_model_update_requested
+    - type: tracker_model_update_requested
       phase: <current phase>
       agent: speckit-echelon-tracker (TRACKER)
-      timestamp: null
       data:
         reason: "<why a model update is needed — what pattern or drift triggered this>"
 **When signalling a social prediction error** (observed intent diverges from predicted), replace the `prediction` entry with:
 echelon_result:
   journal_entries:
-    - id: null
-      type: social_prediction_error
+    - type: social_prediction_error
       phase: <current phase>
       agent: speckit-echelon-tracker (TRACKER)
-      timestamp: null
       data:
         expected: "<what you predicted the user would do>"
         observed: "<what the user actually did>"

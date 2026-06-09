@@ -146,11 +146,10 @@ Return this entry in the `echelon_result` block at the end of your response.
 When speckit-echelon-investigator (INVESTIGATOR) encounters a counterfactual query ("What would happen if X?"), speckit-echelon-investigator (INVESTIGATOR) may delegate to speckit-echelon-consolidator (CONSOLIDATOR)'s Mental Simulation mode (Mode 3). Include a dispatch signal in your `echelon_result` block as an additional journal entry:
 
 echelon_result:
-    - id: null
-      type: decision
+  journal_entries:
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-investigator (INVESTIGATOR)
-      timestamp: null
       data:
         artifact: "research.md"
         section: "consolidator_simulation_requested"
@@ -170,11 +169,9 @@ echelon_result:
   output_files:
     - {spec_dir}/research.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-investigator (INVESTIGATOR)
-      timestamp: null
       data:
         artifact: "research.md"
         section: "<investigation question>"
@@ -186,11 +183,10 @@ echelon_result:
 If an experiment produced measured results, add a second entry:
 
 echelon_result:
-    - id: null
-      type: decision
+  journal_entries:
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-investigator (INVESTIGATOR)
-      timestamp: null
       data:
         artifact: "experiment-results.json"
         section: "<experiment name>"

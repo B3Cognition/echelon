@@ -312,11 +312,9 @@ echelon_result:
   output_files:
     - {spec_dir}/code-review-report.md
   journal_entries:
-    - id: null
-      type: review_finding
+    - type: review_finding
       phase: build
       agent: speckit-echelon-code-reviewer (CODE REVIEWER)
-      timestamp: null
       data:
         task_id: <task_id>
         issues: []

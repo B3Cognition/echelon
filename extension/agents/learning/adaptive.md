@@ -157,11 +157,9 @@ echelon_result:
     - {spec_dir}/evolution-report.md
     - {spec_dir}/improvement-metrics.md
   journal_entries:
-    - id: null
-      type: adaptation_triggered
+    - type: adaptation_triggered
       phase: finalize
       agent: speckit-echelon-adaptive (ADAPTIVE)
-      timestamp: null
       data:
         trajectory: improving
         iteration_delta: 0.0

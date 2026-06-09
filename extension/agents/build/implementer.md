@@ -378,11 +378,9 @@ echelon_result:
   output_files:
     - {spec_dir}/implementation/<file>
   journal_entries:
-    - id: null
-      type: implementation_complete
+    - type: implementation_complete
       phase: build
       agent: speckit-echelon-implementer (IMPLEMENTER)
-      timestamp: null
       data:
         task_id: <task_id>
         files_changed: []

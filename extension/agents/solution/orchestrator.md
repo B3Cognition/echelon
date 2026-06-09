@@ -332,11 +332,9 @@ echelon_result:
     - {spec_dir}/tasks.md
     - {spec_dir}/critical-path.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: <phase3-plan | phase3-consensus>
       agent: speckit-echelon-orchestrator (ORCHESTRATOR)
-      timestamp: null
       data:
         artifact: "tasks.md"
         section: "<task group or dependency area>"

@@ -410,11 +410,9 @@ echelon_result:
     - knowledge-base/agent-scores.yaml
     - {spec_dir}/internalization-metrics.md
   journal_entries:
-    - id: null
-      type: internalization_score
+    - type: internalization_score
       phase: finalize
       agent: speckit-echelon-internalizer (INTERNALIZER)
-      timestamp: null
       data:
         overall_score: 0.0
         metrics: []

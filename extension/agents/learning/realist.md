@@ -165,11 +165,9 @@ echelon_result:
     - {spec_dir}/cost-analysis.md
     - {spec_dir}/benchmark-data.md
   journal_entries:
-    - id: null
-      type: assessment
+    - type: assessment
       phase: finalize
       agent: speckit-echelon-realist (REALIST)
-      timestamp: null
       data:
         historical_comparables: []
         bias_detected: false

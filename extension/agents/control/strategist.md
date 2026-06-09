@@ -144,11 +144,9 @@ echelon_result:
   output_files:
     - {spec_dir}/strategic-overview.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: <current phase>
       agent: speckit-echelon-strategist (STRATEGIST)
-      timestamp: null
       data:
         artifact: "strategic-overview.md"
         section: "risk_areas"

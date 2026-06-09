@@ -186,11 +186,9 @@ echelon_result:
   output_files:
     - {spec_dir}/change-impact-report.md
   journal_entries:
-    - id: null
-      type: change_assessment
+    - type: change_assessment
       phase: build
       agent: speckit-echelon-change-controller (CHANGE CONTROLLER)
-      timestamp: null
       data:
         change_id: <CR-NNN>
         blast_radius: <summary>

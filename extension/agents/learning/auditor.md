@@ -477,11 +477,9 @@ echelon_result:
     - {spec_dir}/calibration-dashboard.md
     - {spec_dir}/confidence-flags.md
   journal_entries:
-    - id: null
-      type: calibration_update
+    - type: calibration_update
       phase: finalize
       agent: speckit-echelon-auditor (AUDITOR)
-      timestamp: null
       data:
         # speckit-echelon-auditor (AUDITOR) FINALIZE parses adr_self_check and self_check type entries to validate unresolved concerns (FR-INH-006).
         # Always preserve those entry type strings — do NOT rename them because speckit-echelon-auditor (AUDITOR) FINALIZE depends on the exact values.

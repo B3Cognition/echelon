@@ -278,11 +278,9 @@ echelon_result:
   output_files:
     - {spec_dir}/kill-report.md
   journal_entries:
-    - id: null
-      type: assessment
+    - type: assessment
       phase: <phase2-decide | phase3-consensus>
       agent: speckit-echelon-gatekeeper (GATEKEEPER)
-      timestamp: null
       data:
         verdict: "<PASS | KILL | DEFER>"
         rationale: "<why this verdict — specific evidence and reasoning>"

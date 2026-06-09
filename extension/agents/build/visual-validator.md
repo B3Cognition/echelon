@@ -150,11 +150,9 @@ echelon_result:
   output_files:
     - {spec_dir}/visual-validation-report.md
   journal_entries:
-    - id: null
-      type: visual_check
+    - type: visual_check
       phase: build
       agent: speckit-echelon-visual-validator (VISUAL VALIDATOR)
-      timestamp: null
       data:
         components_checked: []
         failures: []

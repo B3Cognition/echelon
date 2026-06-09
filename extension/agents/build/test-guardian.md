@@ -226,11 +226,9 @@ echelon_result:
   output_files:
     - {spec_dir}/test-quality-report.md
   journal_entries:
-    - id: null
-      type: quality_check
+    - type: quality_check
       phase: build
       agent: speckit-echelon-test-guardian (TEST GUARDIAN)
-      timestamp: null
       data:
         task_id: <task_id>
         pass: true

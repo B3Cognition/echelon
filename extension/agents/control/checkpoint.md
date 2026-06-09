@@ -228,11 +228,9 @@ echelon_result:
   verdict: <INTERNALIZED | PARTIAL | FAILED>
   output_files: []
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: <current phase>
       agent: speckit-echelon-checkpoint (CHECKPOINT)
-      timestamp: null
       data:
         check_type: "internalization_gate"
         result: "<INTERNALIZED | PARTIAL | FAILED>"

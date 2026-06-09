@@ -124,11 +124,9 @@ echelon_result:
   output_files:
     - ${STAGING_DIR}/mental-model-code.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase1-discover
       agent: speckit-echelon-modeler (MODELER)
-      timestamp: null
       data:
         artifact: "mental-model-code.md"
         section: "invariants"

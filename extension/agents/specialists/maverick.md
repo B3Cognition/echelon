@@ -387,11 +387,9 @@ echelon_result:
     - {spec_dir}/risk-opportunities.md
     - {spec_dir}/challenge-assumptions.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-maverick (MAVERICK)
-      timestamp: null
       data:
         artifact: "alternatives.md"
         section: "<alternative name>"

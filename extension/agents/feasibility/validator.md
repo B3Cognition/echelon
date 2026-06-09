@@ -216,11 +216,9 @@ echelon_result:
   state_updates:
     phase: build_init
   journal_entries:
-    - id: null
-      type: validator_dispatch
+    - type: validator_dispatch
       phase: build_init
       agent: speckit-echelon-validator (VALIDATOR)
-      timestamp: null
       data:
         verdict: "<INTERNALIZED | PARTIAL | FAILED>"
         doubts: ["<doubt 1 if PARTIAL or FAILED — specific artifact, section, and what was unclear>"]

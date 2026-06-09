@@ -146,11 +146,9 @@ echelon_result:
   state_updates:
     constitution_status: <exists | amended>
   journal_entries:
-    - id: null
-      type: constitution_created
+    - type: constitution_created
       phase: phase1-constitution
       agent: speckit-echelon-chief (CHIEF)
-      timestamp: null
       data:
         mode: <Creation | Amendment>
         constitution_path: .specify/memory/constitution.md

@@ -148,11 +148,9 @@ echelon_result:
   output_files:
     - {spec_dir}/domain-patterns.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-oracle (ORACLE)
-      timestamp: null
       data:
         artifact: "domain-patterns.md"
         section: "<domain area>"

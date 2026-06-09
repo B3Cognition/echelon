@@ -271,11 +271,9 @@ echelon_result:
     - {spec_dir}/agent-scorecard.md
     - knowledge-base/agent-scores.yaml
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: <current phase>
       agent: speckit-echelon-scorekeeper (SCOREKEEPER)
-      timestamp: null
       data:
         artifact: "agent-scorecard.md"
         section: "summary"

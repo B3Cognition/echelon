@@ -330,11 +330,9 @@ echelon_result:
     - {spec_dir}/progress-report.md
     - {spec_dir}/process-metrics.md
   journal_entries:
-    - id: null
-      type: progress_update
+    - type: progress_update
       phase: build
       agent: speckit-echelon-progress-tracker (PROGRESS TRACKER)
-      timestamp: null
       data:
         iteration: <iteration_number>
         velocity: <tasks_per_unit_time>

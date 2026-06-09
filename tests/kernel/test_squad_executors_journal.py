@@ -207,6 +207,34 @@ def test_judgment_dispatch_writes_returned_journal_entries(tmp_path):
     assert entries[0]["phase"] == "phase1-discover"
 
 
+def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
+    """COMMANDER/SAGE placeholders like id: null must not persist to JSONL."""
+    ctrl, provider = _squad_controller(tmp_path)
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {},
+            "journal_entries": [
+                {
+                    "id": None,
+                    "timestamp": None,
+                    "phase": None,
+                    "type": "quality_check",
+                }
+            ],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    ctrl._judgment_dispatch("test reason", _node("phase1-why2"))
+    entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
+    assert entries[0]["id"] == 1
+    assert entries[0]["timestamp"] is not None
+    assert entries[0]["phase"] == "phase1-why2"
+
+
 def test_judgment_dispatch_empty_entries_writes_nothing(tmp_path):
     """No journal file created when COMMANDER returns no entries."""
     ctrl, provider = _squad_controller(tmp_path)
@@ -287,6 +315,52 @@ def test_phase_specs_do_not_instruct_agents_to_append_to_journal():
         "Phase specs must instruct agents to return echelon_result.journal_entries, "
         "not append directly to reasoning-journal.jsonl:\n" + "\n".join(violations)
     )
+
+
+def test_agent_output_blocks_do_not_request_null_journal_metadata():
+    """Harness owns journal IDs/timestamps; agent examples should not show nulls."""
+    violations = []
+    for md_file in (EXT_ROOT / "extension" / "agents").rglob("*.md"):
+        text = md_file.read_text(encoding="utf-8")
+        for marker in ("id: null", "timestamp: null"):
+            if marker in text:
+                violations.append(f"{md_file.relative_to(EXT_ROOT)} contains {marker!r}")
+
+    assert not violations, (
+        "Agent output blocks must omit journal id/timestamp metadata because "
+        "the harness fills them:\n" + "\n".join(violations)
+    )
+
+
+def test_agent_output_blocks_do_not_put_list_directly_under_echelon_result():
+    """Examples must name journal_entries/output_files instead of raw YAML lists."""
+    pattern = re.compile(r"^echelon_result:\n\s+-\s+", re.M)
+    violations = []
+    for md_file in (EXT_ROOT / "extension" / "agents").rglob("*.md"):
+        if pattern.search(md_file.read_text(encoding="utf-8")):
+            violations.append(str(md_file.relative_to(EXT_ROOT)))
+
+    assert not violations, (
+        "Agent examples must not place a list directly under echelon_result:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_why2_routing_contract_uses_full_quality_score_shape():
+    from harness.phase_graph import PhaseNode
+    from harness.squad_executors import _routing_contract
+
+    node = PhaseNode(
+        id="phase1-why2",
+        type="agent",
+        transitions=[{"condition": "quality_gates.fail", "to": "phase1-what"}],
+    )
+    contract = _routing_contract(node)
+
+    assert "quality_scores:" in contract
+    assert "[{pass: true}]" not in contract
+    assert 'pass: "WHY2-iter-{N}"' in contract
+    assert "overall:" in contract
 
 
 def test_journal_written_to_squad_dir(tmp_path):

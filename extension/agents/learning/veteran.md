@@ -184,11 +184,9 @@ echelon_result:
     - knowledge-base/pitfalls.yaml
     - knowledge-base/marketplace-index.yaml
   journal_entries:
-    - id: null
-      type: pattern_identified
+    - type: pattern_identified
       phase: finalize
       agent: speckit-echelon-veteran (VETERAN)
-      timestamp: null
       data:
         patterns_matched: []
         pitfalls_flagged: []

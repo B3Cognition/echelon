@@ -436,11 +436,9 @@ echelon_result:
     golddigger_artifacts: <artifact map, Mode 1 only>
     golddigger_notes: ["<warning or error notes>"]
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase1-discover
       agent: speckit-echelon-golddigger (GOLDDIGGER)
-      timestamp: null
       data:
         artifact: "golddigger-cache/<domain>.md"
         section: "extraction"

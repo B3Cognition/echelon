@@ -265,11 +265,9 @@ echelon_result:
     - {spec_dir}/test-architecture.md
     - {spec_dir}/coverage-map.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-sentinel
       agent: speckit-echelon-sentinel (SENTINEL)
-      timestamp: null
       data:
         artifact: "test-strategy.md"
         section: "<test layer — unit/integration/e2e/contract>"

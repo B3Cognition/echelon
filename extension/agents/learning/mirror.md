@@ -210,11 +210,9 @@ echelon_result:
     - knowledge-base/patterns.yaml
     - knowledge-base/pitfalls.yaml
   journal_entries:
-    - id: null
-      type: retrospective
+    - type: retrospective
       phase: finalize
       agent: speckit-echelon-mirror (MIRROR)
-      timestamp: null
       data:
         patterns_found: []
         recommendations: []

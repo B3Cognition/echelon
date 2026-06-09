@@ -287,11 +287,9 @@ echelon_result:
     - ${STAGING_DIR}/unknowns.md
   state_updates: {}
   journal_entries:
-    - id: null
-      type: insight
+    - type: insight
       phase: phase1-discover
       agent: speckit-echelon-scout (SCOUT)
-      timestamp: null
       data:
         artifact: "<filename this relates to>"
         section: "<specific section>"

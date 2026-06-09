@@ -81,11 +81,9 @@ echelon_result:
   output_files:
     - metacognition-log.md
   journal_entries:
-    - id: null
-      type: quality_check
+    - type: quality_check
       phase: build
       agent: speckit-echelon-monitor (MONITOR)
-      timestamp: null
       data:
         pass: true
         drift_signals: []

@@ -205,11 +205,9 @@ echelon_result:
     - {spec_dir}/security-findings.md
     - {spec_dir}/risk-acceptance-log.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase3-specialists
       agent: speckit-echelon-guardian (GUARDIAN)
-      timestamp: null
       data:
         artifact: "security-findings.md"
         section: "<threat area — STRIDE category or OWASP category>"

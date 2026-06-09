@@ -238,11 +238,9 @@ echelon_result:
     - ${STAGING_DIR}/risks.md
   state_updates: {}
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase1-discover
       agent: speckit-echelon-synthesizer (SYNTHESIZER)
-      timestamp: null
       data:
         artifact: "contradictions-and-gaps.md"
         section: "contradictions"

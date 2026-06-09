@@ -307,11 +307,9 @@ echelon_result:
     - {spec_dir}/gap-report.md
     - {spec_dir}/verification-summary.md
   journal_entries:
-    - id: null
-      type: verification_result
+    - type: verification_result
       phase: build
       agent: speckit-echelon-verification (VERIFICATION)
-      timestamp: null
       data:
         requirements_traced: <count>
         coverage_pct: <percentage>

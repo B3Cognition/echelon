@@ -55,10 +55,24 @@ def _routing_contract(node: "PhaseNode") -> str:
     fields: list[tuple[str, str]] = []
 
     if "quality_gates" in condition_text or "CRITICAL_issues" in condition_text:
-        fields.append((
-            "quality_scores",
-            "[{pass: true}]  # true=PASS, false=FAIL",
-        ))
+        if node.id == "phase1-why2":
+            fields.append((
+                "quality_scores",
+                "\n      - pass: \"WHY2-iter-{N}\""
+                "\n        overall: <float|null>"
+                "\n        structure: <float|null>"
+                "\n        readability: <float|null>"
+                "\n        cognitive: <float|null>"
+                "\n        semantic: <float|null>"
+                "\n        testability: <float|null>"
+                "\n        behavioral: <float|null>"
+                "\n        depth: <float|null>",
+            ))
+        else:
+            fields.append((
+                "quality_scores",
+                "[{pass: true}]  # true=PASS, false=FAIL",
+            ))
 
     # phase-specific verdict fields e.g. why3-verdict, assess2-verdict
     for m in re.finditer(r"\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*-verdict)\b", condition_text):
@@ -84,7 +98,10 @@ def _routing_contract(node: "PhaseNode") -> str:
         "  state_updates:",
     ]
     for field, hint in fields:
-        lines.append(f"    {field}: {hint}")
+        if hint.startswith("\n"):
+            lines.append(f"    {field}:{hint}")
+        else:
+            lines.append(f"    {field}: {hint}")
     lines.append("```")
     return "\n".join(lines)
 

@@ -486,11 +486,9 @@ echelon_result:
     - {spec_dir}/spec.md
     - {spec_dir}/00-overview.md
   journal_entries:
-    - id: null
-      type: decision
+    - type: decision
       phase: phase1-what
       agent: speckit-echelon-cartographer (CARTOGRAPHER)
-      timestamp: null
       data:
         artifact: "spec.md"
         section: "<section name where this decision appears>"
