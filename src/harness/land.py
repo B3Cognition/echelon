@@ -380,6 +380,20 @@ def land(
         )
         return False
 
+    default_branch = _land_default_branch(gitops)
+    if not gitops.push_landed_default_branch(str(project_dir), default_branch):
+        _banner(
+            "LAND — DEFAULT PUSH FAILED",
+            [
+                ("spec", spec_id),
+                ("branch", default_branch),
+                ("problem", "local merge succeeded, but pushing the default branch failed"),
+                ("next step", f"git push origin {default_branch}  # then re-run: echelon land {spec_id}"),
+            ],
+            subtitle="Echelon stopped before cleanup so the feature branch remains recoverable.",
+        )
+        return False
+
     return _finish_landing(
         spec_id,
         feature_branch,
@@ -621,17 +635,34 @@ def _finish_landing(
 ) -> bool:
     """Clean up after a feature branch has merged."""
     spec_project_dir = spec_project_dir or project_dir
+    default_branch = _land_default_branch(gitops)
+
+    remote_head = _remote_head_branch(project_dir)
+    if remote_head == feature_branch:
+        _banner(
+            "LAND — REMOTE DEFAULT BRANCH BLOCKED",
+            [
+                ("branch", feature_branch),
+                ("problem", f"origin/HEAD still points to {feature_branch}"),
+                ("next step", f"change default branch to {default_branch}, then rerun: echelon land {spec_id}"),
+                ("manual cleanup", f"git push origin --delete {feature_branch}"),
+            ],
+            subtitle="Echelon stopped before deleting a branch that the remote still treats as default.",
+        )
+        return False
 
     if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
         _banner(
-            "LAND — BRANCH CLEANUP NOTE",
+            "LAND — REMOTE BRANCH CLEANUP BLOCKED",
             [
                 ("branch", feature_branch),
-                ("problem", "could not delete from origin — not configured or wrong remote"),
-                ("safe to ignore?", "yes, if you pushed to a different remote (e.g. upstream)"),
+                ("problem", "could not delete feature branch from origin"),
+                ("state", "default branch merge is complete, but cleanup is not verified"),
                 ("manual cleanup", f"git push origin --delete {feature_branch}"),
             ],
+            subtitle="Echelon stopped before local cleanup and status mutation.",
         )
+        return False
     _delete_local_branch(feature_branch, str(project_dir))
     _cleanup_worktrees(spec_id, project_dir, gitops)
     _delete_harness_branches(spec_id, project_dir)
@@ -643,6 +674,37 @@ def _finish_landing(
 
     logger.info("land: %s — landed successfully", spec_id)
     return True
+
+
+def _land_default_branch(gitops: Any) -> str:
+    config = getattr(gitops, "_config", None)
+    configured = getattr(config, "target_default_branch", None) if config is not None else None
+    if isinstance(configured, str) and configured.strip():
+        return configured.strip()
+    try:
+        branch = gitops.get_default_branch()
+    except Exception:  # noqa: BLE001
+        return "main"
+    return str(branch or "main")
+
+
+def _remote_head_branch(project_dir: Path, remote: str = "origin") -> str | None:
+    """Return the branch that remote HEAD points at, if known."""
+    result = _run_git(
+        ["ls-remote", "--symref", remote, "HEAD"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith("ref:"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[1].startswith("refs/heads/"):
+            return parts[1].removeprefix("refs/heads/")
+    return None
 
 
 def _cleanup_worktrees(spec_id: str, project_dir: Path, gitops: Any) -> None:

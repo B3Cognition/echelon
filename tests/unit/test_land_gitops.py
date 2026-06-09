@@ -25,6 +25,9 @@ def _make_push_gitops(default_branch: str = "main") -> MagicMock:
         m, GitOpsManager
     )
     m.push_prepared_branch = GitOpsManager.push_prepared_branch.__get__(m, GitOpsManager)
+    m.push_landed_default_branch = GitOpsManager.push_landed_default_branch.__get__(
+        m, GitOpsManager
+    )
     return m
 
 
@@ -133,6 +136,23 @@ class TestPushPreparedBranch:
             gitops.push_prepared_branch(str(tmp_path), "+main")
 
         run_git.assert_not_called()
+
+    def test_land_push_allows_default_branch(self, tmp_path) -> None:
+        gitops = _make_push_gitops(default_branch="main")
+
+        with patch("harness.gitops._run_git") as run_git:
+            result = gitops.push_landed_default_branch(str(tmp_path), "main")
+
+        assert result is True
+        run_git.assert_called_once_with(["push", "origin", "main"], cwd=str(tmp_path))
+
+    def test_land_push_returns_false_on_git_error(self, tmp_path) -> None:
+        gitops = _make_push_gitops(default_branch="main")
+
+        with patch("harness.gitops._run_git", side_effect=GitOpsError("rejected")):
+            result = gitops.push_landed_default_branch(str(tmp_path), "main")
+
+        assert result is False
 
 
 @pytest.mark.unit

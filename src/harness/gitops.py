@@ -709,6 +709,25 @@ class GitOpsManager:
         _run_git(args, cwd=project_dir)
         logger.info("Pushed prepared branch %s to origin", branch)
 
+    def push_landed_default_branch(
+        self,
+        project_dir: str,
+        branch: str,
+    ) -> bool:
+        """Push the verified default branch after land merged locally.
+
+        This is intentionally separate from ``push``/``push_prepared_branch``:
+        normal harness build pushes must never target the default branch, but
+        land is the controlled path that publishes the already-verified merge.
+        """
+        try:
+            _run_git(["push", "origin", branch], cwd=project_dir)
+            logger.info("Pushed landed default branch %s to origin", branch)
+            return True
+        except GitOpsError as e:
+            logger.warning("Could not push landed default branch %s: %s", branch, e)
+            return False
+
     # === PR Operations ===
 
     def find_existing_pr(self, branch: str) -> Optional[str]:
