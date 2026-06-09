@@ -125,10 +125,23 @@ class TestAICodingCliProvider:
         assert result == -1
 
     def test_non_claude_cli_uses_plain_run(self, tmp_path):
-        """copilot/opencode use _run_plain, not _run_streaming."""
+        """copilot/opencode/codex use _run_plain, not _run_streaming."""
         with _mock_plain() as mock_plain, \
              patch("harness.llm_provider.AICodingCliProvider._run_streaming") as mock_stream:
             AICodingCliProvider(_config(cli="copilot")).exec_prompt(str(tmp_path), "build this")
 
         mock_stream.assert_not_called()
         mock_plain.assert_called_once()
+
+    def test_codex_cli_uses_codex_exec(self, tmp_path):
+        with _mock_plain() as mock_plain, \
+             patch("harness.llm_provider.shutil.which", return_value="codex"):
+            AICodingCliProvider(_config(cli="codex")).exec_prompt(str(tmp_path), "build this")
+
+        cmd_passed = mock_plain.call_args[0][0]
+        assert cmd_passed == [
+            "codex",
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "build this",
+        ]

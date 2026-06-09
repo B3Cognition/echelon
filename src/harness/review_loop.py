@@ -691,7 +691,7 @@ class ReviewLoopController:
         *,
         worktree_path: str = "",
     ) -> int:
-        """Invoke echelon.review via claude -p subprocess.
+        """Invoke echelon.review via the configured AI coding CLI.
 
         Writes HARNESS_BUILD_STATUS_FILE, waits for skill completion,
         reads the status file to confirm review-fix tasks were queued.
@@ -703,7 +703,7 @@ class ReviewLoopController:
         status_file.unlink(missing_ok=True)
 
         env = {**os.environ, "HARNESS_BUILD_STATUS_FILE": str(status_file)}
-        if self._config.llm.config_dir:
+        if self._config.llm.config_dir and self._llm_cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config.llm.config_dir)
 
         from harness.skill_loader import resolve_llm_prompt
@@ -724,6 +724,13 @@ class ReviewLoopController:
         try:
             if self._llm_cli == "opencode":
                 cmd = [self._llm_bin, "run", "--dangerously-skip-permissions", prompt]
+            elif self._llm_cli == "codex":
+                cmd = [
+                    self._llm_bin,
+                    "exec",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    prompt,
+                ]
             else:
                 cmd = [self._llm_bin, "-p", prompt, "--dangerously-skip-permissions"]
                 if self._llm_cli == "copilot":

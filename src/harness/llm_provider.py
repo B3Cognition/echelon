@@ -1,4 +1,4 @@
-"""AICodingCliProvider — invokes an LLM CLI (claude, copilot, or opencode) via subprocess."""
+"""AICodingCliProvider — invokes an LLM CLI via subprocess."""
 from __future__ import annotations
 
 import json as _json
@@ -16,8 +16,8 @@ from harness.skill_loader import StreamEventPrinter
 class AICodingCliProvider:
     """Runs prompts through an AI coding CLI subprocess.
 
-    Supports claude (default), copilot, and opencode. Configured via config.llm.cli
-    or the ECHELON_LLM env var (env var takes precedence).
+    Supports claude (default), copilot, opencode, and codex. Configured via
+    config.llm.cli or the ECHELON_LLM env var (env var takes precedence).
 
     Not a SandboxProvider: it only owns CLI selection, command construction,
     environment setup, timeout handling, and stream/plain subprocess execution.
@@ -38,6 +38,13 @@ class AICodingCliProvider:
     def _build_cmd(self, prompt: str) -> list:
         if self._cli == "opencode":
             return [self._bin, "run", "--dangerously-skip-permissions", prompt]
+        if self._cli == "codex":
+            return [
+                self._bin,
+                "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                prompt,
+            ]
         if self._cli == "claude":
             return [
                 self._bin, "-p", prompt,

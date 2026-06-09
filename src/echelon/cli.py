@@ -10,6 +10,7 @@ Skill file locations by AI tool:
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
   Copilot  : .github/agents/speckit.echelon.<cmd>.agent.md
   Opencode : .opencode/command/speckit.echelon.<cmd>.md
+  Codex    : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
 Auto-detected from ECHELON_LLM (default: claude).
 """
 
@@ -98,6 +99,7 @@ Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
   Copilot  : .github/agents/speckit.echelon.<cmd>.agent.md
   Opencode : .opencode/command/speckit.echelon.<cmd>.md
+  Codex    : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
 """
 
 

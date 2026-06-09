@@ -215,15 +215,15 @@ def _detect_llm_cli() -> str:
     """Detect available LLM CLI tool.
 
     Respects ECHELON_LLM env var; otherwise checks PATH for supported CLIs.
-    Returns 'claude' | 'copilot' | 'opencode'.
+    Returns 'claude' | 'copilot' | 'opencode' | 'codex'.
     """
     import os
     import shutil
 
     env = os.environ.get("ECHELON_LLM", "").strip()
-    if env in ("claude", "copilot", "opencode"):
+    if env in ("claude", "copilot", "opencode", "codex"):
         return env
-    for cli in ("claude", "copilot", "opencode"):
+    for cli in ("claude", "copilot", "opencode", "codex"):
         if shutil.which(cli):
             return cli
     return "claude"  # default; will error at runtime if not installed

@@ -77,6 +77,7 @@ DEFAULT_NETWORK_ALLOWLIST = [
 ]
 
 VALID_PROVIDERS = {"docker", "e2b", "modal", "daytona"}
+VALID_LLM_CLIS = {"claude", "copilot", "opencode", "codex"}
 VALID_PR_HOSTS = {"github", "gitlab", "none"}
 
 # Simple semver range pattern: supports ^, ~, >=, <=, =, -, x ranges
@@ -301,6 +302,15 @@ def _validate_provider(provider: str) -> str:
     return provider
 
 
+def _validate_llm_cli(cli: str) -> str:
+    if cli not in VALID_LLM_CLIS:
+        raise ValidationError(
+            f"Invalid LLM CLI '{cli}'. Must be one of: {sorted(VALID_LLM_CLIS)}",
+            field_path="llm.cli",
+        )
+    return cli
+
+
 def _validate_semver_range(version_range: str) -> str:
     if not SEMVER_RANGE_PATTERN.match(version_range):
         raise ValidationError(
@@ -420,7 +430,7 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
         raw = {}
     return LlmConfig(
         enabled="llm" in data,
-        cli=str(raw.get("cli", "claude")),
+        cli=_validate_llm_cli(str(raw.get("cli", "claude"))),
         config_dir=str(raw["config_dir"]) if raw.get("config_dir") else None,
         timeout_ms=int(raw.get("timeout_ms", 1_200_000)),
     )

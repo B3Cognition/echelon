@@ -119,7 +119,7 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
 class SquadCliProvider(AICodingCliProvider):
     """Extends AICodingCliProvider with exec_agent() for squad phase dispatch.
 
-    Inherits CLI selection (claude/copilot/opencode via ECHELON_LLM env var).
+    Inherits CLI selection (claude/copilot/opencode/codex via ECHELON_LLM env var).
     Adds output capture + echelon_result: extraction on top of streaming.
     """
 

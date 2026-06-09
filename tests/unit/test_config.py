@@ -146,9 +146,23 @@ class TestParseConfigInvalid:
         with pytest.raises(ValidationError, match="provider"):
             _parse_config({**MINIMAL, "provider": "kubernetes"})
 
+    def test_codex_is_not_a_sandbox_provider(self) -> None:
+        with pytest.raises(ValidationError, match="provider"):
+            _parse_config({**MINIMAL, "provider": "codex"})
+
+    def test_invalid_llm_cli_raises(self) -> None:
+        with pytest.raises(ValidationError, match="llm.cli"):
+            _parse_config({**MINIMAL, "llm": {"cli": "kubernetes"}})
+
     def test_invalid_semver_range_raises(self) -> None:
         with pytest.raises(ValidationError, match="semver"):
             _parse_config({**MINIMAL, "echelon_version_range": "not-a-range!!"})
+
+    def test_codex_is_valid_llm_cli_backend(self) -> None:
+        config = _parse_config({**MINIMAL, "llm": {"cli": "codex"}})
+
+        assert config.provider == "docker"
+        assert config.llm.cli == "codex"
 
 
 @pytest.mark.unit

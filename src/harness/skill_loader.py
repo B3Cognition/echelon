@@ -18,7 +18,7 @@ ECHELON_SKILL_MAP = {
 
 COMMANDER_PREAMBLE = (
     "You were dispatched as a subagent to execute a specific task. "
-    "You are COMMANDER running non-interactively via `claude -p`. "
+    "You are COMMANDER running non-interactively via an AI coding CLI. "
     "The text below is your complete operating instruction set for this session. "
     "Execute every step immediately using your tools. "
     "Do NOT invoke the Skill tool — skill lookup rules do not apply in this session. "
@@ -34,6 +34,7 @@ def find_skill(skill_base: str, project_dir: Path, cli: str) -> Optional[Path]:
     Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
     Copilot  : .github/agents/speckit.<skill_base>.agent.md
     Opencode : .opencode/command/speckit.<skill_base>.md
+    Codex    : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
     """
     if cli == "copilot":
         candidates = [

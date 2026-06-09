@@ -1153,7 +1153,7 @@ harness:
 
   # LLM CLI used by `echelon harness run` for build and review steps.
   # Overrides ECHELON_LLM env var when set.
-  # Options: claude (default) | copilot | opencode
+  # Options: claude (default) | copilot | opencode | codex
   # llm:
   #   cli: claude
   #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
