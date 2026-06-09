@@ -14,7 +14,7 @@ class BuildPromptBuilder:
         "Write all files to the worktree path shown below.\n"
         "Treat that worktree as the only implementation project root for code reads, searches, edits, and tests.\n"
         "Do not search outside the worktree for implementation code; do not run global `find` commands or scan parent/user directories.\n"
-        "Use the exact spec artifact paths in Harness Context; they may be outside the worktree in targeted polyrepo runs.\n"
+        "Use the exact spec artifact paths in Harness Context. They may be outside the worktree only when `spec_artifacts_mode` is `external`.\n"
         "If required Echelon files are missing from the worktree, report the setup failure instead of using copies from another path.\n"
         "Do not run git commands. Do not commit. Do not push.\n"
         "Ralph does not consume `next_phase` from your final message; do not stop at phase boundaries.\n"

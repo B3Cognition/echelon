@@ -168,6 +168,62 @@ def _make_controller(
 class TestOuterLoopConvergence:
     """Test outer loop converges on first iteration."""
 
+    def test_harness_context_uses_worktree_spec_paths_for_single_repo_runs(
+        self, tmp_path: Path
+    ) -> None:
+        """Single-repo builds must not leak spec edits into the live project."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        live_spec_dir = tmp_path / "live-project" / "specs" / "spec-001-demo"
+        live_spec_dir.mkdir(parents=True)
+        (live_spec_dir / "spec.md").write_text("# Live Spec\n", encoding="utf-8")
+        (live_spec_dir / "tasks.md").write_text("# Live Tasks\n", encoding="utf-8")
+
+        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree_spec_dir = worktree / "specs" / "spec-001-demo"
+        worktree_spec_dir.mkdir(parents=True)
+        (worktree_spec_dir / "spec.md").write_text("# Worktree Spec\n", encoding="utf-8")
+        (worktree_spec_dir / "tasks.md").write_text("# Worktree Tasks\n", encoding="utf-8")
+
+        state = state_store.read()
+        state["spec_dir"] = str(live_spec_dir)
+        state["spec_file"] = str(live_spec_dir / "spec.md")
+        state["tasks_file"] = str(live_spec_dir / "tasks.md")
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "spec_artifacts_mode: worktree" in prompt
+        assert f"spec_dir: {worktree_spec_dir}" in prompt
+        assert f"spec_file: {worktree_spec_dir / 'spec.md'}" in prompt
+        assert f"tasks_file: {worktree_spec_dir / 'tasks.md'}" in prompt
+        assert str(live_spec_dir) not in prompt
+
+    def test_harness_context_does_not_fall_back_to_live_spec_in_worktree_mode(
+        self, tmp_path: Path
+    ) -> None:
+        """Missing worktree spec artifacts are setup failures, not permission to edit live specs."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        live_spec_dir = tmp_path / "live-project" / "specs" / "spec-001-demo"
+        live_spec_dir.mkdir(parents=True)
+        (live_spec_dir / "spec.md").write_text("# Live Spec\n", encoding="utf-8")
+        (live_spec_dir / "tasks.md").write_text("# Live Tasks\n", encoding="utf-8")
+        worktree = tmp_path / "live-project" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+
+        state = state_store.read()
+        state["spec_dir"] = str(live_spec_dir)
+        state["spec_file"] = str(live_spec_dir / "spec.md")
+        state["tasks_file"] = str(live_spec_dir / "tasks.md")
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "spec_artifacts_mode: worktree" in prompt
+        assert "spec_dir: MISSING" in prompt
+        assert "spec_file: MISSING" in prompt
+        assert "tasks_file: MISSING" in prompt
+        assert str(live_spec_dir) not in prompt
+
     def test_harness_context_uses_state_owned_spec_paths(self, tmp_path: Path) -> None:
         """Polyrepo builds may keep spec artifacts outside the target worktree."""
         controller, _provider, _gitops, state_store = _make_controller(tmp_path)
@@ -181,6 +237,8 @@ class TestOuterLoopConvergence:
         state["spec_dir"] = str(spec_dir)
         state["spec_file"] = str(spec_file)
         state["tasks_file"] = str(tasks_file)
+        state["target_repo"] = "target-app"
+        state["target_path"] = str(tmp_path / "target-root")
         state_store.write(state)
 
         prompt = controller._with_harness_context(
@@ -188,6 +246,7 @@ class TestOuterLoopConvergence:
             str(tmp_path / "target-root" / "worktree-without-specs"),
         )
 
+        assert "spec_artifacts_mode: external" in prompt
         assert f"spec_dir: {spec_dir}" in prompt
         assert f"spec_file: {spec_file}" in prompt
         assert f"tasks_file: {tasks_file}" in prompt
@@ -220,7 +279,7 @@ class TestOuterLoopConvergence:
         self, tmp_path: Path
     ) -> None:
         """Fulfillment gate uses orchestration spec artifacts, not target worktree discovery."""
-        controller, _, gitops, _ = _make_controller(
+        controller, _, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
         )
@@ -236,6 +295,13 @@ class TestOuterLoopConvergence:
             encoding="utf-8",
         )
         gitops.base_dir = orchestration_root
+        state = state_store.read()
+        state["target_repo"] = "target"
+        state["target_path"] = str(tmp_path / "target")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
         verify = VerifyResult(passed=True, failures=[])
 
         result = controller._apply_fulfillment_gate(verify, str(worktree))
@@ -301,6 +367,13 @@ class TestOuterLoopConvergence:
             encoding="utf-8",
         )
         gitops.base_dir = orchestration_root
+        state = state_store.read()
+        state["target_repo"] = "target"
+        state["target_path"] = str(tmp_path / "target")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
         verify = VerifyResult(passed=True, failures=[])
 
         result = controller._apply_task_progress_gate(verify, str(worktree))
@@ -373,12 +446,19 @@ class TestOuterLoopConvergence:
             "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
             encoding="utf-8",
         )
-        controller, _, gitops, _ = _make_controller(
+        controller, _, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
         )
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = orchestration_root
+        state = state_store.read()
+        state["target_repo"] = "target"
+        state["target_path"] = str(tmp_path / "target")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
 
         result = controller.run_loop(max_outer=1, max_inner=0)
 
@@ -1165,8 +1245,10 @@ class TestLlmProviderDispatch:
         assert "Do not search for state.json" in sent_prompt
         assert "build this" in sent_prompt
 
-    def test_exec_build_injects_authoritative_spec_paths(self, tmp_path: Path) -> None:
-        """LLM build prompts receive spec paths from the harness, not discovery."""
+    def test_exec_build_injects_external_spec_paths_for_polyrepo_target(
+        self, tmp_path: Path
+    ) -> None:
+        """Polyrepo target prompts receive external spec paths from harness state."""
         from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
@@ -1176,7 +1258,7 @@ class TestLlmProviderDispatch:
             stdout="", stderr="", duration_ms=100,
         )
 
-        controller, _, gitops, _ = _make_controller(
+        controller, _, gitops, state_store = _make_controller(
             tmp_path, llm_build_runner=build_runner
         )
         project_root = tmp_path / "polyrepo"
@@ -1185,6 +1267,13 @@ class TestLlmProviderDispatch:
         (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
         (spec_dir / "tasks.md").write_text("- [ ] T-001 req=FR-001\n", encoding="utf-8")
         gitops.base_dir = project_root
+        state = state_store.read()
+        state["target_repo"] = "target-app"
+        state["target_path"] = str(project_root / "target-app")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
         worktree = tmp_path / "polyrepo" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
 
         controller._exec_build(
@@ -1196,6 +1285,7 @@ class TestLlmProviderDispatch:
         )
 
         sent_prompt = build_runner.exec_build.call_args.args[1]
+        assert "spec_artifacts_mode: external" in sent_prompt
         assert f"spec_dir: {spec_dir}" in sent_prompt
         assert f"tasks_file: {spec_dir / 'tasks.md'}" in sent_prompt
         assert f"spec_file: {spec_dir / 'spec.md'}" in sent_prompt

@@ -1371,17 +1371,17 @@ class RalphController:
         project_root = Path(worktree_path)
         orchestration_root = self._orchestration_root(project_root)
         spec_dir = self._find_spec_dir(worktree_path)
+        spec_artifacts_mode = self._spec_artifacts_mode()
         state = self._state_store.read()
-        state_spec_file = state.get("spec_file")
-        state_tasks_file = state.get("tasks_file")
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
-        spec_file_text = str(state_spec_file or (spec_dir / "spec.md" if spec_dir is not None else "MISSING"))
-        tasks_file_text = str(state_tasks_file or (spec_dir / "tasks.md" if spec_dir is not None else "MISSING"))
+        spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
+        tasks_file_text = str(spec_dir / "tasks.md" if spec_dir is not None else "MISSING")
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
             f"target_repo_worktree: {worktree_path}\n"
             f"orchestration_root: {orchestration_root}\n"
+            f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"
             f"spec_file: {spec_file_text}\n"
             f"tasks_file: {tasks_file_text}\n"
@@ -1389,6 +1389,8 @@ class RalphController:
             f"state_dir: {self._state_store.state_dir}\n"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
             "Use `spec_dir`, `spec_file`, and `tasks_file` for spec artifacts and progress/report updates.\n"
+            "When `spec_artifacts_mode` is `worktree`, spec artifact writes must stay under `worktree`.\n"
+            "When `spec_artifacts_mode` is `external`, spec artifact writes may use the external `spec_dir` path.\n"
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "The harness state file is owned by Ralph and may be outside the worktree.\n"
             "Read it only when the build phase explicitly needs orchestration context.\n"
@@ -1404,6 +1406,10 @@ class RalphController:
         return (fallback or Path.cwd()).resolve()
 
     def _find_spec_dir(self, worktree_path: str | Path) -> Path | None:
+        worktree = Path(worktree_path)
+        if self._spec_artifacts_mode() == "worktree":
+            return self._find_spec_dir_in_root(worktree)
+
         state = self._state_store.read()
         state_spec_dir = state.get("spec_dir")
         if state_spec_dir:
@@ -1411,11 +1417,34 @@ class RalphController:
             if not candidate.is_absolute():
                 candidate = self._orchestration_root(Path(worktree_path)) / candidate
             return candidate
-        worktree = Path(worktree_path)
         spec_dir = find_spec_dir(self._spec_id, self._orchestration_root(worktree))
         if spec_dir is not None:
             return spec_dir
         return find_spec_dir(self._spec_id, worktree)
+
+    def _find_spec_dir_in_root(self, root: Path) -> Path | None:
+        """Find a spec directory directly under root without walking parents."""
+        root = root.resolve()
+        exact = root / "specs" / self._spec_id
+        if exact.is_dir():
+            return exact
+        matches = sorted(root.glob(f"specs/{self._spec_id}-*"))
+        if matches:
+            return matches[0]
+        return None
+
+    def _spec_artifacts_mode(self) -> str:
+        """Return where build agents should write spec artifacts.
+
+        Ordinary single-repo harness runs use an isolated git worktree, so spec
+        artifacts must be written inside that worktree and committed with the
+        implementation. Targeted polyrepo runs intentionally keep specs in the
+        orchestration repo while implementation happens in a target repo.
+        """
+        state = self._state_store.read()
+        if state.get("target_repo") or state.get("target_path"):
+            return "external"
+        return "worktree"
 
     def _make_iter_prompt(self, base: str, outer_iter: int, last_failures: str) -> str:
         """Augment base prompt with iteration context for outer loop."""
