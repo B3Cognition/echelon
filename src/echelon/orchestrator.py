@@ -38,12 +38,10 @@ def validate_targets(
                 file=sys.stderr,
             )
             sys.exit(1)
-        if not (target / _ECHELON_YML_REL).exists():
+        if not (target / ".git").exists():
             print(
-                f"✗ {rel}: not initialised for harness.\n"
-                f"  Fix:\n"
-                f"    cd {rel}\n"
-                f"    echelon harness init .",
+                f"✗ {rel}: target exists but is not a git repo.\n"
+                "  Polyrepo harness targets must be initialized git repositories.",
                 file=sys.stderr,
             )
             sys.exit(1)

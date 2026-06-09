@@ -1371,9 +1371,12 @@ class RalphController:
         project_root = Path(worktree_path)
         orchestration_root = self._orchestration_root(project_root)
         spec_dir = self._find_spec_dir(worktree_path)
+        state = self._state_store.read()
+        state_spec_file = state.get("spec_file")
+        state_tasks_file = state.get("tasks_file")
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
-        spec_file_text = str(spec_dir / "spec.md") if spec_dir is not None else "MISSING"
-        tasks_file_text = str(spec_dir / "tasks.md") if spec_dir is not None else "MISSING"
+        spec_file_text = str(state_spec_file or (spec_dir / "spec.md" if spec_dir is not None else "MISSING"))
+        tasks_file_text = str(state_tasks_file or (spec_dir / "tasks.md" if spec_dir is not None else "MISSING"))
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -1401,6 +1404,13 @@ class RalphController:
         return (fallback or Path.cwd()).resolve()
 
     def _find_spec_dir(self, worktree_path: str | Path) -> Path | None:
+        state = self._state_store.read()
+        state_spec_dir = state.get("spec_dir")
+        if state_spec_dir:
+            candidate = Path(str(state_spec_dir))
+            if not candidate.is_absolute():
+                candidate = self._orchestration_root(Path(worktree_path)) / candidate
+            return candidate
         worktree = Path(worktree_path)
         spec_dir = find_spec_dir(self._spec_id, self._orchestration_root(worktree))
         if spec_dir is not None:

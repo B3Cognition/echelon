@@ -588,6 +588,85 @@ class TestSmartResumeDetection:
         assert final_state["target_repo"] == "rbf-opta-points"
         assert final_state["target_path"] == str(target)
 
+    def test_spec_artifact_paths_are_recorded_in_state(self, tmp_path: Path) -> None:
+        """Harness Context must be populated from Python-owned spec paths."""
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        spec_file = spec_dir / "spec.md"
+        tasks_file = spec_dir / "tasks.md"
+        spec_file.write_text("# Spec\n", encoding="utf-8")
+        tasks_file.write_text("# Tasks\n", encoding="utf-8")
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            coord.start(intent)
+
+        from harness.state import StateStore
+
+        state_dir = tmp_path / "runs" / "state"
+        store = StateStore(state_dir, "spec-001", "default")
+        final_state = store.read()
+        assert final_state["spec_dir"] == str(spec_dir)
+        assert final_state["spec_file"] == str(spec_file)
+        assert final_state["tasks_file"] == str(tasks_file)
+
+    def test_target_repo_run_uses_polyrepo_root_for_spec_paths(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Target-side harness runs keep spec artifacts at the polyrepo root."""
+        polyrepo = tmp_path / "wrapper"
+        target = polyrepo / "ow-opta-widgets-v3-orig"
+        target.mkdir(parents=True)
+        spec_dir = polyrepo / "specs" / "002-law-sddp-snapshot-fix"
+        spec_dir.mkdir(parents=True)
+        spec_file = spec_dir / "spec.md"
+        tasks_file = spec_dir / "tasks.md"
+        spec_file.write_text("# Spec\n", encoding="utf-8")
+        tasks_file.write_text("# Tasks\n", encoding="utf-8")
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(polyrepo))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", target.name)
+
+        coord = _make_coordinator(target, should_pass=True)
+        intent = RunIntent(
+            spec_id="002-law-sddp-snapshot-fix",
+            max_outer=5,
+            max_inner=1,
+            reset=True,
+        )
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            coord.start(intent)
+
+        from harness.state import StateStore
+
+        state_dir = target / "runs" / "state"
+        store = StateStore(state_dir, "002-law-sddp-snapshot-fix", "default")
+        final_state = store.read()
+        assert final_state["target_repo"] == target.name
+        assert final_state["target_path"] == str(target)
+        assert final_state["spec_dir"] == str(spec_dir)
+        assert final_state["spec_file"] == str(spec_file)
+        assert final_state["tasks_file"] == str(tasks_file)
+
     def test_blocked_state_not_affected_by_resume_logic(self, tmp_path: Path) -> None:
         """A blocked state with no escalation file is not resumed by the smart resume path;
         it flows through to ralph (which handles blocked resume internally)."""

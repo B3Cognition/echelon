@@ -547,6 +547,36 @@ def _cmd_cicd(args: list[str]) -> None:
     sys.exit(1)
 
 
+def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path) -> None:
+    """Copy wrapper-owned runtime extension into a target-specific harness base."""
+    source = polyrepo_root / ".specify" / "extensions" / "echelon"
+    dest = harness_base_dir / ".specify" / "extensions" / "echelon"
+    required = (
+        source / "agents" / "control" / "commander.md",
+        source / "workflow" / "definition.yaml",
+    )
+    if not all(path.exists() for path in required):
+        print(
+            "✗ Echelon extension not installed in polyrepo root.\n"
+            f"  Expected: {source}\n"
+            "  Fix: run 'specify extension add --dev <echelon>/extension' from the polyrepo root.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source,
+        dest,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(
+            ".git",
+            "__pycache__",
+            ".pytest_cache",
+            "node_modules",
+        ),
+    )
+
+
 def _cmd_harness_run(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -597,7 +627,22 @@ def _cmd_harness_run(args: list[str]) -> None:
     from echelon.orchestrator import run_multi_target, validate_single_target
     from echelon.target_detection import detect_target
 
-    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
+    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else Path.cwd()
+    harness_base_dir = Path.cwd()
+    config_root = Path.cwd()
+    if target_env and polyrepo_env:
+        config_root = Path(polyrepo_env).resolve()
+        harness_base_dir = (
+            config_root
+            / "runs"
+            / "targets"
+            / (target_name_env or Path(target_env).resolve().name)
+        )
+        _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
+    spec_dir = find_spec_dir(spec_id, spec_search_root)
     if spec_dir is not None:
         resolved_spec_id = spec_dir.name
         polyrepo_root = spec_dir.parent.parent
@@ -613,12 +658,14 @@ def _cmd_harness_run(args: list[str]) -> None:
             sys.exit(1)
         frontmatter = read_frontmatter(spec_dir)
         targets_rel: list[str] = frontmatter.get("targets") or []
-        if targets_rel:
+        if targets_rel and not target_env:
             target = validate_single_target(targets_rel, polyrepo_root)
             sys.exit(run_multi_target(spec_id, [target], args[1:]))
 
         detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
-        if detection.decision == "recommend":
+        if target_env:
+            detection = None
+        if detection and detection.decision == "recommend":
             if mode == "banzai" and detection.recommended_target:
                 write_targets(spec_dir, [detection.recommended_target])
                 target = validate_single_target([detection.recommended_target], polyrepo_root)
@@ -644,7 +691,7 @@ def _cmd_harness_run(args: list[str]) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        if detection.decision == "ambiguous":
+        if detection and detection.decision == "ambiguous":
             print(
                 "✗ No implementation target configured and target detection was ambiguous.\n"
                 f"  Fix: run 'echelon spec target {spec_id} <repo>'.",
@@ -653,7 +700,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             sys.exit(1)
 
     # Single-repo mode: require local echelon-config.yml (harness config).
-    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_yml = config_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"
@@ -664,8 +711,8 @@ def _cmd_harness_run(args: list[str]) -> None:
         sys.exit(1)
 
     from harness.paths import mirror_path as _mirror_path_fn
-    mirror_path = _mirror_path_fn(Path.cwd())
-    if not mirror_path.exists():
+    mirror_path = _mirror_path_fn(harness_base_dir)
+    if not mirror_path.exists() and not target_env:
         print(
             "✗ Harness mirror not initialised for this project.\n"
             f"  Expected: {mirror_path}\n"
@@ -675,15 +722,19 @@ def _cmd_harness_run(args: list[str]) -> None:
         sys.exit(1)
 
     try:
-        config = load_config()
+        config = load_config(project_root=config_root)
     except HarnessValidationError as e:
         print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
         sys.exit(1)
-    gitops = GitOpsManager(config)
+    if target_env:
+        config.target_repo = str(Path(target_env).resolve())
+    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
+    if target_env and not mirror_path.exists():
+        gitops.clone_mirror(config.target_repo)
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
 
     try:
-        task_count = _count_tasks(spec_id, str(Path.cwd()))
+        task_count = _count_tasks(spec_id, str(spec_search_root))
     except TaskValidationError as e:
         tasks_path = (
             spec_dir / "tasks.md"
@@ -725,7 +776,7 @@ def _cmd_harness_run(args: list[str]) -> None:
         _write_spec_status(spec_dir, "In Progress")
 
     try:
-        run(user_message, provider, gitops)
+        run(user_message, provider, gitops, base_dir=str(harness_base_dir), config=config)
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(

@@ -6,6 +6,7 @@ when auto_merge is True on the intent.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -156,6 +157,54 @@ class TestRunSkillAutoLand:
             run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
 
         assert any("land() returned False" in record.message for record in caplog.records)
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    def test_branch_recovery_uses_local_target_repo_path(
+        self,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Polyrepo runtime dirs are not git checkouts; recover target checkout."""
+        from harness.config import HarnessConfig
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import run
+
+        target = tmp_path / "repo-a"
+        target.mkdir()
+        runtime = tmp_path / "wrapper" / "runs" / "targets" / "repo-a"
+        runtime.mkdir(parents=True)
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+        )
+        intent = RunIntent(spec_id="012", mode="semi", auto_merge=False)
+        mock_parse.return_value = intent
+
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {},
+            "summary": {"converged": 1, "failed": 0, "total_tokens": 0},
+        }
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        gitops = MagicMock()
+        provider = MagicMock()
+
+        run(
+            "spec 012 semi",
+            provider=provider,
+            gitops=gitops,
+            base_dir=str(runtime),
+            config=config,
+        )
+
+        gitops.ensure_on_default_branch.assert_called_once_with(str(target.resolve()))
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")

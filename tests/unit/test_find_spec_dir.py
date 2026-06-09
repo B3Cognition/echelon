@@ -22,6 +22,11 @@ class TestFindSpecDir:
         result = find_spec_dir("024", tmp_path)
         assert result == spec
 
+    def test_full_spec_directory_name_matches_exactly(self, tmp_path: Path) -> None:
+        spec = _make_spec(tmp_path, "002-law-sddp-snapshot-fix")
+        result = find_spec_dir("002-law-sddp-snapshot-fix", tmp_path)
+        assert result == spec
+
     def test_found_one_level_up(self, tmp_path: Path) -> None:
         spec = _make_spec(tmp_path, "024-test")
         child = tmp_path / "repo-a"

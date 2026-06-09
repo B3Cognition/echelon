@@ -72,6 +72,77 @@ class TestSingleRepoPathUnchanged:
         finally:
             os.chdir(orig)
 
+    def test_target_side_polyrepo_run_does_not_recurse_to_orchestrator(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """run_multi_target dispatches into the target; that child run must build locally."""
+        polyrepo = tmp_path / "wrapper"
+        target = polyrepo / "repo-a"
+        target.mkdir(parents=True)
+        (target / ".git").mkdir()
+        echelon_yml = polyrepo / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text(
+            "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+            encoding="utf-8",
+        )
+        (echelon_yml.parent / "agents" / "control").mkdir(parents=True)
+        (echelon_yml.parent / "agents" / "control" / "commander.md").write_text(
+            "# Commander\n",
+            encoding="utf-8",
+        )
+        (echelon_yml.parent / "workflow").mkdir(parents=True)
+        (echelon_yml.parent / "workflow" / "definition.yaml").write_text(
+            "phases: []\n",
+            encoding="utf-8",
+        )
+
+        spec_dir = polyrepo / "specs" / "024-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - repo-a\n---\n# spec\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(polyrepo))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "repo-a")
+
+        import os
+
+        orig = os.getcwd()
+        try:
+            os.chdir(target)
+            from echelon.cli import _cmd_harness_run
+            with patch("echelon.orchestrator.run_multi_target") as mock_orch:
+                with patch("harness.config.load_config") as mock_cfg:
+                    mock_cfg.return_value = MagicMock(
+                        buffer_limit_bytes=1024 * 1024,
+                        target_repo=".",
+                        target_default_branch="main",
+                    )
+                    with patch("harness.gitops.GitOpsManager") as MockGitOps:
+                        mock_gitops = MagicMock()
+                        MockGitOps.return_value = mock_gitops
+                        with patch("harness.docker_provider.DockerWorktreeProvider"):
+                            with patch("harness.skills.run_skill.run") as mock_run:
+                                _cmd_harness_run(["024-test"])
+        finally:
+            os.chdir(orig)
+
+        mock_orch.assert_not_called()
+        mock_run.assert_called_once()
+        assert mock_cfg.call_args.kwargs["project_root"] == polyrepo
+        assert mock_run.call_args.kwargs["base_dir"] == str(
+            polyrepo / "runs" / "targets" / "repo-a"
+        )
+        assert mock_run.call_args.kwargs["config"].target_repo == str(target.resolve())
+        mock_gitops.clone_mirror.assert_called_once_with(str(target.resolve()))
+
     def test_spec_without_targets_in_polyrepo_blocks_before_wrapper_harness(
         self, tmp_path: Path, capsys
     ) -> None:

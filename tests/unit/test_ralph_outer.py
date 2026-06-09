@@ -168,6 +168,31 @@ def _make_controller(
 class TestOuterLoopConvergence:
     """Test outer loop converges on first iteration."""
 
+    def test_harness_context_uses_state_owned_spec_paths(self, tmp_path: Path) -> None:
+        """Polyrepo builds may keep spec artifacts outside the target worktree."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        spec_dir = tmp_path / "orchestration-root" / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        spec_file = spec_dir / "spec.md"
+        tasks_file = spec_dir / "tasks.md"
+        spec_file.write_text("# Spec\n", encoding="utf-8")
+        tasks_file.write_text("# Tasks\n", encoding="utf-8")
+        state = state_store.read()
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_file)
+        state["tasks_file"] = str(tasks_file)
+        state_store.write(state)
+
+        prompt = controller._with_harness_context(
+            "body",
+            str(tmp_path / "target-root" / "worktree-without-specs"),
+        )
+
+        assert f"spec_dir: {spec_dir}" in prompt
+        assert f"spec_file: {spec_file}" in prompt
+        assert f"tasks_file: {tasks_file}" in prompt
+        assert "spec_dir: MISSING" not in prompt
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(

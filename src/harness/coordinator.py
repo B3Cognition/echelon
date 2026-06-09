@@ -30,6 +30,7 @@ from harness.ralph import RalphController
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
+from harness.spec_frontmatter import find_spec_dir, write_status as _write_spec_status
 from harness.visual_ralph import VisualRalphController
 from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
@@ -249,6 +250,10 @@ class StrategyCoordinator:
         run_id = str(uuid.uuid4())
         target_repo_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
         target_repo_path = os.environ.get("ECHELON_TARGET_REPO_PATH")
+        spec_search_root = Path(os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir).resolve()
+        spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
+        spec_file = spec_dir / "spec.md" if spec_dir is not None else None
+        tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
         state_store.acquire_lock(run_id)
 
         try:
@@ -276,6 +281,9 @@ class StrategyCoordinator:
                     token_budget=budget or 0,
                     target_repo=target_repo_name,
                     target_path=target_repo_path,
+                    spec_dir=str(spec_dir) if spec_dir is not None else None,
+                    spec_file=str(spec_file) if spec_file is not None else None,
+                    tasks_file=str(tasks_file) if tasks_file is not None else None,
                 )
                 state_store.transition("running")
 
@@ -419,7 +427,6 @@ class StrategyCoordinator:
                             break
 
             if result.status == "converged":
-                from harness.spec_frontmatter import find_spec_dir, write_status as _write_spec_status
                 _spec_dir = find_spec_dir(intent.spec_id, Path(self._base_dir))
                 if _spec_dir is not None:
                     try:

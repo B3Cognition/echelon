@@ -120,6 +120,9 @@ def find_spec_dir(spec_id: str, start_dir: Path) -> Optional[Path]:
     """
     current = start_dir.resolve()
     while True:
+        exact = current / "specs" / spec_id
+        if exact.is_dir():
+            return exact
         matches = sorted(current.glob(f"specs/{spec_id}-*"))
         if matches:
             return matches[0]

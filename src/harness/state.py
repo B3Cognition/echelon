@@ -259,6 +259,9 @@ class StateStore:
         token_budget: int = 0,
         target_repo: str | None = None,
         target_path: str | None = None,
+        spec_dir: str | None = None,
+        spec_file: str | None = None,
+        tasks_file: str | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -300,6 +303,9 @@ class StateStore:
             "branch_name": None,
             "target_repo": target_repo,
             "target_path": target_path,
+            "spec_dir": spec_dir,
+            "spec_file": spec_file,
+            "tasks_file": tasks_file,
             "last_verify_result": None,
             "termination_reason": None,
             "escalation_file": None,

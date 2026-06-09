@@ -12,16 +12,11 @@ from echelon.orchestrator import (
     validate_targets,
 )
 
-_ECHELON_YML = ".specify/extensions/echelon/echelon-config.yml"
-
-
-def _make_target(tmp_path: Path, name: str, initialised: bool = True) -> Path:
+def _make_target(tmp_path: Path, name: str, git_repo: bool = True) -> Path:
     t = tmp_path / name
     t.mkdir()
-    if initialised:
-        yml = t / _ECHELON_YML
-        yml.parent.mkdir(parents=True)
-        yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+    if git_repo:
+        (t / ".git").mkdir()
     return t
 
 
@@ -37,14 +32,14 @@ class TestValidateTargets:
             validate_targets(["does-not-exist"], tmp_path)
         assert exc.value.code == 1
 
-    def test_uninitialised_target_exits(self, tmp_path: Path, capsys) -> None:
-        _make_target(tmp_path, "repo-b", initialised=False)
+    def test_non_git_target_exits(self, tmp_path: Path, capsys) -> None:
+        _make_target(tmp_path, "repo-b", git_repo=False)
         with pytest.raises(SystemExit) as exc:
             validate_targets(["repo-b"], tmp_path)
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "cd repo-b" in err
-        assert "echelon harness init ." in err
+        assert "not a git repo" in err
+        assert "must be initialized git repositories" in err
 
     def test_multiple_valid_targets(self, tmp_path: Path) -> None:
         a = _make_target(tmp_path, "repo-a")

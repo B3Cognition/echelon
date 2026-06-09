@@ -97,6 +97,7 @@ def run(
     provider: Any,
     gitops: Any,
     base_dir: str = ".",
+    config: Any = None,
 ) -> None:
     """Execute /speckit-harness-run skill.
 
@@ -111,15 +112,19 @@ def run(
     logger.info("Parsed run intent: spec=%s, mode=%s, strategies=%s",
                 intent.spec_id, intent.mode, intent.strategies)
 
-    # 2. Load config
-    config = load_config()
+    # 2. Load config unless caller supplied a pre-resolved/overridden config.
+    config = config or load_config()
 
     # 3. Ensure project is on the default branch before any git operations.
     # echelon.run/bugfix may leave the working directory on a feature branch.
     # Stash any local changes and switch back so mirror worktrees can be
     # created cleanly.
+    project_working_dir = base_dir
+    target_repo = getattr(config, "target_repo", None)
+    if target_repo and Path(str(target_repo)).is_dir():
+        project_working_dir = str(Path(str(target_repo)).resolve())
     try:
-        gitops.ensure_on_default_branch(base_dir)
+        gitops.ensure_on_default_branch(project_working_dir)
     except Exception as e:
         logger.warning("ensure_on_default_branch failed (continuing): %s", e)
 
