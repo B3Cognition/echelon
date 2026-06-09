@@ -1220,10 +1220,25 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     blockers: list[str] = []
     warnings: list[str] = []
     ready_items: list[str] = []
+    current_state: dict = {}
+    run_dir = _find_current_run_dir(project_root)
+    if run_dir and (run_dir / "state.json").exists():
+        try:
+            current_state = _json.loads((run_dir / "state.json").read_text())
+        except Exception:
+            current_state = {}
 
-    # 1. Constitution — must exist and not be the blank template
+    # 1. Constitution — phase provenance first, artifact integrity second
+    completed = current_state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
     const_path = project_root / ".specify" / "memory" / "constitution.md"
-    if not const_path.exists():
+    if current_state and "phase1-constitution" not in completed_phases:
+        blockers.append(
+            "phase1-constitution has not completed in this run\n"
+            "     → echelon continue\n"
+            "       (CHIEF will invoke speckit.constitution and record provenance)"
+        )
+    elif not const_path.exists():
         blockers.append(
             "constitution.md absent\n"
             "     → echelon continue\n"
@@ -1871,23 +1886,41 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     import re as _re
 
     run_dir = _find_current_run_dir(project_root)
+    current_state: dict = {}
     if run_dir and (run_dir / "state.json").exists():
         try:
-            state = _json.loads((run_dir / "state.json").read_text())
-            recommended = state.get("phase_recommendation")
+            current_state = _json.loads((run_dir / "state.json").read_text())
+            recommended = current_state.get("phase_recommendation")
             if (
                 recommended
-                and (state.get("convergence_forced") or state.get("convergence_detected"))
+                and (
+                    current_state.get("convergence_forced")
+                    or current_state.get("convergence_detected")
+                )
             ):
                 return recommended
         except Exception:
-            pass
+            current_state = {}
 
-    # 0. Constitution missing or template — harness now handles it via phase1-constitution
+    # 0. Constitution phase provenance first, artifact integrity second.
+    completed = current_state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
+    if "phase1-constitution" not in completed_phases:
+        return "phase1-constitution"
     const_path = project_root / ".specify" / "memory" / "constitution.md"
     if not const_path.exists():
         return "phase1-constitution"
-    if "[PROJECT_NAME]" in const_path.read_text(errors="replace"):
+    const_text = const_path.read_text(errors="replace")
+    if any(
+        marker in const_text
+        for marker in (
+            "[PROJECT_NAME]",
+            "[PRINCIPLE_1_NAME]",
+            "[CONSTITUTION_VERSION]",
+            "[RATIFICATION_DATE]",
+            "[LAST_AMENDED_DATE]",
+        )
+    ):
         return "phase1-constitution"
 
     # 1. WHY2 failures — fix spec first, so CARTOGRAPHER runs before HOW

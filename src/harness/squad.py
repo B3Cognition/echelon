@@ -42,6 +42,43 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
 
+
+def _phase_requires_constitution_provenance(phase: str) -> bool:
+    """Return True once a normal spec/build run is past the constitution gate."""
+    if phase in {
+        "init",
+        "phase1-discover",
+        "phase1-why1",
+        "phase1-constitution",
+        *TERMINAL_PHASES,
+    }:
+        return False
+    return (
+        phase.startswith("phase1-")
+        or phase.startswith("phase2-")
+        or phase.startswith("phase3-")
+        or phase.startswith("phase4-")
+        or phase.startswith("checkpoint-")
+        or phase.startswith("build-")
+    )
+
+
+def _constitution_artifact_is_real(project_root: Path) -> bool:
+    """Secondary integrity check for constitution completion provenance."""
+    path = project_root / ".specify" / "memory" / "constitution.md"
+    if not path.exists():
+        return False
+    text = path.read_text(errors="replace")
+    template_markers = (
+        "[PROJECT_NAME]",
+        "[PRINCIPLE_1_NAME]",
+        "[CONSTITUTION_VERSION]",
+        "[RATIFICATION_DATE]",
+        "[LAST_AMENDED_DATE]",
+    )
+    return not any(marker in text for marker in template_markers)
+
+
 def _blocked_banner(phase: str, reason: str, question: str) -> None:
     from echelon.ui import banner as _banner
     _banner(
@@ -295,6 +332,9 @@ class SquadController:
             guarded_phase = self._apply_phase_recommendation_guard(phase)
             if guarded_phase != phase:
                 phase = guarded_phase
+            guarded_phase = self._guard_constitution_provenance(phase)
+            if guarded_phase != phase:
+                phase = guarded_phase
 
             if phase in TERMINAL_PHASES:
                 state = self._state_store.load()
@@ -415,6 +455,49 @@ class SquadController:
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
+
+    def _guard_constitution_provenance(self, phase: str) -> str:
+        """Route normal spec/build phases through CHIEF until constitution is proven.
+
+        The state machine owns the primary decision: phase1-constitution must have
+        completed before phase1-what or later phases run. The filesystem check is
+        a secondary integrity check so stale or template artifacts cannot satisfy
+        the provenance gate by accident.
+        """
+        if not _phase_requires_constitution_provenance(phase):
+            return phase
+
+        state = self._state_store.load()
+        completed = state.get("completed_phases")
+        completed_phases = completed if isinstance(completed, list) else []
+        has_provenance = "phase1-constitution" in completed_phases
+        if has_provenance:
+            if _constitution_artifact_is_real(self._project_root):
+                return phase
+            state["phase"] = PHASE_TERMINAL_BLOCKED
+            state["status"] = "blocked"
+            state["blocked_reason"] = "constitution_artifact_mismatch"
+            state["constitution_guard_reason"] = (
+                "phase1-constitution completed, but constitution artifact is "
+                "missing or still template"
+            )
+            self._state_store.save(state)
+            print(
+                "[squad] constitution guard → blocked "
+                "(phase1-constitution completed but artifact is invalid)",
+                flush=True,
+            )
+            return PHASE_TERMINAL_BLOCKED
+
+        reason = "missing phase1-constitution completion provenance"
+        state["phase"] = "phase1-constitution"
+        state["constitution_guard_reason"] = reason
+        self._state_store.save(state)
+        print(
+            f"[squad] constitution guard → phase1-constitution ({reason})",
+            flush=True,
+        )
+        return "phase1-constitution"
 
     def _apply_phase_recommendation_guard(self, phase: str) -> str:
         """Honor forced-convergence routing before dispatching another agent.

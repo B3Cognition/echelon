@@ -61,6 +61,13 @@ class TestSquadStateStore:
         assert ld["phase_id"] == "init"
         assert ld["verdict"] == "DONE"
 
+    def test_advance_records_completed_phase_provenance(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        store.advance("phase1-constitution", "phase1-what", _result("DONE"))
+
+        assert store.load()["completed_phases"] == ["phase1-constitution"]
+
     def test_advance_applies_state_updates(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")

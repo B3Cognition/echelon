@@ -107,6 +107,7 @@ class SquadStateStore:
             "issues_log": [],
             "why_fail_count": 0,
             "phase_dispatch_counts": {},
+            "completed_phases": [],
             "convergence_guard_fire_count": 0,
             "squad_dir": str(self._squad_dir),
             "staging_dir": str(self._staging_dir),
@@ -155,6 +156,12 @@ class SquadStateStore:
             "verdict": result.verdict,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
+        completed = state.get("completed_phases")
+        if not isinstance(completed, list):
+            completed = []
+        if from_phase not in completed:
+            completed.append(from_phase)
+        state["completed_phases"] = completed
         for key, value in result.state_updates.items():
             if key == "status":
                 self._transition_status(state, value)

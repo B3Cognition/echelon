@@ -57,6 +57,19 @@ def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: 
     return ctrl, store
 
 
+def _mark_constitution_complete(tmp_path: Path, store: SquadStateStore) -> None:
+    const_path = tmp_path / ".specify" / "memory" / "constitution.md"
+    const_path.parent.mkdir(parents=True, exist_ok=True)
+    const_path.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
+    state = store.load()
+    completed = state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
+    if "phase1-constitution" not in completed_phases:
+        completed_phases.append("phase1-constitution")
+    state["completed_phases"] = completed_phases
+    store.save(state)
+
+
 class TestConsensusCannotBeSkipped:
     """Regression: phase3-consensus was previously skipped via EVOI fabrication.
     With the harness, phase3-plan → phase3-consensus is condition: always.
@@ -231,6 +244,7 @@ class TestSquadControllerBasics:
         state["iteration"] = 4
         state["phase_dispatch_counts"] = {"phase3-consensus": 5}
         store.save(state)
+        _mark_constitution_complete(tmp_path, store)
 
         result = ctrl.run("msg", "semi")
 
@@ -353,6 +367,7 @@ class TestSquadControllerBasics:
         provider.exec_agent.side_effect = side_effect
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
         result = ctrl.run("msg", "banzai")
         # Provider called at least twice: once for WHY1, once for COMMANDER escalation
         assert provider.exec_agent.call_count >= 2
@@ -491,6 +506,7 @@ class TestConvergenceRoutingGuard:
             "why_fail_count": 13,
         })
         store.save(state)
+        _mark_constitution_complete(tmp_path, store)
 
         result = ctrl.run("msg", "banzai")
 
@@ -511,6 +527,7 @@ class TestConvergenceRoutingGuard:
             "phase_recommendation": "phase2-decide",
         })
         store.save(state)
+        _mark_constitution_complete(tmp_path, store)
 
         result = ctrl.run("msg", "banzai")
 
@@ -563,6 +580,7 @@ class TestBuildPhaseRouting:
         state = store.load()
         state.update(initial_state)
         store.save(state)
+        _mark_constitution_complete(tmp_path, store)
 
         with patch.object(store, "advance", wraps=store.advance) as spy:
             ctrl.run("msg", "banzai")
@@ -818,11 +836,59 @@ class TestConstitutionPhase:
         graph = PhaseGraph(DEFINITION, EXT_YML)
         node = graph.get("phase1-constitution")
         pack = " ".join(node.context_pack)
+        assert "user-intent.md" in pack
         assert "glossary" in pack
         assert "mental-model" in pack
         assert "boundaries" in pack
         assert "assumptions" in pack
         assert "user-intent" in pack
+
+    def test_phase1_what_requires_constitution_completion_provenance(self, tmp_path):
+        """Existing-spec resumes must not skip CHIEF/phase1-constitution."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+
+        guarded = ctrl._guard_constitution_provenance("phase1-what")
+
+        assert guarded == "phase1-constitution"
+        assert store.load()["phase"] == "phase1-constitution"
+
+    def test_run_dispatches_chief_before_phase1_what_without_provenance(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+
+        with patch.object(ctrl, "_evaluate_transitions", return_value="DONE"):
+            result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+        assert store.load()["last_dispatch"]["phase_id"] == "phase1-constitution"
+        first_prompt = provider.exec_agent.call_args.args[1]
+        assert "speckit.constitution" in first_prompt
+
+    def test_phase1_what_allowed_after_constitution_completion_provenance(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        state = store.load()
+        state["completed_phases"] = ["phase1-constitution"]
+        store.save(state)
+        const_path = tmp_path / ".specify" / "memory" / "constitution.md"
+        const_path.parent.mkdir(parents=True)
+        const_path.write_text("# Constitution\n\nReal rules.\n", encoding="utf-8")
+
+        assert ctrl._guard_constitution_provenance("phase1-what") == "phase1-what"
+
+    def test_completed_constitution_with_missing_artifact_blocks(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        state = store.load()
+        state["completed_phases"] = ["phase1-constitution"]
+        store.save(state)
+
+        assert ctrl._guard_constitution_provenance("phase1-what") == "terminal-blocked"
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["blocked_reason"] == "constitution_artifact_mismatch"
 
     def test_chief_dispatched_in_controller(self, tmp_path):
         """SquadController dispatches an agent (not no-op) for phase1-constitution."""
