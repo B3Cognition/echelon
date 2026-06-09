@@ -18,9 +18,20 @@ class BuildPromptBuilder:
         "If required Echelon files are missing from the worktree, report the setup failure instead of using copies from another path.\n"
         "Do not run git commands. Do not commit. Do not push.\n"
         "Ralph does not consume `next_phase` from your final message; do not stop at phase boundaries.\n"
-        "Do not end after build-1-init or any intermediate build phase. Continue the build workflow until true BUILD_DONE, BLOCKED, or ERROR.\n"
+        "Do not end after build-1-init or any intermediate build phase. Continue until this invocation has produced verified progress, is genuinely blocked, or hit an error.\n"
         "A successful build must write `.harness-build-status.json`; a missing marker is treated as build_incomplete.\n"
         "Signal completion by running the skill shown in the prompt.\n"
+    )
+
+    STATUS_CONTRACT = (
+        "## Harness Build Status Contract\n"
+        "Before you stop, write `.harness-build-status.json` in the worktree root.\n"
+        "Use exactly one of these statuses:\n"
+        '- `{"status": "done", "reason": "<short evidence>"}` when this iteration completed useful verified progress. '
+        "Use `done` even when the overall spec is still incomplete and more tasks remain.\n"
+        '- `{"status": "blocked", "reason": "<specific external blocker>"}` only when no further implementation progress is possible without human input, missing credentials, unavailable tooling, or a contradictory spec decision.\n'
+        '- `{"status": "error", "reason": "<failed command or unexpected failure>"}` when you attempted implementation but verification is failing unexpectedly.\n'
+        "Do not use `impasse` for ordinary partial progress. An incomplete MVP is not a blocker by itself.\n"
     )
 
     def build_prompt(
@@ -38,6 +49,7 @@ class BuildPromptBuilder:
         """Prompt for a fresh build (outer_iter == 0) or a full rebuild."""
         parts = [
             self.SYSTEM_PREAMBLE,
+            self.STATUS_CONTRACT,
             f"## Worktree\n{worktree_path}",
             f"## Spec\n{spec_content}",
             f"## Tasks\n{tasks_content}",
@@ -74,6 +86,7 @@ class BuildPromptBuilder:
         """Prompt for a targeted fix after Docker verification failed."""
         parts = [
             self.SYSTEM_PREAMBLE,
+            self.STATUS_CONTRACT,
             f"## Worktree\n{worktree_path}",
             f"## Spec\n{spec_content}",
         ]

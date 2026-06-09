@@ -40,8 +40,9 @@ ambiguous, stop and ask the user to run `echelon spec target <spec_id> <repo>`.
 ## Environment Variables (injected by harness)
 
 **`HARNESS_BUILD_STATUS_FILE`** — Path where the build skill writes its outcome JSON
-(`{"status":"done"}` or `{"status":"impasse",...}`). Set only when running under harness —
-use as the harness-mode signal.
+(`{"status":"done"}`, `{"status":"blocked",...}`, or `{"status":"error",...}`).
+Set only when running under harness — use as the harness-mode signal. Write `done`
+for useful verified progress even when the overall spec still has remaining tasks.
 
 **`HARNESS_SOURCE_DIR`** — Absolute path to the harness Python source (`src/harness/`).
 If you need to understand harness internals (e.g., why verify failed), read files there

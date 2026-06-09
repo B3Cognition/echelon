@@ -9,6 +9,26 @@ from typing import Optional
 # Filename written by build-8-finalize (and codegen-7-deliver) to signal build outcome.
 BUILD_STATUS_FILENAME = ".harness-build-status.json"
 
+_DONE_STATUS_ALIASES = {
+    "build_done",
+    "done",
+    "iteration_done",
+    "partial",
+    "progress",
+}
+
+
+def _normalize_status(status: object) -> str:
+    raw = str(status or "unknown").strip()
+    if not raw:
+        return "unknown"
+    normalized = raw.lower().replace("-", "_")
+    if normalized in _DONE_STATUS_ALIASES:
+        return "done"
+    if normalized in {"blocked", "error", "impasse", "timeout", "unknown"}:
+        return normalized
+    return raw
+
 
 @dataclass
 class BuildResult:
@@ -27,6 +47,9 @@ class BuildResult:
     stderr: str
     duration_ms: int
     reason: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        self.status = _normalize_status(self.status)
 
     @property
     def succeeded(self) -> bool:

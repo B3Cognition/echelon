@@ -42,6 +42,20 @@ class TestBuildPromptBuilder:
         assert "Do not end after build-1-init" in prompt
         assert ".harness-build-status.json" in prompt
 
+    def test_build_prompt_defines_iteration_status_contract(self):
+        prompt = self.builder.build_prompt(
+            worktree_path="/wt/001",
+            spec_content="spec",
+            tasks_content="tasks",
+            build_skill="speckit.echelon.build",
+        )
+
+        assert '"status": "done"' in prompt
+        assert "iteration completed useful verified progress" in prompt
+        assert "overall spec is still incomplete" in prompt
+        assert '"status": "blocked"' in prompt
+        assert '"status": "impasse"' not in prompt
+
     def test_build_prompt_contains_spec(self):
         prompt = self.builder.build_prompt(
             worktree_path="/wt/001",

@@ -12,6 +12,14 @@ class TestBuildResult:
         assert r.succeeded is True
         assert r.is_impasse is False
 
+    @pytest.mark.parametrize("status", ["BUILD_DONE", "iteration_done", "partial", "progress"])
+    def test_progress_status_aliases_count_as_success(self, status):
+        r = BuildResult(exit_code=0, status=status, impasse_file=None,
+                        stdout="", stderr="", duration_ms=100)
+        assert r.status == "done"
+        assert r.succeeded is True
+        assert r.is_impasse is False
+
     def test_is_impasse_when_status_impasse(self):
         r = BuildResult(exit_code=0, status="impasse",
                         impasse_file="codegen-impasse.md",
@@ -31,6 +39,14 @@ class TestBuildResult:
         r = BuildResult.from_status_file(p, exit_code=0, stdout="", stderr="", duration_ms=50)
         assert r.status == "done"
         assert r.impasse_file is None
+
+    def test_from_status_file_normalizes_progress_alias(self, tmp_path):
+        p = tmp_path / "status.json"
+        p.write_text('{"status": "iteration_done", "reason": "implemented verified subset"}')
+        r = BuildResult.from_status_file(p, exit_code=0, stdout="", stderr="", duration_ms=50)
+        assert r.status == "done"
+        assert r.succeeded is True
+        assert r.reason == "implemented verified subset"
 
     def test_from_status_file_impasse(self, tmp_path):
         p = tmp_path / "status.json"

@@ -6,6 +6,8 @@ CHECKPOINT = ROOT / "extension" / "agents" / "control" / "checkpoint.md"
 PHASE2_DECIDE = ROOT / "extension" / "workflow" / "phases" / "phase2-decide.md"
 PHASE1_WHY2 = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
 BUILD_INIT = ROOT / "extension" / "workflow" / "phases" / "build-1-init.md"
+BUILD_FINALIZE = ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
+BUILD_COMMAND = ROOT / "extension" / "commands" / "echelon.build.md"
 PHASE3_CONSENSUS = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
 PHASE3_SPECIALISTS = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
 PHASE4_DOCUMENT = ROOT / "extension" / "workflow" / "phases" / "phase4-document.md"
@@ -59,6 +61,18 @@ class TestPhaseOutputPaths:
         assert "Do not return `next_phase: build-2-implement` and stop" in text
         assert "Ralph does not consume `next_phase`" in text
         assert ".harness-build-status.json" in text
+
+    def test_harness_status_contract_treats_done_as_iteration_completion(self) -> None:
+        finalize_text = BUILD_FINALIZE.read_text(encoding="utf-8")
+        command_text = BUILD_COMMAND.read_text(encoding="utf-8")
+
+        assert "useful verified progress" in finalize_text
+        assert '"status":"done"' in finalize_text
+        assert '"status":"impasse"' not in finalize_text
+        assert "Do not write `impasse` for ordinary partial progress" in finalize_text
+
+        assert "iteration completion, not total MVP completion" in command_text
+        assert 'Harness `{"status":"done"}` still means' in command_text
 
     def test_phase3_specialists_uses_canonical_context_artifact_path(self) -> None:
         text = PHASE3_SPECIALISTS.read_text(encoding="utf-8")

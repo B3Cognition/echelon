@@ -297,22 +297,24 @@ For the condensed build flow reference, load `workflow/phases/appendices/build-8
 
 ## 12. Harness Integration: Report Build Status
 
-If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build outcome so the Python harness can detect success or impasse:
+If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build outcome so the Python harness can detect whether this invocation completed cleanly:
 
-**On successful completion (BUILD_DONE reached):**
-
-```bash
-if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
-  printf '{"status":"done"}' > "$HARNESS_BUILD_STATUS_FILE"
-fi
-```
-
-**On unresolvable impasse (skill escalates after exhausting all retries):**
+**On useful verified progress, even when the overall spec remains incomplete:**
 
 ```bash
 if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
-  printf '{"status":"impasse","reason":"gate escalation after retries"}' > "$HARNESS_BUILD_STATUS_FILE"
+  printf '{"status":"done","reason":"completed verified build iteration"}' > "$HARNESS_BUILD_STATUS_FILE"
 fi
 ```
+
+**On a real external blocker that prevents further implementation progress:**
+
+```bash
+if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
+  printf '{"status":"blocked","reason":"specific blocker requiring human input"}' > "$HARNESS_BUILD_STATUS_FILE"
+fi
+```
+
+Do not write `impasse` for ordinary partial progress. An incomplete MVP is not a blocker by itself.
 
 If `HARNESS_BUILD_STATUS_FILE` is not set (standalone invocation), skip this step entirely.
