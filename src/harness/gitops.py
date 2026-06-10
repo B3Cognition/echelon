@@ -509,8 +509,26 @@ class GitOpsManager:
                 "node_modules",
             ),
         )
+        self._sync_codegraph_node_modules(source, dest)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)
+
+    @staticmethod
+    def _sync_codegraph_node_modules(source: Path, dest: Path) -> None:
+        """Copy vendored CodeGraph runtime deps ignored by the broad extension sync."""
+        relative = Path("scripts/node/re/node_modules")
+        source_node_modules = source / relative
+        if not source_node_modules.exists():
+            return
+        shutil.copytree(
+            source_node_modules,
+            dest / relative,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(
+                ".cache",
+                ".bin",
+            ),
+        )
 
     @staticmethod
     def _runtime_extension_ready(path: Path) -> bool:

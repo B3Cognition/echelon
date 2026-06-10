@@ -80,6 +80,48 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     assert ".specify/extensions/echelon/" in exclude.read_text(encoding="utf-8")
 
 
+def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
+    """Harness worktrees keep CodeGraph Node deps required by the vendored bridge."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "node" / "re" / "node_modules" / "picomatch").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (
+        source
+        / "scripts"
+        / "node"
+        / "re"
+        / "node_modules"
+        / "picomatch"
+        / "package.json"
+    ).write_text('{"name":"picomatch"}\n', encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    copied = (
+        worktree
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "scripts"
+        / "node"
+        / "re"
+        / "node_modules"
+        / "picomatch"
+        / "package.json"
+    )
+    assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
+
+
 def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path):
     """Missing runtime prompts fail deterministically instead of inviting global search."""
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
