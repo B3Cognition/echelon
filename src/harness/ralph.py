@@ -266,11 +266,13 @@ class RalphController:
                         getattr(self._gitops, "base_dir", None),
                         worktree_path,
                     )
+                    before_build_head = self._current_head(worktree_path)
                     build_result = self._exec_build(
                         handle, build_command, strategy_context,
                         worktree_path=worktree_path,
                         prompt=iter_prompt,
                     )
+                    after_build_head = self._current_head(worktree_path)
                     containment_violation = _detect_containment_violation(
                         containment_before,
                         getattr(self._gitops, "base_dir", None),
@@ -352,10 +354,18 @@ class RalphController:
                             build_result,
                             worktree_path=worktree_path,
                             checkpoint=build_checkpoint,
+                            head_advanced=self._head_advanced(
+                                before_build_head,
+                                after_build_head,
+                            ),
                         ):
                             self._record_missing_marker_recovery(
                                 build_result,
                                 checkpoint=build_checkpoint,
+                                head_advanced=self._head_advanced(
+                                    before_build_head,
+                                    after_build_head,
+                                ),
                             )
                         else:
                             preserve_worktree = True
@@ -1626,6 +1636,7 @@ class RalphController:
         *,
         worktree_path: str,
         checkpoint: Optional[Dict[str, Any]],
+        head_advanced: bool = False,
     ) -> bool:
         """Treat clean markerless builds with evidence of work as verifiable.
 
@@ -1648,6 +1659,8 @@ class RalphController:
 
         if checkpoint is not None:
             return True
+        if head_advanced:
+            return True
         return self._has_confirmed_file_changes(worktree_path)
 
     def _record_missing_marker_recovery(
@@ -1655,6 +1668,7 @@ class RalphController:
         build_result: Dict[str, Any],
         *,
         checkpoint: Optional[Dict[str, Any]],
+        head_advanced: bool = False,
     ) -> None:
         state = self._state_store.read()
         recoveries = state.get("missing_marker_recoveries")
@@ -1665,6 +1679,7 @@ class RalphController:
                 "build_status": str(build_result.get("build_status") or "unknown"),
                 "exit_code": build_result.get("exit_code"),
                 "checkpoint_commit": checkpoint.get("commit") if checkpoint else None,
+                "head_advanced": head_advanced,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
@@ -1690,6 +1705,26 @@ class RalphController:
         if result.returncode != 0:
             return False
         return bool(result.stdout.strip())
+
+    @staticmethod
+    def _current_head(worktree_path: str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=worktree_path,
+                timeout=10,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout.strip() or None
+
+    @staticmethod
+    def _head_advanced(before: Optional[str], after: Optional[str]) -> bool:
+        return bool(before and after and before != after)
 
     def _commit_and_push(self, worktree_path: str, outer_iter: int) -> str:
         """Commit all changes and push to remote. Returns the branch pushed to.

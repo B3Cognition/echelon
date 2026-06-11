@@ -974,6 +974,69 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_called_once()
         gitops.push.assert_called_once_with(str(worktree), "main")
 
+    def test_clean_markerless_build_with_head_advance_continues_to_verify(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Clean exit + missing marker + new commit is verifiable progress."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=worktree, check=True)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+
+        def commit_without_marker(_worktree_path: str, _prompt: str):
+            (worktree / "generated.txt").write_text("committed output\n", encoding="utf-8")
+            subprocess.run(["git", "add", "generated.txt"], cwd=worktree, check=True)
+            subprocess.run(["git", "commit", "-m", "feat: generated output"], cwd=worktree, check=True)
+            return BuildResult(
+                exit_code=0,
+                status="unknown",
+                impasse_file=None,
+                stdout="done without status file",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = commit_without_marker
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "converged"
+        assert result.termination_reason == "converged"
+        captured = capsys.readouterr()
+        assert "BUILD DID NOT COMPLETE" not in captured.err
+        assert subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout == ""
+        state = state_store.read()
+        recovery = state["missing_marker_recoveries"][0]
+        assert recovery["exit_code"] == 0
+        assert recovery["head_advanced"] is True
+        gitops.push.assert_called_once_with(str(worktree), "main")
+
     def test_checkpoint_commit_records_task_progress_delta(self, tmp_path: Path) -> None:
         """Ralph commits a dirty worktree when build state shows task progress."""
         controller, provider, gitops, state_store = _make_controller(
