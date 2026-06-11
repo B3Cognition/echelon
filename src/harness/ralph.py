@@ -366,6 +366,13 @@ class RalphController:
                                 "COMMANDER may have changed files, but did not write "
                                 "the harness completion marker"
                             )
+                        elif build_status == "timeout":
+                            why = "build invocation timed out before COMMANDER finalized"
+                            meaning = (
+                                "COMMANDER may have made useful progress, but the LLM "
+                                "process exceeded the build timeout before verification "
+                                "and final status could be trusted"
+                            )
                         else:
                             why = f"build reported status '{build_status}'"
                             meaning = (

@@ -659,6 +659,45 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_timeout_reports_timeout_not_marker_status(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Timeouts are process failures, not explicit COMMANDER marker statuses."""
+        from harness.build_result import BuildResult
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=-1,
+            status="timeout",
+            impasse_file=None,
+            reason=None,
+            stdout="",
+            stderr="",
+            duration_ms=1_200_000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+
+        result = controller.run_loop(
+            max_outer=5,
+            max_inner=3,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        captured = capsys.readouterr()
+        assert "build invocation timed out before COMMANDER finalized" in captured.err
+        assert "COMMANDER wrote the harness completion marker" not in captured.err
+        state = state_store.read()
+        assert state["build_status"] == "timeout"
+        assert provider.destroyed is True
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
     def test_llm_build_blocks_when_real_repo_gets_dirty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
