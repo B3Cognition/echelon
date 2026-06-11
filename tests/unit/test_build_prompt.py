@@ -40,6 +40,7 @@ class TestBuildPromptBuilder:
 
         assert "Ralph does not consume `next_phase`" in prompt
         assert "Do not end after build-1-init" in prompt
+        assert "Ralph owns the outer loop" in prompt
         assert ".harness-build-status.json" in prompt
 
     def test_build_prompt_defines_iteration_status_contract(self):
@@ -51,6 +52,8 @@ class TestBuildPromptBuilder:
         )
 
         assert '"status": "done"' in prompt
+        assert "one bounded verified progress slice" in prompt
+        assert "Ralph will verify, commit, and start another invocation" in prompt
         assert "iteration completed useful verified progress" in prompt
         assert "overall spec is still incomplete" in prompt
         assert '"status": "blocked"' in prompt

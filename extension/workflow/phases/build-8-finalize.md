@@ -297,7 +297,7 @@ For the condensed build flow reference, load `workflow/phases/appendices/build-8
 
 ## 12. Harness Integration: Report Build Status
 
-If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build outcome so the Python harness can detect whether this invocation completed cleanly:
+If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build outcome so the Python harness can detect whether this invocation completed cleanly. Under harness, this means the current bounded progress slice completed cleanly; it does not mean the whole MVP is complete:
 
 **On useful verified progress, even when the overall spec remains incomplete:**
 

@@ -57,21 +57,29 @@ class TestPhaseOutputPaths:
 
     def test_build_init_warns_harness_not_to_stop_on_next_phase(self) -> None:
         text = BUILD_INIT.read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
 
         assert "Do not return `next_phase: build-2-implement` and stop" in text
         assert "Ralph does not consume `next_phase`" in text
+        assert "one bounded verified progress slice" in normalized
+        assert "Ralph owns verification, commit, and the next build invocation" in normalized
         assert ".harness-build-status.json" in text
 
     def test_harness_status_contract_treats_done_as_iteration_completion(self) -> None:
         finalize_text = BUILD_FINALIZE.read_text(encoding="utf-8")
         command_text = BUILD_COMMAND.read_text(encoding="utf-8")
+        command_normalized = " ".join(command_text.split())
 
         assert "useful verified progress" in finalize_text
+        assert "current bounded progress slice completed cleanly" in finalize_text
         assert '"status":"done"' in finalize_text
         assert '"status":"impasse"' not in finalize_text
         assert "Do not write `impasse` for ordinary partial progress" in finalize_text
 
+        assert "one bounded verified progress slice" in command_normalized
         assert "iteration completion, not total MVP completion" in command_text
+        assert "Ralph owns the outer loop" in command_text
+        assert "Do not keep selecting more tasks after writing the marker" in command_normalized
         assert 'Harness `{"status":"done"}` still means' in command_text
 
     def test_phase3_specialists_uses_canonical_context_artifact_path(self) -> None:

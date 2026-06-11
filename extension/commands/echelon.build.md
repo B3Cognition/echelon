@@ -37,6 +37,13 @@ Full-spec BUILD_DONE is forbidden while `verification-summary.md` is FAIL or
 `{"status":"done"}` after one verified build iteration; Ralph treats that marker
 as iteration completion, not total MVP completion.
 
+When `HARNESS_BUILD_STATUS_FILE` is set, a build invocation is **one bounded
+verified progress slice**, not the whole MVP and not the whole build state
+machine. After completing a task or coherent small batch and running the
+required quality gates for that slice, write `{"status":"done","reason":"..."}`
+to `$HARNESS_BUILD_STATUS_FILE` and stop. Ralph owns the outer loop: it will
+verify, commit, and invoke the next build slice when more tasks remain.
+
 **AXIOM-1:** Every increment must be a working application. Smoke test (app starts + HTTP 200) is a hard gate — 100% passing unit tests alone is not enough.
 
 **AXIOM-3:** Unverified requirements are unshipped. Full-spec BUILD_DONE is forbidden while any `coverage-map.md` entry has `coverage_type: manual|none` without explicit `deferred_risky_accepted` signed off by user. Harness `{"status":"done"}` still means the current invocation completed useful verified progress.
@@ -52,6 +59,11 @@ execute the next step in the build state machine without ending your response.
 Stop only when: (a) the state machine reaches DONE, (b) a BLOCKED/ERROR condition
 cannot be self-resolved, or (c) a human checkpoint is reached in `guided`/`semi`
 mode.
+
+Under `echelon harness run`, a verified slice with a written
+`$HARNESS_BUILD_STATUS_FILE` marker is also a valid stopping point. Do not keep
+selecting more tasks after writing the marker; that creates large uncheckpointed
+work and leaves Ralph waiting for a final marker that may never be reached.
 
 When invoked by `echelon harness run`, there is no external squad phase runner
 consuming `echelon_result.state_updates.next_phase` from your final response.

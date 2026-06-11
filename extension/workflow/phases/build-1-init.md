@@ -14,9 +14,15 @@ automatically re-dispatch `build-2-implement` after this response.
 Do not return `next_phase: build-2-implement` and stop. After initialization,
 continue directly into `build-2-implement` in the same build invocation. If an
 Agent/subagent tool is unavailable, execute the required build role inline in
-the main conversation and continue through the quality gates. Stop only on true
-BUILD_DONE, BLOCKED, or ERROR, and write `.harness-build-status.json` according
-to the harness contract.
+the main conversation and continue through the quality gates.
+
+When `HARNESS_BUILD_STATUS_FILE` is set, do not wait for full-spec BUILD_DONE to
+report success. The harness invocation boundary is one bounded verified progress
+slice: after a task or coherent small batch passes the required gates, write
+`.harness-build-status.json` with `{"status":"done","reason":"..."}` and stop.
+Ralph owns verification, commit, and the next build invocation. Stop without a
+`done` marker only on a real BLOCKED or ERROR condition, and write the matching
+status marker before stopping.
 
 ## 1. Initialization (BUILD_INIT)
 

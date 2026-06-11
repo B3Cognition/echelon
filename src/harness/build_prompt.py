@@ -18,14 +18,17 @@ class BuildPromptBuilder:
         "If required Echelon files are missing from the worktree, report the setup failure instead of using copies from another path.\n"
         "Do not run git commands. Do not commit. Do not push.\n"
         "Ralph does not consume `next_phase` from your final message; do not stop at phase boundaries.\n"
-        "Do not end after build-1-init or any intermediate build phase. Continue until this invocation has produced verified progress, is genuinely blocked, or hit an error.\n"
-        "A successful build must write `.harness-build-status.json`; a missing marker is treated as build_incomplete.\n"
+        "Do not end after build-1-init or any intermediate build phase. Continue until this invocation has produced one bounded verified progress slice, is genuinely blocked, or hit an error.\n"
+        "Ralph owns the outer loop. After one verified progress slice, write `.harness-build-status.json` and stop; do not keep selecting more tasks in the same invocation.\n"
+        "A successful build invocation must write `.harness-build-status.json`; a missing marker is treated as build_incomplete.\n"
         "Signal completion by running the skill shown in the prompt.\n"
     )
 
     STATUS_CONTRACT = (
         "## Harness Build Status Contract\n"
         "Before you stop, write `.harness-build-status.json` in the worktree root.\n"
+        "A harness build invocation is one bounded verified progress slice, not the whole MVP and not the whole build state machine.\n"
+        "When you finish a task or coherent small batch and its required quality gates pass, immediately write the status marker and stop. Ralph will verify, commit, and start another invocation if more work remains.\n"
         "Use exactly one of these statuses:\n"
         '- `{"status": "done", "reason": "<short evidence>"}` when this iteration completed useful verified progress. '
         "Use `done` even when the overall spec is still incomplete and more tasks remain.\n"
