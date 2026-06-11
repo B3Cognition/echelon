@@ -352,7 +352,7 @@ def test_llm_defaults():
         "target_default_branch": "main",
         "provider": "docker",
     })
-    assert config.llm.timeout_ms == 1_200_000
+    assert config.llm.timeout_ms == 10_800_000
     assert config.llm.config_dir is None
 
 

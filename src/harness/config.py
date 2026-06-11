@@ -150,7 +150,7 @@ class LlmConfig:
     enabled: bool = False              # true when llm section is present in config
     cli: str = "claude"               # "claude", "copilot", or "opencode"
     config_dir: Optional[str] = None   # passed as CLAUDE_CONFIG_DIR env var (claude only)
-    timeout_ms: int = 1_200_000        # 20 minutes per build invocation
+    timeout_ms: int = 10_800_000       # 3 hours per autonomous build invocation
 
 
 @dataclass
@@ -432,7 +432,7 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
         enabled="llm" in data,
         cli=_validate_llm_cli(str(raw.get("cli", "claude"))),
         config_dir=str(raw["config_dir"]) if raw.get("config_dir") else None,
-        timeout_ms=int(raw.get("timeout_ms", 1_200_000)),
+        timeout_ms=int(raw.get("timeout_ms", 10_800_000)),
     )
 
 
