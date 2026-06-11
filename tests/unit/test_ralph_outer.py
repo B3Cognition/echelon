@@ -540,7 +540,7 @@ class TestOuterLoopConvergence:
             llm_build_runner=llm_build_runner,
             fulfillment_runner=fulfillment_runner,
         )
-        controller._config.verify_command = f"{sys.executable} -c \"pass\""
+        controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = str(worktree)
 
@@ -597,7 +597,7 @@ class TestOuterLoopConvergence:
         state["spec_file"] = str(spec_dir / "spec.md")
         state["tasks_file"] = str(spec_dir / "tasks.md")
         state_store.write(state)
-        controller._config.verify_command = f"{sys.executable} -c \"pass\""
+        controller._config.verify_command = f"{sys.executable} -c pass"
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = orchestration_root
 
@@ -810,7 +810,7 @@ class TestOuterLoopConvergence:
     def test_build_incomplete_salvages_dirty_worktree_to_commit(
         self, tmp_path: Path
     ) -> None:
-        """Useful build output is committed before blocking on missing status marker."""
+        """Failed markerless build output is committed before blocking."""
         from harness.build_result import BuildResult
 
         worktree = tmp_path / "worktree"
@@ -833,7 +833,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
         llm_build_runner.exec_build.return_value = BuildResult(
-            exit_code=0,
+            exit_code=1,
             status="unknown",
             impasse_file=None,
             stdout="done without status file",
@@ -845,6 +845,8 @@ class TestOuterLoopConvergence:
             verify_results=[{"passed": True, "failures": []}],
             llm_build_runner=llm_build_runner,
         )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
         result = controller.run_loop(
@@ -877,6 +879,60 @@ class TestOuterLoopConvergence:
             text=True,
             check=True,
         ).stdout == ""
+
+    def test_clean_markerless_build_with_dirty_worktree_continues_to_verify(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Clean exit + missing marker + worktree changes is verifiable progress."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=worktree, check=True)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+
+        def write_without_marker(_worktree_path: str, _prompt: str):
+            (worktree / "generated.txt").write_text("usable output\n", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="unknown",
+                impasse_file=None,
+                stdout="done without status file",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = write_without_marker
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "converged"
+        assert result.termination_reason == "converged"
+        captured = capsys.readouterr()
+        assert "BUILD DID NOT COMPLETE" not in captured.err
+        state = state_store.read()
+        assert state["missing_marker_recoveries"][0]["exit_code"] == 0
+        assert state["missing_marker_recoveries"][0]["checkpoint_commit"] is None
+        gitops.commit.assert_called_once()
+        gitops.push.assert_called_once_with(str(worktree), "main")
 
     def test_checkpoint_commit_records_task_progress_delta(self, tmp_path: Path) -> None:
         """Ralph commits a dirty worktree when build state shows task progress."""
@@ -1027,6 +1083,8 @@ class TestOuterLoopConvergence:
             verify_results=[{"passed": True, "failures": []}],
             llm_build_runner=llm_build_runner,
         )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
         def commit_worktree(_path: str, message: str) -> str:
@@ -1073,10 +1131,10 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["checkpoint_commits"][0]["task_ids"] == ["T-001"]
 
-    def test_build_incomplete_keeps_checkpoint_before_blocking(
+    def test_clean_markerless_build_keeps_checkpoint_then_verifies(
         self, tmp_path: Path
     ) -> None:
-        """If a build advances progress then misses the marker, recovery has a checkpoint."""
+        """If a clean markerless build advances progress, verify the checkpoint."""
         from harness.build_result import BuildResult
 
         worktree = tmp_path / "worktree"
@@ -1114,6 +1172,8 @@ class TestOuterLoopConvergence:
             verify_results=[{"passed": True, "failures": []}],
             llm_build_runner=llm_build_runner,
         )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
         gitops.create_worktree.return_value = str(worktree)
 
         def commit_worktree(_path: str, message: str) -> str:
@@ -1151,12 +1211,13 @@ class TestOuterLoopConvergence:
             build_prompt="implement one task",
         )
 
-        assert result.status == "blocked"
-        assert result.termination_reason == "build_incomplete"
+        assert result.status == "converged"
+        assert result.termination_reason == "converged"
         state = state_store.read()
         checkpoint = state["checkpoint_commits"][0]
         assert checkpoint["task_ids"] == ["T-001"]
         assert checkpoint["commit"]
+        assert state["missing_marker_recoveries"][0]["checkpoint_commit"] == checkpoint["commit"]
         assert "salvage_commit" not in state
         assert subprocess.run(
             ["git", "status", "--porcelain"],

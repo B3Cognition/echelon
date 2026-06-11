@@ -305,7 +305,7 @@ class RalphController:
                         build_result.get("duration_s", 0.0),
                         build_result.get("tokens", 0),
                     )
-                    self._try_checkpoint_progress_commit(
+                    build_checkpoint = self._try_checkpoint_progress_commit(
                         worktree_path=worktree_path,
                         before_state=before_build_state,
                         after_state=self._state_store.read(),
@@ -348,81 +348,91 @@ class RalphController:
                     # marker was missing/unreadable, while other statuses (for
                     # example "impasse") are explicit build outcomes.
                     if not build_result.get("passed", True):
-                        preserve_worktree = True
-                        salvage = _salvage_build_worktree(
+                        if self._should_continue_after_missing_marker(
+                            build_result,
                             worktree_path=worktree_path,
-                            spec_id=self._spec_id,
-                            strategy_id=self._strategy_id,
-                            outer_iter=outer_iter,
-                        )
-                        from echelon.ui import banner as _ui_banner
-                        build_status = str(
-                            build_result.get("build_status") or "unknown"
-                        )
-                        build_reason = build_result.get("build_reason")
-                        if build_status == "unknown":
-                            why = "missing build status marker: .harness-build-status.json"
-                            meaning = (
-                                "COMMANDER may have changed files, but did not write "
-                                "the harness completion marker"
-                            )
-                        elif build_status == "timeout":
-                            why = "build invocation timed out before COMMANDER finalized"
-                            meaning = (
-                                "COMMANDER may have made useful progress, but the LLM "
-                                "process exceeded the build timeout before verification "
-                                "and final status could be trusted"
+                            checkpoint=build_checkpoint,
+                        ):
+                            self._record_missing_marker_recovery(
+                                build_result,
+                                checkpoint=build_checkpoint,
                             )
                         else:
-                            why = f"build reported status '{build_status}'"
-                            meaning = (
-                                "COMMANDER wrote the harness completion marker, "
-                                "but did not report BUILD_DONE"
+                            preserve_worktree = True
+                            salvage = _salvage_build_worktree(
+                                worktree_path=worktree_path,
+                                spec_id=self._spec_id,
+                                strategy_id=self._strategy_id,
+                                outer_iter=outer_iter,
                             )
-                        fields = [
-                            ("spec", self._spec_id),
-                            ("strategy", self._strategy_id),
-                            ("why", why),
-                        ]
-                        if build_reason:
-                            fields.append(("reason", str(build_reason)))
-                        if salvage:
+                            from echelon.ui import banner as _ui_banner
+                            build_status = str(
+                                build_result.get("build_status") or "unknown"
+                            )
+                            build_reason = build_result.get("build_reason")
+                            if build_status == "unknown":
+                                why = "missing build status marker: .harness-build-status.json"
+                                meaning = (
+                                    "COMMANDER may have changed files, but did not write "
+                                    "the harness completion marker"
+                                )
+                            elif build_status == "timeout":
+                                why = "build invocation timed out before COMMANDER finalized"
+                                meaning = (
+                                    "COMMANDER may have made useful progress, but the LLM "
+                                    "process exceeded the build timeout before verification "
+                                    "and final status could be trusted"
+                                )
+                            else:
+                                why = f"build reported status '{build_status}'"
+                                meaning = (
+                                    "COMMANDER wrote the harness completion marker, "
+                                    "but did not report BUILD_DONE"
+                                )
+                            fields = [
+                                ("spec", self._spec_id),
+                                ("strategy", self._strategy_id),
+                                ("why", why),
+                            ]
+                            if build_reason:
+                                fields.append(("reason", str(build_reason)))
+                            if salvage:
+                                fields.extend(
+                                    [
+                                        ("salvage commit", salvage["salvage_commit"][:12]),
+                                        ("salvage branch", salvage["salvage_branch"]),
+                                    ]
+                                )
                             fields.extend(
                                 [
-                                    ("salvage commit", salvage["salvage_commit"][:12]),
-                                    ("salvage branch", salvage["salvage_branch"]),
+                                    ("meaning", meaning),
+                                    (
+                                        "next",
+                                        f"echelon harness resume {self._spec_id}  (recover and finalize this build)",
+                                    ),
                                 ]
                             )
-                        fields.extend(
-                            [
-                                ("meaning", meaning),
-                                (
-                                    "next",
-                                    f"echelon harness resume {self._spec_id}  (recover and finalize this build)",
-                                ),
-                            ]
-                        )
-                        _ui_banner(
-                            "HARNESS — BUILD DID NOT COMPLETE",
-                            fields,
-                            file=sys.stderr,
-                        )
-                        blocked_state = {
-                            **(salvage or {}),
-                            "build_status": build_status,
-                            "build_reason": build_reason,
-                        }
-                        return self._finalize(
-                            status="blocked",
-                            reason="build_incomplete",
-                            outer_iterations=outer_iter + 1,
-                            inner_iterations=total_inner_iterations,
-                            pr_url=pr_url,
-                            tokens_used=tokens_used,
-                            final_verify=None,
-                            branch=salvage.get("salvage_branch") if salvage else None,
-                            extra_state=blocked_state,
-                        )
+                            _ui_banner(
+                                "HARNESS — BUILD DID NOT COMPLETE",
+                                fields,
+                                file=sys.stderr,
+                            )
+                            blocked_state = {
+                                **(salvage or {}),
+                                "build_status": build_status,
+                                "build_reason": build_reason,
+                            }
+                            return self._finalize(
+                                status="blocked",
+                                reason="build_incomplete",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=None,
+                                branch=salvage.get("salvage_branch") if salvage else None,
+                                extra_state=blocked_state,
+                            )
 
                     # Run verify
                     verify_result = self._exec_verify(handle, worktree_path=worktree_path)
@@ -1588,6 +1598,77 @@ class RalphController:
             return bool(result.stdout.strip())
         except Exception:
             return True  # Assume progress on error to avoid false escalation
+
+    def _should_continue_after_missing_marker(
+        self,
+        build_result: Dict[str, Any],
+        *,
+        worktree_path: str,
+        checkpoint: Optional[Dict[str, Any]],
+    ) -> bool:
+        """Treat clean markerless builds with evidence of work as verifiable.
+
+        COMMANDER sometimes exits 0 after producing valid code and test output
+        but forgets `.harness-build-status.json`. That marker is still required
+        for explicit failure/timeout/impasse handling; this recovery path only
+        applies when the process exited cleanly and git shows deterministic
+        evidence that work happened in the harness worktree.
+        """
+        build_status = str(build_result.get("build_status") or "unknown")
+        if build_status != "unknown":
+            return False
+
+        try:
+            exit_code = int(build_result.get("exit_code", 1))
+        except (TypeError, ValueError):
+            return False
+        if exit_code != 0:
+            return False
+
+        if checkpoint is not None:
+            return True
+        return self._has_confirmed_file_changes(worktree_path)
+
+    def _record_missing_marker_recovery(
+        self,
+        build_result: Dict[str, Any],
+        *,
+        checkpoint: Optional[Dict[str, Any]],
+    ) -> None:
+        state = self._state_store.read()
+        recoveries = state.get("missing_marker_recoveries")
+        if not isinstance(recoveries, list):
+            recoveries = []
+        recoveries.append(
+            {
+                "build_status": str(build_result.get("build_status") or "unknown"),
+                "exit_code": build_result.get("exit_code"),
+                "checkpoint_commit": checkpoint.get("commit") if checkpoint else None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        state["missing_marker_recoveries"] = recoveries
+        self._state_store.write(state)
+        logger.warning(
+            "Build status marker missing after clean exit; continuing to verify "
+            "because harness worktree progress was detected"
+        )
+
+    def _has_confirmed_file_changes(self, worktree_path: str) -> bool:
+        """Return True only when git confirms the worktree has changes."""
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True,
+                text=True,
+                cwd=worktree_path,
+                timeout=10,
+            )
+        except Exception:
+            return False
+        if result.returncode != 0:
+            return False
+        return bool(result.stdout.strip())
 
     def _commit_and_push(self, worktree_path: str, outer_iter: int) -> str:
         """Commit all changes and push to remote. Returns the branch pushed to.
