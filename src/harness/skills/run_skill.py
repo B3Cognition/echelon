@@ -19,6 +19,8 @@ from harness.run_intent import parse_intent
 
 logger = logging.getLogger(__name__)
 
+_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed"}
+
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:
     """Return count of canonical task rows in tasks.md, or 0 if absent."""
@@ -51,8 +53,17 @@ def _print_delivery_summary(
     for sid, info in comparison.get("strategies", {}).items():
         result = result_map.get(sid)
         converged = info.get("converged", False)
-        status_icon = "✓" if converged else "✗"
-        status_str = "CONVERGED" if converged else info.get("status", "FAILED").upper()
+        reason = getattr(result, "termination_reason", None) if result is not None else info.get("termination_reason")
+        checkpointed = (not converged) and reason in _CHECKPOINT_REASONS
+        if converged:
+            status_icon = "✓"
+            status_str = "CONVERGED"
+        elif checkpointed:
+            status_icon = "◐"
+            status_str = "CHECKPOINTED"
+        else:
+            status_icon = "✗"
+            status_str = info.get("status", "FAILED").upper()
         outer = info.get("outer_iterations", 0)
         inner = info.get("inner_iterations", 0)
         branch = info.get("branch") or f"harness/{intent.spec_id}/{sid}/iter-{max(outer - 1, 0)}"
@@ -65,9 +76,12 @@ def _print_delivery_summary(
             f"iterations: {outer} outer, {inner} inner retries",
         ]
         if result is not None:
-            reason = getattr(result, "termination_reason", None)
             if reason and reason != "converged":
-                lines.append(f"stopped: {reason}")
+                if checkpointed:
+                    lines.append("stopped: checkpoint recovery needed")
+                    lines.append(f"resume: echelon harness resume {intent.spec_id}")
+                else:
+                    lines.append(f"stopped: {reason}")
             fv = getattr(result, "final_verify", None)
             if fv is not None:
                 v_icon = "✓" if fv.passed else "✗"
@@ -82,9 +96,22 @@ def _print_delivery_summary(
 
     summary = comparison.get("summary", {})
     n_converged = summary.get("converged", 0)
-    n_failed = summary.get("failed", 0)
+    n_checkpointed = sum(
+        1
+        for sid, info in comparison.get("strategies", {}).items()
+        if not info.get("converged", False)
+        and (
+            getattr(result_map.get(sid), "termination_reason", None)
+            or info.get("termination_reason")
+        )
+        in _CHECKPOINT_REASONS
+    )
+    raw_failed = summary.get("failed", 0)
+    n_failed = max(0, raw_failed - n_checkpointed)
     total_tokens = summary.get("total_tokens", 0)
     result_str = f"{n_converged} converged, {n_failed} failed"
+    if n_checkpointed:
+        result_str += f", {n_checkpointed} checkpointed"
     if total_tokens:
         result_str += f"  ·  {total_tokens:,} tokens"
     fields.append(("result", result_str))

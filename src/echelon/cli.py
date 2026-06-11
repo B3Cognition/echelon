@@ -1205,6 +1205,9 @@ def _constitution_template_markers(text: str) -> list[str]:
     return markers
 
 
+_HARNESS_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed"}
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -1252,7 +1255,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("salvage branch", salvage_branch))
         if salvage_verified:
             fields.append(("salvage verified", salvage_verified))
-        if termination_reason in {"build_incomplete", "publish_failed"}:
+        is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
+        if is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
                 fields.append(
                     (
@@ -1278,8 +1282,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         else:
             fields.append(("next", f"echelon harness run {spec_id} --reset"))
             subtitle = "HARNESS BUILD BLOCKED"
-        if termination_reason in {"build_incomplete", "publish_failed"}:
-            subtitle = "HARNESS BUILD BLOCKED"
+        if is_checkpoint:
+            subtitle = "HARNESS BUILD CHECKPOINTED"
         _banner("NEXT STEP", fields, subtitle=subtitle)
         return
 

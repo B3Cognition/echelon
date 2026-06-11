@@ -82,7 +82,7 @@ def test_next_steps_report_latest_blocked_harness_build_before_phase_a_blockers(
     _print_next_steps(tmp_path, "done")
 
     captured = capsys.readouterr()
-    assert "HARNESS BUILD BLOCKED" in captured.out
+    assert "HARNESS BUILD CHECKPOINTED" in captured.out
     assert "build_incomplete" in captured.out
     assert "echelon harness resume 001-demo" in captured.out
     assert "constitution.md absent" not in captured.out
@@ -189,4 +189,3 @@ def test_next_steps_for_docker_unavailable_tells_user_to_start_docker(
     assert "start Docker Desktop" in captured.out
     assert "echelon harness run 001-demo" in captured.out
     assert "--reset" not in captured.out
-

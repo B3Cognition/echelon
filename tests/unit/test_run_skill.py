@@ -39,6 +39,19 @@ def _make_failed_result() -> LoopResult:
     )
 
 
+def _make_checkpoint_result() -> LoopResult:
+    return LoopResult(
+        status="blocked",
+        termination_reason="build_incomplete",
+        outer_iterations=2,
+        inner_iterations=3,
+        pr_url=None,
+        tokens_used=0,
+        final_verify=None,
+        branch="001-demo",
+    )
+
+
 @pytest.mark.unit
 class TestRunSkillAutoLand:
     """Test that run() calls land() when auto_merge is True."""
@@ -240,6 +253,45 @@ class TestRunSkillAutoLand:
         run("spec 012 banzai auto_merge", provider=provider, gitops=gitops, base_dir="/tmp/test")
 
         mock_land.assert_not_called()
+
+    def test_delivery_summary_renders_build_incomplete_as_checkpointed(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Recoverable salvaged harness stops should not be summarized as failed."""
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result = _make_checkpoint_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "branch": result.branch,
+                    "converged": False,
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+
+        _print_delivery_summary(
+            intent,
+            {"default": result},
+            comparison,
+            base_dir="/tmp/nonexistent",
+        )
+
+        captured = capsys.readouterr()
+        assert "◐ CHECKPOINTED" in captured.err
+        assert "stopped: checkpoint recovery needed" in captured.err
+        assert "resume: echelon harness resume 001-demo" in captured.err
+        assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
