@@ -105,6 +105,23 @@ class TestCmdHarnessResume:
 
         mock_run.assert_called_once()
 
+    def test_resume_forwards_mode_to_run(self, tmp_path: Path) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "verify_command_needed",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001", "mode=banzai"])
+
+        user_message = mock_run.call_args.args[0]
+        assert "mode=banzai" in user_message
+
     @pytest.mark.parametrize("reason", ["build_incomplete", "publish_failed"])
     def test_recoverable_blocked_reason_recovers_and_calls_run(
         self,

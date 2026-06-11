@@ -878,7 +878,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
 
     if not args or args[0] in ("-h", "--help"):
         print(
-            "Usage: echelon harness resume <spec_id> [strategy=<s>]\n\n"
+            "Usage: echelon harness resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n\n"
             "Resume a blocked harness run. Supports verify_command_needed and\n"
             "recovery from build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
@@ -895,6 +895,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
             k, _, v = arg.partition("=")
             kv[k.strip()] = v.strip()
     strategy = kv.get("strategy", "default")
+    mode = kv.get("mode", "semi")
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
@@ -992,7 +993,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
 
         from harness.skills.run_skill import run
         provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
-        user_message = f"spec {spec_id} {strategy} mode resume"
+        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
             run(user_message, provider, gitops)
         except Exception as exc:
@@ -1041,7 +1042,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
 
     from harness.skills.run_skill import run
     provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
-    user_message = f"spec {spec_id} {strategy} mode resume"
+    user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
     try:
         run(user_message, provider, gitops)
     except Exception as exc:
