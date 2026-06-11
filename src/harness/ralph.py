@@ -370,12 +370,32 @@ class RalphController:
                                 build_result.get("build_status") or "unknown"
                             )
                             build_reason = build_result.get("build_reason")
+                            build_exit_code = build_result.get("exit_code")
                             if build_status == "unknown":
-                                why = "missing build status marker: .harness-build-status.json"
-                                meaning = (
-                                    "COMMANDER may have changed files, but did not write "
-                                    "the harness completion marker"
-                                )
+                                try:
+                                    exit_code = int(build_exit_code)
+                                except (TypeError, ValueError):
+                                    exit_code = None
+                                if exit_code == 0:
+                                    why = "missing build status marker: .harness-build-status.json"
+                                    meaning = (
+                                        "COMMANDER may have changed files, but did not write "
+                                        "the harness completion marker"
+                                    )
+                                else:
+                                    code_text = (
+                                        f"code {exit_code}"
+                                        if exit_code is not None
+                                        else "a nonzero code"
+                                    )
+                                    why = (
+                                        "build process exited with "
+                                        f"{code_text} before writing the completion marker"
+                                    )
+                                    meaning = (
+                                        "The LLM/provider process stopped before COMMANDER "
+                                        "could finalize the harness build status"
+                                    )
                             elif build_status == "timeout":
                                 why = "build invocation timed out before COMMANDER finalized"
                                 meaning = (
@@ -421,6 +441,7 @@ class RalphController:
                                 **(salvage or {}),
                                 "build_status": build_status,
                                 "build_reason": build_reason,
+                                "build_exit_code": build_exit_code,
                             }
                             return self._finalize(
                                 status="blocked",

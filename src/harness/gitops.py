@@ -39,6 +39,65 @@ RUNTIME_EXTENSION_REQUIRED = (
 RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
 
 
+def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
+    """Create a Claude/Codex skill wrapper from a synced Echelon command file."""
+    raw = command_file.read_text(encoding="utf-8")
+    metadata, body = _split_frontmatter(raw)
+    description = _frontmatter_value(metadata, "description") or f"Run {command_file.stem}"
+    body = _prefix_runtime_paths(body)
+    return (
+        "---\n"
+        f"name: {skill_name}\n"
+        f"description: {description}\n"
+        "compatibility: Requires spec-kit project structure with .specify/ directory\n"
+        "metadata:\n"
+        "  author: github-spec-kit\n"
+        f"  source: echelon:commands/{command_file.name}\n"
+        "disable-model-invocation: true\n"
+        "---\n\n"
+        f"{body.rstrip()}\n"
+    )
+
+
+def _split_frontmatter(raw: str) -> tuple[str, str]:
+    if not raw.startswith("---\n"):
+        return "", raw
+    end = raw.find("\n---", 4)
+    if end == -1:
+        return "", raw
+    body_start = raw.find("\n", end + 4)
+    if body_start == -1:
+        return raw[4:end], ""
+    return raw[4:end], raw[body_start + 1 :]
+
+
+def _frontmatter_value(metadata: str, key: str) -> str | None:
+    match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", metadata, flags=re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1]
+    return value
+
+
+def _prefix_runtime_paths(body: str) -> str:
+    prefix = ".specify/extensions/echelon/"
+    for name in (
+        "agents/",
+        "workflow/",
+        "commands/",
+        "scripts/",
+        "templates/",
+        "config/",
+        "presets/",
+        "extension.yml",
+        "echelon-config.yml",
+    ):
+        body = body.replace(f"`{name}", f"`{prefix}{name}")
+    return body
+
+
 def _run_git(
     args: list,
     cwd: Optional[str] = None,
@@ -485,6 +544,7 @@ class GitOpsManager:
         dest = worktree / RUNTIME_EXTENSION_REL
 
         if self._runtime_extension_ready(dest):
+            self._sync_claude_command_skills(dest, worktree)
             self._exclude_runtime_extension(worktree)
             return
 
@@ -510,6 +570,7 @@ class GitOpsManager:
             ),
         )
         self._sync_codegraph_node_modules(source, dest)
+        self._sync_claude_command_skills(dest, worktree)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)
 
@@ -530,6 +591,23 @@ class GitOpsManager:
             ),
         )
 
+    def _sync_claude_command_skills(self, extension_root: Path, worktree: Path) -> None:
+        """Materialize ignored Claude skill wrappers from runtime command files."""
+        commands_dir = extension_root / "commands"
+        if not commands_dir.exists():
+            return
+
+        for command_file in sorted(commands_dir.glob("echelon.*.md")):
+            command_name = command_file.stem
+            skill_name = "speckit-" + command_name.replace(".", "-")
+            skill_dir = worktree / ".claude" / "skills" / skill_name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            (skill_dir / "SKILL.md").write_text(
+                _claude_skill_from_command(command_file, skill_name),
+                encoding="utf-8",
+            )
+            self._exclude_claude_skill(worktree, skill_name)
+
     @staticmethod
     def _runtime_extension_ready(path: Path) -> bool:
         return all((path / required).exists() for required in RUNTIME_EXTENSION_REQUIRED)
@@ -543,18 +621,35 @@ class GitOpsManager:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"{existing}{suffix}{line}\n", encoding="utf-8")
 
+    @staticmethod
+    def _git_exclude_path(worktree: Path) -> Path:
+        result = _run_git(
+            ["rev-parse", "--git-path", "info/exclude"],
+            cwd=str(worktree),
+        )
+        exclude_path = Path(result.stdout.strip())
+        if not exclude_path.is_absolute():
+            exclude_path = worktree / exclude_path
+        return exclude_path
+
     def _exclude_runtime_extension(self, worktree: Path) -> None:
         try:
-            result = _run_git(
-                ["rev-parse", "--git-path", "info/exclude"],
-                cwd=str(worktree),
-            )
-            exclude_path = Path(result.stdout.strip())
-            if not exclude_path.is_absolute():
-                exclude_path = worktree / exclude_path
-            self._append_unique_line(exclude_path, RUNTIME_EXTENSION_EXCLUDE)
+            self._append_unique_line(self._git_exclude_path(worktree), RUNTIME_EXTENSION_EXCLUDE)
         except GitOpsError as e:
             logger.warning("Could not exclude runtime extension from git status: %s", e)
+
+    def _exclude_claude_skill(self, worktree: Path, skill_name: str) -> None:
+        try:
+            self._append_unique_line(
+                self._git_exclude_path(worktree),
+                f".claude/skills/{skill_name}/",
+            )
+        except GitOpsError as e:
+            logger.warning(
+                "Could not exclude generated Claude skill %s from git status: %s",
+                skill_name,
+                e,
+            )
 
     def destroy_worktree(
         self,

@@ -122,6 +122,42 @@ def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
     assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
 
 
+def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
+    """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "commands").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "commands" / "echelon.verify-spec.md").write_text(
+        "---\n"
+        "name: speckit.echelon.verify-spec\n"
+        "description: Verify spec\n"
+        "---\n\n"
+        "Read `agents/control/commander.md` and `workflow/definition.yaml`.\n\n"
+        "$ARGUMENTS\n",
+        encoding="utf-8",
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    skill = worktree / ".claude" / "skills" / "speckit-echelon-verify-spec" / "SKILL.md"
+    text = skill.read_text(encoding="utf-8")
+    assert "name: speckit-echelon-verify-spec" in text
+    assert "Read `.specify/extensions/echelon/agents/control/commander.md`" in text
+    assert "`.specify/extensions/echelon/workflow/definition.yaml`" in text
+    assert "$ARGUMENTS" in text
+    assert ".claude/skills/speckit-echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
+
+
 def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path):
     """Missing runtime prompts fail deterministically instead of inviting global search."""
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
