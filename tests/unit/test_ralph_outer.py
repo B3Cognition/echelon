@@ -553,11 +553,65 @@ class TestOuterLoopConvergence:
         fulfillment_runner.refresh.assert_called_once_with(
             str(worktree),
             "spec-001",
-            orchestration_root=str(worktree),
+            orchestration_root=None,
         )
         assert result.status == "failed"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
+
+    def test_fulfillment_refresh_uses_orchestration_root_for_polyrepo_target(
+        self, tmp_path: Path
+    ) -> None:
+        """Targeted polyrepo builds refresh fulfillment in the orchestration spec dir."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        orchestration_root = tmp_path / "polyrepo"
+        target_root = tmp_path / "target"
+        worktree = target_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        spec_dir = orchestration_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        worktree.mkdir(parents=True)
+
+        llm_build_runner = MagicMock(spec=LlmBuildRunner)
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = 0
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        state = state_store.read()
+        state["target_repo"] = "target"
+        state["target_path"] = str(target_root)
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
+        controller._config.verify_command = f"{sys.executable} -c \"pass\""
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = orchestration_root
+
+        controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        fulfillment_runner.refresh.assert_called_once_with(
+            str(worktree),
+            "spec-001",
+            orchestration_root=orchestration_root,
+        )
 
     def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:
         """Verified work must not be reported converged when commit/push fails."""

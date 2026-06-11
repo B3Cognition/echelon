@@ -1008,7 +1008,11 @@ class RalphController:
         exit_code = self._fulfillment_runner.refresh(
             worktree_path,
             self._spec_id,
-            orchestration_root=getattr(self._gitops, "base_dir", None),
+            orchestration_root=(
+                getattr(self._gitops, "base_dir", None)
+                if self._spec_artifacts_mode() == "external"
+                else None
+            ),
         )
         if exit_code == 0:
             return verify_result
