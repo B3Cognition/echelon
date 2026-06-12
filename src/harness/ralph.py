@@ -302,6 +302,7 @@ class RalphController:
                             },
                         )
                     tokens_used += build_result.get("tokens", 0)
+                    self._enforce_completed_task_ids(build_result, worktree_path)
 
                     # Log build iteration
                     self._append_iteration_log(
@@ -420,6 +421,12 @@ class RalphController:
                                     "COMMANDER may have made useful progress, but the LLM "
                                     "process exceeded the build timeout before verification "
                                     "and final status could be trusted"
+                                )
+                            elif build_status == "missing_task_ids":
+                                why = "build completion marker omitted completed_task_ids"
+                                meaning = (
+                                    "COMMANDER reported the build slice done, but did not "
+                                    "identify the canonical tasks Ralph must mark DONE"
                                 )
                             else:
                                 why = f"build reported status '{build_status}'"
@@ -1102,6 +1109,41 @@ class RalphController:
         build["task_results"] = task_results
         state["build"] = build
         self._state_store.write(state)
+
+    def _enforce_completed_task_ids(
+        self,
+        build_result: Dict[str, Any],
+        worktree_path: str,
+    ) -> None:
+        """Require completed task IDs for successful task-backed build slices."""
+        if not build_result.get("passed", True):
+            return
+        if (build_result.get("build_status") or "unknown") != "done":
+            return
+        task_ids = build_result.get("task_ids")
+        if isinstance(task_ids, list) and any(str(task_id).strip() for task_id in task_ids):
+            return
+
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return
+        tasks_path = spec_dir / "tasks.md"
+        if not tasks_path.exists():
+            return
+
+        summary = summarize_task_progress(
+            tasks_path.read_text(encoding="utf-8", errors="replace")
+        )
+        if summary.total_tasks <= 0:
+            return
+
+        build_result["passed"] = False
+        build_result["build_status"] = "missing_task_ids"
+        build_result["build_reason"] = (
+            "successful harness build marker omitted completed_task_ids for a "
+            "task-backed build slice"
+        )
+        build_result["exit_code"] = 1
 
     def _refresh_fulfillment_report(
         self,

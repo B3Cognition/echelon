@@ -749,6 +749,55 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_done_without_task_ids_blocks_for_task_backed_spec(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A done marker must name completed task IDs when tasks.md has task rows."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            reason="implemented verified slice",
+            stdout="",
+            stderr="",
+            duration_ms=1000,
+            task_ids=[],
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        captured = capsys.readouterr()
+        assert "build completion marker omitted completed_task_ids" in captured.err
+        assert "canonical tasks Ralph must mark DONE" in captured.err
+        state = state_store.read()
+        assert state["build_status"] == "missing_task_ids"
+        assert "completed_task_ids" in state["build_reason"]
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
     def test_llm_build_timeout_reports_timeout_not_marker_status(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
