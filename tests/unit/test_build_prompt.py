@@ -60,6 +60,20 @@ class TestBuildPromptBuilder:
         assert '"status": "blocked"' in prompt
         assert '"status": "impasse"' not in prompt
 
+    def test_build_prompt_forbids_native_task_planning_tools_and_group_ids(self):
+        prompt = self.builder.build_prompt(
+            worktree_path="/wt/001",
+            spec_content="spec",
+            tasks_content="tasks",
+            build_skill="speckit.echelon.build",
+        )
+
+        assert "Do not use native task-planning tools" in prompt
+        assert "TaskCreate" in prompt
+        assert "TaskUpdate" in prompt
+        assert "Never report ranges or grouped task labels" in prompt
+        assert "T-063..T-068" in prompt
+
     def test_build_prompt_contains_spec(self):
         prompt = self.builder.build_prompt(
             worktree_path="/wt/001",

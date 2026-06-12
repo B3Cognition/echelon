@@ -77,6 +77,16 @@ class TestAICodingCliProvider:
         assert "--output-format" in cmd_passed
         assert "stream-json" in cmd_passed
 
+    def test_exec_prompt_disallows_claude_native_task_planning_tools(self, tmp_path):
+        with _mock_streaming() as mock_stream:
+            AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")
+
+        cmd_passed = mock_stream.call_args[0][0]
+        assert "--disallowedTools" in cmd_passed
+        disallowed = cmd_passed[cmd_passed.index("--disallowedTools") + 1]
+        assert "TaskCreate" in disallowed
+        assert "TaskUpdate" in disallowed
+
     def test_exec_prompt_sets_claude_config_dir_when_configured(self, tmp_path):
         captured_env = {}
 

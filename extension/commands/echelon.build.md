@@ -47,6 +47,16 @@ in the slice; Ralph marks those rows DONE in `tasks.md` before verify. Ralph
 owns the outer loop: it will verify, commit, and invoke the next build slice
 when more tasks remain.
 
+Do not use native task-planning tools such as TaskCreate or TaskUpdate under
+`echelon harness run`. They create provider-local todos only; Ralph does not
+consume them. Select work from canonical `tasks.md` rows and report progress
+only through `$HARNESS_BUILD_STATUS_FILE`.
+
+Never report ranges or grouped labels as completed task IDs. `T-063..T-068`,
+`T-095..T-149`, and `"Enemy Combat all tasks"` are display groupings, not valid
+progress identities. Expand them to exact canonical IDs such as
+`"completed_task_ids":["T-063","T-064"]`.
+
 **AXIOM-1:** Every increment must be a working application. Smoke test (app starts + HTTP 200) is a hard gate — 100% passing unit tests alone is not enough.
 
 **AXIOM-3:** Unverified requirements are unshipped. Full-spec BUILD_DONE is forbidden while any `coverage-map.md` entry has `coverage_type: manual|none` without explicit `deferred_risky_accepted` signed off by user. Harness `{"status":"done"}` still means the current invocation completed useful verified progress.

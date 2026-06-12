@@ -49,6 +49,7 @@ class AICodingCliProvider:
             return [
                 self._bin, "-p", prompt,
                 "--dangerously-skip-permissions",
+                "--disallowedTools", "TaskCreate,TaskUpdate",
                 "--output-format", "stream-json",
                 "--verbose",
             ]
