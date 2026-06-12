@@ -78,7 +78,9 @@ class TestPhaseOutputPaths:
 
         assert "one bounded verified progress slice" in command_normalized
         assert "iteration completion, not total MVP completion" in command_text
-        assert "Ralph owns the outer loop" in command_text
+        assert '"completed_task_ids":["T-001"]' in command_text
+        assert "Ralph marks those rows DONE in `tasks.md` before verify" in command_text
+        assert "Ralph owns the outer loop" in command_normalized
         assert "Do not keep selecting more tasks after writing the marker" in command_normalized
         assert 'Harness `{"status":"done"}` still means' in command_text
 

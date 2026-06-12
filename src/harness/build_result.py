@@ -47,6 +47,7 @@ class BuildResult:
     stderr: str
     duration_ms: int
     reason: Optional[str] = None
+    task_ids: list[str] | None = None
 
     def __post_init__(self) -> None:
         self.status = _normalize_status(self.status)
@@ -79,6 +80,7 @@ class BuildResult:
                 status=str(data.get("status", "unknown")),
                 impasse_file=data.get("impasse_file"),
                 reason=data.get("reason"),
+                task_ids=_task_ids(data),
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
@@ -89,7 +91,20 @@ class BuildResult:
                 status="unknown",
                 impasse_file=None,
                 reason=None,
+                task_ids=None,
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
             )
+
+
+def _task_ids(data: dict[str, object]) -> list[str]:
+    raw = data.get("completed_task_ids", data.get("task_ids"))
+    if not isinstance(raw, list):
+        return []
+    ids: list[str] = []
+    for value in raw:
+        task_id = str(value).strip()
+        if task_id:
+            ids.append(task_id)
+    return ids

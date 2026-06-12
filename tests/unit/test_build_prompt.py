@@ -52,8 +52,9 @@ class TestBuildPromptBuilder:
         )
 
         assert '"status": "done"' in prompt
+        assert "completed_task_ids" in prompt
         assert "one bounded verified progress slice" in prompt
-        assert "Ralph will verify, commit, and start another invocation" in prompt
+        assert "Ralph will mark those tasks DONE, verify, commit, and start another invocation" in prompt
         assert "iteration completed useful verified progress" in prompt
         assert "overall spec is still incomplete" in prompt
         assert '"status": "blocked"' in prompt

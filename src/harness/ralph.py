@@ -39,7 +39,11 @@ from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_history import append_implementation_run
 from harness.spec_frontmatter import find_spec_dir, write_status
 from harness.state import StateStore
-from harness.task_progress import summarize_task_progress
+from harness.task_progress import (
+    TaskProgressError,
+    summarize_task_progress,
+    update_task_progress_markdown,
+)
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from kernel.fulfillment import (
     blocking_statuses,
@@ -306,6 +310,10 @@ class RalphController:
                         build_result.get("passed", True),
                         build_result.get("duration_s", 0.0),
                         build_result.get("tokens", 0),
+                    )
+                    self._apply_build_task_progress(
+                        worktree_path=worktree_path,
+                        task_ids=build_result.get("task_ids"),
                     )
                     build_checkpoint = self._try_checkpoint_progress_commit(
                         worktree_path=worktree_path,
@@ -913,6 +921,7 @@ class RalphController:
                 "tokens": 0,
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
+                "task_ids": result.task_ids or [],
             }
         # Fallback: original sandbox path
         cmd = build_command
@@ -1036,6 +1045,63 @@ class RalphController:
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
         )
+
+    def _apply_build_task_progress(
+        self,
+        *,
+        worktree_path: str,
+        task_ids: object,
+    ) -> None:
+        """Apply build-reported completed task IDs to canonical tasks.md."""
+        if not isinstance(task_ids, list) or not task_ids:
+            return
+
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return
+
+        tasks_path = spec_dir / "tasks.md"
+        if not tasks_path.exists():
+            return
+
+        completed_ids = [str(task_id).strip() for task_id in task_ids if str(task_id).strip()]
+        if not completed_ids:
+            return
+
+        markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+        applied: list[str] = []
+        for task_id in completed_ids:
+            try:
+                markdown = update_task_progress_markdown(markdown, task_id, "DONE")
+            except TaskProgressError as exc:
+                logger.warning("Could not mark completed build task %s: %s", task_id, exc)
+                continue
+            applied.append(task_id)
+
+        if not applied:
+            return
+
+        tasks_path.write_text(markdown, encoding="utf-8")
+        summary = summarize_task_progress(markdown)
+        state = self._state_store.read()
+        build = state.get("build")
+        if not isinstance(build, dict):
+            build = {}
+        build["total_tasks"] = summary.total_tasks
+        build["completed_tasks"] = summary.completed_tasks
+        build["tasks_completed_pct"] = summary.tasks_completed_pct
+        task_results = build.get("task_results")
+        if not isinstance(task_results, dict):
+            task_results = {}
+        for task_id in applied:
+            result = task_results.get(task_id)
+            if not isinstance(result, dict):
+                result = {}
+            result["status"] = "DONE"
+            task_results[task_id] = result
+        build["task_results"] = task_results
+        state["build"] = build
+        self._state_store.write(state)
 
     def _refresh_fulfillment_report(
         self,

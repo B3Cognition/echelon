@@ -340,6 +340,42 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "task-progress-mismatch"
         assert "state completed_tasks=1 but tasks.md has 0 checked task rows" in result.failures[0].error
 
+    def test_build_reported_task_ids_mark_canonical_tasks_done(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph applies build status marker task IDs to tasks.md before verify."""
+        controller, _, _, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
+            "\n"
+            "  **Acceptance Criteria:**\n"
+            "  - [ ] Gate passes\n"
+            "\n"
+            "- [ ] T-002 complexity=standard phase=core req=FR-001 depends=T-001\n",
+            encoding="utf-8",
+        )
+
+        controller._apply_build_task_progress(
+            worktree_path=str(worktree),
+            task_ids=["T-001"],
+        )
+
+        text = tasks_path.read_text(encoding="utf-8")
+        assert "- [x] T-001 complexity=standard phase=foundation req=INFRA depends=none" in text
+        assert "  **Status:** DONE" in text
+        assert "  - [x] Gate passes" in text
+        assert "- [ ] T-002 complexity=standard phase=core req=FR-001 depends=T-001" in text
+        build = state_store.read()["build"]
+        assert build["completed_tasks"] == 1
+        assert build["task_results"]["T-001"]["status"] == "DONE"
+
     def test_task_progress_gate_reads_orchestration_tasks_for_polyrepo(
         self, tmp_path: Path
     ) -> None:

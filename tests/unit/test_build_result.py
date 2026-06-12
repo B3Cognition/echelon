@@ -48,6 +48,18 @@ class TestBuildResult:
         assert r.succeeded is True
         assert r.reason == "implemented verified subset"
 
+    def test_from_status_file_reads_completed_task_ids(self, tmp_path):
+        p = tmp_path / "status.json"
+        p.write_text(
+            '{"status": "done", "completed_task_ids": ["T-001", "T-002", " "]}'
+        )
+
+        r = BuildResult.from_status_file(
+            p, exit_code=0, stdout="", stderr="", duration_ms=50
+        )
+
+        assert r.task_ids == ["T-001", "T-002"]
+
     def test_from_status_file_impasse(self, tmp_path):
         p = tmp_path / "status.json"
         p.write_text('{"status": "impasse", "impasse_file": "codegen-impasse.md"}')

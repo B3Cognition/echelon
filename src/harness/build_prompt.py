@@ -28,9 +28,9 @@ class BuildPromptBuilder:
         "## Harness Build Status Contract\n"
         "Before you stop, write `.harness-build-status.json` in the worktree root.\n"
         "A harness build invocation is one bounded verified progress slice, not the whole MVP and not the whole build state machine.\n"
-        "When you finish a task or coherent small batch and its required quality gates pass, immediately write the status marker and stop. Ralph will verify, commit, and start another invocation if more work remains.\n"
+        "When you finish a task or coherent small batch and its required quality gates pass, immediately write the status marker and stop. Include `completed_task_ids` with the exact canonical task IDs completed in this slice. Ralph will mark those tasks DONE, verify, commit, and start another invocation if more work remains.\n"
         "Use exactly one of these statuses:\n"
-        '- `{"status": "done", "reason": "<short evidence>"}` when this iteration completed useful verified progress. '
+        '- `{"status": "done", "reason": "<short evidence>", "completed_task_ids": ["T-001"]}` when this iteration completed useful verified progress. '
         "Use `done` even when the overall spec is still incomplete and more tasks remain.\n"
         '- `{"status": "blocked", "reason": "<specific external blocker>"}` only when no further implementation progress is possible without human input, missing credentials, unavailable tooling, or a contradictory spec decision.\n'
         '- `{"status": "error", "reason": "<failed command or unexpected failure>"}` when you attempted implementation but verification is failing unexpectedly.\n'

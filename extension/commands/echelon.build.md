@@ -41,8 +41,11 @@ When `HARNESS_BUILD_STATUS_FILE` is set, a build invocation is **one bounded
 verified progress slice**, not the whole MVP and not the whole build state
 machine. After completing a task or coherent small batch and running the
 required quality gates for that slice, write `{"status":"done","reason":"..."}`
-to `$HARNESS_BUILD_STATUS_FILE` and stop. Ralph owns the outer loop: it will
-verify, commit, and invoke the next build slice when more tasks remain.
+to `$HARNESS_BUILD_STATUS_FILE` and stop. Include
+`"completed_task_ids":["T-001"]` with the exact canonical task row IDs completed
+in the slice; Ralph marks those rows DONE in `tasks.md` before verify. Ralph
+owns the outer loop: it will verify, commit, and invoke the next build slice
+when more tasks remain.
 
 **AXIOM-1:** Every increment must be a working application. Smoke test (app starts + HTTP 200) is a hard gate — 100% passing unit tests alone is not enough.
 
