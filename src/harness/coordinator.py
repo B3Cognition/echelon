@@ -30,7 +30,7 @@ from harness.ralph import RalphController
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
-from harness.spec_frontmatter import find_spec_dir, write_status as _write_spec_status
+from harness.spec_frontmatter import find_spec_dir
 from harness.visual_ralph import VisualRalphController
 from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
@@ -425,15 +425,6 @@ class StrategyCoordinator:
                         )
                         if result.status != "converged":
                             break
-
-            if result.status == "converged":
-                _spec_dir = find_spec_dir(intent.spec_id, Path(self._base_dir))
-                if _spec_dir is not None:
-                    try:
-                        _write_spec_status(_spec_dir, "Implemented")
-                        logger.info("spec %s marked Implemented", intent.spec_id)
-                    except FileNotFoundError:
-                        logger.warning("spec %s: no spec.md in %s — status not updated", intent.spec_id, _spec_dir)
 
             return result
 

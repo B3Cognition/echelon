@@ -51,10 +51,17 @@ def _statuses_in_report(report_path: Path) -> set[str]:
     statuses: set[str] = set()
     known = STRICT_BLOCKING | {"IMPLEMENTED", "OBSOLETE_SPEC"}
     requirement_id = re.compile(r"^(?:FR|AC|US|NFR|REQ|EDGE)-[A-Za-z0-9_.:-]+$")
+    summary_count = re.compile(
+        r"\b(?P<status>MISSING|PARTIAL|DEVIATED|UNVERIFIED)\s*:?\s*(?P<count>\d+)\b"
+    )
 
     for line in text.splitlines():
         if "|" not in line:
+            for match in summary_count.finditer(line):
+                if int(match.group("count")) > 0:
+                    statuses.add(match.group("status"))
             continue
+
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
         if len(cells) >= 2 and requirement_id.match(cells[0]) and cells[1] in known:
             statuses.add(cells[1])

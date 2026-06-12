@@ -94,6 +94,31 @@ def test_summary_table_status_counts_do_not_count_as_requirement_statuses(tmp_pa
     assert not fulfillment_has_blocking_gaps(report)
 
 
+def test_nonzero_fulfillment_summary_counts_are_blocking(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "**Verdict: SPEC_PARTIALLY_FULFILLED**\n\n"
+        "- Checklist: **137 items** extracted from `spec.md` / `plan.md`\n"
+        "- IMPLEMENTED 57 (42%) · PARTIAL 27 (20%) · UNVERIFIED 1 · "
+        "MISSING 46 (34%) · DEVIATED 0 · OBSOLETE_SPEC 6\n"
+    )
+
+    assert fulfillment_has_blocking_gaps(report)
+
+
+def test_zero_fulfillment_summary_counts_are_not_blocking(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "**Verdict: SPEC_FULFILLED**\n\n"
+        "- IMPLEMENTED: 137\n"
+        "- PARTIAL: 0\n"
+        "- MISSING: 0\n"
+        "- DEVIATED: 0\n"
+    )
+
+    assert not fulfillment_has_blocking_gaps(report)
+
+
 def test_blocking_statuses_returns_expected_sets():
     assert blocking_statuses() == NON_STRICT_BLOCKING
     assert blocking_statuses(strict=True) == STRICT_BLOCKING
