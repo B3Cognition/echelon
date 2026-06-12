@@ -94,6 +94,21 @@ def test_summary_table_status_counts_do_not_count_as_requirement_statuses(tmp_pa
     assert not fulfillment_has_blocking_gaps(report)
 
 
+def test_nonzero_summary_table_status_counts_are_blocking(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| Status | Count | Percentage |\n"
+        "|--------|------:|-----------:|\n"
+        "| IMPLEMENTED | 68 | 39% |\n"
+        "| PARTIAL | 42 | 24% |\n"
+        "| UNVERIFIED | 1 | 1% |\n"
+        "| MISSING | 47 | 27% |\n"
+        "| DEVIATED | 0 | 0% |\n"
+    )
+
+    assert fulfillment_has_blocking_gaps(report)
+
+
 def test_nonzero_fulfillment_summary_counts_are_blocking(tmp_path):
     report = tmp_path / "fulfillment-report.md"
     report.write_text(

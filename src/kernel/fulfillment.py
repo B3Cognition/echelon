@@ -63,6 +63,10 @@ def _statuses_in_report(report_path: Path) -> set[str]:
             continue
 
         cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) >= 2 and cells[0] in STRICT_BLOCKING:
+            count_match = re.search(r"\d+", cells[1])
+            if count_match and int(count_match.group(0)) > 0:
+                statuses.add(cells[0])
         if len(cells) >= 2 and requirement_id.match(cells[0]) and cells[1] in known:
             statuses.add(cells[1])
 
