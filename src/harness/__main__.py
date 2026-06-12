@@ -12,6 +12,7 @@ Subcommands:
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
+  write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -393,6 +394,35 @@ def _write_codegraph_evidence() -> None:
     print(f"OK: wrote CodeGraph evidence to {result.analysis_path}")
 
 
+def _write_codegraph_evidence_map() -> None:
+    if len(sys.argv) < 7:
+        print(
+            "Usage: python -m harness write-codegraph-evidence-map "
+            "<requirement-audit.md> <codegraph-analysis.json> <tasks.md> "
+            "<out.json> <out.md> [coverage-map.md]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.codegraph_evidence_mapper import write_codegraph_evidence_map
+
+    result = write_codegraph_evidence_map(
+        requirement_audit_path=Path(sys.argv[2]),
+        codegraph_analysis_path=Path(sys.argv[3]),
+        tasks_path=Path(sys.argv[4]),
+        out_json_path=Path(sys.argv[5]),
+        out_md_path=Path(sys.argv[6]),
+        coverage_map_path=Path(sys.argv[7]) if len(sys.argv) >= 8 else None,
+    )
+    print(
+        "OK: wrote CodeGraph evidence map to "
+        f"{result.out_json_path} and {result.out_md_path} "
+        f"({result.total_requirements} requirements)"
+    )
+
+
 def _migrate_tasks() -> None:
     if len(sys.argv) < 3:
         print("Usage: python -m harness migrate-tasks <tasks.md> [--write]", file=sys.stderr)
@@ -508,6 +538,8 @@ def main() -> None:
         _plan_reopen_gaps()
     elif subcommand == "write-codegraph-evidence":
         _write_codegraph_evidence()
+    elif subcommand == "write-codegraph-evidence-map":
+        _write_codegraph_evidence_map()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -520,8 +552,8 @@ def main() -> None:
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
             "'write-progress-integrity', 'apply-task-requirement-mapping', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
-            "'write-codegraph-evidence', 'migrate-tasks', 'validate-plan', "
-            "or 'migrate-plan'.",
+            "'write-codegraph-evidence', 'write-codegraph-evidence-map', "
+            "'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)

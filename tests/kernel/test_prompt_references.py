@@ -89,6 +89,26 @@ def test_build_finalize_uses_appendices_for_large_reference_sections():
     assert "workflow/phases/appendices/build-8-feedback-reference.md" in text
 
 
+def test_verify_spec_map_runs_deterministic_codegraph_evidence_map_first():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "verify-spec-4-map.md"
+    text = prompt.read_text()
+
+    assert "write-codegraph-evidence-map" in text
+    assert "{verify_run_dir}/codegraph-evidence-map.json" in text
+    assert "{verify_run_dir}/codegraph-evidence-map.md" in text
+    assert "`low`, `none`, or `ambiguous`" in text
+
+
+def test_implementation_mapper_respects_deterministic_codegraph_boundary():
+    prompt = EXTENSION_ROOT / "agents" / "build" / "implementation-mapper.md"
+    text = prompt.read_text()
+
+    assert "{verify_run_dir}/codegraph-evidence-map.json" in text
+    assert "preserve `high` and `medium` rows" in text.lower()
+    assert "low`, `none`, or `ambiguous`" in text
+    assert "NEVER perform broad LLM/source exploration" in text
+
+
 def test_sage_uses_appendix_for_decision_calibration_reference():
     prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
     text = prompt.read_text()

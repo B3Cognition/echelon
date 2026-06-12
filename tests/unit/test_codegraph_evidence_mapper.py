@@ -1,0 +1,249 @@
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+from harness.codegraph_evidence_mapper import write_codegraph_evidence_map
+
+
+def _write_fixture(tmp_path: Path, codegraph_symbols: list[dict]) -> tuple[Path, Path, Path]:
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "\n".join(
+            [
+                "# Requirement Audit",
+                "",
+                "| ID | Category | Source | Requirement | Acceptance Signal |",
+                "| --- | --- | --- | --- | --- |",
+                "| FR-004 | functional | spec.md#requirements | Engine awards exactly one Key card per grid-line crossing in the order crossings occur along Route. | Deterministic Route with N crossings produces exactly N key_awarded events. |",
+                "| FR-029 | functional | spec.md#requirements | Background saves write a Save State snapshot after mission state changes. | SaveStateRepository write is exercised by tests. |",
+                "| FR-999 | functional | spec.md#requirements | Telemetry pipeline emits gameplay events. | telemetry_event is persisted. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "symbols": codegraph_symbols,
+                "call_graph": [
+                    {
+                        "caller": "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004",
+                        "callee": "RouteResolver::resolve",
+                    }
+                ],
+                "impact_radius": [
+                    {
+                        "symbol": "RouteResolver::resolve",
+                        "affected": [
+                            "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004"
+                        ],
+                        "depth": 3,
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "\n".join(
+            [
+                "# Tasks",
+                "",
+                "- [ ] T-004 complexity=standard phase=engine req=FR-004 depends=none",
+                "  **Title:** Route resolver key award",
+                "- [ ] T-029 complexity=standard phase=persistence req=FR-029 depends=none",
+                "  **Title:** Save state repository writes",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return audit, analysis, tasks
+
+
+def test_codegraph_evidence_map_prefers_structural_evidence(tmp_path: Path):
+    audit, analysis, tasks = _write_fixture(
+        tmp_path,
+        [
+            {
+                "kind": "file",
+                "qualified_name": "Packages/Engine/Sources/RouteResolver.swift",
+                "name": "RouteResolver.swift",
+                "file_path": "Packages/Engine/Sources/RouteResolver.swift",
+                "line_start": 1,
+                "line_end": 90,
+            },
+            {
+                "kind": "method",
+                "qualified_name": "RouteResolver::resolve",
+                "name": "resolve",
+                "file_path": "Packages/Engine/Sources/RouteResolver.swift",
+                "line_start": 12,
+                "line_end": 44,
+            },
+            {
+                "kind": "method",
+                "qualified_name": "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004",
+                "name": "test_routeResolver_drawsKeysFromDeck_FR004",
+                "file_path": "Packages/Engine/Tests/EngineWiringTests.swift",
+                "line_start": 51,
+                "line_end": 70,
+            },
+            {
+                "kind": "class",
+                "qualified_name": "SaveStateRepository",
+                "name": "SaveStateRepository",
+                "file_path": "Packages/Engine/Sources/Persistence/SaveStateRepository.swift",
+                "line_start": 1,
+                "line_end": 48,
+            },
+        ],
+    )
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+
+    result = write_codegraph_evidence_map(
+        requirement_audit_path=audit,
+        codegraph_analysis_path=analysis,
+        tasks_path=tasks,
+        out_json_path=out_json,
+        out_md_path=out_md,
+    )
+
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    by_id = {entry["id"]: entry for entry in payload["requirements"]}
+
+    assert result.counts["high"] == 1
+    assert by_id["FR-004"]["confidence"] == "high"
+    assert by_id["FR-004"]["task_ids"] == ["T-004"]
+    assert "RouteResolver::resolve" in by_id["FR-004"]["implementation_evidence"][0]["symbol"]
+    assert (
+        "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004"
+        in by_id["FR-004"]["test_evidence"][0]["symbol"]
+    )
+
+    assert by_id["FR-029"]["confidence"] == "low"
+    assert by_id["FR-029"]["implementation_evidence"]
+    assert by_id["FR-029"]["test_evidence"] == []
+
+    assert by_id["FR-999"]["confidence"] == "none"
+    assert by_id["FR-999"]["implementation_evidence"] == []
+    assert by_id["FR-999"]["negative_evidence"]
+
+    markdown = out_md.read_text(encoding="utf-8")
+    assert "| FR-004 | high |" in markdown
+    assert "| FR-999 | none |" in markdown
+
+
+def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path: Path):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "\n".join(
+            [
+                "# Requirement Audit",
+                "",
+                "| ID | Category | Source | Requirement | Acceptance Signal |",
+                "| --- | --- | --- | --- | --- |",
+                "| FR-042 | functional | spec.md#requirements | AR overlay renders portal alignment. | ARKit view is visible. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(
+        json.dumps(
+            {
+                "symbols": [
+                    {
+                        "kind": "class",
+                        "qualified_name": "StarArrivalView",
+                        "name": "StarArrivalView",
+                        "file_path": "NavigationalPortal/Features/Flight/StarArrivalView.swift",
+                    },
+                    {
+                        "kind": "struct",
+                        "qualified_name": "CardView",
+                        "name": "CardView",
+                        "file_path": "NavigationalPortal/Features/GameSession/CardView.swift",
+                    },
+                ],
+                "call_graph": [],
+                "impact_radius": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [ ] T-042 complexity=standard phase=ui req=FR-042 depends=none\n",
+        encoding="utf-8",
+    )
+
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+    write_codegraph_evidence_map(
+        requirement_audit_path=audit,
+        codegraph_analysis_path=analysis,
+        tasks_path=tasks,
+        out_json_path=out_json,
+        out_md_path=out_md,
+    )
+
+    entry = json.loads(out_json.read_text(encoding="utf-8"))["requirements"][0]
+    assert entry["id"] == "FR-042"
+    assert entry["confidence"] == "none"
+    assert entry["implementation_evidence"] == []
+
+
+def test_write_codegraph_evidence_map_cli(tmp_path: Path):
+    audit, analysis, tasks = _write_fixture(
+        tmp_path,
+        [
+            {
+                "kind": "method",
+                "qualified_name": "RouteResolver::resolve",
+                "name": "resolve",
+                "file_path": "Packages/Engine/Sources/RouteResolver.swift",
+            },
+            {
+                "kind": "method",
+                "qualified_name": "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004",
+                "name": "test_routeResolver_drawsKeysFromDeck_FR004",
+                "file_path": "Packages/Engine/Tests/EngineWiringTests.swift",
+            },
+        ],
+    )
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "harness",
+            "write-codegraph-evidence-map",
+            str(audit),
+            str(analysis),
+            str(tasks),
+            str(out_json),
+            str(out_md),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "OK: wrote CodeGraph evidence map" in completed.stdout
+    assert out_json.is_file()
+    assert out_md.is_file()
