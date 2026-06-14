@@ -158,6 +158,32 @@ def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     assert ".claude/skills/speckit-echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
 
 
+def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
+    """Harness worktrees get ignored Claude agent registry files from runtime agents."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "agents" / "build").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
+    (source / "agents" / "build" / "spec-guard.md").write_text("guard\n", encoding="utf-8")
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    commander = worktree / ".claude" / "agents" / "speckit-echelon-commander.md"
+    spec_guard = worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md"
+    assert commander.read_text(encoding="utf-8") == "commander\n"
+    assert spec_guard.read_text(encoding="utf-8") == "guard\n"
+    assert ".claude/agents/" in exclude.read_text(encoding="utf-8")
+
+
 def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path):
     """Missing runtime prompts fail deterministically instead of inviting global search."""
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"

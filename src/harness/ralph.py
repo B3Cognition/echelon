@@ -48,7 +48,9 @@ from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 from kernel.fulfillment import (
     blocking_statuses,
     fulfillment_has_blocking_gaps,
+    fulfillment_report_is_current,
     latest_fulfillment_report,
+    read_fulfillment_metadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,6 +58,20 @@ logger = logging.getLogger(__name__)
 # Number of consecutive failed outer iterations with no file changes before
 # escalating with a no-progress block.
 _NO_PROGRESS_THRESHOLD = 2
+
+
+def _current_git_commit(worktree: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
 
 
 class CommitPushError(RuntimeError):
@@ -992,10 +1008,32 @@ class RalphController:
         if report is None:
             return verify_result
 
-        if not fulfillment_has_blocking_gaps(report):
+        current_commit = _current_git_commit(Path(worktree_path))
+        if current_commit and not fulfillment_report_is_current(
+            report, current_commit=current_commit
+        ):
+            metadata = read_fulfillment_metadata(report)
+            verified_commit = metadata.get("verified_commit") or "(missing)"
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="fulfillment-report-stale",
+                error=(
+                    f"fulfillment report is stale for current HEAD {current_commit}: "
+                    f"{report} was verified at {verified_commit}. "
+                    f"Run `echelon verify-spec {self._spec_id}` before convergence."
+                ),
+            )
+            return VerifyResult(
+                passed=False,
+                failures=[failure],
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+            )
+
+        if not fulfillment_has_blocking_gaps(report, strict=True):
             return verify_result
 
-        statuses = ", ".join(sorted(blocking_statuses()))
+        statuses = ", ".join(sorted(blocking_statuses(strict=True)))
         failure = FailureEntry(
             category=FailureCategory.OTHER,
             id="fulfillment-gaps",

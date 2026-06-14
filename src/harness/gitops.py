@@ -545,6 +545,7 @@ class GitOpsManager:
 
         if self._runtime_extension_ready(dest):
             self._sync_claude_command_skills(dest, worktree)
+            self._sync_claude_agents(dest, worktree)
             self._exclude_runtime_extension(worktree)
             return
 
@@ -571,6 +572,7 @@ class GitOpsManager:
         )
         self._sync_codegraph_node_modules(source, dest)
         self._sync_claude_command_skills(dest, worktree)
+        self._sync_claude_agents(dest, worktree)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)
 
@@ -607,6 +609,22 @@ class GitOpsManager:
                 encoding="utf-8",
             )
             self._exclude_claude_skill(worktree, skill_name)
+
+    def _sync_claude_agents(self, extension_root: Path, worktree: Path) -> None:
+        """Materialize ignored Claude agent registry files from runtime agents."""
+        agents_dir = extension_root / "agents"
+        if not agents_dir.exists():
+            return
+
+        target = worktree / ".claude" / "agents"
+        target.mkdir(parents=True, exist_ok=True)
+        for agent_file in sorted(agents_dir.rglob("*.md")):
+            agent_name = f"speckit-echelon-{agent_file.stem}"
+            (target / f"{agent_name}.md").write_text(
+                agent_file.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+        self._exclude_claude_agents(worktree)
 
     @staticmethod
     def _runtime_extension_ready(path: Path) -> bool:
@@ -650,6 +668,12 @@ class GitOpsManager:
                 skill_name,
                 e,
             )
+
+    def _exclude_claude_agents(self, worktree: Path) -> None:
+        try:
+            self._append_unique_line(self._git_exclude_path(worktree), ".claude/agents/")
+        except GitOpsError as e:
+            logger.warning("Could not exclude generated Claude agents from git status: %s", e)
 
     def destroy_worktree(
         self,

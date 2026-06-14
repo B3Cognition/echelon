@@ -52,6 +52,12 @@ Do not use native task-planning tools such as TaskCreate or TaskUpdate under
 consume them. Select work from canonical `tasks.md` rows and report progress
 only through `$HARNESS_BUILD_STATUS_FILE`.
 
+`fulfillment-report.md` and `fulfillment-gaps.md` are verify-spec-owned
+judgment artifacts. NEVER hand-edit them during `echelon build` or a harness
+build slice to make a text gate pass. Implement source/tests, write the harness
+status marker with exact `completed_task_ids`, and let Ralph run verify-spec to
+regenerate those reports from fresh evidence.
+
 Never report ranges or grouped labels as completed task IDs. `T-063..T-068`,
 `T-095..T-149`, and `"Enemy Combat all tasks"` are display groupings, not valid
 progress identities. Expand them to exact canonical IDs such as

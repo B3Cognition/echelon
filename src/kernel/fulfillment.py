@@ -1,6 +1,7 @@
 """Fulfillment verification helpers."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import re
@@ -11,6 +12,18 @@ import yaml
 NON_STRICT_BLOCKING = {"MISSING", "PARTIAL", "DEVIATED"}
 STRICT_BLOCKING = NON_STRICT_BLOCKING | {"UNVERIFIED"}
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
+_TABLE_ITEM_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9_.:]+)*$")
+
+
+@dataclass(frozen=True)
+class FulfillmentArtifactValidation:
+    """Result of comparing verify-spec requirement and judgment row IDs."""
+
+    ok: bool
+    audit_count: int
+    report_count: int
+    missing_in_report: tuple[str, ...]
+    extra_in_report: tuple[str, ...]
 
 
 def blocking_statuses(strict: bool = False) -> set[str]:
@@ -134,3 +147,44 @@ def fulfillment_report_is_current(report_path: Path, *, current_commit: str) -> 
     metadata = read_fulfillment_metadata(report_path)
     verified_commit = metadata.get("verified_commit")
     return isinstance(verified_commit, str) and verified_commit == current_commit
+
+
+def fulfillment_table_ids(markdown: str) -> set[str]:
+    """Extract first-column item IDs from markdown fulfillment-style tables."""
+    ids: set[str] = set()
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|") or "---" in stripped:
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells or cells[0] == "ID":
+            continue
+        item_id = cells[0]
+        if _TABLE_ITEM_ID_RE.match(item_id):
+            ids.add(item_id)
+    return ids
+
+
+def validate_fulfillment_artifacts(
+    *,
+    requirement_audit_path: Path,
+    fulfillment_report_path: Path,
+) -> FulfillmentArtifactValidation:
+    """Validate that SPEC-GUARD judged exactly the audited requirement IDs."""
+    audit_ids = fulfillment_table_ids(
+        requirement_audit_path.read_text(encoding="utf-8", errors="replace")
+    )
+    report_ids = fulfillment_table_ids(
+        fulfillment_report_path.read_text(encoding="utf-8", errors="replace")
+    )
+    comparable_report_ids = set(report_ids)
+    comparable_report_ids.discard("TASK-PROGRESS")
+    missing = tuple(sorted(audit_ids - comparable_report_ids))
+    extra = tuple(sorted(comparable_report_ids - audit_ids))
+    return FulfillmentArtifactValidation(
+        ok=not missing and not extra,
+        audit_count=len(audit_ids),
+        report_count=len(comparable_report_ids),
+        missing_in_report=missing,
+        extra_in_report=extra,
+    )

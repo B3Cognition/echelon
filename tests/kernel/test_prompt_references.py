@@ -96,7 +96,28 @@ def test_verify_spec_map_runs_deterministic_codegraph_evidence_map_first():
     assert "write-codegraph-evidence-map" in text
     assert "{verify_run_dir}/codegraph-evidence-map.json" in text
     assert "{verify_run_dir}/codegraph-evidence-map.md" in text
+    assert "fallback_requirement_ids" in text
     assert "`low`, `none`, or `ambiguous`" in text
+
+
+def test_verify_spec_judge_requires_artifact_row_set_validation():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "verify-spec-5-judge.md"
+    text = prompt.read_text()
+
+    assert "requirement-audit.md" in text
+    assert "fulfillment-report.md" in text
+    assert "row-set integrity" in text
+    assert "hard stop" in text.lower()
+
+
+def test_build_command_forbids_hand_editing_verify_spec_reports():
+    prompt = EXTENSION_ROOT / "commands" / "echelon.build.md"
+    text = prompt.read_text()
+
+    assert "fulfillment-report.md" in text
+    assert "fulfillment-gaps.md" in text
+    assert "NEVER hand-edit" in text
+    assert "verify-spec-owned" in text
 
 
 def test_implementation_mapper_respects_deterministic_codegraph_boundary():
@@ -105,6 +126,7 @@ def test_implementation_mapper_respects_deterministic_codegraph_boundary():
 
     assert "{verify_run_dir}/codegraph-evidence-map.json" in text
     assert "preserve `high` and `medium` rows" in text.lower()
+    assert "fallback_requirement_ids" in text
     assert "low`, `none`, or `ambiguous`" in text
     assert "NEVER perform broad LLM/source exploration" in text
 

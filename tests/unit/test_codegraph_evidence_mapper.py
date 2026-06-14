@@ -122,6 +122,7 @@ def test_codegraph_evidence_map_prefers_structural_evidence(tmp_path: Path):
     by_id = {entry["id"]: entry for entry in payload["requirements"]}
 
     assert result.counts["high"] == 1
+    assert payload["summary"]["fallback_requirement_ids"] == ["FR-029", "FR-999"]
     assert by_id["FR-004"]["confidence"] == "high"
     assert by_id["FR-004"]["task_ids"] == ["T-004"]
     assert "RouteResolver::resolve" in by_id["FR-004"]["implementation_evidence"][0]["symbol"]

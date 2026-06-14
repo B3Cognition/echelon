@@ -275,6 +275,62 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "fulfillment-gaps"
         assert "echelon reopen spec-001" in result.failures[0].error
 
+    def test_fulfillment_gate_treats_unverified_as_blocking_for_harness(
+        self, tmp_path: Path
+    ) -> None:
+        """Harness convergence requires strict fulfillment, including UNVERIFIED."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | UNVERIFIED | src/a.py | medium | no executable proof |\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[])
+
+        result = controller._apply_fulfillment_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "fulfillment-gaps"
+        assert "UNVERIFIED" in result.failures[0].error
+
+    def test_fulfillment_gate_blocks_stale_report_for_current_head(
+        self, tmp_path: Path
+    ) -> None:
+        """Harness must not trust a fulfillment report stamped for an older commit."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            "spec_id: spec-001\n"
+            "verified_commit: old123\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[])
+
+        with patch("harness.ralph._current_git_commit", return_value="new456"):
+            result = controller._apply_fulfillment_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "fulfillment-report-stale"
+        assert "old123" in result.failures[0].error
+        assert "new456" in result.failures[0].error
+
     def test_fulfillment_gate_reads_orchestration_spec_dir_for_polyrepo(
         self, tmp_path: Path
     ) -> None:

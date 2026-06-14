@@ -35,4 +35,10 @@ Write:
 - `{spec_dir}/fulfillment-report.md`
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
 
+Before returning DONE, perform row-set integrity validation: every item ID in
+`{verify_run_dir}/requirement-audit.md` must appear exactly once in
+`{spec_dir}/fulfillment-report.md`, and the report must not invent extra item
+IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If validation
+fails, hard stop with BLOCKED and do not summarize the run as complete.
+
 Return summary and recommended action.

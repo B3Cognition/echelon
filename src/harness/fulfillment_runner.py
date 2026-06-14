@@ -8,7 +8,11 @@ from typing import Mapping, Protocol
 
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
-from kernel.fulfillment import latest_fulfillment_report, stamp_fulfillment_report
+from kernel.fulfillment import (
+    latest_fulfillment_report,
+    stamp_fulfillment_report,
+    validate_fulfillment_artifacts,
+)
 
 
 class PromptExecutor(Protocol):
@@ -55,6 +59,12 @@ class FulfillmentRunner:
         prompt = build_skill_prompt(skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
         if exit_code == 0:
+            if not _latest_report_matches_latest_audit(
+                Path(worktree_path),
+                spec_id,
+                spec_dir=spec_dir,
+            ):
+                return 2
             _stamp_latest_report(Path(worktree_path), spec_id, spec_dir=spec_dir)
         return exit_code
 
@@ -88,6 +98,37 @@ def _stamp_latest_report(
 
     run_id = _current_run_id(worktree)
     stamp_fulfillment_report(report, spec_id=spec_id, commit=commit, run_id=run_id)
+
+
+def _latest_report_matches_latest_audit(
+    worktree: Path,
+    spec_id: str,
+    *,
+    spec_dir: Path | None = None,
+) -> bool:
+    spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
+    if spec_dir is None:
+        return True
+    report = latest_fulfillment_report(spec_dir)
+    audit = _latest_requirement_audit(worktree, spec_id)
+    if report is None or audit is None:
+        return True
+    return validate_fulfillment_artifacts(
+        requirement_audit_path=audit,
+        fulfillment_report_path=report,
+    ).ok
+
+
+def _latest_requirement_audit(worktree: Path, spec_id: str) -> Path | None:
+    runs = worktree / "runs"
+    if not runs.exists():
+        return None
+    candidates = list(runs.glob(f"verify-spec-{spec_id}-*/requirement-audit.md"))
+    candidates.extend(runs.glob(f"*/verify-spec/{spec_id}/requirement-audit.md"))
+    existing = [path for path in candidates if path.is_file()]
+    if not existing:
+        return None
+    return max(existing, key=lambda path: path.stat().st_mtime)
 
 
 def _current_git_commit(worktree: Path) -> str | None:

@@ -23,6 +23,8 @@ NEVER reuse stale brownfield RE artifacts when verify-spec produced fresh CodeGr
 ### Rule 4 - Deterministic Map Boundary
 ALWAYS preserve `high` and `medium` rows from `codegraph-evidence-map.json` unless direct source inspection contradicts them.
 NEVER perform broad LLM/source exploration for rows already resolved by deterministic CodeGraph evidence.
+ALWAYS use `summary.fallback_requirement_ids` as the bounded queue for manual inspection when present.
+NEVER inspect outside `summary.fallback_requirement_ids` except to validate a cited high/medium row that appears contradictory.
 
 ## Inputs
 
@@ -38,7 +40,7 @@ NEVER perform broad LLM/source exploration for rows already resolved by determin
 
 1. Read every checklist item.
 2. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy its `high` and `medium` rows into the implementation map unless direct source inspection contradicts the cited evidence.
-3. For rows with deterministic confidence `low`, `none`, or `ambiguous`, inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
+3. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
 4. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
 5. For each item, distinguish implementation evidence from executable test evidence.
 6. Mark confidence as `high`, `medium`, `low`, or `none` based only on cited evidence.

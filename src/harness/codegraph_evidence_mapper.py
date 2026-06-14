@@ -126,6 +126,11 @@ def write_codegraph_evidence_map(
     counts = Counter(str(entry["confidence"]) for entry in entries)
     for confidence in CONFIDENCE_ORDER:
         counts.setdefault(confidence, 0)
+    fallback_requirement_ids = [
+        str(entry["id"])
+        for entry in entries
+        if str(entry["confidence"]) in {"low", "none", "ambiguous"}
+    ]
 
     payload = {
         "schema_version": 1,
@@ -138,6 +143,7 @@ def write_codegraph_evidence_map(
         "summary": {
             "total_requirements": len(entries),
             "counts": {key: counts[key] for key in CONFIDENCE_ORDER},
+            "fallback_requirement_ids": fallback_requirement_ids,
         },
         "requirements": entries,
     }
@@ -403,6 +409,12 @@ def _render_markdown(payload: dict[str, Any]) -> str:
         "# CodeGraph Evidence Map",
         "",
         f"Requirements: {summary['total_requirements']}",
+        "Fallback requirement IDs: "
+        + (
+            ", ".join(summary.get("fallback_requirement_ids") or [])
+            if summary.get("fallback_requirement_ids")
+            else "(none)"
+        ),
         "",
         "| ID | Confidence | Task IDs | Implementation Evidence | Test Evidence | Notes |",
         "| --- | --- | --- | --- | --- | --- |",
