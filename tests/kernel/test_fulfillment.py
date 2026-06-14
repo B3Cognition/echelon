@@ -121,6 +121,29 @@ def test_nonzero_fulfillment_summary_counts_are_blocking(tmp_path):
     assert fulfillment_has_blocking_gaps(report)
 
 
+def test_equals_style_fulfillment_summary_counts_are_blocking(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "**Fulfillment status (170 checklist items)**: "
+        "IMPLEMENTED=80, PARTIAL=31, UNVERIFIED=5, MISSING=53, "
+        "DEVIATED=1, OBSOLETE_SPEC=0\n"
+    )
+
+    assert fulfillment_has_blocking_gaps(report)
+
+
+def test_non_fr_requirement_table_ids_are_blocking(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status | Basis |\n"
+        "| --- | --- | --- |\n"
+        "| US1 | PARTIAL | full E2E absent |\n"
+        "| SC-014 | MISSING | cloud billing absent |\n"
+    )
+
+    assert fulfillment_has_blocking_gaps(report)
+
+
 def test_zero_fulfillment_summary_counts_are_not_blocking(tmp_path):
     report = tmp_path / "fulfillment-report.md"
     report.write_text(

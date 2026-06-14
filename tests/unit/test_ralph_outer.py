@@ -595,6 +595,66 @@ class TestOuterLoopConvergence:
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
 
+    def test_refreshed_equals_style_fulfillment_report_blocks_convergence(
+        self, tmp_path: Path
+    ) -> None:
+        """Fresh verify-spec summaries using STATUS=count syntax must block convergence."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+
+        llm_build_runner = MagicMock(spec=LlmBuildRunner)
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+
+        def write_realistic_summary(
+            worktree_path: str,
+            spec_id: str,
+            *,
+            orchestration_root: Path | str | None = None,
+        ) -> int:
+            (spec_dir / "fulfillment-report.md").write_text(
+                "**Fulfillment status (170 checklist items)**: "
+                "IMPLEMENTED=80, PARTIAL=31, UNVERIFIED=5, MISSING=53, "
+                "DEVIATED=1, OBSOLETE_SPEC=0\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.side_effect = write_realistic_summary
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "failed"
+        assert result.termination_reason == "outer_cap"
+        assert result.final_verify is not None
+        assert result.final_verify.passed is False
+        assert result.final_verify.failures[0].id == "fulfillment-gaps"
+        gitops.promote_pr_ready.assert_not_called()
+
     def test_fulfillment_refresh_uses_orchestration_root_for_polyrepo_target(
         self, tmp_path: Path
     ) -> None:
