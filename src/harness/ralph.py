@@ -544,6 +544,17 @@ class RalphController:
 
                     if verify_result.passed:
                         # Converged!
+                        if not self._mark_spec_ready_to_land(worktree_path):
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="ready_status_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                            )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
                         except CommitPushError as e:
@@ -558,7 +569,6 @@ class RalphController:
                                 final_verify=verify_result,
                                 branch=e.branch,
                             )
-                        self._mark_spec_ready_to_land(worktree_path)
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
 
                         return self._finalize(
@@ -597,6 +607,17 @@ class RalphController:
                         )
 
                     if inner_result["converged"]:
+                        if not self._mark_spec_ready_to_land(worktree_path):
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="ready_status_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                            )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
                         except CommitPushError as e:
@@ -611,7 +632,6 @@ class RalphController:
                                 final_verify=inner_result.get("final_verify"),
                                 branch=e.branch,
                             )
-                        self._mark_spec_ready_to_land(worktree_path)
                         pr_url = self._manage_pr(pr_url, branch, converged=True)
                         return self._finalize(
                             status="converged",
@@ -1981,15 +2001,23 @@ class RalphController:
 
     # === State helpers ===
 
-    def _mark_spec_ready_to_land(self, worktree_path: str) -> None:
+    def _mark_spec_ready_to_land(self, worktree_path: str) -> bool:
         """Write Python-owned implemented-but-not-landed spec status."""
         spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
+            state = self._state_store.read()
+            expected_spec = bool(state.get("spec_dir") or state.get("spec_file"))
+            if not expected_spec:
+                logger.info(
+                    "No spec directory found for %s; skipping ready_to_land marker",
+                    self._spec_id,
+                )
+                return True
             logger.warning(
                 "Could not mark %s ready_to_land: spec directory not found",
                 self._spec_id,
             )
-            return
+            return False
         try:
             write_status(spec_dir, "ready_to_land")
             state = self._state_store.read()
@@ -2000,8 +2028,10 @@ class RalphController:
                 verification_result="PASS",
             )
             write_artifact_index(spec_dir)
-        except FileNotFoundError as exc:
+            return True
+        except Exception as exc:
             logger.warning("Could not mark %s ready_to_land: %s", self._spec_id, exc)
+            return False
 
     def _append_iteration_log(
         self,

@@ -31,6 +31,7 @@ VALID_TERMINATION_REASONS = {
     "review_fix_queued",
     "no_progress",
     "publish_failed",
+    "ready_status_failed",
     "verify_command_needed",
     "containment_violation",
 }

@@ -525,6 +525,42 @@ class TestOuterLoopConvergence:
         assert "Lifecycle stage: verified" in text
         assert "`run-history.json`" in text
 
+    def test_ready_to_land_status_is_committed_before_publish(
+        self, tmp_path: Path
+    ) -> None:
+        """The pushed convergence commit must include the ready_to_land marker."""
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
+            encoding="utf-8",
+        )
+        controller, _provider, gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        def assert_ready_marker_committed(path: str, message: str) -> str:
+            del message
+            from harness.spec_frontmatter import read_frontmatter
+
+            committed_spec_dir = Path(path) / "specs" / "spec-001-demo"
+            assert read_frontmatter(committed_spec_dir)["status"] == "ready_to_land"
+            assert "**Status**: ready_to_land" in (
+                committed_spec_dir / "spec.md"
+            ).read_text(encoding="utf-8")
+            return "abc123"
+
+        gitops.commit.side_effect = assert_ready_marker_committed
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "converged"
+        gitops.push.assert_called_once()
+        gitops.promote_pr_ready.assert_called_once()
+
     def test_convergence_writes_ready_status_to_orchestration_spec_dir(
         self, tmp_path: Path
     ) -> None:
