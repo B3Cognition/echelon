@@ -6,10 +6,12 @@ from kernel.fulfillment import (
     STRICT_BLOCKING,
     blocking_statuses,
     fulfillment_report_is_current,
+    fulfillment_table_ids,
     fulfillment_has_blocking_gaps,
     latest_fulfillment_report,
     make_verify_spec_run_dir,
     stamp_fulfillment_report,
+    validate_fulfillment_artifacts,
 )
 
 
@@ -184,3 +186,58 @@ def test_fulfillment_report_is_current_rejects_stale_commit(tmp_path):
     assert fulfillment_report_is_current(report, current_commit="old") is True
     assert fulfillment_report_is_current(report, current_commit="new") is False
     assert STRICT_BLOCKING == NON_STRICT_BLOCKING | {"UNVERIFIED"}
+
+
+def test_fulfillment_table_ids_ignores_status_summary_tables():
+    markdown = (
+        "## Summary\n\n"
+        "| Status | Count |\n"
+        "| --- | ---: |\n"
+        "| IMPLEMENTED | 130 |\n"
+        "| PARTIAL | 0 |\n"
+        "| UNVERIFIED | 0 |\n"
+        "| MISSING | 0 |\n"
+        "| DEVIATED | 0 |\n\n"
+        "## Per-Requirement Verdicts\n\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n"
+        "| US-001-AC-1 | OBSOLETE_SPEC | scope.md | high | deferred |\n"
+        "| TASK-PROGRESS | PARTIAL | tasks.md | high | bookkeeping |\n"
+    )
+
+    assert fulfillment_table_ids(markdown) == {
+        "FR-001",
+        "US-001-AC-1",
+        "TASK-PROGRESS",
+    }
+
+
+def test_validate_fulfillment_artifacts_allows_status_summary_table(tmp_path):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | FR | spec.md | Build one thing | Test one thing |\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| Status | Count |\n"
+        "| --- | ---: |\n"
+        "| IMPLEMENTED | 1 |\n"
+        "| MISSING | 0 |\n\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+        encoding="utf-8",
+    )
+
+    result = validate_fulfillment_artifacts(
+        requirement_audit_path=audit,
+        fulfillment_report_path=report,
+    )
+
+    assert result.ok is True
+    assert result.audit_count == 1
+    assert result.report_count == 1

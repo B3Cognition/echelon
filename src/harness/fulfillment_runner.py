@@ -9,9 +9,19 @@ from typing import Mapping, Protocol
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
 from kernel.fulfillment import (
+    fulfillment_table_ids,
     latest_fulfillment_report,
     stamp_fulfillment_report,
     validate_fulfillment_artifacts,
+)
+
+AUDIT_SCOPE_DROP_THRESHOLD = 0.10
+SCOPE_INPUT_FILENAMES = (
+    "spec.md",
+    "plan.md",
+    "tasks.md",
+    "coverage-map.md",
+    "user-clarifications.md",
 )
 
 
@@ -113,6 +123,13 @@ def _latest_report_matches_latest_audit(
     audit = _latest_requirement_audit(worktree, spec_id)
     if report is None or audit is None:
         return True
+    if not _latest_audit_scope_is_stable(
+        worktree,
+        spec_id,
+        latest_audit=audit,
+        spec_dir=spec_dir,
+    ):
+        return False
     return validate_fulfillment_artifacts(
         requirement_audit_path=audit,
         fulfillment_report_path=report,
@@ -120,15 +137,60 @@ def _latest_report_matches_latest_audit(
 
 
 def _latest_requirement_audit(worktree: Path, spec_id: str) -> Path | None:
+    audits = _requirement_audits(worktree, spec_id)
+    return audits[-1] if audits else None
+
+
+def _requirement_audits(worktree: Path, spec_id: str) -> list[Path]:
     runs = worktree / "runs"
     if not runs.exists():
-        return None
+        return []
     candidates = list(runs.glob(f"verify-spec-{spec_id}-*/requirement-audit.md"))
     candidates.extend(runs.glob(f"*/verify-spec/{spec_id}/requirement-audit.md"))
     existing = [path for path in candidates if path.is_file()]
-    if not existing:
-        return None
-    return max(existing, key=lambda path: path.stat().st_mtime)
+    return sorted(existing, key=lambda path: path.stat().st_mtime)
+
+
+def _latest_audit_scope_is_stable(
+    worktree: Path,
+    spec_id: str,
+    *,
+    latest_audit: Path,
+    spec_dir: Path,
+) -> bool:
+    audits = _requirement_audits(worktree, spec_id)
+    previous = [path for path in audits if path != latest_audit]
+    if not previous:
+        return True
+    previous_audit = previous[-1]
+    previous_ids = fulfillment_table_ids(
+        previous_audit.read_text(encoding="utf-8", errors="replace")
+    )
+    latest_ids = fulfillment_table_ids(
+        latest_audit.read_text(encoding="utf-8", errors="replace")
+    )
+    if not previous_ids or len(latest_ids) >= len(previous_ids):
+        return True
+    dropped_ids = previous_ids - latest_ids
+    drop_ratio = len(dropped_ids) / len(previous_ids)
+    if drop_ratio <= AUDIT_SCOPE_DROP_THRESHOLD:
+        return True
+    return _scope_inputs_changed_after(spec_dir, previous_audit)
+
+
+def _scope_inputs_changed_after(spec_dir: Path, previous_audit: Path) -> bool:
+    try:
+        previous_mtime = previous_audit.stat().st_mtime
+    except OSError:
+        return True
+    for filename in SCOPE_INPUT_FILENAMES:
+        path = spec_dir / filename
+        try:
+            if path.is_file() and path.stat().st_mtime > previous_mtime:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _current_git_commit(worktree: Path) -> str | None:

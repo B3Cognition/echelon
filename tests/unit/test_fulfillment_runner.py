@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import MagicMock
 from unittest.mock import patch
 
@@ -109,6 +110,130 @@ class TestFulfillmentRunner:
 
         assert result == 2
         assert read_fulfillment_metadata(report) == {}
+
+    def test_refresh_rejects_large_audit_scope_drop_without_scope_change(self, tmp_path):
+        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+            encoding="utf-8",
+        )
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+
+        previous = tmp_path / "runs" / "verify-spec-spec-001-previous"
+        current = tmp_path / "runs" / "verify-spec-spec-001-current"
+        previous.mkdir(parents=True)
+        current.mkdir(parents=True)
+        previous_rows = "\n".join(
+            f"| FR-{index:03d} | FR | spec.md | R | A |" for index in range(1, 101)
+        )
+        current_rows = "\n".join(
+            f"| FR-{index:03d} | FR | spec.md | R | A |" for index in range(1, 61)
+        )
+        (previous / "requirement-audit.md").write_text(
+            "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            f"{previous_rows}\n",
+            encoding="utf-8",
+        )
+        (current / "requirement-audit.md").write_text(
+            "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            f"{current_rows}\n",
+            encoding="utf-8",
+        )
+        os.utime(spec_dir / "spec.md", (50, 50))
+        os.utime(previous / "requirement-audit.md", (100, 100))
+        os.utime(current / "requirement-audit.md", (200, 200))
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_matching_current_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                + "\n".join(
+                    f"| FR-{index:03d} | IMPLEMENTED | src/a.py | high | ok |"
+                    for index in range(1, 61)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_matching_current_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result == 2
+        assert read_fulfillment_metadata(report) == {}
+
+    def test_refresh_allows_large_audit_scope_drop_after_spec_change(self, tmp_path):
+        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+            encoding="utf-8",
+        )
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Changed Spec\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+
+        previous = tmp_path / "runs" / "verify-spec-spec-001-previous"
+        current = tmp_path / "runs" / "verify-spec-spec-001-current"
+        previous.mkdir(parents=True)
+        current.mkdir(parents=True)
+        (previous / "requirement-audit.md").write_text(
+            "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            + "\n".join(
+                f"| FR-{index:03d} | FR | spec.md | R | A |" for index in range(1, 101)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (current / "requirement-audit.md").write_text(
+            "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            + "\n".join(
+                f"| FR-{index:03d} | FR | spec.md | R | A |" for index in range(1, 61)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        os.utime(previous / "requirement-audit.md", (100, 100))
+        os.utime(spec_dir / "spec.md", (150, 150))
+        os.utime(current / "requirement-audit.md", (200, 200))
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_matching_current_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                + "\n".join(
+                    f"| FR-{index:03d} | IMPLEMENTED | src/a.py | high | ok |"
+                    for index in range(1, 61)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_matching_current_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result == 0
+        assert read_fulfillment_metadata(report)["verified_commit"] == "abc123"
 
     def test_refresh_uses_orchestration_spec_dir_for_polyrepo_runs(self, tmp_path):
         worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"

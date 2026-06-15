@@ -41,4 +41,9 @@ Before returning DONE, perform row-set integrity validation: every item ID in
 IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If validation
 fails, hard stop with BLOCKED and do not summarize the run as complete.
 
+Do not render summary counts as a markdown table with status labels in the first column.
+Use bullets or prose for summary counts. The first column of any report
+table is reserved for real requirement IDs or the permitted `TASK-PROGRESS`
+synthetic row.
+
 Return summary and recommended action.

@@ -152,12 +152,24 @@ def fulfillment_report_is_current(report_path: Path, *, current_commit: str) -> 
 def fulfillment_table_ids(markdown: str) -> set[str]:
     """Extract first-column item IDs from markdown fulfillment-style tables."""
     ids: set[str] = set()
+    table_contains_item_ids = False
     for line in markdown.splitlines():
         stripped = line.strip()
-        if not stripped.startswith("|") or "---" in stripped:
+        if not stripped.startswith("|"):
+            table_contains_item_ids = False
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if not cells or cells[0] == "ID":
+        if not cells:
+            continue
+        if set(cells[0]) <= {"-", ":"}:
+            continue
+        if cells[0] in {"ID", "Requirement"}:
+            table_contains_item_ids = True
+            continue
+        if cells[0] in {"Status", "Category", "Metric"}:
+            table_contains_item_ids = False
+            continue
+        if not table_contains_item_ids:
             continue
         item_id = cells[0]
         if _TABLE_ITEM_ID_RE.match(item_id):
