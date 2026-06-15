@@ -45,6 +45,10 @@ execution:
     learning: haiku       # MIRROR, ADAPTIVE, AUDITOR, REALIST (post-run, less critical)
     # @belief(claim: "Opus is required for final verification — the cost premium is justified by correctness stakes", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.85, severity: critical)
     verification: opus    # VALIDATOR — most important check, use best model
+    # @belief(claim: "Sonnet has enough context and synthesis quality for reverse-engineering extraction while avoiding Opus cost", verified: 2026-06-12, expires: 2026-12-12, confidence: 0.70, severity: high)
+    re_extraction: sonnet  # RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER
+    # @belief(claim: "Sonnet is sufficient for per-domain brownfield planning and task generation", verified: 2026-06-12, expires: 2026-12-12, confidence: 0.70, severity: high)
+    re_planning: sonnet    # RE-PLANNER, RE-TASKER
 
   # Git worktree isolation for build tasks
   worktree_isolation:

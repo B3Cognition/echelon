@@ -156,7 +156,7 @@ provides:
       behavior:
         execution: skill
         invocation: automatic
-        capability: strong
+        capability: balanced
         effort: high
         tools: full
         color: red
@@ -185,7 +185,7 @@ provides:
       description: "CHECKPOINT — internalization quality assessor"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes internalization-report.md
         color: blue
     - name: "speckit.echelon.scorekeeper"
@@ -209,7 +209,7 @@ provides:
       description: "TRACKER — intent analyst detecting scope drift"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes user-intent.md
         color: blue
     # Exploration layer
@@ -218,7 +218,7 @@ provides:
       description: "SCOUT — reconnaissance analyst mapping domain territory"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md
         color: green
     - name: "speckit.echelon.golddigger"
@@ -234,7 +234,7 @@ provides:
       description: "SYNTHESIZER — fuses raw discovery outputs into unified knowledge base"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes contradictions-and-gaps.md, risks.md, unified outputs
         color: green
     - name: "speckit.echelon.cartographer"
@@ -258,7 +258,7 @@ provides:
       description: "MODELER — maintains living queryable map of the codebase"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes mental-model-code.md, invariant alerts
         color: green
     # Feasibility layer
@@ -275,7 +275,7 @@ provides:
       description: "VALIDATOR — internalization gate ensuring comprehension before work"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes internalization-report.md
         color: orange
     # Solution layer
@@ -300,7 +300,7 @@ provides:
       description: "SENTINEL — test architecture lead designing test strategies"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes test-strategy.md, test-architecture.md, coverage-map.md
         color: purple
     # Specialists layer
@@ -325,7 +325,7 @@ provides:
       description: "BENCHMARK — performance engineer modeling capacity and scalability"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes performance-requirements.md, capacity-model.md
         color: cyan
     - name: "speckit.echelon.advocate"
@@ -333,7 +333,7 @@ provides:
       description: "ADVOCATE — accessibility specialist ensuring WCAG compliance"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes accessibility-requirements.md, user-flow.md
         color: cyan
     - name: "speckit.echelon.oracle"
@@ -341,7 +341,7 @@ provides:
       description: "ORACLE — domain-specific knowledge specialist"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes domain amendments to spec, plan, glossary
         color: cyan
     - name: "speckit.echelon.maverick"
@@ -349,7 +349,7 @@ provides:
       description: "MAVERICK — innovation consultant breaking assumptions via AutoTRIZ"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write         # writes alternatives.md, risk-opportunities.md, challenge-assumptions.md
         color: cyan
     # Learning layer
@@ -586,7 +586,7 @@ provides:
       description: "RE-ANALYZER — extracts structured codebase data via analysis scripts"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: full
         color: orange
     - name: "speckit.echelon.re-specifier"
@@ -594,7 +594,7 @@ provides:
       description: "RE-SPECIFIER — synthesises domain specifications from analysis artifacts"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
     - name: "speckit.echelon.re-verifier"
@@ -602,7 +602,7 @@ provides:
       description: "RE-VERIFIER — computes spec coverage and clusters orphan files"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
     - name: "speckit.echelon.re-expander"
@@ -610,7 +610,7 @@ provides:
       description: "RE-EXPANDER — fills coverage gaps from orphan file clusters"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
     - name: "speckit.echelon.re-validator"
@@ -618,7 +618,7 @@ provides:
       description: "RE-VALIDATOR — quality-checks specs and auto-resolves ambiguities from code"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
     - name: "speckit.echelon.re-checklister"
@@ -626,7 +626,7 @@ provides:
       description: "RE-CHECKLISTER — generates per-domain and summary quality checklists"
       behavior:
         execution: agent
-        capability: strong
+        capability: fast
         tools: write
         color: orange
     - name: "speckit.echelon.re-constituter"
@@ -634,7 +634,7 @@ provides:
       description: "RE-CONSTITUTER — generates strategic artifacts (constitution, strategy, risks, gaps, ADRs)"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
     - name: "speckit.echelon.re-planner"
@@ -642,7 +642,7 @@ provides:
       description: "RE-PLANNER — generates per-domain plan.md informed by constitution"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
     - name: "speckit.echelon.re-tasker"
@@ -650,7 +650,7 @@ provides:
       description: "RE-TASKER — generates per-domain tasks.md files"
       behavior:
         execution: agent
-        capability: strong
+        capability: balanced
         tools: write
         color: orange
 
@@ -660,7 +660,7 @@ provides:
       behavior:
         invocation: explicit
         visibility: user
-        capability: strong
+        capability: balanced
         tools: full
         color: blue
 
