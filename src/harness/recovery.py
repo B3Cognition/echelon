@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from harness.errors import GitOpsError
 from harness.gitops import _clean_branch_listing, _run_git
+from harness.build_result import BUILD_STATUS_FILENAME
 
 
 RECOVERABLE_REASONS = {"build_incomplete", "publish_failed"}
@@ -326,6 +327,13 @@ def _apply_commit(
                 target_branch=target_branch,
                 applied=False,
             )
+        if _resolve_only_build_status_marker_conflict(project_dir):
+            return RecoveryResult(
+                source=source_label,
+                commit=commit,
+                target_branch=target_branch,
+                applied=True,
+            )
         raise HarnessRecoveryError(f"Could not cherry-pick recovered commit {commit}: {e}") from e
     return RecoveryResult(
         source=source_label,
@@ -333,6 +341,27 @@ def _apply_commit(
         target_branch=target_branch,
         applied=True,
     )
+
+
+def _resolve_only_build_status_marker_conflict(project_dir: Path) -> bool:
+    unmerged = _run_git(["diff", "--name-only", "--diff-filter=U"], cwd=str(project_dir), check=False)
+    paths = [line.strip() for line in unmerged.stdout.splitlines() if line.strip()]
+    if paths != [BUILD_STATUS_FILENAME]:
+        return False
+
+    _run_git(["rm", BUILD_STATUS_FILENAME], cwd=str(project_dir), check=False)
+    continued = _run_git(
+        ["-c", "core.editor=true", "cherry-pick", "--continue"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if continued.returncode == 0:
+        return True
+
+    if "previous cherry-pick is now empty" in (continued.stderr or ""):
+        _run_git(["cherry-pick", "--abort"], cwd=str(project_dir), check=False)
+        return True
+    return False
 
 
 def _checkout_target_branch(project_dir: Path, target_branch: str) -> None:

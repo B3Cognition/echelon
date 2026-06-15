@@ -288,6 +288,61 @@ def test_recover_blocked_run_treats_empty_cherry_pick_as_already_applied(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_auto_resolves_only_build_status_marker_conflict(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+    _commit_file(
+        project,
+        ".harness-build-status.json",
+        '{"status":"done","completed_task_ids":["T-001"]}\n',
+        "bad tracked marker from previous recovery",
+    )
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    producer = tmp_path / "producer"
+    _git(tmp_path, "clone", str(mirror), str(producer))
+    _git(producer, "config", "user.email", "test@example.com")
+    _git(producer, "config", "user.name", "Test User")
+    _git(producer, "checkout", "001-feature")
+    _git(producer, "rm", ".harness-build-status.json")
+    _git(producer, "commit", "-m", "remove inherited marker")
+    (producer / "src").mkdir()
+    (producer / "src" / "generated.txt").write_text("generated\n", encoding="utf-8")
+    (producer / ".harness-build-status.json").write_text(
+        '{"status":"done","completed_task_ids":[]}\n',
+        encoding="utf-8",
+    )
+    _git(producer, "add", "src/generated.txt", ".harness-build-status.json")
+    _git(producer, "commit", "-m", "harness-salvage: 001-feature default iter-0")
+    recovered = _git(producer, "rev-parse", "HEAD")
+    _git(producer, "push", "origin", "001-feature")
+
+    _git(project, "checkout", "001-feature")
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={"termination_reason": "build_incomplete"},
+        gitops=_make_gitops(project),
+    )
+
+    assert result.source == "mirror"
+    assert result.commit == recovered
+    assert result.applied is True
+    assert (project / "src" / "generated.txt").read_text(encoding="utf-8") == "generated\n"
+    assert not (project / ".harness-build-status.json").exists()
+    assert _git(project, "status", "--porcelain", "--untracked-files=no") == ""
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_reports_existing_target_repo_commit(
     tmp_path: Path,
 ) -> None:
