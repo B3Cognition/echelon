@@ -25,6 +25,7 @@ import pytest
 from harness.config import HarnessConfig, ResourceLimits, NetworkConfig
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
+from harness.fulfillment_runner import FulfillmentRefreshResult
 from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import (
@@ -686,6 +687,59 @@ class TestOuterLoopConvergence:
         assert result.status == "failed"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
+
+    def test_cached_verify_spec_refresh_is_accepted_before_fulfillment_gate(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph treats a valid cached full verify-spec report as refreshed evidence."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+
+        llm_build_runner = MagicMock(spec=LlmBuildRunner)
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="cached",
+            exit_code=0,
+            used_cache=True,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "converged"
+        assert result.final_verify is not None
+        assert result.final_verify.passed is True
+        fulfillment_runner.refresh.assert_called_once()
 
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path

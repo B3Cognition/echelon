@@ -12,22 +12,55 @@ from harness.fulfillment_runner import FulfillmentRunner
 from kernel.fulfillment import read_fulfillment_metadata
 
 
+def _write_verify_skill(root):
+    skill_dir = root / ".claude" / "skills" / "speckit-echelon-verify-spec"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text(
+        "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+        encoding="utf-8",
+    )
+
+
+def _write_spec_inputs(spec_dir, *, tasks: str = "# Tasks\n") -> None:
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(tasks, encoding="utf-8")
+
+
+def _write_matching_audit(root, spec_id: str = "spec-001") -> None:
+    run_dir = root / "runs" / f"verify-spec-{spec_id}-20260615"
+    run_dir.mkdir(parents=True)
+    (run_dir / "requirement-audit.md").write_text(
+        "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | FR | spec.md | Build one thing | Test one thing |\n",
+        encoding="utf-8",
+    )
+
+
+def _write_matching_report(report) -> None:
+    report.write_text(
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.unit
 class TestFulfillmentRunner:
     def test_refresh_builds_verify_spec_prompt_and_runs_provider(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
-            encoding="utf-8",
-        )
+        _write_verify_skill(tmp_path)
         provider = MagicMock()
         provider.cli = "claude"
         provider.exec_prompt.return_value = 0
 
         result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
-        assert result == 0
+        assert result.exit_code == 0
+        assert result.status == "refreshed"
+        assert result.used_cache is False
         provider.exec_prompt.assert_called_once()
         worktree_path, prompt = provider.exec_prompt.call_args.args
         assert worktree_path == str(tmp_path)
@@ -40,18 +73,15 @@ class TestFulfillmentRunner:
 
         result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
-        assert result == 127
+        assert result.exit_code == 127
+        assert result.status == "missing_skill"
+        assert result.used_cache is False
         provider.exec_prompt.assert_not_called()
 
     def test_refresh_stamps_latest_fulfillment_report_on_success(self, tmp_path):
-        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
-        skill_dir.mkdir(parents=True)
-        (skill_dir / "skill.md").write_text(
-            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
-            encoding="utf-8",
-        )
+        _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
+        _write_spec_inputs(spec_dir)
         report = spec_dir / "fulfillment-report.md"
 
         provider = MagicMock()
@@ -66,10 +96,14 @@ class TestFulfillmentRunner:
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
             result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
-        assert result == 0
+        assert result.exit_code == 0
+        assert result.status == "refreshed"
         metadata = read_fulfillment_metadata(report)
         assert metadata["spec_id"] == "spec-001"
         assert metadata["verified_commit"] == "abc123"
+        assert metadata["verify_scope"] == "full"
+        assert isinstance(metadata["spec_input_hash"], str)
+        assert isinstance(metadata["verify_cache_key"], str)
 
     def test_refresh_rejects_report_with_ids_not_in_requirement_audit(self, tmp_path):
         skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
@@ -108,7 +142,8 @@ class TestFulfillmentRunner:
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
             result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
-        assert result == 2
+        assert result.exit_code == 2
+        assert result.status == "failed"
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_rejects_large_audit_scope_drop_without_scope_change(self, tmp_path):
@@ -170,7 +205,8 @@ class TestFulfillmentRunner:
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
             result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
-        assert result == 2
+        assert result.exit_code == 2
+        assert result.status == "failed"
         assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_allows_large_audit_scope_drop_after_spec_change(self, tmp_path):
@@ -232,7 +268,8 @@ class TestFulfillmentRunner:
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
             result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
-        assert result == 0
+        assert result.exit_code == 0
+        assert result.status == "refreshed"
         assert read_fulfillment_metadata(report)["verified_commit"] == "abc123"
 
     def test_refresh_uses_orchestration_spec_dir_for_polyrepo_runs(self, tmp_path):
@@ -264,9 +301,135 @@ class TestFulfillmentRunner:
                 orchestration_root=orchestration_root,
             )
 
-        assert result == 0
+        assert result.exit_code == 0
+        assert result.status == "refreshed"
         _worktree_path, prompt = provider.exec_prompt.call_args.args
         assert f"verify spec-001 spec_dir={spec_dir}" in prompt
         metadata = read_fulfillment_metadata(report)
         assert metadata["spec_id"] == "spec-001"
         assert metadata["verified_commit"] == "abc123"
+
+    def test_refresh_uses_cached_full_report_when_commit_and_spec_hash_match(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "cached"
+        assert second.exit_code == 0
+        assert second.used_cache is True
+        provider.exec_prompt.assert_called_once()
+
+    def test_refresh_invalidates_cache_when_tasks_change(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            (spec_dir / "tasks.md").write_text("# Tasks\n- [ ] T001\n", encoding="utf-8")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert second.used_cache is False
+        assert provider.exec_prompt.call_count == 2
+
+    def test_refresh_invalidates_cache_when_commit_changes(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch(
+            "harness.fulfillment_runner._current_git_commit",
+            side_effect=["abc123", "def456", "def456"],
+        ):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert provider.exec_prompt.call_count == 2
+
+    def test_refresh_does_not_use_cache_without_metadata(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        _write_matching_report(report)
+        provider = MagicMock()
+        provider.cli = "claude"
+        provider.exec_prompt.return_value = 0
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "refreshed"
+        provider.exec_prompt.assert_called_once()
+
+    def test_refresh_does_not_use_cache_when_artifact_validation_fails(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            report.write_text(
+                report.read_text(encoding="utf-8")
+                + "| FR-999 | IMPLEMENTED | src/b.py | high | invented row |\n",
+                encoding="utf-8",
+            )
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert provider.exec_prompt.call_count == 2

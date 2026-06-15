@@ -1228,7 +1228,7 @@ class RalphController:
                 token_usage=verify_result.token_usage,
             )
 
-        exit_code = self._fulfillment_runner.refresh(
+        refresh_result = self._fulfillment_runner.refresh(
             worktree_path,
             self._spec_id,
             orchestration_root=(
@@ -1237,6 +1237,7 @@ class RalphController:
                 else None
             ),
         )
+        exit_code = getattr(refresh_result, "exit_code", refresh_result)
         if exit_code == 0:
             return verify_result
 

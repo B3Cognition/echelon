@@ -118,6 +118,7 @@ def stamp_fulfillment_report(
     spec_id: str,
     commit: str,
     run_id: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Record deterministic verification provenance in a fulfillment report."""
     text = report_path.read_text(encoding="utf-8", errors="replace")
@@ -131,6 +132,8 @@ def stamp_fulfillment_report(
             "verified_at": datetime.now(timezone.utc).isoformat(),
         }
     )
+    if extra_metadata:
+        metadata.update(extra_metadata)
     if run_id:
         metadata["verify_run_id"] = run_id
     frontmatter = yaml.dump(

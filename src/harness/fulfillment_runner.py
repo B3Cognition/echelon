@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import hashlib
 from pathlib import Path
 import subprocess
 from typing import Mapping, Protocol
@@ -11,6 +13,7 @@ from harness.spec_frontmatter import find_spec_dir
 from kernel.fulfillment import (
     fulfillment_table_ids,
     latest_fulfillment_report,
+    read_fulfillment_metadata,
     stamp_fulfillment_report,
     validate_fulfillment_artifacts,
 )
@@ -23,6 +26,19 @@ SCOPE_INPUT_FILENAMES = (
     "coverage-map.md",
     "user-clarifications.md",
 )
+
+
+@dataclass(frozen=True)
+class FulfillmentRefreshResult:
+    """Result of a verify-spec fulfillment refresh attempt."""
+
+    status: str
+    exit_code: int
+    used_cache: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.exit_code == 0
 
 
 class PromptExecutor(Protocol):
@@ -52,16 +68,38 @@ class FulfillmentRunner:
         spec_id: str,
         *,
         orchestration_root: Path | str | None = None,
-    ) -> int:
+    ) -> FulfillmentRefreshResult:
+        worktree = Path(worktree_path)
+        spec_dir = _resolve_spec_dir(spec_id, Path(worktree_path), orchestration_root)
+        commit = _current_git_commit(worktree)
+        spec_input_hash = _spec_input_hash(spec_dir) if spec_dir is not None else None
+        cache_key = _verify_cache_key(
+            spec_id=spec_id,
+            commit=commit,
+            spec_input_hash=spec_input_hash,
+        )
+        if _latest_full_report_matches_cache(
+            worktree,
+            spec_id,
+            spec_dir=spec_dir,
+            commit=commit,
+            spec_input_hash=spec_input_hash,
+            cache_key=cache_key,
+        ):
+            return FulfillmentRefreshResult(
+                status="cached",
+                exit_code=0,
+                used_cache=True,
+            )
+
         skill_path = find_skill(
             "echelon.verify-spec",
-            Path(worktree_path),
+            worktree,
             self._prompt_executor.cli,
         )
         if skill_path is None:
-            return 127
+            return FulfillmentRefreshResult(status="missing_skill", exit_code=127)
 
-        spec_dir = _resolve_spec_dir(spec_id, Path(worktree_path), orchestration_root)
         arguments = spec_id
         if spec_dir is not None:
             arguments = f"{spec_id} spec_dir={spec_dir}"
@@ -70,13 +108,21 @@ class FulfillmentRunner:
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
         if exit_code == 0:
             if not _latest_report_matches_latest_audit(
-                Path(worktree_path),
+                worktree,
                 spec_id,
                 spec_dir=spec_dir,
             ):
-                return 2
-            _stamp_latest_report(Path(worktree_path), spec_id, spec_dir=spec_dir)
-        return exit_code
+                return FulfillmentRefreshResult(status="failed", exit_code=2)
+            _stamp_latest_report(
+                worktree,
+                spec_id,
+                spec_dir=spec_dir,
+                commit=commit,
+                spec_input_hash=spec_input_hash,
+                cache_key=cache_key,
+            )
+            return FulfillmentRefreshResult(status="refreshed", exit_code=0)
+        return FulfillmentRefreshResult(status="failed", exit_code=exit_code)
 
 
 def _resolve_spec_dir(
@@ -96,9 +142,11 @@ def _stamp_latest_report(
     spec_id: str,
     *,
     spec_dir: Path | None = None,
+    commit: str | None = None,
+    spec_input_hash: str | None = None,
+    cache_key: str | None = None,
 ) -> None:
     spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
-    commit = _current_git_commit(worktree)
     if spec_dir is None or commit is None:
         return
 
@@ -107,7 +155,78 @@ def _stamp_latest_report(
         return
 
     run_id = _current_run_id(worktree)
-    stamp_fulfillment_report(report, spec_id=spec_id, commit=commit, run_id=run_id)
+    extra_metadata: dict[str, str] = {"verify_scope": "full"}
+    if spec_input_hash:
+        extra_metadata["spec_input_hash"] = spec_input_hash
+    if cache_key:
+        extra_metadata["verify_cache_key"] = cache_key
+    stamp_fulfillment_report(
+        report,
+        spec_id=spec_id,
+        commit=commit,
+        run_id=run_id,
+        extra_metadata=extra_metadata,
+    )
+
+
+def _latest_full_report_matches_cache(
+    worktree: Path,
+    spec_id: str,
+    *,
+    spec_dir: Path | None,
+    commit: str | None,
+    spec_input_hash: str | None,
+    cache_key: str | None,
+) -> bool:
+    if spec_dir is None or commit is None or spec_input_hash is None or cache_key is None:
+        return False
+    report = latest_fulfillment_report(spec_dir)
+    if report is None:
+        return False
+    metadata = read_fulfillment_metadata(report)
+    if metadata.get("verify_scope") != "full":
+        return False
+    if metadata.get("verified_commit") != commit:
+        return False
+    if metadata.get("spec_input_hash") != spec_input_hash:
+        return False
+    if metadata.get("verify_cache_key") != cache_key:
+        return False
+    return _latest_report_matches_latest_audit(worktree, spec_id, spec_dir=spec_dir)
+
+
+def _spec_input_hash(spec_dir: Path | None) -> str | None:
+    if spec_dir is None:
+        return None
+    digest = hashlib.sha256()
+    for filename in SCOPE_INPUT_FILENAMES:
+        path = spec_dir / filename
+        digest.update(filename.encode("utf-8"))
+        digest.update(b"\0")
+        if path.is_file():
+            digest.update(b"1\0")
+            digest.update(path.read_bytes())
+        else:
+            digest.update(b"0\0")
+    return digest.hexdigest()
+
+
+def _verify_cache_key(
+    *,
+    spec_id: str,
+    commit: str | None,
+    spec_input_hash: str | None,
+) -> str | None:
+    if commit is None or spec_input_hash is None:
+        return None
+    digest = hashlib.sha256()
+    digest.update(b"verify-spec-cache-v1\0")
+    digest.update(spec_id.encode("utf-8"))
+    digest.update(b"\0full\0")
+    digest.update(commit.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(spec_input_hash.encode("utf-8"))
+    return digest.hexdigest()
 
 
 def _latest_report_matches_latest_audit(
