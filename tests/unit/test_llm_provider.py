@@ -1,5 +1,7 @@
 """Tests for AICodingCliProvider (formerly ClaudeCliProvider)."""
 from __future__ import annotations
+import io
+import json
 from unittest.mock import patch
 import pytest
 from harness.llm_provider import AICodingCliProvider
@@ -133,6 +135,39 @@ class TestAICodingCliProvider:
             result = AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")
 
         assert result == -1
+
+    def test_streaming_captures_result_error_text(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+
+        class FakeProcess:
+            stdout = io.BytesIO(
+                (
+                    json.dumps(
+                        {
+                            "type": "result",
+                            "is_error": True,
+                            "result": "You've hit your session limit · resets 9:10pm",
+                            "num_turns": 1,
+                            "duration_ms": 0,
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+            returncode = 1
+
+            def kill(self):
+                return None
+
+            def wait(self):
+                return self.returncode
+
+        with patch("harness.llm_provider.subprocess.Popen", return_value=FakeProcess()):
+            result = provider.exec_prompt(str(tmp_path), "build this")
+
+        assert result == 1
+        assert "session limit" in provider.last_stdout
+        assert "resets 9:10pm" in provider.last_stdout
 
     def test_non_claude_cli_uses_plain_run(self, tmp_path):
         """copilot/opencode/codex use _run_plain, not _run_streaming."""

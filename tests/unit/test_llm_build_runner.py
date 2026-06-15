@@ -64,6 +64,17 @@ class TestLlmBuildRunner:
         assert result.status == "unknown"
         assert result.succeeded is False
 
+    def test_exec_build_preserves_provider_output_when_status_file_missing(self, tmp_path):
+        executor = _executor(returncode=1)
+        executor.last_stdout = "You've hit your session limit"
+        executor.last_stderr = "resets 9:10pm"
+
+        result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        assert result.status == "unknown"
+        assert result.stdout == "You've hit your session limit"
+        assert result.stderr == "resets 9:10pm"
+
     def test_exec_feedback_delegates_to_build_semantics(self, tmp_path):
         executor = _executor(status={"status": "done"})
 

@@ -1070,10 +1070,10 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
-    def test_llm_build_nonzero_unknown_reports_process_exit_not_marker_status(
+    def test_llm_build_nonzero_unknown_reports_session_limit_not_marker_status(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Nonzero LLM exits before marker should not be blamed on COMMANDER forgetting."""
+        """Provider session limits should be explicit, not blamed on COMMANDER."""
         from harness.build_result import BuildResult
 
         llm_build_runner = MagicMock()
@@ -1100,11 +1100,11 @@ class TestOuterLoopConvergence:
         assert result.status == "blocked"
         assert result.termination_reason == "build_incomplete"
         captured = capsys.readouterr()
-        assert "build process exited with code 1 before writing the completion marker" in captured.err
+        assert "LLM provider session limit reached before COMMANDER finalized" in captured.err
         assert "missing build status marker" not in captured.err
         assert "COMMANDER may have changed files, but did not write" not in captured.err
         state = state_store.read()
-        assert state["build_status"] == "unknown"
+        assert state["build_status"] == "provider_session_limit"
         assert state["build_exit_code"] == 1
         assert provider.destroyed is True
         gitops.commit.assert_not_called()

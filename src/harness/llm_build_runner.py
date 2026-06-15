@@ -40,6 +40,8 @@ class LlmBuildRunner:
             },
         )
         duration_ms = int((time.monotonic() - start) * 1000)
+        stdout = str(getattr(self._prompt_executor, "last_stdout", "") or "")
+        stderr = str(getattr(self._prompt_executor, "last_stderr", "") or "")
 
         if exit_code == -1:
             return BuildResult(
@@ -47,16 +49,16 @@ class LlmBuildRunner:
                 status="timeout",
                 impasse_file=None,
                 reason=None,
-                stdout="",
-                stderr="",
+                stdout=stdout,
+                stderr=stderr,
                 duration_ms=duration_ms,
             )
 
         return BuildResult.from_status_file(
             status_file,
             exit_code=exit_code,
-            stdout="",
-            stderr="",
+            stdout=stdout,
+            stderr=stderr,
             duration_ms=duration_ms,
         )
 

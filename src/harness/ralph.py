@@ -406,7 +406,15 @@ class RalphController:
                             )
                             build_reason = build_result.get("build_reason")
                             build_exit_code = build_result.get("exit_code")
-                            if build_status == "unknown":
+                            if build_status == "unknown" and _is_provider_session_limit(build_result):
+                                why = "LLM provider session limit reached before COMMANDER finalized"
+                                meaning = (
+                                    "The provider stopped the build because its session budget "
+                                    "was exhausted; wait for the reset window, then resume to "
+                                    "recover the salvage commit"
+                                )
+                                build_status = "provider_session_limit"
+                            elif build_status == "unknown":
                                 try:
                                     exit_code = int(build_exit_code)
                                 except (TypeError, ValueError):
@@ -965,6 +973,8 @@ class RalphController:
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
                 "task_ids": result.task_ids or [],
+                "stdout": result.stdout,
+                "stderr": result.stderr,
             }
         # Fallback: original sandbox path
         cmd = build_command
@@ -981,6 +991,8 @@ class RalphController:
             "tokens": _estimate_tokens(result),
             "impasse": False,
             "impasse_file": None,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
         }
 
     def _exec_verify(self, handle: SandboxHandle, worktree_path: str = "") -> VerifyResult:
@@ -2554,7 +2566,6 @@ def _salvage_build_worktree(
         )
         if status.returncode != 0 or not status.stdout.strip():
             return None
-
         (Path(worktree_path) / BUILD_STATUS_FILENAME).unlink(missing_ok=True)
         subprocess.run(
             ["git", "add", "-A"],
@@ -2606,6 +2617,24 @@ def _salvage_build_worktree(
     except Exception as exc:
         logger.warning("Could not salvage dirty harness worktree %s: %s", worktree_path, exc)
         return None
+
+
+def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
+    text = "\n".join(
+        str(build_result.get(key) or "")
+        for key in ("stdout", "stderr", "build_reason", "reason")
+    ).lower()
+    if not text:
+        return False
+    needles = (
+        "session limit",
+        "usage limit",
+        "rate limit",
+        "quota exceeded",
+        "resets ",
+        "reset window",
+    )
+    return any(needle in text for needle in needles)
 
 
 def _newly_completed_task_ids(

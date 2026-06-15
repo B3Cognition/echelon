@@ -30,6 +30,8 @@ class AICodingCliProvider:
         self._cli = os.environ.get("ECHELON_LLM", config.llm.cli)
         # Resolve full path so subprocess inherits our shell's PATH, not a stripped one.
         self._bin = shutil.which(self._cli) or self._cli
+        self.last_stdout = ""
+        self.last_stderr = ""
 
     @property
     def cli(self) -> str:
@@ -66,6 +68,8 @@ class AICodingCliProvider:
         extra_env: Mapping[str, str] | None = None,
     ) -> int:
         """Run a prompt with the configured LLM CLI and return its process exit code."""
+        self.last_stdout = ""
+        self.last_stderr = ""
         env = self._build_env(extra_env)
         start = time.monotonic()
         if self._cli == "claude":
@@ -88,11 +92,26 @@ class AICodingCliProvider:
 
         timed_out = False
         printer = StreamEventPrinter()
+        captured_lines: list[str] = []
 
         def _kill():
             nonlocal timed_out
             timed_out = True
             proc.kill()
+
+        def _capture(text: object) -> None:
+            line = str(text or "").strip()
+            if not line:
+                return
+            captured_lines.append(line)
+            total = 0
+            bounded: list[str] = []
+            for item in reversed(captured_lines):
+                total += len(item) + 1
+                if total > 20_000:
+                    break
+                bounded.append(item)
+            captured_lines[:] = list(reversed(bounded))
 
         timer = threading.Timer(self._timeout_s, _kill)
         try:
@@ -102,14 +121,19 @@ class AICodingCliProvider:
                 if not line:
                     continue
                 try:
-                    printer(_json.loads(line))
+                    event = _json.loads(line)
+                    if event.get("type") == "result" and event.get("is_error"):
+                        _capture(event.get("result", ""))
+                    printer(event)
                 except _json.JSONDecodeError:
+                    _capture(line)
                     print(line, flush=True)
             proc.stdout.close()  # type: ignore[union-attr]
             proc.wait()
         finally:
             timer.cancel()
 
+        self.last_stdout = "\n".join(captured_lines)
         return None if timed_out else proc.returncode
 
     def _run_plain(self, cmd: list, cwd: str, env: dict, start: float):
