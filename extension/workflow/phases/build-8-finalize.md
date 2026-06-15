@@ -303,9 +303,15 @@ If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build 
 
 ```bash
 if [ -n "$HARNESS_BUILD_STATUS_FILE" ]; then
-  printf '{"status":"done","reason":"completed verified build iteration"}' > "$HARNESS_BUILD_STATUS_FILE"
+  printf '{"status":"done","reason":"completed verified build iteration","completed_task_ids":["T-001"]}' > "$HARNESS_BUILD_STATUS_FILE"
 fi
 ```
+
+Replace `T-001` with the exact canonical `tasks.md` row IDs completed by this
+bounded slice. Never write `status=done` with an empty or omitted
+`completed_task_ids` list for a task-backed spec. If verified progress cannot be
+mapped to canonical task rows, write `status=blocked` with a reason explaining
+the unmapped progress instead; Ralph cannot safely reconcile anonymous progress.
 
 **On a real external blocker that prevents further implementation progress:**
 

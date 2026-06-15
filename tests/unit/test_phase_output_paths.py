@@ -73,6 +73,11 @@ class TestPhaseOutputPaths:
         assert "useful verified progress" in finalize_text
         assert "current bounded progress slice completed cleanly" in finalize_text
         assert '"status":"done"' in finalize_text
+        assert '"completed_task_ids":["T-001"]' in finalize_text
+        assert (
+            'printf \'{"status":"done","reason":"completed verified build iteration"}\''
+            not in finalize_text
+        )
         assert '"status":"impasse"' not in finalize_text
         assert "Do not write `impasse` for ordinary partial progress" in finalize_text
 
