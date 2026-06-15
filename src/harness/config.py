@@ -79,6 +79,7 @@ DEFAULT_NETWORK_ALLOWLIST = [
 VALID_PROVIDERS = {"docker", "e2b", "modal", "daytona"}
 VALID_LLM_CLIS = {"claude", "copilot", "opencode", "codex"}
 VALID_PR_HOSTS = {"github", "gitlab", "none"}
+VALID_FULFILLMENT_REFRESH_POLICIES = {"every_slice", "milestone", "convergence_only"}
 
 # Simple semver range pattern: supports ^, ~, >=, <=, =, -, x ranges
 SEMVER_RANGE_PATTERN = re.compile(
@@ -167,6 +168,12 @@ class ReviewLoopConfig:
 
 
 @dataclass
+class FulfillmentConfig:
+    """Configuration for expensive verify-spec fulfillment refreshes."""
+    refresh_policy: str = "milestone"
+
+
+@dataclass
 class HarnessConfig:
     """Complete harness configuration."""
     target_repo: str
@@ -194,6 +201,7 @@ class HarnessConfig:
     app: AppRuntimeConfig = field(default_factory=AppRuntimeConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     review_loop: ReviewLoopConfig = field(default_factory=ReviewLoopConfig)
+    fulfillment: FulfillmentConfig = field(default_factory=FulfillmentConfig)
     verify_command: Optional[str] = None
 
 
@@ -436,6 +444,20 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
     )
 
 
+def _parse_fulfillment(data: Dict[str, Any]) -> FulfillmentConfig:
+    raw = data.get("fulfillment", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    refresh_policy = str(raw.get("refresh_policy", "milestone"))
+    if refresh_policy not in VALID_FULFILLMENT_REFRESH_POLICIES:
+        raise ValidationError(
+            f"Invalid fulfillment refresh_policy '{refresh_policy}'. "
+            f"Must be one of: {sorted(VALID_FULFILLMENT_REFRESH_POLICIES)}",
+            field_path="fulfillment.refresh_policy",
+        )
+    return FulfillmentConfig(refresh_policy=refresh_policy)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -500,6 +522,7 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
         app=_parse_app_runtime(data),
         llm=_parse_llm(data),
         review_loop=_parse_review_loop(data),
+        fulfillment=_parse_fulfillment(data),
         verify_command=data.get("verify_command") or None,
     )
 

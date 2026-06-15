@@ -24,6 +24,15 @@ acceptance signal. Task progress is bookkeeping integrity evidence only. SPEC-GU
 MUST NOT downgrade an item from `IMPLEMENTED` to `PARTIAL`, `UNVERIFIED`, or
 `MISSING` solely because `tasks.md` marks the related task pending, when source and executable test evidence satisfy the requirement and acceptance signal.
 
+Evidence-strength rule: runtime threshold requirements, especially `NFR-*`,
+`SC-*`, latency, frame-rate, crash-free-rate, retention, cloud-cost, privacy
+telemetry, and cross-device replay thresholds, require measured CI/runtime
+evidence. `evidence_kind=assertion_only` or synthetic fixture tests may prove
+that a gate API/schema exists, but MUST NOT be judged `IMPLEMENTED` for the
+threshold itself. Mark those rows `UNVERIFIED` unless the implementation map
+cites measured artifacts (`evidence_kind=measured_runtime` or equivalent CI
+artifact / runtime metric output) that satisfy the acceptance signal.
+
 Also judge task-progress integrity from `progress-integrity.json` and
 `progress-integrity.md`. If progress integrity is invalid or incomplete, write a
 `TASK-PROGRESS` row with status `PARTIAL` and include the mismatch in

@@ -1211,6 +1211,22 @@ class RalphController:
         """Run verify-spec after ordinary verification passes, when possible."""
         if not verify_result.passed or not worktree_path or self._fulfillment_runner is None:
             return verify_result
+        if not self._should_refresh_fulfillment(worktree_path):
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="fulfillment-refresh-deferred",
+                error=(
+                    "full verify-spec refresh deferred by "
+                    f"fulfillment.refresh_policy={self._config.fulfillment.refresh_policy}; "
+                    "task progress is not complete enough for convergence"
+                ),
+            )
+            return VerifyResult(
+                passed=False,
+                failures=[failure],
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+            )
 
         exit_code = self._fulfillment_runner.refresh(
             worktree_path,
@@ -1238,6 +1254,28 @@ class RalphController:
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
         )
+
+    def _should_refresh_fulfillment(self, worktree_path: str) -> bool:
+        policy = self._config.fulfillment.refresh_policy
+        if policy == "every_slice":
+            return True
+        if policy == "milestone":
+            return True
+        if policy != "convergence_only":
+            return True
+
+        state = self._state_store.read()
+        build = state.get("build")
+        if not isinstance(build, dict):
+            return True
+        try:
+            total = int(build.get("total_tasks") or 0)
+            completed = int(build.get("completed_tasks") or 0)
+        except (TypeError, ValueError):
+            return True
+        if total <= 0:
+            return True
+        return completed >= total
 
     def _exec_verify_locally(self, worktree_path: str) -> VerifyResult:
         """Run verification locally on the host when LLM provider is active.

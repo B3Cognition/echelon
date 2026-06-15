@@ -112,6 +112,15 @@ class TestParseConfigValid:
         assert config.ci_skip_enabled is True
         assert config.bind_mount_ack is False
         assert config.pr_host == "none"
+        assert config.fulfillment.refresh_policy == "milestone"
+
+    def test_fulfillment_refresh_policy_can_be_configured(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "fulfillment": {"refresh_policy": "convergence_only"},
+        })
+
+        assert config.fulfillment.refresh_policy == "convergence_only"
 
     def test_full_dict_preserves_all_fields(self) -> None:
         config = _parse_config(FULL)

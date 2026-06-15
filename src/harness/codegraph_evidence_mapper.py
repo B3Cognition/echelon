@@ -66,6 +66,28 @@ STOPWORDS = {
 }
 KNOWN_ACRONYMS = {"ar", "ui", "api", "gps", "nfc"}
 CONFIDENCE_ORDER = ("high", "medium", "low", "none", "ambiguous")
+RUNTIME_THRESHOLD_CATEGORIES = {"nfr", "non-functional", "sc", "success-criteria"}
+RUNTIME_THRESHOLD_TERMS = {
+    "artifact",
+    "billing",
+    "budget",
+    "ci",
+    "crash",
+    "crashfree",
+    "cost",
+    "fps",
+    "frame",
+    "latency",
+    "mau",
+    "metric",
+    "p95",
+    "p99",
+    "rate",
+    "retention",
+    "runtime",
+    "telemetry",
+    "threshold",
+}
 
 
 @dataclass(frozen=True)
@@ -257,7 +279,15 @@ def _map_requirement(
 
     implementation = _dedupe_evidence(implementation)[:8]
     tests = _dedupe_evidence(tests)[:8]
-    confidence, notes = _confidence(implementation, tests)
+    runtime_threshold = _is_runtime_threshold(row)
+    evidence_kind = _evidence_kind(row, implementation, tests, runtime_threshold)
+    evidence_strength = _evidence_strength(evidence_kind)
+    confidence, notes = _confidence(
+        implementation,
+        tests,
+        evidence_kind=evidence_kind,
+        runtime_threshold=runtime_threshold,
+    )
     negative_evidence = []
     if confidence == "none":
         negative_evidence.append(
@@ -275,21 +305,92 @@ def _map_requirement(
         "implementation_evidence": implementation,
         "test_evidence": tests,
         "negative_evidence": negative_evidence,
+        "evidence_kind": evidence_kind,
+        "evidence_strength": evidence_strength,
+        "runtime_threshold": runtime_threshold,
         "confidence": confidence,
         "notes": notes,
     }
 
 
 def _confidence(
-    implementation: list[dict[str, Any]], tests: list[dict[str, Any]]
+    implementation: list[dict[str, Any]],
+    tests: list[dict[str, Any]],
+    *,
+    evidence_kind: str,
+    runtime_threshold: bool,
 ) -> tuple[str, str]:
+    if evidence_kind == "measured_runtime":
+        return "high", "CodeGraph found source/test evidence plus measured CI/runtime artifacts."
+    if evidence_kind == "assertion_only":
+        if runtime_threshold:
+            return (
+                "low",
+                "Runtime threshold has assertion-only source/test symbols; measured CI/runtime evidence is still required.",
+            )
+        return "medium", "CodeGraph found assertion-gate source and test symbols."
     if implementation and tests:
-        return "high", "CodeGraph found both source and executable test symbols."
+        return "medium", "CodeGraph found both source and executable test symbols."
     if tests:
         return "medium", "CodeGraph found test symbols but no implementation symbol."
     if implementation:
         return "low", "CodeGraph found source candidates but no executable test symbol."
     return "none", "No deterministic CodeGraph evidence found; LLM fallback should inspect."
+
+
+def _is_runtime_threshold(row: RequirementRow) -> bool:
+    category = row.category.strip().lower()
+    if row.id.startswith(("NFR-", "SC-")) or category in RUNTIME_THRESHOLD_CATEGORIES:
+        text = " ".join([row.requirement, row.acceptance_signal])
+        tokens = set(_tokens(text, keep_acronyms=True))
+        if tokens & RUNTIME_THRESHOLD_TERMS:
+            return True
+    return False
+
+
+def _evidence_kind(
+    row: RequirementRow,
+    implementation: list[dict[str, Any]],
+    tests: list[dict[str, Any]],
+    runtime_threshold: bool,
+) -> str:
+    if not implementation and not tests:
+        return "none"
+    all_evidence = implementation + tests
+    files = " ".join(str(item.get("file") or "") for item in all_evidence).lower()
+    symbols = " ".join(str(item.get("symbol") or "") for item in all_evidence).lower()
+    reasons = " ".join(
+        " ".join(str(reason) for reason in item.get("reasons") or [])
+        for item in all_evidence
+    ).lower()
+    combined = " ".join([files, symbols, reasons])
+
+    if any(term in combined for term in ("ci/", ".github/", "artifact", "metric", "telemetrysample", "runtime")):
+        return "measured_runtime" if runtime_threshold else "integration_test"
+    if (
+        "releasecandidategate" in combined
+        or "acceptancegate" in combined
+        or "assert" in symbols
+        or "assertion" in combined
+    ):
+        return "assertion_only"
+    if implementation and tests:
+        return "source_and_test"
+    if tests:
+        return "unit_test"
+    return "source_capability"
+
+
+def _evidence_strength(evidence_kind: str) -> str:
+    return {
+        "measured_runtime": "strong",
+        "integration_test": "strong",
+        "source_and_test": "moderate",
+        "unit_test": "moderate",
+        "source_capability": "weak",
+        "assertion_only": "weak",
+        "none": "none",
+    }.get(evidence_kind, "weak")
 
 
 def _symbol_evidence(symbol: SymbolRecord, reasons: list[str]) -> dict[str, Any]:
@@ -416,17 +517,20 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             else "(none)"
         ),
         "",
-        "| ID | Confidence | Task IDs | Implementation Evidence | Test Evidence | Notes |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| ID | Confidence | Evidence Kind | Evidence Strength | Runtime Threshold | Task IDs | Implementation Evidence | Test Evidence | Notes |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for entry in payload["requirements"]:
         impl = _evidence_cell(entry["implementation_evidence"])
         tests = _evidence_cell(entry["test_evidence"])
         task_ids = ", ".join(entry["task_ids"]) if entry["task_ids"] else ""
         lines.append(
-            "| {id} | {confidence} | {task_ids} | {impl} | {tests} | {notes} |".format(
+            "| {id} | {confidence} | {kind} | {strength} | {runtime} | {task_ids} | {impl} | {tests} | {notes} |".format(
                 id=_md(entry["id"]),
                 confidence=_md(entry["confidence"]),
+                kind=_md(entry.get("evidence_kind", "")),
+                strength=_md(entry.get("evidence_strength", "")),
+                runtime=_md(entry.get("runtime_threshold", "")),
                 task_ids=_md(task_ids),
                 impl=_md(impl),
                 tests=_md(tests),

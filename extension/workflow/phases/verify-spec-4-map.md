@@ -41,15 +41,21 @@ Map checklist items to concrete source, test, route, UI, configuration, and
 CodeGraph evidence.
 
 Use `{verify_run_dir}/codegraph-evidence-map.json` as the primary mapping input.
-Preserve `high` and `medium` deterministic rows unless direct source inspection
-contradicts them. Only perform broad LLM/source exploration for rows with
-`confidence` of `low`, `none`, or `ambiguous`, plus any row whose deterministic
-evidence is contradicted by source inspection. Treat
+Preserve deterministic rows only together with their `evidence_kind`,
+`evidence_strength`, `runtime_threshold`, and `confidence` fields. A row with
+`evidence_kind=assertion_only` is not full implementation evidence for runtime
+threshold requirements even when source and tests exist; keep it in the fallback
+queue for SPEC-GUARD review. Preserve `high` and `medium` deterministic rows
+unless direct source inspection contradicts them. Only perform broad LLM/source
+exploration for rows with `confidence` of `low`, `none`, or `ambiguous`, plus
+any row whose deterministic evidence is contradicted by source inspection. Treat
 `summary.fallback_requirement_ids` as the bounded fallback queue; do not inspect
 outside that queue except to validate a cited high/medium row that appears
 contradictory.
 
-Distinguish source evidence from executable test evidence.
+Distinguish source evidence from executable test evidence and measured
+CI/runtime artifacts. Do not rewrite assertion-gate functions or synthetic
+fixture tests as measured runtime evidence.
 
 ## Expected Output
 

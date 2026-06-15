@@ -810,6 +810,8 @@ config:
       secrets_env_file: "secrets.env"
       bind_mount_ack: false
       pr_host: "none"
+      fulfillment:
+        refresh_policy: "milestone"
       gc:
         worktree_max_age_hours: 24
         container_max_age_hours: 1

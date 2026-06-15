@@ -26,6 +26,25 @@ Always perform constitution NEVER-rule check + all ADR compliance checks only. D
 
 **Verify that what was built is what was specified — no more, no less.**
 
+## Fulfillment Evidence Semantics
+
+When judging verify-spec fulfillment reports, preserve the implementation map's
+evidence semantics:
+
+- `source_capability`: source exists, but behavior may not be executable.
+- `unit_test` / `source_and_test`: executable test evidence exists.
+- `integration_test`: system/CI path evidence exists.
+- `measured_runtime`: CI artifact or runtime metric output proves a threshold.
+- `assertion_only`: code or tests assert a threshold against synthetic fixtures,
+  but no measured artifact proves the production/runtime threshold.
+- `none`: no evidence found.
+
+Runtime thresholds (`NFR-*`, `SC-*`, latency, frame-rate, crash-free rate,
+retention, cloud cost, privacy telemetry, deterministic replay across targets)
+MUST NOT be marked `IMPLEMENTED` from `assertion_only`, source-symbol, or
+synthetic fixture evidence. Mark them `UNVERIFIED` unless the map cites measured
+CI/runtime artifacts satisfying the acceptance signal.
+
 ## Batch Contract (v0.4.0 QA)
 
 When invoked for QA batch review, speckit-echelon-spec-guard (SPEC GUARD) must:

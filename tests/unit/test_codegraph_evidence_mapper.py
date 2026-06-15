@@ -121,9 +121,12 @@ def test_codegraph_evidence_map_prefers_structural_evidence(tmp_path: Path):
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     by_id = {entry["id"]: entry for entry in payload["requirements"]}
 
-    assert result.counts["high"] == 1
+    assert result.counts["high"] == 0
+    assert result.counts["medium"] == 1
     assert payload["summary"]["fallback_requirement_ids"] == ["FR-029", "FR-999"]
-    assert by_id["FR-004"]["confidence"] == "high"
+    assert by_id["FR-004"]["confidence"] == "medium"
+    assert by_id["FR-004"]["evidence_kind"] == "source_and_test"
+    assert by_id["FR-004"]["evidence_strength"] == "moderate"
     assert by_id["FR-004"]["task_ids"] == ["T-004"]
     assert "RouteResolver::resolve" in by_id["FR-004"]["implementation_evidence"][0]["symbol"]
     assert (
@@ -140,8 +143,8 @@ def test_codegraph_evidence_map_prefers_structural_evidence(tmp_path: Path):
     assert by_id["FR-999"]["negative_evidence"]
 
     markdown = out_md.read_text(encoding="utf-8")
-    assert "| FR-004 | high |" in markdown
-    assert "| FR-999 | none |" in markdown
+    assert "| FR-004 | medium | source_and_test | moderate | False |" in markdown
+    assert "| FR-999 | none | none | none | False |" in markdown
 
 
 def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path: Path):
@@ -204,6 +207,70 @@ def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path
     assert entry["id"] == "FR-042"
     assert entry["confidence"] == "none"
     assert entry["implementation_evidence"] == []
+
+
+def test_runtime_threshold_assertion_only_evidence_is_not_high_confidence(tmp_path: Path):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "\n".join(
+            [
+                "# Requirement Audit",
+                "",
+                "| ID | Category | Source | Requirement | Acceptance Signal |",
+                "| --- | --- | --- | --- | --- |",
+                "| NFR-001 | non-functional | spec.md#nfr | Map renderer maintains 60 fps during route animation. | CI artifact records measured frame-rate p95 >= 60 fps on device matrix. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(
+        json.dumps(
+            {
+                "symbols": [
+                    {
+                        "kind": "method",
+                        "qualified_name": "ReleaseCandidateGate::assertNFR001FrameRate60fps",
+                        "name": "assertNFR001FrameRate60fps",
+                        "file_path": "Packages/Engine/Sources/Telemetry/ReleaseCandidateGate.swift",
+                    },
+                    {
+                        "kind": "method",
+                        "qualified_name": "ReleaseCandidateGateTests::test_NFR001_FrameRate60fps_releaseCandidateGate",
+                        "name": "test_NFR001_FrameRate60fps_releaseCandidateGate",
+                        "file_path": "Packages/Engine/Tests/ReleaseCandidateGateTests.swift",
+                    },
+                ],
+                "call_graph": [],
+                "impact_radius": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [ ] T-001 complexity=standard phase=quality req=NFR-001 depends=none\n",
+        encoding="utf-8",
+    )
+
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+    write_codegraph_evidence_map(
+        requirement_audit_path=audit,
+        codegraph_analysis_path=analysis,
+        tasks_path=tasks,
+        out_json_path=out_json,
+        out_md_path=out_md,
+    )
+
+    entry = json.loads(out_json.read_text(encoding="utf-8"))["requirements"][0]
+    assert entry["evidence_kind"] == "assertion_only"
+    assert entry["evidence_strength"] == "weak"
+    assert entry["confidence"] == "low"
+    assert entry["runtime_threshold"] is True
+    assert entry["id"] in json.loads(out_json.read_text(encoding="utf-8"))["summary"]["fallback_requirement_ids"]
 
 
 def test_write_codegraph_evidence_map_cli(tmp_path: Path):

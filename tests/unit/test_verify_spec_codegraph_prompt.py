@@ -48,3 +48,27 @@ def test_verify_spec_progress_integrity_does_not_override_fulfillment_status() -
     assert "NEVER instruct downstream agents to downgrade" in audit_text
     assert "MUST NOT downgrade an item from `IMPLEMENTED`" in judge_text
     assert "source and executable test evidence satisfy" in judge_text
+
+
+def test_verify_spec_preserves_runtime_evidence_semantics() -> None:
+    map_phase = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    judge_phase = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+    mapper = (
+        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+    ).read_text(encoding="utf-8")
+    guard = (ROOT / "extension" / "agents" / "build" / "spec-guard.md").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (map_phase, mapper):
+        assert "evidence_kind" in text
+        assert "evidence_strength" in text
+        assert "assertion_only" in text
+
+    for text in (judge_phase, guard):
+        lowered = text.lower()
+        assert "runtime threshold" in lowered
+        assert "measured" in lowered
+        assert "runtime" in lowered or "ci artifact" in lowered
+        assert "must not" in lowered
+        assert "assertion_only" in lowered

@@ -687,6 +687,33 @@ class TestOuterLoopConvergence:
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
 
+    def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """Incomplete task slices should not pay for full verify-spec refresh."""
+        controller, _provider, _gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[
+                {"passed": True, "failures": []},
+            ],
+            fulfillment_runner=MagicMock(),
+        )
+        controller._config.fulfillment.refresh_policy = "convergence_only"
+        state = _state_store.read()
+        state["build"] = {
+            "total_tasks": 2,
+            "completed_tasks": 1,
+            "tasks_completed_pct": 50,
+        }
+        _state_store.write(state)
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "failed"
+        assert result.final_verify is not None
+        assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
+        controller._fulfillment_runner.refresh.assert_not_called()
+
     def test_refreshed_equals_style_fulfillment_report_blocks_convergence(
         self, tmp_path: Path
     ) -> None:

@@ -37,4 +37,4 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run Python unit tests
-        run: pytest tests/unit/ -q --tb=short
+        run: pytest tests/unit/ tests/kernel/test_prompt_references.py -q --tb=short
