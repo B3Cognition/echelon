@@ -1190,14 +1190,22 @@ class TestOuterLoopConvergence:
         (worktree / "generated.txt").write_text("salvaged\n", encoding="utf-8")
 
         llm_build_runner = MagicMock()
-        llm_build_runner.exec_build.return_value = BuildResult(
-            exit_code=1,
-            status="unknown",
-            impasse_file=None,
-            stdout="done without status file",
-            stderr="",
-            duration_ms=1000,
-        )
+
+        def markerless_failed_build(*_args: Any, **_kwargs: Any) -> BuildResult:
+            (worktree / ".harness-build-status.json").write_text(
+                '{"status":"done","completed_task_ids":[]}\n',
+                encoding="utf-8",
+            )
+            return BuildResult(
+                exit_code=1,
+                status="unknown",
+                impasse_file=None,
+                stdout="done without usable status file",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = markerless_failed_build
         controller, provider, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
@@ -1230,6 +1238,14 @@ class TestOuterLoopConvergence:
             ).stdout
             == "salvaged\n"
         )
+        marker = subprocess.run(
+            ["git", "show", f"{salvage_commit}:.harness-build-status.json"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert marker.returncode != 0
         assert subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=worktree,

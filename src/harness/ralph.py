@@ -2555,6 +2555,7 @@ def _salvage_build_worktree(
         if status.returncode != 0 or not status.stdout.strip():
             return None
 
+        (Path(worktree_path) / BUILD_STATUS_FILENAME).unlink(missing_ok=True)
         subprocess.run(
             ["git", "add", "-A"],
             cwd=worktree_path,
