@@ -21,7 +21,7 @@ import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from echelon.artifact_index import write_artifact_index
@@ -1702,6 +1702,15 @@ class RalphController:
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
         spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
         tasks_file_text = str(spec_dir / "tasks.md" if spec_dir is not None else "MISSING")
+        dirty_verify_artifacts = self._dirty_verify_artifacts(worktree_path)
+        dirty_verify_block = ""
+        if dirty_verify_artifacts:
+            self._record_dirty_verify_artifacts(worktree_path, dirty_verify_artifacts)
+            dirty_verify_block = (
+                "dirty_verify_artifacts:\n"
+                + "".join(f"- {path}\n" for path in dirty_verify_artifacts)
+                + "Treat these as inherited verify-spec outputs. Do not hand-edit them in build slices; Ralph owns regeneration and commit/salvage.\n"
+            )
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -1711,6 +1720,7 @@ class RalphController:
             f"spec_dir: {spec_dir_text}\n"
             f"spec_file: {spec_file_text}\n"
             f"tasks_file: {tasks_file_text}\n"
+            f"{dirty_verify_block}"
             f"state_file: {self._state_store.state_file}\n"
             f"state_dir: {self._state_store.state_dir}\n"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
@@ -1724,6 +1734,41 @@ class RalphController:
             "Do not write harness state directly; return state_updates in echelon_result.\n"
         )
         return f"{block}\n{prompt}"
+
+    def _dirty_verify_artifacts(self, worktree_path: str) -> list[str]:
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except Exception:
+            return []
+        if result.returncode != 0:
+            return []
+
+        artifacts: list[str] = []
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            path = _porcelain_path(line)
+            if path and _is_verify_owned_artifact(path):
+                artifacts.append(path)
+        return sorted(dict.fromkeys(artifacts))
+
+    def _record_dirty_verify_artifacts(
+        self, worktree_path: str, artifacts: list[str]
+    ) -> None:
+        state = self._state_store.read()
+        state["dirty_verify_artifacts"] = {
+            "count": len(artifacts),
+            "paths": artifacts,
+            "worktree": worktree_path,
+        }
+        self._state_store.write(state)
 
     def _orchestration_root(self, fallback: Path | None = None) -> Path:
         base_dir = getattr(self._gitops, "base_dir", None)
@@ -2569,6 +2614,25 @@ def _git_status_lines(project: Path) -> Optional[List[str]]:
         return [line for line in status.stdout.splitlines() if line.strip()]
     except Exception:
         return None
+
+
+def _porcelain_path(line: str) -> str:
+    value = line[3:].strip()
+    if " -> " in value:
+        value = value.split(" -> ", 1)[1].strip()
+    return value.strip('"')
+
+
+def _is_verify_owned_artifact(path: str) -> bool:
+    posix = path.replace("\\", "/")
+    if posix.startswith("runs/verify-spec-"):
+        return True
+    if "/runs/verify-spec-" in posix:
+        return True
+    if not posix.startswith("specs/"):
+        return False
+    name = PurePosixPath(posix).name
+    return name in {"fulfillment-report.md", "fulfillment-gaps.md"}
 
 
 def _status_delta(before: List[str], after: List[str]) -> List[str]:

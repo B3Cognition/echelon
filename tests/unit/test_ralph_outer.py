@@ -225,6 +225,46 @@ class TestOuterLoopConvergence:
         assert "tasks_file: MISSING" in prompt
         assert str(live_spec_dir) not in prompt
 
+    def test_harness_context_labels_dirty_verify_owned_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+        (spec_dir / "fulfillment-report.md").write_text("old\n", encoding="utf-8")
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        (spec_dir / "fulfillment-report.md").write_text("new\n", encoding="utf-8")
+        (spec_dir / "fulfillment-gaps.md").write_text("gap\n", encoding="utf-8")
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "dirty_verify_artifacts:" in prompt
+        assert "specs/spec-001-demo/fulfillment-report.md" in prompt
+        assert "specs/spec-001-demo/fulfillment-gaps.md" in prompt
+        assert "Treat these as inherited verify-spec outputs" in prompt
+        state = state_store.read()
+        assert state["dirty_verify_artifacts"]["count"] == 2
+        assert "specs/spec-001-demo/fulfillment-report.md" in state[
+            "dirty_verify_artifacts"
+        ]["paths"]
+
     def test_harness_context_uses_state_owned_spec_paths(self, tmp_path: Path) -> None:
         """Polyrepo builds may keep spec artifacts outside the target worktree."""
         controller, _provider, _gitops, state_store = _make_controller(tmp_path)
