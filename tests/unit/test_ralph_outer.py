@@ -889,14 +889,17 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
 
-        result = controller.run_loop(max_outer=1, max_inner=3, build_prompt="build")
+        result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
 
         assert result.status == "failed"
         assert result.termination_reason == "outer_cap"
+        assert result.outer_iterations == 2
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
         build_runner.exec_feedback.assert_not_called()
+        assert build_runner.exec_build.call_count == 2
         fulfillment_runner.refresh.assert_not_called()
+        assert not state_store.read().get("escalation_file")
         refresh = state_store.read()["fulfillment_refresh"]
         assert refresh["status"] == "deferred"
         assert (

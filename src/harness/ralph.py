@@ -609,7 +609,10 @@ class RalphController:
                     total_inner_iterations += inner_result["inner_count"]
 
                     final_verify = inner_result.get("final_verify")
-                    if final_verify and final_verify.failures:
+                    fulfillment_refresh_deferred = bool(
+                        final_verify and _is_fulfillment_refresh_deferred(final_verify)
+                    )
+                    if final_verify and final_verify.failures and not fulfillment_refresh_deferred:
                         last_verify_failures_text = "\n".join(
                             f"[{f.category.value}] {f.id}: {f.error}"
                             for f in final_verify.failures
@@ -667,7 +670,9 @@ class RalphController:
                     # No-progress guard: if the LLM made no file changes on a
                     # failed iteration, increment the stuck counter and escalate
                     # after _NO_PROGRESS_THRESHOLD consecutive stuck iterations.
-                    if self._has_file_changes(worktree_path):
+                    if fulfillment_refresh_deferred:
+                        no_progress_count = 0
+                    elif self._has_file_changes(worktree_path):
                         no_progress_count = 0
                     else:
                         no_progress_count += 1
