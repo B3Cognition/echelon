@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 from typing import Any
@@ -184,10 +185,15 @@ def validate_fulfillment_artifacts(
     *,
     requirement_audit_path: Path,
     fulfillment_report_path: Path,
+    canonical_inventory_path: Path | None = None,
 ) -> FulfillmentArtifactValidation:
     """Validate that SPEC-GUARD judged exactly the audited requirement IDs."""
-    audit_ids = fulfillment_table_ids(
-        requirement_audit_path.read_text(encoding="utf-8", errors="replace")
+    audit_ids = (
+        _canonical_inventory_ids(canonical_inventory_path)
+        if canonical_inventory_path is not None and canonical_inventory_path.is_file()
+        else fulfillment_table_ids(
+            requirement_audit_path.read_text(encoding="utf-8", errors="replace")
+        )
     )
     report_ids = fulfillment_table_ids(
         fulfillment_report_path.read_text(encoding="utf-8", errors="replace")
@@ -203,3 +209,18 @@ def validate_fulfillment_artifacts(
         missing_in_report=missing,
         extra_in_report=extra,
     )
+
+
+def _canonical_inventory_ids(inventory_path: Path) -> set[str]:
+    try:
+        data = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    rows = data.get("requirements", [])
+    if not isinstance(rows, list):
+        return set()
+    return {
+        str(row.get("id", "")).strip()
+        for row in rows
+        if isinstance(row, dict) and str(row.get("id", "")).strip()
+    }

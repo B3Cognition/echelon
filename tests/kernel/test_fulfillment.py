@@ -241,3 +241,35 @@ def test_validate_fulfillment_artifacts_allows_status_summary_table(tmp_path):
     assert result.ok is True
     assert result.audit_count == 1
     assert result.report_count == 1
+
+
+def test_validate_fulfillment_artifacts_prefers_canonical_inventory(tmp_path):
+    inventory = tmp_path / "canonical-requirements.json"
+    inventory.write_text(
+        '{"requirements":[{"id":"FR-001"},{"id":"FR-002"}]}\n',
+        encoding="utf-8",
+    )
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "| ID | Category |\n"
+        "| --- | --- |\n"
+        "| FR-001 | functional |\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status |\n"
+        "| --- | --- |\n"
+        "| FR-001 | IMPLEMENTED |\n",
+        encoding="utf-8",
+    )
+
+    result = validate_fulfillment_artifacts(
+        requirement_audit_path=audit,
+        fulfillment_report_path=report,
+        canonical_inventory_path=inventory,
+    )
+
+    assert result.ok is False
+    assert result.audit_count == 2
+    assert result.missing_in_report == ("FR-002",)
