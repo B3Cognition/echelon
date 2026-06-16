@@ -75,6 +75,21 @@ class TestCommitAndPushBranchDetection:
                                                "harness: 001-feature/default iter-0")
         gitops.push.assert_called_once_with(worktree_path, "001-feature")
 
+    def test_commit_and_push_delegates_dirty_verify_artifacts_to_gitops_commit(
+        self, tmp_path
+    ):
+        ralph, gitops = _make_ralph(tmp_path, spec_id="001-feature")
+        worktree_path = str(tmp_path / "worktree")
+
+        with patch("harness.gitops._run_git") as mock_run_git:
+            mock_run_git.return_value = MagicMock(stdout="001-feature\n", returncode=0)
+            ralph._commit_and_push(worktree_path, outer_iter=0)
+
+        gitops.commit.assert_called_once_with(
+            worktree_path,
+            "harness: 001-feature/default iter-0",
+        )
+
     def test_feature_branch_push_not_hardcoded_harness_name(self, tmp_path):
         """Regression: push must NOT use hardcoded 'harness/{spec}/{strategy}/iter-N'."""
         ralph, gitops = _make_ralph(tmp_path, spec_id="042-payment-flow",

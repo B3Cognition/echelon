@@ -1377,6 +1377,11 @@ class TestOuterLoopConvergence:
         subprocess.run(["git", "add", "README.md"], cwd=worktree, check=True)
         subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
         (worktree / "generated.txt").write_text("salvaged\n", encoding="utf-8")
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "generated\n", encoding="utf-8"
+        )
 
         llm_build_runner = MagicMock()
 
@@ -1426,6 +1431,20 @@ class TestOuterLoopConvergence:
                 check=True,
             ).stdout
             == "salvaged\n"
+        )
+        assert (
+            subprocess.run(
+                [
+                    "git",
+                    "show",
+                    f"{salvage_commit}:specs/spec-001-demo/fulfillment-report.md",
+                ],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            == "generated\n"
         )
         marker = subprocess.run(
             ["git", "show", f"{salvage_commit}:.harness-build-status.json"],
