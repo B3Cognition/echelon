@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.loop_result import LoopResult
-from harness.verify_result import VerifyResult
+from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
 def _make_converged_result() -> LoopResult:
@@ -48,6 +48,28 @@ def _make_checkpoint_result() -> LoopResult:
         pr_url=None,
         tokens_used=0,
         final_verify=None,
+        branch="001-demo",
+    )
+
+
+def _make_checkpoint_outer_cap_result() -> LoopResult:
+    return LoopResult(
+        status="blocked",
+        termination_reason="checkpoint_outer_cap",
+        outer_iterations=5,
+        inner_iterations=0,
+        pr_url="https://github.com/t/r/pull/1",
+        tokens_used=0,
+        final_verify=VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="fulfillment-refresh-deferred",
+                    error="full verify-spec refresh deferred",
+                )
+            ],
+        ),
         branch="001-demo",
     )
 
@@ -291,6 +313,49 @@ class TestRunSkillAutoLand:
         assert "◐ CHECKPOINTED" in captured.err
         assert "stopped: checkpoint recovery needed" in captured.err
         assert "resume: echelon harness resume 001-demo" in captured.err
+        assert "0 converged, 0 failed, 1 checkpointed" in captured.err
+
+    def test_delivery_summary_renders_deferred_outer_cap_as_checkpointed(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Outer cap with deferred fulfillment is continuation, not failure."""
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="banzai")
+        result = _make_checkpoint_outer_cap_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "branch": result.branch,
+                    "converged": False,
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+
+        _print_delivery_summary(
+            intent,
+            {"default": result},
+            comparison,
+            base_dir="/tmp/nonexistent",
+        )
+
+        captured = capsys.readouterr()
+        assert "◐ CHECKPOINTED" in captured.err
+        assert "stopped: checkpoint continuation needed" in captured.err
+        assert "resume: echelon harness resume 001-demo" in captured.err
+        assert "verify: deferred" in captured.err
+        assert "verify: ✗ FAILED" not in captured.err
+        assert "deferred [other] full verify-spec refresh deferred" in captured.err
+        assert "✗ [other] full verify-spec refresh deferred" not in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
     @patch("harness.skills.run_skill.parse_intent")

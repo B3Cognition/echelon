@@ -19,7 +19,7 @@ from harness.run_intent import parse_intent
 
 logger = logging.getLogger(__name__)
 
-_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed"}
+_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 
 
 def _count_tasks(spec_id: str, base_dir: str) -> int:
@@ -78,17 +78,38 @@ def _print_delivery_summary(
         if result is not None:
             if reason and reason != "converged":
                 if checkpointed:
-                    lines.append("stopped: checkpoint recovery needed")
+                    if reason == "checkpoint_outer_cap":
+                        lines.append("stopped: checkpoint continuation needed")
+                    else:
+                        lines.append("stopped: checkpoint recovery needed")
                     lines.append(f"resume: echelon harness resume {intent.spec_id}")
                 else:
                     lines.append(f"stopped: {reason}")
             fv = getattr(result, "final_verify", None)
             if fv is not None:
-                v_icon = "✓" if fv.passed else "✗"
                 duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
-                lines.append(f"verify: {v_icon} {'passed' if fv.passed else 'FAILED'}{duration}")
+                deferred = (
+                    reason == "checkpoint_outer_cap"
+                    and not fv.passed
+                    and any(
+                        getattr(failure, "id", "") == "fulfillment-refresh-deferred"
+                        for failure in (fv.failures or [])
+                    )
+                )
+                if deferred:
+                    lines.append(f"verify: deferred{duration}")
+                else:
+                    v_icon = "✓" if fv.passed else "✗"
+                    lines.append(f"verify: {v_icon} {'passed' if fv.passed else 'FAILED'}{duration}")
                 for failure in (fv.failures or []):
-                    lines.append(f"        ✗ [{failure.category.value}] {failure.error}")
+                    if deferred:
+                        lines.append(
+                            f"        deferred [{failure.category.value}] {failure.error}"
+                        )
+                    else:
+                        lines.append(
+                            f"        ✗ [{failure.category.value}] {failure.error}"
+                        )
             else:
                 lines.append("verify: skipped (no sandbox / project type undetected)")
 

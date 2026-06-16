@@ -941,6 +941,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
     recoverable_reasons = {"build_incomplete", "publish_failed"}
+    continuation_reasons = {"checkpoint_outer_cap"}
 
     if current_status != "blocked" and termination_reason not in recoverable_reasons:
         print(
@@ -950,7 +951,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         sys.exit(1)
 
-    if termination_reason not in {"verify_command_needed", *recoverable_reasons}:
+    if termination_reason not in {"verify_command_needed", *recoverable_reasons, *continuation_reasons}:
         print(
             f"✗ Spec {spec_id!r} is blocked for a different reason: {termination_reason!r}.\n"
             "  Use 'echelon harness run <spec_id>' to resume.",
@@ -1206,7 +1207,7 @@ def _constitution_template_markers(text: str) -> list[str]:
     return markers
 
 
-_HARNESS_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed"}
+_HARNESS_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 
 
 def _print_next_steps(project_root: Path, result_status: str) -> None:

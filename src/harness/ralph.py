@@ -59,6 +59,9 @@ logger = logging.getLogger(__name__)
 # Number of consecutive failed outer iterations with no file changes before
 # escalating with a no-progress block.
 _NO_PROGRESS_THRESHOLD = 2
+_BANZAI_MILESTONE_DEFER_REASON = (
+    "banzai milestone defers full verify until task completion"
+)
 
 
 def _current_git_commit(worktree: Path) -> str | None:
@@ -746,6 +749,25 @@ class RalphController:
             state["pr_url"] = pr_url
             self._state_store.write(state)
 
+        # Outer cap reached. If the only outstanding verification failure is an
+        # intentionally deferred banzai fulfillment refresh, useful checkpointed
+        # progress exists and the correct next step is continuation, not failure.
+        if (
+            final_verify is not None
+            and _is_fulfillment_refresh_deferred(final_verify)
+            and self._last_fulfillment_refresh_reason()
+            == _BANZAI_MILESTONE_DEFER_REASON
+        ):
+            return self._finalize(
+                status="blocked",
+                reason="checkpoint_outer_cap",
+                outer_iterations=max_outer,
+                inner_iterations=total_inner_iterations,
+                pr_url=pr_url,
+                tokens_used=tokens_used,
+                final_verify=final_verify,
+            )
+
         # Outer cap reached
         return self._finalize(
             status="failed",
@@ -1331,7 +1353,7 @@ class RalphController:
             ):
                 return {
                     "action": "defer",
-                    "reason": "banzai milestone defers full verify until task completion",
+                    "reason": _BANZAI_MILESTONE_DEFER_REASON,
                 }
             return {"action": "full", "reason": f"fulfillment.refresh_policy={policy}"}
         if tasks_complete or total <= 0:
@@ -1358,6 +1380,13 @@ class RalphController:
             status=str(state["fulfillment_refresh"]["status"]),
             reason=str(state["fulfillment_refresh"]["reason"]),
         )
+
+    def _last_fulfillment_refresh_reason(self) -> str:
+        state = self._state_store.read()
+        refresh = state.get("fulfillment_refresh")
+        if not isinstance(refresh, dict):
+            return ""
+        return str(refresh.get("reason") or "")
 
     def _print_fulfillment_refresh_decision(self, *, status: str, reason: str) -> None:
         print(f"fulfillment refresh: {status} ({reason})", file=sys.stderr)

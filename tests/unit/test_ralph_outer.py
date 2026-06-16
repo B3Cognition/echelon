@@ -891,8 +891,8 @@ class TestOuterLoopConvergence:
 
         result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
 
-        assert result.status == "failed"
-        assert result.termination_reason == "outer_cap"
+        assert result.status == "blocked"
+        assert result.termination_reason == "checkpoint_outer_cap"
         assert result.outer_iterations == 2
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"

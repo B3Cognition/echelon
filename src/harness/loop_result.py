@@ -19,6 +19,7 @@ VALID_STATUSES = {"converged", "failed", "blocked", "interrupted", "cancelled", 
 VALID_TERMINATION_REASONS = {
     "converged",
     "outer_cap",
+    "checkpoint_outer_cap",
     "inner_cap_no_progress",
     "same_failure_threshold",
     "budget_exhausted",
