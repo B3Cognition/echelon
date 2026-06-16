@@ -772,6 +772,15 @@ class RalphController:
 
         Returns dict with: converged, blocked, inner_count, tokens_used, final_verify.
         """
+        if _is_fulfillment_refresh_deferred(verify_result):
+            return {
+                "converged": False,
+                "blocked": False,
+                "inner_count": 0,
+                "tokens_used": tokens_used,
+                "final_verify": verify_result,
+            }
+
         failure_history: List[List[str]] = []
         current_verify = verify_result
 
@@ -2627,6 +2636,10 @@ def _porcelain_path(line: str) -> str:
     if " -> " in value:
         value = value.split(" -> ", 1)[1].strip()
     return value.strip('"')
+
+
+def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
+    return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
 
 
 def _is_verify_owned_artifact(path: str) -> bool:

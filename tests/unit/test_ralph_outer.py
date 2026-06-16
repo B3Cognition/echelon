@@ -852,7 +852,7 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
         controller._fulfillment_runner.refresh.assert_not_called()
 
-    def test_banzai_milestone_defers_full_fulfillment_until_tasks_complete(
+    def test_banzai_milestone_defers_full_fulfillment_without_feedback(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Banzai milestone slices should keep building without full verify-spec cost."""
@@ -889,11 +889,13 @@ class TestOuterLoopConvergence:
         gitops.create_worktree.return_value = str(worktree)
         gitops.base_dir = worktree
 
-        result = controller.run_loop(max_outer=1, max_inner=0, build_prompt="build")
+        result = controller.run_loop(max_outer=1, max_inner=3, build_prompt="build")
 
         assert result.status == "failed"
+        assert result.termination_reason == "outer_cap"
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
+        build_runner.exec_feedback.assert_not_called()
         fulfillment_runner.refresh.assert_not_called()
         refresh = state_store.read()["fulfillment_refresh"]
         assert refresh["status"] == "deferred"
