@@ -1255,6 +1255,8 @@ class RalphController:
         task_ids = build_result.get("task_ids")
         if isinstance(task_ids, list) and any(str(task_id).strip() for task_id in task_ids):
             return
+        if not self._has_non_verify_worktree_changes(worktree_path):
+            return
 
         spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
@@ -1276,6 +1278,28 @@ class RalphController:
             "task-backed build slice"
         )
         build_result["exit_code"] = 1
+
+    def _has_non_verify_worktree_changes(self, worktree_path: str) -> bool:
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain", "--untracked-files=all"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except OSError:
+            return True
+        if result.returncode != 0:
+            return True
+        for line in result.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if path == BUILD_STATUS_FILENAME or _is_verify_owned_artifact(path):
+                continue
+            return True
+        return False
 
     def _refresh_fulfillment_report(
         self,

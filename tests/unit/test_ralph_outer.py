@@ -1410,6 +1410,74 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_allows_empty_completed_task_ids_for_zero_change_slice(
+        self, tmp_path: Path
+    ) -> None:
+        """A no-op fix slice may hand control back to Ralph without fake task IDs."""
+        build_result = {
+            "passed": True,
+            "build_status": "done",
+            "task_ids": [],
+            "reason": "Ralph must refresh fulfillment evidence before convergence.",
+        }
+        controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"], cwd=worktree, check=True
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        controller._enforce_completed_task_ids(build_result, str(worktree))
+
+        assert build_result["passed"] is True
+        assert build_result["build_status"] == "done"
+
+    def test_rejects_empty_completed_task_ids_when_non_verify_files_changed(
+        self, tmp_path: Path
+    ) -> None:
+        """A successful slice with real file edits must name the completed tasks."""
+        build_result = {
+            "passed": True,
+            "build_status": "done",
+            "task_ids": [],
+        }
+        controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"], cwd=worktree, check=True
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        (worktree / "app.py").write_text("print('changed')\n", encoding="utf-8")
+
+        controller._enforce_completed_task_ids(build_result, str(worktree))
+
+        assert build_result["passed"] is False
+        assert build_result["build_status"] == "missing_task_ids"
+
     def test_llm_build_blocks_when_real_repo_gets_dirty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
