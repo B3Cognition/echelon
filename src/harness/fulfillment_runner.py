@@ -35,6 +35,10 @@ class FulfillmentRefreshResult:
     status: str
     exit_code: int
     used_cache: bool = False
+    scope: str = "full"
+    reason: str = ""
+    cache_key: str | None = None
+    report_path: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -78,6 +82,8 @@ class FulfillmentRunner:
             commit=commit,
             spec_input_hash=spec_input_hash,
         )
+        report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
+        report_path = str(report) if report is not None else None
         if _latest_full_report_matches_cache(
             worktree,
             spec_id,
@@ -90,6 +96,10 @@ class FulfillmentRunner:
                 status="cached",
                 exit_code=0,
                 used_cache=True,
+                scope="full",
+                reason="full verify-spec cache hit",
+                cache_key=cache_key,
+                report_path=report_path,
             )
 
         skill_path = find_skill(
@@ -98,7 +108,14 @@ class FulfillmentRunner:
             self._prompt_executor.cli,
         )
         if skill_path is None:
-            return FulfillmentRefreshResult(status="missing_skill", exit_code=127)
+            return FulfillmentRefreshResult(
+                status="missing_skill",
+                exit_code=127,
+                scope="full",
+                reason="verify-spec skill missing",
+                cache_key=cache_key,
+                report_path=report_path,
+            )
 
         arguments = spec_id
         if spec_dir is not None:
@@ -112,7 +129,14 @@ class FulfillmentRunner:
                 spec_id,
                 spec_dir=spec_dir,
             ):
-                return FulfillmentRefreshResult(status="failed", exit_code=2)
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="full",
+                    reason="full verify-spec artifact validation failed",
+                    cache_key=cache_key,
+                    report_path=report_path,
+                )
             _stamp_latest_report(
                 worktree,
                 spec_id,
@@ -121,8 +145,24 @@ class FulfillmentRunner:
                 spec_input_hash=spec_input_hash,
                 cache_key=cache_key,
             )
-            return FulfillmentRefreshResult(status="refreshed", exit_code=0)
-        return FulfillmentRefreshResult(status="failed", exit_code=exit_code)
+            report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
+            report_path = str(report) if report is not None else None
+            return FulfillmentRefreshResult(
+                status="refreshed",
+                exit_code=0,
+                scope="full",
+                reason="full verify-spec completed",
+                cache_key=cache_key,
+                report_path=report_path,
+            )
+        return FulfillmentRefreshResult(
+            status="failed",
+            exit_code=exit_code,
+            scope="full",
+            reason="full verify-spec failed",
+            cache_key=cache_key,
+            report_path=report_path,
+        )
 
 
 def _resolve_spec_dir(

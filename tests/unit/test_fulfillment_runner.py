@@ -98,6 +98,10 @@ class TestFulfillmentRunner:
 
         assert result.exit_code == 0
         assert result.status == "refreshed"
+        assert result.scope == "full"
+        assert result.reason == "full verify-spec completed"
+        assert result.report_path == str(report)
+        assert isinstance(result.cache_key, str)
         metadata = read_fulfillment_metadata(report)
         assert metadata["spec_id"] == "spec-001"
         assert metadata["verified_commit"] == "abc123"
@@ -331,6 +335,10 @@ class TestFulfillmentRunner:
 
         assert first.status == "refreshed"
         assert second.status == "cached"
+        assert second.scope == "full"
+        assert second.reason == "full verify-spec cache hit"
+        assert second.report_path == str(report)
+        assert isinstance(second.cache_key, str)
         assert second.exit_code == 0
         assert second.used_cache is True
         provider.exec_prompt.assert_called_once()
