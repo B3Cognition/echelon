@@ -265,6 +265,36 @@ class TestOuterLoopConvergence:
             "dirty_verify_artifacts"
         ]["paths"]
 
+    def test_harness_context_does_not_label_source_changes_as_verify_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+        source_dir = worktree / "src"
+        source_dir.mkdir()
+        (source_dir / "feature.swift").write_text("new\n", encoding="utf-8")
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "dirty_verify_artifacts:" not in prompt
+        assert "dirty_verify_artifacts" not in state_store.read()
+
     def test_harness_context_uses_state_owned_spec_paths(self, tmp_path: Path) -> None:
         """Polyrepo builds may keep spec artifacts outside the target worktree."""
         controller, _provider, _gitops, state_store = _make_controller(tmp_path)
