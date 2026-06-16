@@ -1339,6 +1339,13 @@ class RalphController:
             "report_path": data.get("report_path"),
         }
         self._state_store.write(state)
+        self._print_fulfillment_refresh_decision(
+            status=str(state["fulfillment_refresh"]["status"]),
+            reason=str(state["fulfillment_refresh"]["reason"]),
+        )
+
+    def _print_fulfillment_refresh_decision(self, *, status: str, reason: str) -> None:
+        print(f"fulfillment refresh: {status} ({reason})", file=sys.stderr)
 
     def _exec_verify_locally(self, worktree_path: str) -> VerifyResult:
         """Run verification locally on the host when LLM provider is active.

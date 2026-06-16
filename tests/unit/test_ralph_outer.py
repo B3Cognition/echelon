@@ -769,7 +769,7 @@ class TestOuterLoopConvergence:
         controller._fulfillment_runner.refresh.assert_not_called()
 
     def test_banzai_milestone_defers_full_fulfillment_until_tasks_complete(
-        self, tmp_path: Path
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Banzai milestone slices should keep building without full verify-spec cost."""
         from harness.build_result import BuildResult
@@ -817,9 +817,12 @@ class TestOuterLoopConvergence:
             refresh["reason"]
             == "banzai milestone defers full verify until task completion"
         )
+        captured = capsys.readouterr()
+        assert "fulfillment refresh: deferred" in captured.err
+        assert "banzai milestone defers full verify until task completion" in captured.err
 
     def test_semi_milestone_runs_full_fulfillment_and_records_decision(
-        self, tmp_path: Path
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Semi milestone remains conservative but records cache/full refresh metadata."""
         from harness.build_result import BuildResult
@@ -880,6 +883,9 @@ class TestOuterLoopConvergence:
         assert refresh["scope"] == "full"
         assert refresh["cache_key"] == "cache123"
         assert refresh["report_path"] == str(report)
+        captured = capsys.readouterr()
+        assert "fulfillment refresh: cached" in captured.err
+        assert "full verify-spec cache hit" in captured.err
 
     def test_refreshed_equals_style_fulfillment_report_blocks_convergence(
         self, tmp_path: Path
