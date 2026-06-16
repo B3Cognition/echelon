@@ -142,6 +142,21 @@ class TestBuildPromptBuilder:
         # Must not re-run the full build pipeline
         assert "do not re-run" in prompt.lower() or "do not run" in prompt.lower()
 
+    def test_feedback_prompt_forbids_manual_verify_spec_regeneration(self):
+        prompt = self.builder.feedback_prompt(
+            worktree_path="/wt/001",
+            spec_content="spec",
+            failures_output=(
+                "fulfillment report is stale for current HEAD abc123: "
+                "Run `echelon verify-spec 001` before convergence."
+            ),
+            outer_iter=1,
+        )
+
+        assert "Do not run `echelon verify-spec`" in prompt
+        assert "Ralph owns fulfillment refresh" in prompt
+        assert "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`" in prompt
+
     def test_feedback_prompt_includes_lessons(self):
         prompt = self.builder.feedback_prompt(
             worktree_path="/wt/001",

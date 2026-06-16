@@ -122,6 +122,14 @@ class TestParseConfigValid:
 
         assert config.fulfillment.refresh_policy == "convergence_only"
 
+    def test_scoped_fulfillment_refresh_policy_can_be_configured(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "fulfillment": {"refresh_policy": "scoped"},
+        })
+
+        assert config.fulfillment.refresh_policy == "scoped"
+
     def test_full_dict_preserves_all_fields(self) -> None:
         config = _parse_config(FULL)
         assert config.base_image == "node:20-slim"

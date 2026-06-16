@@ -1203,6 +1203,8 @@ harness:
   # invoke the LLM fulfillment audit.
   # - every_slice: old behavior; refresh after each passing build verification
   # - milestone: refresh at normal milestone boundaries (default)
+  # - scoped: re-judge only deterministically impacted requirement rows, but
+  #   still require a full verify-spec before convergence or land
   # - convergence_only: skip full refresh until task progress is complete enough
   fulfillment:
     refresh_policy: milestone

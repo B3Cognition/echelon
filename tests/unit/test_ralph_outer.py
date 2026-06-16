@@ -446,7 +446,8 @@ class TestOuterLoopConvergence:
 
         assert result.passed is False
         assert result.failures[0].id == "fulfillment-report-scoped"
-        assert "full `echelon verify-spec spec-001`" in result.failures[0].error
+        assert "Do not regenerate fulfillment artifacts in a build slice" in result.failures[0].error
+        assert "Ralph must run a full fulfillment refresh before convergence" in result.failures[0].error
 
     def test_fulfillment_gate_reads_orchestration_spec_dir_for_polyrepo(
         self, tmp_path: Path
@@ -2300,6 +2301,35 @@ class TestPromptHelpers:
         assert "AssertionError" in result
         assert "spec 001" in result
         assert "re-running" in result
+
+    def test_make_feedback_prompt_overrides_manual_verify_spec_repair(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="fulfillment-report-stale",
+                    error=(
+                        "fulfillment report is stale for current HEAD abc123: "
+                        "/tmp/specs/001/fulfillment-report.md was verified at old456. "
+                        "Run `echelon verify-spec spec-001` before convergence."
+                    ),
+                )
+            ],
+            duration_s=1.0,
+            token_usage=0,
+        )
+
+        result = controller._make_feedback_prompt("spec 001", verify, inner_iter=1)
+
+        assert "Do not run `echelon verify-spec`" in result
+        assert "Ralph owns fulfillment refresh" in result
+        assert "Run `echelon verify-spec spec-001` before convergence." in result
 
 
 @pytest.mark.unit

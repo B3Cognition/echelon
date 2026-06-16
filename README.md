@@ -106,6 +106,30 @@ echelon build   001                              # agent-driven build (no harnes
 echelon harness init                            # re-run to auto-detect high-confidence verify_command
 ```
 
+### Harness fulfillment refresh policy
+
+Harness fulfillment refreshes are controlled from the repo config under
+`harness.fulfillment.refresh_policy`. Set this in
+`.specify/extensions/echelon/echelon-config.yml` for a committed project default,
+or in `.specify/extensions/echelon/local-config.yml` for a local override.
+
+```yaml
+harness:
+  verify_command: env NP_SMOKE_SKIP_IOS=1 bash scripts/smoke.sh
+  fulfillment:
+    refresh_policy: scoped
+```
+
+Available policies:
+
+- `milestone` — default; run full `verify-spec` at normal milestone boundaries
+- `scoped` — run scoped incremental fulfillment refreshes after passing slices, but still require a full `verify-spec` before convergence or land
+- `every_slice` — old behavior; run full `verify-spec` after each passing build slice
+- `convergence_only` — defer full fulfillment refresh until task progress is complete enough to attempt convergence
+
+Use `scoped` when full fulfillment refreshes are dominating cost or latency during
+active harness loops. Use `milestone` when you want the most conservative default.
+
 ### Spec-kit skills (Claude session)
 
 All of the above are also available as spec-kit slash commands inside a Claude Code session:

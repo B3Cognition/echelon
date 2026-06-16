@@ -1091,7 +1091,8 @@ class RalphController:
                 id="fulfillment-report-scoped",
                 error=(
                     f"fulfillment report is scoped incremental evidence: {report}. "
-                    f"Run full `echelon verify-spec {self._spec_id}` before convergence."
+                    "Do not regenerate fulfillment artifacts in a build slice; "
+                    "Ralph must run a full fulfillment refresh before convergence."
                 ),
             )
             return VerifyResult(
@@ -1112,7 +1113,8 @@ class RalphController:
                 error=(
                     f"fulfillment report is stale for current HEAD {current_commit}: "
                     f"{report} was verified at {verified_commit}. "
-                    f"Run `echelon verify-spec {self._spec_id}` before convergence."
+                    "Do not regenerate fulfillment artifacts in a build slice; "
+                    "Ralph must refresh fulfillment evidence before convergence."
                 ),
             )
             return VerifyResult(
@@ -1953,6 +1955,11 @@ class RalphController:
         )
         return (
             f"{base}\n\n"
+            "Ralph owns fulfillment refresh and verify-spec regeneration. "
+            "Do not run `echelon verify-spec`. "
+            "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`. "
+            "If a failure mentions stale/scoped fulfillment evidence, treat it as "
+            "read-only context and fix source/tests or stop after writing the harness status marker.\n\n"
             f"Inner fix {inner_iter}. Fix these verification failures "
             f"without re-running the full build pipeline:\n{failures_text}"
         )
