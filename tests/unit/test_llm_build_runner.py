@@ -46,6 +46,14 @@ class TestLlmBuildRunner:
         assert extra_env["SPEC_KIT_ROOT"] == str(tmp_path)
         assert extra_env["HARNESS_WORKTREE"] == str(tmp_path)
 
+    def test_exec_build_exposes_harness_source_dir(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+
+        LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
+        assert extra_env["HARNESS_SOURCE_DIR"].endswith("src/harness")
+
     def test_exec_build_returns_impasse_from_status_file(self, tmp_path):
         executor = _executor(
             status={"status": "impasse", "impasse_file": "codegen-impasse.md"}

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import subprocess
 import sys
@@ -1702,6 +1703,9 @@ class RalphController:
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
         spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
         tasks_file_text = str(spec_dir / "tasks.md" if spec_dir is not None else "MISSING")
+        harness_source_dir = os.environ.get("HARNESS_SOURCE_DIR") or str(
+            Path(__file__).resolve().parent
+        )
         dirty_verify_artifacts = self._dirty_verify_artifacts(worktree_path)
         dirty_verify_block = ""
         if dirty_verify_artifacts:
@@ -1720,11 +1724,13 @@ class RalphController:
             f"spec_dir: {spec_dir_text}\n"
             f"spec_file: {spec_file_text}\n"
             f"tasks_file: {tasks_file_text}\n"
+            f"harness_source_dir: {harness_source_dir}\n"
             f"{dirty_verify_block}"
             f"state_file: {self._state_store.state_file}\n"
             f"state_dir: {self._state_store.state_dir}\n"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
             "Use `spec_dir`, `spec_file`, and `tasks_file` for spec artifacts and progress/report updates.\n"
+            "Do not search for harness source, Ralph code, or ralph.py. If harness internals are needed, read files under `harness_source_dir` directly.\n"
             "When `spec_artifacts_mode` is `worktree`, spec artifact writes must stay under `worktree`.\n"
             "When `spec_artifacts_mode` is `external`, spec artifact writes may use the external `spec_dir` path.\n"
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"

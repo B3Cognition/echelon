@@ -225,6 +225,20 @@ class TestOuterLoopConvergence:
         assert "tasks_file: MISSING" in prompt
         assert str(live_spec_dir) not in prompt
 
+    def test_harness_context_names_harness_source_without_searching(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        harness_source = tmp_path / "echelon" / "src" / "harness"
+        monkeypatch.setenv("HARNESS_SOURCE_DIR", str(harness_source))
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert f"harness_source_dir: {harness_source}" in prompt
+        assert "Do not search for harness source, Ralph code, or ralph.py" in prompt
+
     def test_harness_context_labels_dirty_verify_owned_artifacts(
         self, tmp_path: Path
     ) -> None:
