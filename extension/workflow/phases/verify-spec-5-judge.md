@@ -5,6 +5,9 @@
 ## Context Pack
 
 Provide SPEC-GUARD with:
+- `{verify_run_dir}/canonical-requirements.json`
+- `{verify_run_dir}/canonical-requirements.md`
+- `{verify_run_dir}/requirement-audit.md`
 - fulfillment checklist
 - implementation evidence map
 - `spec.md`
@@ -18,6 +21,11 @@ Provide SPEC-GUARD with:
 Run SPEC-GUARD in fulfillment mode. Assign exactly one status per item:
 `IMPLEMENTED`, `PARTIAL`, `UNVERIFIED`, `MISSING`, `DEVIATED`, or
 `OBSOLETE_SPEC`.
+
+Use `{verify_run_dir}/canonical-requirements.json` as the only allowed
+requirement row set. Judge every canonical ID exactly once. Do not add report
+rows for IDs outside the inventory; record such discoveries separately as
+`unmapped_candidate` notes.
 
 Judge item fulfillment from the implementation evidence map and the requirement's
 acceptance signal. Task progress is bookkeeping integrity evidence only. SPEC-GUARD
@@ -45,7 +53,7 @@ Write:
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
 
 Before returning DONE, perform row-set integrity validation: every item ID in
-`{verify_run_dir}/requirement-audit.md` must appear exactly once in
+`{verify_run_dir}/canonical-requirements.json` must appear exactly once in
 `{spec_dir}/fulfillment-report.md`, and the report must not invent extra item
 IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If validation
 fails, hard stop with BLOCKED and do not summarize the run as complete.

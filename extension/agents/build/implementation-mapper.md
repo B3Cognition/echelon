@@ -32,8 +32,14 @@ NEVER upgrade `assertion_only` evidence to measured runtime evidence based on sy
 ALWAYS use `summary.fallback_requirement_ids` as the bounded queue for manual inspection when present.
 NEVER inspect outside `summary.fallback_requirement_ids` except to validate a cited high/medium row that appears contradictory.
 
+### Rule 7 - Canonical Inventory Boundary
+ALWAYS map only IDs present in `{verify_run_dir}/canonical-requirements.json`.
+NEVER add extra implementation-map rows for non-inventory IDs; record them separately as `unmapped_candidate`.
+
 ## Inputs
 
+- `{verify_run_dir}/canonical-requirements.json`
+- `{verify_run_dir}/canonical-requirements.md`
 - `{verify_run_dir}/requirement-audit.md`
 - `{verify_run_dir}/state.json`
 - `{verify_run_dir}/codegraph-summary.json`
@@ -44,12 +50,14 @@ NEVER inspect outside `summary.fallback_requirement_ids` except to validate a ci
 
 ## Process
 
-1. Read every checklist item.
-2. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy its `high` and `medium` rows into the implementation map unless direct source inspection contradicts the cited evidence.
-3. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
-4. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
-5. For each item, distinguish implementation evidence from executable test evidence.
-6. Mark confidence as `high`, `medium`, `low`, or `none` based only on cited evidence. For runtime thresholds, keep assertion-only gates at `low`/fallback unless measured CI/runtime artifacts are cited.
+1. Read `{verify_run_dir}/canonical-requirements.json`; this is the authoritative row set.
+2. Read every checklist item and verify its ID is present in the canonical inventory.
+3. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy its `high` and `medium` rows into the implementation map unless direct source inspection contradicts the cited evidence.
+4. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
+5. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
+6. For each item, distinguish implementation evidence from executable test evidence.
+7. Mark confidence as `high`, `medium`, `low`, or `none` based only on cited evidence. For runtime thresholds, keep assertion-only gates at `low`/fallback unless measured CI/runtime artifacts are cited.
+8. If source inspection suggests a non-inventory item, record it as `unmapped_candidate` outside the implementation map table.
 
 ## Output Block
 

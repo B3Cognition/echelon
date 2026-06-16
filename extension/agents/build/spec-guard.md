@@ -45,6 +45,19 @@ MUST NOT be marked `IMPLEMENTED` from `assertion_only`, source-symbol, or
 synthetic fixture evidence. Mark them `UNVERIFIED` unless the map cites measured
 CI/runtime artifacts satisfying the acceptance signal.
 
+## Verify-Spec Fulfillment Row-Set Contract
+
+When invoked for verify-spec fulfillment mode, read
+`{verify_run_dir}/canonical-requirements.json` before judging. That
+Python-owned inventory is the only allowed requirement row set for
+`{spec_dir}/fulfillment-report.md` and `{spec_dir}/fulfillment-gaps.md`.
+
+Judge every canonical ID exactly once. Do not invent, rename, or drop
+requirement rows. `TASK-PROGRESS` is the only permitted synthetic report row.
+If the implementation map or source inspection reveals a candidate outside the
+inventory, record it as `unmapped_candidate` outside the fulfillment table and
+do not count it in summary totals.
+
 ## Batch Contract (v0.4.0 QA)
 
 When invoked for QA batch review, speckit-echelon-spec-guard (SPEC GUARD) must:

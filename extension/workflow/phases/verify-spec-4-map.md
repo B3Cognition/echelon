@@ -5,6 +5,8 @@
 ## Context Pack
 
 Provide IMPLEMENTATION-MAPPER with:
+- `{verify_run_dir}/canonical-requirements.json`
+- `{verify_run_dir}/canonical-requirements.md`
 - fulfillment checklist
 - current source tree and tests
 - verification `state.json`
@@ -40,6 +42,11 @@ mapping path.
 Map checklist items to concrete source, test, route, UI, configuration, and
 CodeGraph evidence.
 
+Use `{verify_run_dir}/canonical-requirements.json` as the row-set boundary.
+Map only canonical IDs from that inventory. If source inspection reveals a
+candidate item outside the inventory, record it separately as
+`unmapped_candidate`; do not insert it as an implementation-map row.
+
 Use `{verify_run_dir}/codegraph-evidence-map.json` as the primary mapping input.
 Preserve deterministic rows only together with their `evidence_kind`,
 `evidence_strength`, `runtime_threshold`, and `confidence` fields. A row with
@@ -60,6 +67,8 @@ fixture tests as measured runtime evidence.
 ## Expected Output
 
 - evidence map per requirement.
+- separate `unmapped_candidate` notes for any candidate row not present in
+  `{verify_run_dir}/canonical-requirements.json`.
 - `{verify_run_dir}/codegraph-evidence-map.json`
 - `{verify_run_dir}/codegraph-evidence-map.md`
 

@@ -20,8 +20,14 @@ NEVER rewrite requirements into implementation guesses or preferred designs.
 ALWAYS name the observable behavior or evidence that would prove each item.
 NEVER mark an item implemented, missing, or obsolete.
 
+### Rule 4 - Canonical Inventory Boundary
+ALWAYS preserve the IDs from `{verify_run_dir}/canonical-requirements.json` exactly once in `requirement-audit.md`.
+NEVER invent, rename, or drop canonical IDs; record possible additions separately as `unmapped_candidate` notes.
+
 ## Inputs
 
+- `{verify_run_dir}/canonical-requirements.json`
+- `{verify_run_dir}/canonical-requirements.md`
 - `{spec_dir}/spec.md`
 - `{spec_dir}/plan.md` if present
 - `{spec_dir}/tasks.md` if present
@@ -30,11 +36,11 @@ NEVER mark an item implemented, missing, or obsolete.
 
 ## Process
 
-1. Read the spec from top to bottom.
-2. Extract checklist items using existing IDs where present (`FR-*`, `AC-*`, `US-*`, `NFR-*`, `REQ-*`, `EDGE-*`).
-3. Assign deterministic IDs for unnumbered requirements, prefixed by the nearest section type.
-4. Classify each item as `functional`, `acceptance`, `user_story`, `edge_case`, `non_functional`, or `workflow`.
-5. Record acceptance signals as observable behavior, test evidence, state changes, API behavior, UI behavior, or documentation evidence.
+1. Read `{verify_run_dir}/canonical-requirements.json`; this Python-owned inventory defines the only allowed checklist IDs.
+2. Read the spec from top to bottom to enrich each canonical ID with source meaning and acceptance signal.
+3. Classify each canonical item as `functional`, `acceptance`, `user_story`, `edge_case`, `non_functional`, or `workflow`.
+4. Record acceptance signals as observable behavior, test evidence, state changes, API behavior, UI behavior, or documentation evidence.
+5. If you notice a candidate requirement absent from the inventory, record it outside the audit table as `unmapped_candidate`; do not add it as a row.
 
 ## Output Block
 
