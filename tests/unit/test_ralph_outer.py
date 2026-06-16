@@ -818,6 +818,69 @@ class TestOuterLoopConvergence:
             == "banzai milestone defers full verify until task completion"
         )
 
+    def test_semi_milestone_runs_full_fulfillment_and_records_decision(
+        self, tmp_path: Path
+    ) -> None:
+        """Semi milestone remains conservative but records cache/full refresh metadata."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=demo req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=demo req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=["T-001"],
+        )
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="cached",
+            exit_code=0,
+            used_cache=True,
+            scope="full",
+            reason="full verify-spec cache hit",
+            cache_key="cache123",
+            report_path=str(report),
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            mode="semi",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = worktree
+
+        controller.run_loop(max_outer=1, max_inner=0, build_prompt="build")
+
+        fulfillment_runner.refresh.assert_called_once()
+        refresh = state_store.read()["fulfillment_refresh"]
+        assert refresh["status"] == "cached"
+        assert refresh["reason"] == "full verify-spec cache hit"
+        assert refresh["scope"] == "full"
+        assert refresh["cache_key"] == "cache123"
+        assert refresh["report_path"] == str(report)
+
     def test_refreshed_equals_style_fulfillment_report_blocks_convergence(
         self, tmp_path: Path
     ) -> None:

@@ -1258,6 +1258,19 @@ class RalphController:
             ),
         )
         exit_code = getattr(refresh_result, "exit_code", refresh_result)
+        self._record_fulfillment_refresh(
+            {
+                "status": getattr(
+                    refresh_result,
+                    "status",
+                    "refreshed" if exit_code == 0 else "failed",
+                ),
+                "reason": getattr(refresh_result, "reason", ""),
+                "scope": getattr(refresh_result, "scope", "full"),
+                "cache_key": getattr(refresh_result, "cache_key", None),
+                "report_path": getattr(refresh_result, "report_path", None),
+            }
+        )
         if exit_code == 0:
             return verify_result
 
