@@ -27,6 +27,7 @@ from kernel.preflight import (
     PreflightNoMatchingTransition,
     PreflightResult,
     _PROBE_REGISTRY,
+    _probe_understanding,
     _resolve_next_node,
     run_preflight,
 )
@@ -85,6 +86,31 @@ class TestProbeRegistry:
 
     def test_kb_schema_registered(self):
         assert "kb_schema" in _PROBE_REGISTRY
+
+
+class TestUnderstandingProbe:
+    def test_understanding_console_script_counts_as_available(self, tmp_path):
+        with patch("kernel.preflight.shutil.which", return_value="/venv/bin/understanding"):
+            with patch("kernel.preflight.subprocess.run") as run:
+                run.return_value.returncode = 0
+                run.return_value.stdout = "understanding version 3.7.0\n"
+                run.return_value.stderr = ""
+
+                status, reason, exit_code, stderr, cause = _probe_understanding(
+                    {}, {}, tmp_path / ".specify" / "extensions" / "echelon"
+                )
+
+        assert status == "AVAILABLE"
+        assert reason == "n/a"
+        assert exit_code == 0
+        assert stderr == ""
+        assert cause == "understanding CLI smoke probe passed"
+        run.assert_called_once_with(
+            ["/venv/bin/understanding", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+        )
 
 
 # ---------------------------------------------------------------------------

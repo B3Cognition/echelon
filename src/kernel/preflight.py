@@ -22,6 +22,7 @@ Routing boundary:
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -87,9 +88,14 @@ def _truncate(text: str, max_bytes: int = 2048) -> str:
 
 def _run_script(script_path: Path, timeout: float = 5.0) -> tuple[int, str, str]:
     """Run a script and return (exit_code, stdout, stderr). Times out after timeout seconds."""
+    return _run_command([str(script_path)], timeout=timeout)
+
+
+def _run_command(command: list[str], timeout: float = 5.0) -> tuple[int, str, str]:
+    """Run a command and return (exit_code, stdout, stderr)."""
     try:
         result = subprocess.run(
-            [str(script_path)],
+            command,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -111,8 +117,36 @@ def _probe_understanding(
 ) -> tuple[str, str, Optional[int], str, str]:
     """Probe speckit-understanding availability.
 
-    Checks for run-understanding.sh and optionally runs a smoke test.
+    Checks for the understanding console script first, then legacy
+    run-understanding.sh locations.
     """
+    cli = shutil.which(str(config.get("understanding_cli") or "understanding"))
+    if cli:
+        exit_code, stdout, stderr = _run_command([cli, "--version"], timeout=5.0)
+        if stderr == "TIMEOUT":
+            return (
+                "UNAVAILABLE",
+                "timeout",
+                -1,
+                "TIMEOUT: understanding CLI did not respond in 5s",
+                "slow startup",
+            )
+        if exit_code == 0:
+            return (
+                "AVAILABLE",
+                "n/a",
+                exit_code,
+                "",
+                "understanding CLI smoke probe passed",
+            )
+        return (
+            "DEGRADED",
+            "script_error",
+            exit_code,
+            _truncate(stderr or stdout),
+            f"understanding CLI exited with {exit_code}",
+        )
+
     # Look for run-understanding.sh in known locations
     candidate_paths = [
         ext_dir / "scripts" / "bash" / "run-understanding.sh",
