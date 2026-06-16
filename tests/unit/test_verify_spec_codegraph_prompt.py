@@ -22,6 +22,16 @@ def test_verify_spec_init_accepts_authoritative_spec_dir_argument() -> None:
     assert "do not locate or\nglob `specs/{spec_id}-*/`" in text
 
 
+def test_verify_spec_init_accepts_scoped_verify_arguments() -> None:
+    text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
+
+    assert "optional `scope=scoped`" in text
+    assert "optional `scoped_ids=<comma-separated requirement IDs>`" in text
+    assert "`verify_scope`" in text
+    assert "`scoped_ids`" in text
+    assert "`base_full_verify_commit`" in text
+
+
 def test_verify_spec_codegraph_uses_deterministic_harness_command() -> None:
     text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
 

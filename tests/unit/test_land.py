@@ -156,6 +156,31 @@ class TestLand:
         assert _fulfillment_warning("001", tmp_path, strict=False) is None
         assert _fulfillment_warning("001", tmp_path, strict=True) is not None
 
+    def test_fulfillment_warning_rejects_scoped_report_for_landing(
+        self, tmp_path: Path
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            "spec_id: '001'\n"
+            "verified_commit: head456\n"
+            "verify_scope: scoped\n"
+            "base_full_verify_commit: base123\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+
+        with patch("harness.land._current_git_commit", return_value="head456"):
+            warning = _fulfillment_warning("001", tmp_path)
+
+        assert warning is not None
+        assert "scoped fulfillment report" in warning
+        assert "echelon verify-spec 001" in warning
+
     def test_land_blocks_fulfillment_gaps_before_merge(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-demo"
         spec_dir.mkdir(parents=True)

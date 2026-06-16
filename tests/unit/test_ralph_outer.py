@@ -416,6 +416,38 @@ class TestOuterLoopConvergence:
         assert "old123" in result.failures[0].error
         assert "new456" in result.failures[0].error
 
+    def test_fulfillment_gate_rejects_scoped_report_as_convergence_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        """Scoped fulfillment reports are incremental evidence, not final proof."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            "spec_id: spec-001\n"
+            "verified_commit: head456\n"
+            "verify_scope: scoped\n"
+            "base_full_verify_commit: base123\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[])
+
+        with patch("harness.ralph._current_git_commit", return_value="head456"):
+            result = controller._apply_fulfillment_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "fulfillment-report-scoped"
+        assert "full `echelon verify-spec spec-001`" in result.failures[0].error
+
     def test_fulfillment_gate_reads_orchestration_spec_dir_for_polyrepo(
         self, tmp_path: Path
     ) -> None:
@@ -824,6 +856,65 @@ class TestOuterLoopConvergence:
         assert result.final_verify is not None
         assert result.final_verify.passed is True
         fulfillment_runner.refresh.assert_called_once()
+
+    def test_scoped_fulfillment_policy_passes_task_ids_and_changed_files(
+        self, tmp_path: Path
+    ) -> None:
+        """Scoped policy gives verify-spec a deterministic impacted slice."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+
+        llm_build_runner = MagicMock(spec=LlmBuildRunner)
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=["T-002"],
+        )
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed",
+            exit_code=0,
+            scope="scoped",
+            reason="scoped verify-spec completed",
+        )
+        controller, _provider, gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        controller._config.fulfillment.refresh_policy = "scoped"
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = str(worktree)
+        controller._changed_files_since_head = MagicMock(
+            return_value=["src/a.py", "tests/test_a.py"]
+        )
+
+        controller.run_loop(max_outer=1, max_inner=0, build_prompt="implement")
+
+        fulfillment_runner.refresh.assert_called_once_with(
+            str(worktree),
+            "spec-001",
+            orchestration_root=None,
+            scope="scoped",
+            completed_task_ids=["T-002"],
+            changed_files=["src/a.py", "tests/test_a.py"],
+        )
 
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path

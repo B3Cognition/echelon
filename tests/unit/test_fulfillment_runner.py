@@ -486,3 +486,77 @@ class TestFulfillmentRunner:
         assert first.status == "refreshed"
         assert second.status == "refreshed"
         assert provider.exec_prompt.call_count == 2
+
+    def test_scoped_refresh_passes_impacted_ids_and_merges_report(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(
+            spec_dir,
+            tasks=(
+                "- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n"
+                "- [x] T-002 complexity=standard phase=base req=FR-002 depends=T-001\n"
+            ),
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\nverify_scope: full\nverified_commit: base123\n---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |\n"
+            "| FR-002 | PARTIAL | src/b.swift | medium | replace |\n",
+            encoding="utf-8",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_scoped_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-002 | IMPLEMENTED | src/b.swift | high | fixed |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_scoped_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                "spec-001",
+                scope="scoped",
+                completed_task_ids=["T-002"],
+            )
+
+        assert result.status == "refreshed"
+        assert result.scope == "scoped"
+        assert result.reason == "scoped verify-spec completed"
+        _worktree_path, prompt = provider.exec_prompt.call_args.args
+        assert "verify spec-001" in prompt
+        assert "scope=scoped" in prompt
+        assert "scoped_ids=FR-001,FR-002" in prompt
+        text = report.read_text(encoding="utf-8")
+        assert "verify_scope: scoped" in text
+        assert "base_full_verify_commit: base123" in text
+        assert "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |" in text
+        assert "| FR-002 | IMPLEMENTED | src/b.swift | high | fixed |" in text
+
+    def test_scoped_refresh_skips_provider_when_no_impacted_ids(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                "spec-001",
+                scope="scoped",
+                completed_task_ids=[],
+            )
+
+        assert result.status == "cached"
+        assert result.scope == "scoped"
+        assert result.reason == "scoped verify-spec skipped; no impacted requirements"
+        provider.exec_prompt.assert_not_called()

@@ -79,7 +79,12 @@ DEFAULT_NETWORK_ALLOWLIST = [
 VALID_PROVIDERS = {"docker", "e2b", "modal", "daytona"}
 VALID_LLM_CLIS = {"claude", "copilot", "opencode", "codex"}
 VALID_PR_HOSTS = {"github", "gitlab", "none"}
-VALID_FULFILLMENT_REFRESH_POLICIES = {"every_slice", "milestone", "convergence_only"}
+VALID_FULFILLMENT_REFRESH_POLICIES = {
+    "every_slice",
+    "milestone",
+    "convergence_only",
+    "scoped",
+}
 
 # Simple semver range pattern: supports ^, ~, >=, <=, =, -, x ranges
 SEMVER_RANGE_PATTERN = re.compile(

@@ -550,6 +550,13 @@ def _fulfillment_warning(
             f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
         )
 
+    metadata = read_fulfillment_metadata(report)
+    if metadata.get("verify_scope") == "scoped":
+        return (
+            f"latest fulfillment report is a scoped fulfillment report: {report}. "
+            f"Run full `echelon verify-spec {spec_id}` before landing."
+        )
+
     if not fulfillment_has_blocking_gaps(report, strict=strict):
         return None
 

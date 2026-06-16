@@ -27,6 +27,13 @@ requirement row set. Judge every canonical ID exactly once. Do not add report
 rows for IDs outside the inventory; record such discoveries separately as
 `unmapped_candidate` notes.
 
+When `verify_scope=scoped` in `state.json`, judge only IDs listed in `scoped_ids`.
+The scoped output may contain rows for those IDs only; Ralph will merge those
+rows over the last full fulfillment report and preserve unaffected rows. Include
+`base_full_verify_commit` in the scoped run summary so the harness can prove
+which full report the scoped judgment extends. Do not summarize a scoped run as
+a replacement for full land-time verification.
+
 Judge item fulfillment from the implementation evidence map and the requirement's
 acceptance signal. Task progress is bookkeeping integrity evidence only. SPEC-GUARD
 MUST NOT downgrade an item from `IMPLEMENTED` to `PARTIAL`, `UNVERIFIED`, or
@@ -52,11 +59,13 @@ Write:
 - `{spec_dir}/fulfillment-report.md`
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
 
-Before returning DONE, perform row-set integrity validation: every item ID in
-`{verify_run_dir}/canonical-requirements.json` must appear exactly once in
-`{spec_dir}/fulfillment-report.md`, and the report must not invent extra item
-IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If validation
-fails, hard stop with BLOCKED and do not summarize the run as complete.
+Before returning DONE in full scope, perform row-set integrity validation: every
+item ID in `{verify_run_dir}/canonical-requirements.json` must appear exactly
+once in `{spec_dir}/fulfillment-report.md`, and the report must not invent extra
+item IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If
+validation fails, hard stop with BLOCKED and do not summarize the run as
+complete. In scoped mode, validate that every `scoped_ids` item appears exactly
+once and that no other requirement IDs appear in the scoped output.
 
 Do not render summary counts as a markdown table with status labels in the first column.
 Use bullets or prose for summary counts. The first column of any report

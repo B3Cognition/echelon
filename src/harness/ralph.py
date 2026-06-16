@@ -336,6 +336,10 @@ class RalphController:
                         worktree_path=worktree_path,
                         task_ids=build_result.get("task_ids"),
                     )
+                    scoped_completed_task_ids = _clean_task_ids(
+                        build_result.get("task_ids")
+                    )
+                    scoped_changed_files = self._changed_files_since_head(worktree_path)
                     build_checkpoint = self._try_checkpoint_progress_commit(
                         worktree_path=worktree_path,
                         before_state=before_build_state,
@@ -514,7 +518,10 @@ class RalphController:
                         verify_result, worktree_path
                     )
                     verify_result = self._refresh_fulfillment_report(
-                        verify_result, worktree_path
+                        verify_result,
+                        worktree_path,
+                        completed_task_ids=scoped_completed_task_ids,
+                        changed_files=scoped_changed_files,
                     )
                     verify_result = self._apply_fulfillment_gate(
                         verify_result, worktree_path
@@ -1077,11 +1084,27 @@ class RalphController:
         if report is None:
             return verify_result
 
+        metadata = read_fulfillment_metadata(report)
+        if metadata.get("verify_scope") == "scoped":
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="fulfillment-report-scoped",
+                error=(
+                    f"fulfillment report is scoped incremental evidence: {report}. "
+                    f"Run full `echelon verify-spec {self._spec_id}` before convergence."
+                ),
+            )
+            return VerifyResult(
+                passed=False,
+                failures=[failure],
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+            )
+
         current_commit = _current_git_commit(Path(worktree_path))
         if current_commit and not fulfillment_report_is_current(
             report, current_commit=current_commit
         ):
-            metadata = read_fulfillment_metadata(report)
             verified_commit = metadata.get("verified_commit") or "(missing)"
             failure = FailureEntry(
                 category=FailureCategory.OTHER,
@@ -1256,6 +1279,8 @@ class RalphController:
         self,
         verify_result: VerifyResult,
         worktree_path: str,
+        completed_task_ids: Optional[List[str]] = None,
+        changed_files: Optional[List[str]] = None,
     ) -> VerifyResult:
         """Run verify-spec after ordinary verification passes, when possible."""
         if not verify_result.passed or not worktree_path or self._fulfillment_runner is None:
@@ -1285,14 +1310,25 @@ class RalphController:
                 token_usage=verify_result.token_usage,
             )
 
-        refresh_result = self._fulfillment_runner.refresh(
-            worktree_path,
-            self._spec_id,
-            orchestration_root=(
+        refresh_kwargs: dict[str, object] = {
+            "orchestration_root": (
                 getattr(self._gitops, "base_dir", None)
                 if self._spec_artifacts_mode() == "external"
                 else None
-            ),
+            )
+        }
+        if decision.get("action") == "scoped":
+            refresh_kwargs.update(
+                {
+                    "scope": "scoped",
+                    "completed_task_ids": completed_task_ids or [],
+                    "changed_files": changed_files or [],
+                }
+            )
+        refresh_result = self._fulfillment_runner.refresh(
+            worktree_path,
+            self._spec_id,
+            **refresh_kwargs,
         )
         exit_code = getattr(refresh_result, "exit_code", refresh_result)
         self._record_fulfillment_refresh(
@@ -1340,6 +1376,8 @@ class RalphController:
 
     def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
         policy = self._config.fulfillment.refresh_policy
+        if policy == "scoped":
+            return {"action": "scoped", "reason": "fulfillment.refresh_policy=scoped"}
         if policy == "every_slice":
             return {"action": "full", "reason": "fulfillment.refresh_policy=every_slice"}
         total, completed = self._task_progress_counts()
@@ -1364,7 +1402,34 @@ class RalphController:
         }
 
     def _should_refresh_fulfillment(self, worktree_path: str) -> bool:
-        return self._fulfillment_refresh_decision(worktree_path).get("action") == "full"
+        return self._fulfillment_refresh_decision(worktree_path).get("action") in {
+            "full",
+            "scoped",
+        }
+
+    def _changed_files_since_head(self, worktree_path: str) -> List[str]:
+        changed: set[str] = set()
+        for args in (
+            ["git", "diff", "--name-only", "HEAD"],
+            ["git", "diff", "--cached", "--name-only", "HEAD"],
+            ["git", "ls-files", "--others", "--exclude-standard"],
+        ):
+            try:
+                result = subprocess.run(
+                    args,
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except OSError:
+                continue
+            if result.returncode != 0:
+                continue
+            for line in result.stdout.splitlines():
+                if line.strip():
+                    changed.add(line.strip())
+        return sorted(changed)
 
     def _record_fulfillment_refresh(self, data: dict[str, object]) -> None:
         state = self._state_store.read()
@@ -2674,6 +2739,12 @@ def _porcelain_path(line: str) -> str:
 
 def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
     return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
+
+
+def _clean_task_ids(value: object) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(task_id).strip() for task_id in value if str(task_id).strip()]
 
 
 def _is_verify_owned_artifact(path: str) -> bool:

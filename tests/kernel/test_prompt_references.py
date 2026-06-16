@@ -127,6 +127,16 @@ def test_verify_spec_judge_requires_artifact_row_set_validation():
     assert "status labels in the first column" in text
 
 
+def test_verify_spec_judge_documents_scoped_report_contract():
+    prompt = EXTENSION_ROOT / "workflow" / "phases" / "verify-spec-5-judge.md"
+    text = prompt.read_text()
+
+    assert "When `verify_scope=scoped`" in text
+    assert "judge only IDs listed in `scoped_ids`" in text
+    assert "preserve unaffected rows" in text
+    assert "base_full_verify_commit" in text
+
+
 def test_build_command_forbids_hand_editing_verify_spec_reports():
     prompt = EXTENSION_ROOT / "commands" / "echelon.build.md"
     text = prompt.read_text()

@@ -6,9 +6,14 @@ from dataclasses import dataclass
 import hashlib
 from pathlib import Path
 import subprocess
+import tempfile
 from typing import Mapping, Protocol
 
 from harness.canonical_requirements import INVENTORY_JSON
+from harness.scoped_verify import (
+    build_scoped_verify_plan,
+    merge_scoped_fulfillment_report,
+)
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
 from kernel.fulfillment import (
@@ -73,6 +78,9 @@ class FulfillmentRunner:
         spec_id: str,
         *,
         orchestration_root: Path | str | None = None,
+        scope: str = "full",
+        completed_task_ids: list[str] | tuple[str, ...] | None = None,
+        changed_files: list[str] | tuple[str, ...] | None = None,
     ) -> FulfillmentRefreshResult:
         worktree = Path(worktree_path)
         spec_dir = _resolve_spec_dir(spec_id, Path(worktree_path), orchestration_root)
@@ -85,6 +93,18 @@ class FulfillmentRunner:
         )
         report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
         report_path = str(report) if report is not None else None
+        if scope == "scoped":
+            return self._refresh_scoped(
+                worktree_path=worktree_path,
+                worktree=worktree,
+                spec_id=spec_id,
+                spec_dir=spec_dir,
+                commit=commit,
+                report=report,
+                report_path=report_path,
+                completed_task_ids=completed_task_ids or [],
+                changed_files=changed_files or [],
+            )
         if _latest_full_report_matches_cache(
             worktree,
             spec_id,
@@ -164,6 +184,113 @@ class FulfillmentRunner:
             cache_key=cache_key,
             report_path=report_path,
         )
+
+    def _refresh_scoped(
+        self,
+        *,
+        worktree_path: str,
+        worktree: Path,
+        spec_id: str,
+        spec_dir: Path | None,
+        commit: str | None,
+        report: Path | None,
+        report_path: str | None,
+        completed_task_ids: list[str] | tuple[str, ...],
+        changed_files: list[str] | tuple[str, ...],
+    ) -> FulfillmentRefreshResult:
+        if spec_dir is None or commit is None:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="scoped",
+                reason="scoped verify-spec missing spec dir or commit",
+                report_path=report_path,
+            )
+        plan = build_scoped_verify_plan(
+            spec_dir=spec_dir,
+            completed_task_ids=completed_task_ids,
+            changed_files=changed_files,
+        )
+        if not plan.impacted_requirement_ids:
+            return FulfillmentRefreshResult(
+                status="cached",
+                exit_code=0,
+                used_cache=True,
+                scope="scoped",
+                reason="scoped verify-spec skipped; no impacted requirements",
+                report_path=report_path,
+            )
+        if report is None:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="scoped",
+                reason="scoped verify-spec requires a base full fulfillment report",
+                report_path=report_path,
+            )
+
+        skill_path = find_skill(
+            "echelon.verify-spec",
+            worktree,
+            self._prompt_executor.cli,
+        )
+        if skill_path is None:
+            return FulfillmentRefreshResult(
+                status="missing_skill",
+                exit_code=127,
+                scope="scoped",
+                reason="verify-spec skill missing",
+                report_path=report_path,
+            )
+
+        scoped_ids = ",".join(plan.impacted_requirement_ids)
+        arguments = (
+            f"{spec_id} spec_dir={spec_dir} scope=scoped scoped_ids={scoped_ids}"
+        )
+        if plan.base_full_verify_commit:
+            arguments += f" base_full_verify_commit={plan.base_full_verify_commit}"
+
+        prompt = build_skill_prompt(skill_path, arguments)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_snapshot = Path(temp_dir) / "base-full-fulfillment-report.md"
+            base_snapshot.write_text(
+                report.read_text(encoding="utf-8", errors="replace"),
+                encoding="utf-8",
+            )
+            exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+            if exit_code != 0:
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=exit_code,
+                    scope="scoped",
+                    reason="scoped verify-spec failed",
+                    report_path=report_path,
+                )
+            scoped_report = latest_fulfillment_report(spec_dir)
+            if scoped_report is None:
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="scoped",
+                    reason="scoped verify-spec did not write fulfillment report",
+                    report_path=report_path,
+                )
+            merge_scoped_fulfillment_report(
+                base_report_path=base_snapshot,
+                scoped_report_path=scoped_report,
+                output_report_path=report,
+                impacted_requirement_ids=plan.impacted_requirement_ids,
+                spec_id=spec_id,
+                commit=commit,
+                base_full_verify_commit=plan.base_full_verify_commit,
+            )
+            return FulfillmentRefreshResult(
+                status="refreshed",
+                exit_code=0,
+                scope="scoped",
+                reason="scoped verify-spec completed",
+                report_path=str(report),
+            )
 
 
 def _resolve_spec_dir(
