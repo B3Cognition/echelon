@@ -1223,14 +1223,22 @@ class RalphController:
         """Run verify-spec after ordinary verification passes, when possible."""
         if not verify_result.passed or not worktree_path or self._fulfillment_runner is None:
             return verify_result
-        if not self._should_refresh_fulfillment(worktree_path):
+        decision = self._fulfillment_refresh_decision(worktree_path)
+        if decision.get("action") == "defer":
+            reason = str(decision.get("reason") or "fulfillment refresh deferred")
+            self._record_fulfillment_refresh(
+                {
+                    "status": "deferred",
+                    "reason": reason,
+                    "scope": "full",
+                }
+            )
             failure = FailureEntry(
                 category=FailureCategory.OTHER,
                 id="fulfillment-refresh-deferred",
                 error=(
-                    "full verify-spec refresh deferred by "
-                    f"fulfillment.refresh_policy={self._config.fulfillment.refresh_policy}; "
-                    "task progress is not complete enough for convergence"
+                    f"full verify-spec refresh deferred: {reason}; "
+                    "full fulfillment evidence is still required before convergence"
                 ),
             )
             return VerifyResult(
@@ -1268,27 +1276,56 @@ class RalphController:
             token_usage=verify_result.token_usage,
         )
 
-    def _should_refresh_fulfillment(self, worktree_path: str) -> bool:
-        policy = self._config.fulfillment.refresh_policy
-        if policy == "every_slice":
-            return True
-        if policy == "milestone":
-            return True
-        if policy != "convergence_only":
-            return True
-
+    def _task_progress_counts(self) -> tuple[int, int]:
         state = self._state_store.read()
         build = state.get("build")
         if not isinstance(build, dict):
-            return True
+            return (0, 0)
         try:
             total = int(build.get("total_tasks") or 0)
             completed = int(build.get("completed_tasks") or 0)
         except (TypeError, ValueError):
-            return True
-        if total <= 0:
-            return True
-        return completed >= total
+            return (0, 0)
+        return (total, completed)
+
+    def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
+        policy = self._config.fulfillment.refresh_policy
+        if policy == "every_slice":
+            return {"action": "full", "reason": "fulfillment.refresh_policy=every_slice"}
+        total, completed = self._task_progress_counts()
+        tasks_complete = total > 0 and completed >= total
+        if policy != "convergence_only":
+            if (
+                policy == "milestone"
+                and self._mode.mode == "banzai"
+                and total > 0
+                and not tasks_complete
+            ):
+                return {
+                    "action": "defer",
+                    "reason": "banzai milestone defers full verify until task completion",
+                }
+            return {"action": "full", "reason": f"fulfillment.refresh_policy={policy}"}
+        if tasks_complete or total <= 0:
+            return {"action": "full", "reason": "convergence boundary reached"}
+        return {
+            "action": "defer",
+            "reason": "fulfillment.refresh_policy=convergence_only",
+        }
+
+    def _should_refresh_fulfillment(self, worktree_path: str) -> bool:
+        return self._fulfillment_refresh_decision(worktree_path).get("action") == "full"
+
+    def _record_fulfillment_refresh(self, data: dict[str, object]) -> None:
+        state = self._state_store.read()
+        state["fulfillment_refresh"] = {
+            "status": str(data.get("status") or ""),
+            "reason": str(data.get("reason") or ""),
+            "scope": str(data.get("scope") or "full"),
+            "cache_key": data.get("cache_key"),
+            "report_path": data.get("report_path"),
+        }
+        self._state_store.write(state)
 
     def _exec_verify_locally(self, worktree_path: str) -> VerifyResult:
         """Run verification locally on the host when LLM provider is active.

@@ -768,6 +768,56 @@ class TestOuterLoopConvergence:
         assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
         controller._fulfillment_runner.refresh.assert_not_called()
 
+    def test_banzai_milestone_defers_full_fulfillment_until_tasks_complete(
+        self, tmp_path: Path
+    ) -> None:
+        """Banzai milestone slices should keep building without full verify-spec cost."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=demo req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=demo req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=["T-001"],
+        )
+        fulfillment_runner = MagicMock()
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            mode="banzai",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = worktree
+
+        result = controller.run_loop(max_outer=1, max_inner=0, build_prompt="build")
+
+        assert result.status == "failed"
+        assert result.final_verify is not None
+        assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
+        fulfillment_runner.refresh.assert_not_called()
+        refresh = state_store.read()["fulfillment_refresh"]
+        assert refresh["status"] == "deferred"
+        assert (
+            refresh["reason"]
+            == "banzai milestone defers full verify until task completion"
+        )
+
     def test_refreshed_equals_style_fulfillment_report_blocks_convergence(
         self, tmp_path: Path
     ) -> None:
