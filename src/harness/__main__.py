@@ -394,6 +394,29 @@ def _write_codegraph_evidence() -> None:
     print(f"OK: wrote CodeGraph evidence to {result.analysis_path}")
 
 
+def _write_canonical_requirements() -> None:
+    if len(sys.argv) < 4:
+        print(
+            "Usage: python -m harness write-canonical-requirements <spec-dir> <verify-run-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.canonical_requirements import write_canonical_requirements
+
+    result = write_canonical_requirements(
+        spec_dir=Path(sys.argv[2]),
+        verify_run_dir=Path(sys.argv[3]),
+    )
+    print(
+        "OK: wrote canonical requirements to "
+        f"{result.json_path} and {result.markdown_path} "
+        f"({result.count} requirements)"
+    )
+
+
 def _write_codegraph_evidence_map() -> None:
     if len(sys.argv) < 7:
         print(
@@ -536,6 +559,8 @@ def main() -> None:
         _apply_progress_reconciliation()
     elif subcommand == "plan-reopen-gaps":
         _plan_reopen_gaps()
+    elif subcommand == "write-canonical-requirements":
+        _write_canonical_requirements()
     elif subcommand == "write-codegraph-evidence":
         _write_codegraph_evidence()
     elif subcommand == "write-codegraph-evidence-map":
@@ -552,8 +577,9 @@ def main() -> None:
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
             "'write-progress-integrity', 'apply-task-requirement-mapping', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
-            "'write-codegraph-evidence', 'write-codegraph-evidence-map', "
-            "'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
+            "'write-canonical-requirements', 'write-codegraph-evidence', "
+            "'write-codegraph-evidence-map', 'migrate-tasks', "
+            "'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)

@@ -150,6 +150,51 @@ class TestFulfillmentRunner:
         assert result.status == "failed"
         assert read_fulfillment_metadata(report) == {}
 
+    def test_refresh_fails_when_report_drops_canonical_inventory_row(self, tmp_path):
+        skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "skill.md").write_text(
+            "---\nname: echelon.verify-spec\n---\nverify $ARGUMENTS\n",
+            encoding="utf-8",
+        )
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("- FR-001\n- FR-002\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        run_dir = tmp_path / "runs" / "verify-spec-spec-001-20260616"
+        run_dir.mkdir(parents=True)
+        (run_dir / "canonical-requirements.json").write_text(
+            '{"requirements":[{"id":"FR-001"},{"id":"FR-002"}]}\n',
+            encoding="utf-8",
+        )
+        (run_dir / "requirement-audit.md").write_text(
+            "| ID | Category |\n"
+            "| --- | --- |\n"
+            "| FR-001 | functional |\n",
+            encoding="utf-8",
+        )
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report_missing_inventory_row(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "|---|---|---|---|---|\n"
+                "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report_missing_inventory_row
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.exit_code == 2
+        assert result.status == "failed"
+        assert read_fulfillment_metadata(report) == {}
+
     def test_refresh_rejects_large_audit_scope_drop_without_scope_change(self, tmp_path):
         skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"
         skill_dir.mkdir(parents=True)

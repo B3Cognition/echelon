@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 from typing import Mapping, Protocol
 
+from harness.canonical_requirements import INVENTORY_JSON
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
 from kernel.fulfillment import (
@@ -292,12 +293,23 @@ def _latest_report_matches_latest_audit(
     return validate_fulfillment_artifacts(
         requirement_audit_path=audit,
         fulfillment_report_path=report,
+        canonical_inventory_path=_latest_canonical_inventory(worktree, spec_id),
     ).ok
 
 
 def _latest_requirement_audit(worktree: Path, spec_id: str) -> Path | None:
     audits = _requirement_audits(worktree, spec_id)
     return audits[-1] if audits else None
+
+
+def _latest_canonical_inventory(worktree: Path, spec_id: str) -> Path | None:
+    runs = worktree / "runs"
+    if not runs.exists():
+        return None
+    candidates = list(runs.glob(f"verify-spec-{spec_id}-*/{INVENTORY_JSON}"))
+    candidates.extend(runs.glob(f"*/verify-spec/{spec_id}/{INVENTORY_JSON}"))
+    existing = [path for path in candidates if path.is_file()]
+    return sorted(existing, key=lambda path: path.stat().st_mtime)[-1] if existing else None
 
 
 def _requirement_audits(worktree: Path, spec_id: str) -> list[Path]:
