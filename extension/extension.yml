@@ -787,6 +787,7 @@ config:
       per_req: false
       diagram: false
     harness:
+      container_cli: "docker"
       resource_limits:
         memory: "4g"
         cpu: 2.0

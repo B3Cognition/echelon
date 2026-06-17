@@ -30,7 +30,7 @@ except ImportError:
     yaml = None  # type: ignore[assignment]
 
 from harness.app_runtime_detection import AppRuntimeDetectionResult, detect_app_runtime
-from harness.config import HarnessConfig
+from harness.config import HarnessConfig, VALID_CONTAINER_CLIS
 from harness.errors import GitOpsError, SandboxCreationError, SelfTargetError
 from harness.fingerprint import fingerprint_repo, detect_playwright
 from harness.gitops import GitOpsManager
@@ -151,11 +151,40 @@ def _apply_verify_command_detection(
 
 
 
-def _check_docker() -> bool:
-    """Check if Docker daemon is running."""
+def _resolve_container_cli(base: Optional[Path] = None) -> str:
+    """Resolve the Docker-compatible container CLI for harness sandboxes."""
+    env_cli = os.environ.get("ECHELON_CONTAINER_CLI", "").strip()
+    cli = env_cli or _read_existing_container_cli(base) or "docker"
+    if cli not in VALID_CONTAINER_CLIS:
+        raise InitError(
+            f"Invalid container_cli={cli!r}. "
+            f"Expected one of: {sorted(VALID_CONTAINER_CLIS)}."
+        )
+    return cli
+
+
+def _read_existing_container_cli(base: Optional[Path]) -> Optional[str]:
+    if base is None or yaml is None:
+        return None
+    config_file = base / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    if not config_file.exists():
+        return None
+    try:
+        existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    harness = existing.get("harness", existing)
+    if not isinstance(harness, dict):
+        return None
+    value = harness.get("container_cli")
+    return str(value).strip() if value else None
+
+
+def _check_container_runtime(container_cli: str) -> bool:
+    """Check if the selected Docker-compatible runtime is reachable."""
     try:
         result = subprocess.run(
-            ["docker", "info"],
+            [container_cli, "info"],
             capture_output=True,
             timeout=10,
             check=False,
@@ -163,6 +192,11 @@ def _check_docker() -> bool:
         return result.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
+
+
+def _check_docker() -> bool:
+    """Backward-compatible wrapper for older tests and callers."""
+    return _check_container_runtime("docker")
 
 
 def _check_os() -> str:
@@ -300,13 +334,21 @@ def init_harness(
     os_name = _check_os()
     logger.info("OS detected: %s", os_name)
 
-    # Step 2: Docker health check
-    if not _check_docker():
-        raise InitError(
-            "Docker is not running. echelon-harness requires Docker to create sandboxes. "
-            "Please start Docker and try again."
+    container_cli = _resolve_container_cli(base)
+
+    # Step 2: Container runtime health check
+    if not _check_container_runtime(container_cli):
+        hint = (
+            " If using Podman on macOS, run 'podman machine start' and retry."
+            if container_cli == "podman"
+            else ""
         )
-    logger.info("Docker is running")
+        raise InitError(
+            f"{container_cli} is not running or is unreachable. "
+            "echelon-harness requires a Docker-compatible runtime to create sandboxes. "
+            f"Please start {container_cli} and try again.{hint}"
+        )
+    logger.info("%s runtime is running", container_cli)
 
     # Step 3: Self-targeting detection
     # Create a temporary config to initialize GitOpsManager
@@ -314,6 +356,7 @@ def init_harness(
         target_repo=target_repo,
         target_default_branch="main",
         provider="docker",
+        container_cli=container_cli,
         pr_host=_detect_pr_host(),
     )
     try:
@@ -416,6 +459,7 @@ def init_harness(
         target_repo=target_repo,
         target_default_branch=default_branch,
         provider="docker",
+        container_cli=container_cli,
         base_image=resolved.image if resolved.source == "config_override" else None,
         pr_host=pr_host,
         bind_mount_ack=bind_mount_ack,
@@ -434,6 +478,7 @@ def init_harness(
         "target_repo": config.target_repo,
         "target_default_branch": config.target_default_branch,
         "provider": config.provider,
+        "container_cli": config.container_cli,
         "detected_language": fp.language,
         "detected_image": resolved.image,
         "detected_image_source": resolved.source,

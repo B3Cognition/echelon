@@ -25,15 +25,16 @@ logger = logging.getLogger(__name__)
 
 def _get_stale_containers(
     max_age_hours: int,
+    container_cli: str = "docker",
 ) -> List[str]:
-    """Find Docker containers with harness labels older than threshold.
+    """Find containers with harness labels older than threshold.
 
     Returns list of container IDs to remove.
     """
     try:
         result = subprocess.run(
             [
-                "docker", "ps", "-a",
+                container_cli, "ps", "-a",
                 "--filter", "label=spec-kit-harness.session_id",
                 "--format", "{{.ID}}\t{{.CreatedAt}}",
             ],
@@ -60,7 +61,7 @@ def _get_stale_containers(
             # Use docker inspect for precise creation time
             try:
                 inspect_result = subprocess.run(
-                    ["docker", "inspect", "--format", "{{.Created}}", container_id],
+                    [container_cli, "inspect", "--format", "{{.Created}}", container_id],
                     capture_output=True, text=True, timeout=5, check=True,
                 )
                 # Parse ISO 8601 timestamp
@@ -172,14 +173,17 @@ def run_gc(
     }
 
     # 1. Stale containers
-    stale_containers = _get_stale_containers(config.gc.container_max_age_hours)
+    stale_containers = _get_stale_containers(
+        config.gc.container_max_age_hours,
+        container_cli=config.container_cli,
+    )
     for container_id in stale_containers:
         if dry_run:
             logger.warning("DRY RUN: Would remove container %s", container_id)
         else:
             try:
                 subprocess.run(
-                    ["docker", "rm", "-f", container_id],
+                    [config.container_cli, "rm", "-f", container_id],
                     capture_output=True, timeout=10, check=False,
                 )
                 logger.warning("Removed stale container: %s", container_id)

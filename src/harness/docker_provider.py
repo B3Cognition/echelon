@@ -83,11 +83,12 @@ DOCKER_CMD_TIMEOUT = 30
 
 def _run_docker(
     args: List[str],
+    cli: str = "docker",
     timeout: int = DOCKER_CMD_TIMEOUT,
     check: bool = True,
 ) -> subprocess.CompletedProcess:
-    """Run a docker command with timeout."""
-    cmd = ["docker"] + args
+    """Run a Docker-compatible container CLI command with timeout."""
+    cmd = [cli] + args
     try:
         return subprocess.run(
             cmd,
@@ -151,7 +152,7 @@ def _truncate_output(
     return truncated, True
 
 
-def _parse_docker_stats(container_id: str) -> Optional[ResourceStats]:
+def _parse_docker_stats(container_id: str, cli: str = "docker") -> Optional[ResourceStats]:
     """Collect resource stats via docker stats (FR-EXEC-STATS-001).
 
     Returns None with warning on collection failure.
@@ -159,7 +160,7 @@ def _parse_docker_stats(container_id: str) -> Optional[ResourceStats]:
     try:
         result = subprocess.run(
             [
-                "docker", "stats", "--no-stream",
+                cli, "stats", "--no-stream",
                 "--format", "{{json .}}",
                 container_id,
             ],
@@ -235,9 +236,11 @@ class DockerWorktreeProvider(SandboxProvider):
         self,
         buffer_limit_bytes: int = DEFAULT_BUFFER_LIMIT_BYTES,
         squid_conf_path: Optional[str] = None,
+        container_cli: str = "docker",
     ) -> None:
         self._buffer_limit_bytes = buffer_limit_bytes
         self._squid_conf_path = squid_conf_path
+        self._container_cli = container_cli
         # Track resources for cleanup
         self._containers: Dict[str, _ContainerInfo] = {}
 
@@ -267,7 +270,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 "network", "create", "--internal",
                 "--label", f"spec-kit-harness.session_id={session_id}",
                 network_name,
-            ])
+            ], cli=self._container_cli)
             network_id = result.stdout.strip()
 
             # Start Squid proxy sidecar (if squid conf available)
@@ -280,7 +283,7 @@ class DockerWorktreeProvider(SandboxProvider):
                     "--label", f"spec-kit-harness.session_id={session_id}",
                     "--label", "spec-kit-harness.type=squid-proxy",
                     spec.network_policy.proxy_image,
-                ])
+                ], cli=self._container_cli)
                 proxy_container_id = proxy_result.stdout.strip()
 
             # Build sandbox container args
@@ -323,13 +326,13 @@ class DockerWorktreeProvider(SandboxProvider):
             # Image + keep-alive command
             docker_args.extend([spec.image, "tail", "-f", "/dev/null"])
 
-            sandbox_result = _run_docker(docker_args)
+            sandbox_result = _run_docker(docker_args, cli=self._container_cli)
             sandbox_container_id = sandbox_result.stdout.strip()
 
             # Execute post_create_command (FR-SANDBOX spec)
             if spec.post_create_command:
                 post_result = subprocess.run(
-                    ["docker", "exec", sandbox_container_id,
+                    [self._container_cli, "exec", sandbox_container_id,
                      "sh", "-c", spec.post_create_command],
                     capture_output=True,
                     text=True,
@@ -398,7 +401,7 @@ class DockerWorktreeProvider(SandboxProvider):
 
         try:
             result = subprocess.run(
-                ["docker"] + docker_args,
+                [self._container_cli] + docker_args,
                 capture_output=True,
                 timeout=timeout_seconds,
                 check=False,
@@ -421,7 +424,7 @@ class DockerWorktreeProvider(SandboxProvider):
                 exit_code = EXIT_PID_LIMIT
 
             # Collect resource stats (FR-EXEC-STATS-001)
-            resource_stats = _parse_docker_stats(container_id)
+            resource_stats = _parse_docker_stats(container_id, cli=self._container_cli)
             if resource_stats is not None:
                 resource_stats = ResourceStats(
                     peak_memory_bytes=resource_stats.peak_memory_bytes,
@@ -444,7 +447,7 @@ class DockerWorktreeProvider(SandboxProvider):
             # FR-SANDBOX-003b: kill within 5s
             try:
                 subprocess.run(
-                    ["docker", "exec", container_id, "kill", "-TERM", "1"],
+                    [self._container_cli, "exec", container_id, "kill", "-TERM", "1"],
                     capture_output=True,
                     timeout=5,
                     check=False,
@@ -481,7 +484,7 @@ class DockerWorktreeProvider(SandboxProvider):
             tmp.write(content)
             tmp_path = tmp.name
         try:
-            _run_docker(["cp", tmp_path, f"{handle.id}:{path}"])
+            _run_docker(["cp", tmp_path, f"{handle.id}:{path}"], cli=self._container_cli)
         finally:
             os.unlink(tmp_path)
 
@@ -489,7 +492,7 @@ class DockerWorktreeProvider(SandboxProvider):
         """Read a file from the sandbox via docker cp."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             local_path = os.path.join(tmp_dir, "file")
-            _run_docker(["cp", f"{handle.id}:{path}", local_path])
+            _run_docker(["cp", f"{handle.id}:{path}", local_path], cli=self._container_cli)
             return Path(local_path).read_bytes()
 
     def destroy(self, handle: SandboxHandle) -> None:
@@ -501,7 +504,7 @@ class DockerWorktreeProvider(SandboxProvider):
         if info is None:
             # Best-effort: just try to remove the container by ID
             subprocess.run(
-                ["docker", "rm", "-f", handle.id],
+                [self._container_cli, "rm", "-f", handle.id],
                 capture_output=True,
                 timeout=10,
                 check=False,
@@ -510,7 +513,7 @@ class DockerWorktreeProvider(SandboxProvider):
 
         # Remove sandbox container
         subprocess.run(
-            ["docker", "rm", "-f", info.sandbox_id],
+            [self._container_cli, "rm", "-f", info.sandbox_id],
             capture_output=True,
             timeout=10,
             check=False,
@@ -519,7 +522,7 @@ class DockerWorktreeProvider(SandboxProvider):
         # Remove proxy container
         if info.proxy_id:
             subprocess.run(
-                ["docker", "rm", "-f", info.proxy_id],
+                [self._container_cli, "rm", "-f", info.proxy_id],
                 capture_output=True,
                 timeout=10,
                 check=False,
@@ -527,7 +530,7 @@ class DockerWorktreeProvider(SandboxProvider):
 
         # Remove network
         subprocess.run(
-            ["docker", "network", "rm", info.network_name],
+            [self._container_cli, "network", "rm", info.network_name],
             capture_output=True,
             timeout=10,
             check=False,
@@ -548,17 +551,17 @@ class DockerWorktreeProvider(SandboxProvider):
         """Clean up partially created resources on failure."""
         if sandbox_id:
             subprocess.run(
-                ["docker", "rm", "-f", sandbox_id],
+                [self._container_cli, "rm", "-f", sandbox_id],
                 capture_output=True, timeout=10, check=False,
             )
         if proxy_id:
             subprocess.run(
-                ["docker", "rm", "-f", proxy_id],
+                [self._container_cli, "rm", "-f", proxy_id],
                 capture_output=True, timeout=10, check=False,
             )
         if network_name:
             subprocess.run(
-                ["docker", "network", "rm", network_name],
+                [self._container_cli, "network", "rm", network_name],
                 capture_output=True, timeout=10, check=False,
             )
 

@@ -104,6 +104,7 @@ class TestParseConfigValid:
         assert config.target_repo == "git@github.com:example/payments.git"
         assert config.target_default_branch == "main"
         assert config.provider == "docker"
+        assert config.container_cli == "docker"
         assert config.resource_limits.memory == "4g"
         assert config.resource_limits.cpu == 2.0
         assert config.resource_limits.pids == 256
@@ -121,6 +122,11 @@ class TestParseConfigValid:
         })
 
         assert config.fulfillment.refresh_policy == "convergence_only"
+
+    def test_container_cli_accepts_podman(self) -> None:
+        config = _parse_config({**MINIMAL, "container_cli": "podman"})
+
+        assert config.container_cli == "podman"
 
     def test_scoped_fulfillment_refresh_policy_can_be_configured(self) -> None:
         config = _parse_config({
@@ -162,6 +168,10 @@ class TestParseConfigInvalid:
     def test_invalid_provider_raises(self) -> None:
         with pytest.raises(ValidationError, match="provider"):
             _parse_config({**MINIMAL, "provider": "kubernetes"})
+
+    def test_invalid_container_cli_raises(self) -> None:
+        with pytest.raises(ValidationError, match="container_cli"):
+            _parse_config({**MINIMAL, "container_cli": "nerdctl"})
 
     def test_codex_is_not_a_sandbox_provider(self) -> None:
         with pytest.raises(ValidationError, match="provider"):

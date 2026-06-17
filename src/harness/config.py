@@ -77,6 +77,7 @@ DEFAULT_NETWORK_ALLOWLIST = [
 ]
 
 VALID_PROVIDERS = {"docker", "e2b", "modal", "daytona"}
+VALID_CONTAINER_CLIS = {"docker", "podman"}
 VALID_LLM_CLIS = {"claude", "copilot", "opencode", "codex"}
 VALID_PR_HOSTS = {"github", "gitlab", "none"}
 VALID_FULFILLMENT_REFRESH_POLICIES = {
@@ -186,6 +187,7 @@ class HarnessConfig:
     provider: str
 
     # Optional fields with defaults
+    container_cli: str = "docker"
     base_image: Optional[str] = None
     image_digest_pin: Optional[str] = None
     resource_limits: ResourceLimits = field(default_factory=ResourceLimits)
@@ -313,6 +315,15 @@ def _validate_provider(provider: str) -> str:
             field_path="provider",
         )
     return provider
+
+
+def _validate_container_cli(container_cli: str) -> str:
+    if container_cli not in VALID_CONTAINER_CLIS:
+        raise ValidationError(
+            f"Invalid container_cli '{container_cli}'. Must be one of: {sorted(VALID_CONTAINER_CLIS)}",
+            field_path="container_cli",
+        )
+    return container_cli
 
 
 def _validate_llm_cli(cli: str) -> str:
@@ -507,6 +518,7 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
         target_repo=target_repo,
         target_default_branch=target_default_branch,
         provider=provider,
+        container_cli=_validate_container_cli(str(data.get("container_cli", "docker"))),
         base_image=data.get("base_image"),
         image_digest_pin=data.get("image_digest_pin"),
         resource_limits=_parse_resource_limits(data),

@@ -1,7 +1,7 @@
 """VisualRalphController — Phase 2 visual verification loop.
 
-Runs Playwright headless tests inside the Docker sandbox after Phase 1
-(unit/logic) converges. Retrieves screenshots via docker cp and passes
+Runs Playwright headless tests inside the container sandbox after Phase 1
+(unit/logic) converges. Retrieves screenshots via container cp and passes
 them as evidence to echelon build --fix.
 """
 from __future__ import annotations
@@ -258,20 +258,21 @@ class VisualRalphController:
     # === Screenshots ===
 
     def _retrieve_screenshots(self, handle: SandboxHandle) -> List[str]:
-        """Pull screenshot files from the container via docker cp."""
+        """Pull screenshot files from the container via the configured CLI."""
         container_src = f"/workspace/{self._vc.screenshot_dir}"
 
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 dest = Path(tmpdir) / "playwright-report"
                 proc = subprocess.run(
-                    ["docker", "cp", f"{handle.id}:{container_src}", str(dest)],
+                    [self._config.container_cli, "cp", f"{handle.id}:{container_src}", str(dest)],
                     capture_output=True,
                     timeout=30,
                 )
                 if proc.returncode != 0:
                     logger.debug(
-                        "docker cp failed for screenshots (no playwright-report yet): %s",
+                        "%s cp failed for screenshots (no playwright-report yet): %s",
+                        self._config.container_cli,
                         proc.stderr.decode(errors="replace").strip(),
                     )
                     return []

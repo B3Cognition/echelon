@@ -22,6 +22,7 @@ import pytest
 from harness.docker_provider import (
     DockerWorktreeProvider,
     _check_credential_leak,
+    _run_docker,
     _truncate_output,
     _parse_memory_string,
 )
@@ -168,6 +169,18 @@ class TestDockerProviderInit:
     def test_custom_buffer_limit(self) -> None:
         provider = DockerWorktreeProvider(buffer_limit_bytes=5_000_000)
         assert provider._buffer_limit_bytes == 5_000_000
+
+    def test_custom_container_cli(self) -> None:
+        provider = DockerWorktreeProvider(container_cli="podman")
+        assert provider._container_cli == "podman"
+
+    def test_run_docker_uses_configured_container_cli(self) -> None:
+        with patch("harness.docker_provider.subprocess.run") as run:
+            run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+            _run_docker(["info"], cli="podman")
+
+        assert run.call_args.args[0] == ["podman", "info"]
 
     def test_capabilities_empty(self) -> None:
         provider = DockerWorktreeProvider()

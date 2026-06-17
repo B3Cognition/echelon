@@ -170,7 +170,7 @@ def test_next_steps_labels_running_harness_build_as_in_progress(
     assert "echelon status" in captured.out
 
 
-def test_next_steps_for_docker_unavailable_tells_user_to_start_docker(
+def test_next_steps_for_docker_unavailable_tells_user_to_start_container_runtime(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -186,7 +186,7 @@ def test_next_steps_for_docker_unavailable_tells_user_to_start_docker(
 
     captured = capsys.readouterr()
     assert "docker_unavailable" in captured.out
-    assert "start Docker Desktop" in captured.out
+    assert "start the configured container runtime" in captured.out
     assert "echelon harness run 001-demo" in captured.out
     assert "--reset" not in captured.out
 

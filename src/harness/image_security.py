@@ -49,6 +49,7 @@ class VulnerabilityScanResult:
 def validate_digest_pin(
     image: str,
     expected_digest: Optional[str],
+    container_cli: str = "docker",
 ) -> bool:
     """Validate pulled image digest matches pin.
 
@@ -67,7 +68,7 @@ def validate_digest_pin(
 
     try:
         result = subprocess.run(
-            ["docker", "inspect", "--format", "{{index .RepoDigests 0}}", image],
+            [container_cli, "inspect", "--format", "{{index .RepoDigests 0}}", image],
             capture_output=True,
             text=True,
             timeout=10,

@@ -1144,6 +1144,10 @@ harness:
   # Phase 3 (planned): "e2b", "modal", "daytona"
   provider: "docker"
 
+  # Docker-compatible CLI used by the docker provider: "docker" or "podman".
+  # Set by `ECHELON_CONTAINER_CLI=podman echelon harness init` when using Podman.
+  container_cli: "docker"
+
   # --- Docker Image ---
 
   # Base image for the sandbox container.

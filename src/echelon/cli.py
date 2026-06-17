@@ -731,7 +731,10 @@ def _cmd_harness_run(args: list[str]) -> None:
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
-    provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=_container_runtime_cli(config),
+    )
 
     try:
         task_count = _count_tasks(spec_id, str(spec_search_root))
@@ -786,9 +789,9 @@ def _cmd_harness_run(args: list[str]) -> None:
                 "docker_unavailable",
             )
             print(
-                "✗ Docker is not running or is unreachable.\n"
+                f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
-                "  Fix: start Docker Desktop, wait until it reports running, then rerun:\n"
+                f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
                 f"       echelon harness run {spec_id}",
                 file=sys.stderr,
             )
@@ -805,15 +808,35 @@ def _cmd_harness_run(args: list[str]) -> None:
 def _is_docker_unavailable_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return (
-        "docker" in message
+        ("docker" in message or "podman" in message)
         and (
             "daemon is running" in message
             or "docker api" in message
             or "docker.sock" in message
+            or "podman.sock" in message
             or "cannot connect to the docker daemon" in message
             or "failed to connect" in message
+            or "connection refused" in message
         )
     )
+
+
+def _container_runtime_fix(container_cli: str) -> str:
+    if container_cli == "podman":
+        return "start the Podman machine (`podman machine start`) and wait until it reports running"
+    return "start Docker Desktop and wait until it reports running"
+
+
+def _container_runtime_cli(config: object) -> str:
+    cli = getattr(config, "container_cli", "docker")
+    if cli not in {"docker", "podman"}:
+        return "docker"
+    return cli
+
+
+def _container_runtime_display(config: object) -> str:
+    cli = _container_runtime_cli(config)
+    return "Docker" if cli == "docker" else "Podman"
 
 
 def _mark_current_harness_state_blocked(
@@ -993,7 +1016,10 @@ def _cmd_harness_resume(args: list[str]) -> None:
         ])
 
         from harness.skills.run_skill import run
-        provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+        provider = DockerWorktreeProvider(
+            buffer_limit_bytes=config.buffer_limit_bytes,
+            container_cli=_container_runtime_cli(config),
+        )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
             run(user_message, provider, gitops)
@@ -1006,9 +1032,9 @@ def _cmd_harness_resume(args: list[str]) -> None:
                     "docker_unavailable",
                 )
                 print(
-                    "✗ Docker is not running or is unreachable.\n"
+                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
-                    "  Fix: start Docker Desktop, wait until it reports running, then rerun:\n"
+                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
                     f"       echelon harness resume {spec_id}",
                     file=sys.stderr,
                 )
@@ -1042,7 +1068,10 @@ def _cmd_harness_resume(args: list[str]) -> None:
     ])
 
     from harness.skills.run_skill import run
-    provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=_container_runtime_cli(config),
+    )
     user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
     try:
         run(user_message, provider, gitops)
@@ -1055,9 +1084,9 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 "docker_unavailable",
             )
             print(
-                "✗ Docker is not running or is unreachable.\n"
+                f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
-                "  Fix: start Docker Desktop, wait until it reports running, then rerun:\n"
+                f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
                 f"       echelon harness resume {spec_id}",
                 file=sys.stderr,
             )
@@ -1275,7 +1304,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             else:
                 fields.append(("next", f"echelon harness resume {spec_id}"))
         elif termination_reason == "docker_unavailable":
-            fields.append(("fix", "start Docker Desktop and wait until it reports running"))
+            fields.append(("fix", "start the configured container runtime and wait until it reports running"))
             fields.append(("next", f"echelon harness run {spec_id}"))
             subtitle = "HARNESS BUILD BLOCKED"
         elif harness_status in {"running", "in_progress"}:

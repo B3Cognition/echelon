@@ -80,7 +80,10 @@ def _run() -> None:
 
     config = load_config()
     gitops = GitOpsManager(config)
-    provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=config.container_cli,
+    )
 
     run(user_message, provider, gitops)
 
@@ -106,7 +109,10 @@ def _resume() -> None:
 
     config = load_config()
     gitops = GitOpsManager(config)
-    provider = DockerWorktreeProvider(buffer_limit_bytes=config.buffer_limit_bytes)
+    provider = DockerWorktreeProvider(
+        buffer_limit_bytes=config.buffer_limit_bytes,
+        container_cli=config.container_cli,
+    )
 
     resume(user_message, provider, gitops)
 
