@@ -358,6 +358,53 @@ class TestRunSkillAutoLand:
         assert "✗ [other] full verify-spec refresh deferred" not in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
+    def test_delivery_summary_renders_next_step_for_failed_outer_cap(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="banzai")
+        result = _make_failed_result()
+        result.final_verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="fulfillment-report-stale",
+                    error="fulfillment report is stale for current HEAD abc123",
+                )
+            ],
+        )
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "branch": result.branch,
+                    "converged": False,
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+
+        _print_delivery_summary(
+            intent,
+            {"default": result},
+            comparison,
+            base_dir="/tmp/nonexistent",
+        )
+
+        captured = capsys.readouterr()
+        assert "stopped: outer_cap" in captured.err
+        assert "next: echelon harness run 001-demo" in captured.err
+        assert "continue with a fresh outer-loop budget" in captured.err
+
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")

@@ -85,6 +85,11 @@ def _print_delivery_summary(
                     lines.append(f"resume: echelon harness resume {intent.spec_id}")
                 else:
                     lines.append(f"stopped: {reason}")
+                    if reason == "outer_cap":
+                        lines.append(
+                            f"next: echelon harness run {intent.spec_id}  "
+                            "# continue with a fresh outer-loop budget"
+                        )
             fv = getattr(result, "final_verify", None)
             if fv is not None:
                 duration = f"  ({fv.duration_s:.1f}s)" if fv.duration_s else ""
