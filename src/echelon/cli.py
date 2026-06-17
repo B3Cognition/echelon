@@ -47,7 +47,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "2.2.0"
+CLI_VERSION = "3.0.0"
 
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
 

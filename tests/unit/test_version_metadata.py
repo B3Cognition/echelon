@@ -3,6 +3,8 @@ import tomllib
 
 import yaml
 
+from echelon.cli import CLI_VERSION
+
 
 ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_VERSION = "3.0.0"
@@ -16,5 +18,6 @@ def test_release_metadata_uses_current_version() -> None:
 
     assert pyproject["project"]["version"] == EXPECTED_VERSION
     assert extension["extension"]["version"] == EXPECTED_VERSION
+    assert CLI_VERSION == EXPECTED_VERSION
     assert f"**Version {EXPECTED_VERSION}**" in readme
     assert f'name = "echelon"\nversion = "{EXPECTED_VERSION}"' in lock
