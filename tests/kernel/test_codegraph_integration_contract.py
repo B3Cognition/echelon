@@ -19,6 +19,15 @@ def test_install_script_installs_re_node_dependencies_with_npm_ci():
     assert "CodeGraph bridge" in install_script
 
 
+def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
+    install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
+
+    assert "ECHELON_INSTALL_CODEGRAPH_CLI" in install_script
+    assert "@colbymchenry/codegraph" in install_script
+    assert "codegraph install" not in install_script
+    assert 'command -v codegraph' in install_script
+
+
 def test_run_analysis_points_to_extension_node_install_path():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"

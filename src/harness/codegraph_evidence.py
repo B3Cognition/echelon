@@ -41,52 +41,88 @@ def write_codegraph_evidence(
     bridge_path = project_root / FIXED_BRIDGE_RELATIVE
     codegraph_dir = project_root / ".codegraph"
     codegraph_preexisted = codegraph_dir.exists()
+    diagnostics: list[str] = []
 
     verify_run_dir.mkdir(parents=True, exist_ok=True)
 
-    node = shutil.which("node")
-    if node is None:
-        _write_error(error_path, "Node.js is required to run CodeGraph evidence.")
-        raise CodeGraphEvidenceError(str(error_path))
-
-    if not bridge_path.is_file():
-        _write_error(
-            error_path,
-            "CodeGraph bridge missing at fixed installed extension path:\n"
-            f"{bridge_path}\n",
-        )
-        raise CodeGraphEvidenceError(str(error_path))
-
     try:
-        completed = subprocess.run(
-            [
-                node,
-                str(bridge_path),
-                "analyze",
-                "--repo-path",
-                str(project_root),
-                "--output-path",
-                str(analysis_path),
-            ],
-            cwd=str(project_root),
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        codegraph = shutil.which("codegraph")
+        if codegraph is not None:
+            completed = _run_codegraph_cli(codegraph, project_root, analysis_path)
+            if completed.returncode == 0 and _analysis_is_usable(analysis_path):
+                _write_summary(analysis_path, summary_path)
+                _remove_if_exists(error_path)
+                return CodeGraphEvidenceResult(
+                    analysis_path=analysis_path,
+                    summary_path=summary_path,
+                    error_path=error_path,
+                    ok=True,
+                )
+            diagnostics.append(
+                _provider_failure(
+                    "CodeGraph CLI failed.",
+                    command=[
+                        codegraph,
+                        "export",
+                        "--format",
+                        "echelon",
+                        "--path",
+                        str(project_root),
+                        "--output",
+                        str(analysis_path),
+                    ],
+                    exit_code=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    output_exists=analysis_path.is_file(),
+                )
+            )
+            _remove_if_exists(analysis_path)
+
+        node = shutil.which("node")
+        if node is None:
+            _write_error(
+                error_path,
+                "".join(diagnostics)
+                + "Node.js is required to run CodeGraph evidence.\n",
+            )
+            raise CodeGraphEvidenceError(str(error_path))
+
+        if not bridge_path.is_file():
+            _write_error(
+                error_path,
+                "".join(diagnostics)
+                + "CodeGraph bridge missing at fixed installed extension path:\n"
+                f"{bridge_path}\n",
+            )
+            raise CodeGraphEvidenceError(str(error_path))
+
+        completed = _run_vendored_bridge(node, bridge_path, project_root, analysis_path)
         if completed.returncode != 0 or not analysis_path.is_file():
             _write_error(
                 error_path,
-                "CodeGraph bridge failed.\n\n"
-                f"project_root: {project_root}\n"
-                f"spec_dir: {spec_dir}\n"
-                f"bridge_path: {bridge_path}\n"
-                f"exit_code: {completed.returncode}\n\n"
-                f"stdout:\n{completed.stdout}\n\n"
-                f"stderr:\n{completed.stderr}\n",
+                "".join(diagnostics)
+                + _provider_failure(
+                    "CodeGraph bridge failed.",
+                    command=[
+                        node,
+                        str(bridge_path),
+                        "analyze",
+                        "--repo-path",
+                        str(project_root),
+                        "--output-path",
+                        str(analysis_path),
+                    ],
+                    exit_code=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    output_exists=analysis_path.is_file(),
+                ),
             )
             raise CodeGraphEvidenceError(str(error_path))
 
         _write_summary(analysis_path, summary_path)
+        _remove_if_exists(error_path)
         return CodeGraphEvidenceResult(
             analysis_path=analysis_path,
             summary_path=summary_path,
@@ -101,9 +137,90 @@ def write_codegraph_evidence(
                 shutil.rmtree(codegraph_dir)
 
 
+def _run_codegraph_cli(
+    codegraph: str, project_root: Path, analysis_path: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            codegraph,
+            "export",
+            "--format",
+            "echelon",
+            "--path",
+            str(project_root),
+            "--output",
+            str(analysis_path),
+        ],
+        cwd=str(project_root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _run_vendored_bridge(
+    node: str, bridge_path: Path, project_root: Path, analysis_path: Path
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            node,
+            str(bridge_path),
+            "analyze",
+            "--repo-path",
+            str(project_root),
+            "--output-path",
+            str(analysis_path),
+        ],
+        cwd=str(project_root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def _analysis_is_usable(analysis_path: Path) -> bool:
+    if not analysis_path.is_file():
+        return False
+    try:
+        data = json.loads(analysis_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("symbols"), list)
+
+
+def _provider_failure(
+    title: str,
+    *,
+    command: list[str],
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    output_exists: bool,
+) -> str:
+    return (
+        f"{title}\n\n"
+        f"command: {_shell_join(command)}\n"
+        f"exit_code: {exit_code}\n"
+        f"output_exists: {output_exists}\n\n"
+        f"stdout:\n{stdout}\n\n"
+        f"stderr:\n{stderr}\n\n"
+    )
+
+
+def _shell_join(command: list[str]) -> str:
+    return " ".join(command)
+
+
 def _write_error(error_path: Path, message: str) -> None:
     error_path.parent.mkdir(parents=True, exist_ok=True)
     error_path.write_text(message, encoding="utf-8")
+
+
+def _remove_if_exists(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _write_summary(analysis_path: Path, summary_path: Path) -> None:
