@@ -360,24 +360,30 @@ class StagedParallelExecutor(PhaseExecutor):
                 static_parts.append(agent_path.read_text())
 
         # 2. Per-agent context_pack files.
-        # Try spec dirs (specs/*/) first, then project root, then squad staging.
+        # state.spec_dir is authoritative for spec artifacts. Do not scan every
+        # specs/* directory for bare names: older runs can satisfy spec.md/tasks.md
+        # and contaminate staged consensus prompts.
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
-        spec_dirs: list[Path] = []
-        specs_root = self._project_root / "specs"
-        if specs_root.exists():
-            spec_dirs = sorted(
-                [d for d in specs_root.iterdir() if d.is_dir()],
-                key=lambda d: d.name,
-            )
-        search_bases = spec_dirs + [self._project_root, Path(staging_dir_str)]
+        search_bases: list[Path] = []
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            search_bases.append(spec_dir)
+        search_bases.extend([Path(staging_dir_str), self._project_root])
 
         for item in agent_entry.get("context_pack", []):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            for base in search_bases:
-                candidate = base / file_ref
+            resolved_ref = file_ref.replace("{spec_dir}", spec_dir_ref)
+            if resolved_ref.startswith("/"):
+                candidates = [Path(resolved_ref)]
+            else:
+                candidates = [base / resolved_ref for base in search_bases]
+            for candidate in candidates:
                 if candidate.exists():
                     dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
                     break
@@ -441,12 +447,15 @@ class StagedParallelExecutor(PhaseExecutor):
 
         # Stage 2: PLAN2 — requires implementability-report.md from ASSESS2
         impl_report_path: Optional[Path] = None
-        specs_root = self._project_root / "specs"
-        spec_dirs: list[Path] = (
-            sorted([d for d in specs_root.iterdir() if d.is_dir()], key=lambda d: d.name)
-            if specs_root.exists() else []
-        )
-        for base in spec_dirs + [self._project_root, self._squad_dir / "staging"]:
+        report_bases: list[Path] = []
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            report_bases.append(spec_dir)
+        report_bases.extend([self._squad_dir / "staging", self._project_root])
+        for base in report_bases:
             candidate = base / "implementability-report.md"
             if candidate.exists():
                 impl_report_path = candidate

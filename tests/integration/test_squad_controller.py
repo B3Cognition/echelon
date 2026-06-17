@@ -536,6 +536,73 @@ class TestConvergenceRoutingGuard:
         assert provider.exec_agent.call_count == 1
 
 
+class TestConsensusAcceptWithRiskRouting:
+    def test_accept_with_risk_consensus_advances_to_checkpoint_not_how(self, tmp_path):
+        provider = MagicMock()
+
+        def _side_effect(project_root: str, prompt: str, *args, **kwargs):
+            if "Operate in **WHY3** mode" in prompt:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={"verdict": "FAIL", "state_updates": {}},
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                )
+            if "Operate in **ASSESS2** mode" in prompt:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={"verdict": "PASS", "state_updates": {}},
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                )
+            if "Operate in **PLAN2** mode" in prompt:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "COMPLETE",
+                        "state_updates": {
+                            "gate_decision": "accept_with_risk",
+                            "convergence_forced": True,
+                            "phase_recommendation": "advance_past_consensus_to_delivery",
+                        },
+                    },
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                )
+            if "COMMANDER JUDGMENT REQUEST" in prompt:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"next_phase": "phase4-document"},
+                    },
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                )
+            raise AssertionError(f"unexpected agent prompt:\n{prompt[:400]}")
+
+        provider.exec_agent.side_effect = _side_effect
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase3-consensus", max_iterations=10)
+        state = store.load()
+        state.update({"iteration": 9, "spec_dir": "specs/071-rule-studio"})
+        store.save(state)
+        _mark_constitution_complete(tmp_path, store)
+
+        with patch.object(store, "advance", wraps=store.advance) as spy:
+            result = ctrl.run("msg", "banzai")
+
+        transitions = [(c.args[0], c.args[1]) for c in spy.call_args_list]
+
+        assert result.status == "done"
+        assert ("phase3-consensus", "checkpoint-plan") in transitions
+        assert ("phase3-consensus", "phase3-how") not in transitions
+
+
 class TestBuildPhaseRouting:
     """Regression: 12 build-phase transition conditions used lowercase 'and'
     (e.g. 'verdict = FAIL and fix_cycle < 2'). The evaluator splits only on

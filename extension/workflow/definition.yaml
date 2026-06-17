@@ -753,6 +753,8 @@ phases:
     transitions:
       - to: checkpoint-plan
         condition: "why3-verdict = PASS AND assess2-verdict = PASS"
+      - to: checkpoint-plan
+        condition: "gate_decision = accept_with_risk OR phase_recommendation = advance_past_consensus_to_delivery"
       - to: phase3-how
         condition: "why3-verdict = FAIL OR assess2-verdict = REJECTED"
         action: increment_iteration

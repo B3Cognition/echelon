@@ -448,6 +448,57 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert prompt.index("# WHY3") < prompt.index("# Squad Run Context")
 
 
+def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
+    """Consensus context must not pull bare artifact names from older specs/* dirs."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "why3.md").write_text("# WHY3\nRole-specific instructions.")
+
+    stale_spec = tmp_path / "specs" / "016-old"
+    stale_spec.mkdir(parents=True)
+    (stale_spec / "spec.md").write_text("WRONG SPEC 016")
+
+    stale_plan = tmp_path / "specs" / "063-pvas"
+    stale_plan.mkdir(parents=True)
+    (stale_plan / "tasks.md").write_text("WRONG TASKS 063")
+
+    active_spec = tmp_path / "specs" / "071-rule-studio"
+    active_spec.mkdir(parents=True)
+    (active_spec / "spec.md").write_text("RIGHT SPEC 071")
+    (active_spec / "tasks.md").write_text("RIGHT TASKS 071")
+    (staging_dir / "implementability-report.md").write_text("RIGHT STAGING REPORT")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    state = {
+        "squad_dir": str(squad_dir),
+        "staging_dir": str(staging_dir),
+        "spec_dir": "specs/071-rule-studio",
+    }
+    prompt = ex._build_agent_prompt(
+        {
+            "id": "WHY3",
+            "mode": "WHY3",
+            "context_pack": ["spec.md", "tasks.md", "implementability-report.md"],
+        },
+        state,
+    )
+
+    assert "RIGHT SPEC 071" in prompt
+    assert "RIGHT TASKS 071" in prompt
+    assert "RIGHT STAGING REPORT" in prompt
+    assert "WRONG SPEC 016" not in prompt
+    assert "WRONG TASKS 063" not in prompt
+
+
 def test_assemble_prompt_translates_legacy_paths(tmp_path):
     """Legacy .specify/squad/staging/ references in spec content are replaced."""
     squad_dir = tmp_path / "squad" / "run-test"

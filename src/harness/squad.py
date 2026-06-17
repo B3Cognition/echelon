@@ -44,6 +44,22 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 MAX_PHASE_DISPATCHES = 5
 
 
+def _normalize_phase_recommendation(recommended: object, valid_phases: set[str]) -> str | None:
+    """Return a concrete phase id for semantic phase recommendations."""
+    if not isinstance(recommended, str) or not recommended:
+        return None
+    if recommended in valid_phases:
+        return recommended
+    semantic_routes = {
+        "advance_past_consensus_to_delivery": "checkpoint-plan",
+        "advance_to_delivery": "checkpoint-plan",
+    }
+    mapped = semantic_routes.get(recommended)
+    if mapped in valid_phases:
+        return mapped
+    return None
+
+
 def _phase_requires_constitution_provenance(phase: str) -> bool:
     """Return True once a normal spec/build run is past the constitution gate."""
     if phase in {
@@ -293,10 +309,16 @@ class SquadController:
             existing_status == "blocked"
             and not existing.get("escalation_question")
             and (existing.get("convergence_forced") or existing.get("convergence_detected"))
-            and existing.get("phase_recommendation") in self._graph.all_phase_ids()
+            and _normalize_phase_recommendation(
+                existing.get("phase_recommendation"),
+                self._graph.all_phase_ids(),
+            )
         ):
             state = self._state_store.load()
-            recommended = state["phase_recommendation"]
+            recommended = _normalize_phase_recommendation(
+                state.get("phase_recommendation"),
+                self._graph.all_phase_ids(),
+            )
             state["status"] = "running"
             state["blocked_reason"] = None
             state["phase"] = recommended
@@ -517,7 +539,11 @@ class SquadController:
         if not (state.get("convergence_forced") or state.get("convergence_detected")):
             return phase
 
-        recommended = state.get("phase_recommendation")
+        raw_recommended = state.get("phase_recommendation")
+        recommended = _normalize_phase_recommendation(
+            raw_recommended,
+            self._graph.all_phase_ids(),
+        )
         if not recommended or recommended == phase:
             # We've arrived at the recommended phase (or there's no recommendation).
             # Clear the flags so they don't override the next forward transition.
@@ -527,9 +553,6 @@ class SquadController:
             state["convergence_guard_fire_count"] = 0
             self._state_store.save(state)
             return phase
-        if recommended not in self._graph.all_phase_ids():
-            return phase
-
         fire_count = self._state_store.increment_convergence_guard_fires()
         if fire_count > MAX_CONVERGENCE_GUARD_FIRES:
             # Agent keeps re-asserting convergence on every dispatch — infinite loop.
