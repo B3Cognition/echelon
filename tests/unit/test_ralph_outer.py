@@ -199,10 +199,10 @@ class TestOuterLoopConvergence:
         assert f"tasks_file: {worktree_spec_dir / 'tasks.md'}" in prompt
         assert str(live_spec_dir) not in prompt
 
-    def test_harness_context_does_not_fall_back_to_live_spec_in_worktree_mode(
+    def test_harness_context_materializes_state_spec_in_worktree_mode(
         self, tmp_path: Path
     ) -> None:
-        """Missing worktree spec artifacts are setup failures, not permission to edit live specs."""
+        """Worktree-mode prompts materialize Python-owned specs into the worktree."""
         controller, _provider, _gitops, state_store = _make_controller(tmp_path)
         live_spec_dir = tmp_path / "live-project" / "specs" / "spec-001-demo"
         live_spec_dir.mkdir(parents=True)
@@ -218,11 +218,13 @@ class TestOuterLoopConvergence:
         state_store.write(state)
 
         prompt = controller._with_harness_context("body", str(worktree))
+        worktree_spec_dir = worktree / "specs" / "spec-001-demo"
 
         assert "spec_artifacts_mode: worktree" in prompt
-        assert "spec_dir: MISSING" in prompt
-        assert "spec_file: MISSING" in prompt
-        assert "tasks_file: MISSING" in prompt
+        assert f"spec_dir: {worktree_spec_dir}" in prompt
+        assert f"spec_file: {worktree_spec_dir / 'spec.md'}" in prompt
+        assert f"tasks_file: {worktree_spec_dir / 'tasks.md'}" in prompt
+        assert (worktree_spec_dir / "tasks.md").read_text(encoding="utf-8") == "# Live Tasks\n"
         assert str(live_spec_dir) not in prompt
 
     def test_harness_context_names_harness_source_without_searching(

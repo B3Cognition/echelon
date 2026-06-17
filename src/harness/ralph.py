@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -1919,7 +1920,10 @@ class RalphController:
     def _find_spec_dir(self, worktree_path: str | Path) -> Path | None:
         worktree = Path(worktree_path)
         if self._spec_artifacts_mode() == "worktree":
-            return self._find_spec_dir_in_root(worktree)
+            spec_dir = self._find_spec_dir_in_root(worktree)
+            if spec_dir is not None:
+                return spec_dir
+            return self._materialize_state_spec_dir_into_worktree(worktree)
 
         state = self._state_store.read()
         state_spec_dir = state.get("spec_dir")
@@ -1932,6 +1936,27 @@ class RalphController:
         if spec_dir is not None:
             return spec_dir
         return find_spec_dir(self._spec_id, worktree)
+
+    def _materialize_state_spec_dir_into_worktree(self, worktree: Path) -> Path | None:
+        """Copy the Python-owned spec into an isolated worktree when it is absent."""
+        state = self._state_store.read()
+        state_spec_dir = state.get("spec_dir")
+        if not state_spec_dir:
+            return None
+
+        source = Path(str(state_spec_dir))
+        if not source.is_absolute():
+            source = self._orchestration_root(worktree) / source
+        if not source.is_dir():
+            return None
+
+        dest = worktree / "specs" / source.name
+        if dest.exists():
+            return dest if dest.is_dir() else None
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, dest)
+        return dest
 
     def _find_spec_dir_in_root(self, root: Path) -> Path | None:
         """Find a spec directory directly under root without walking parents."""
