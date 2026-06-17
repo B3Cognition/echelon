@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import signal
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,6 +43,17 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Max dispatches of any single phase per run before forcing escalation.
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
+PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+
+
+def _state_autonomy_mode(state: dict, fallback: str) -> str:
+    autonomy = state.get("autonomy_mode")
+    if isinstance(autonomy, str) and autonomy:
+        return autonomy
+    legacy = state.get("mode")
+    if isinstance(legacy, str) and legacy in {"guided", "semi", "banzai"}:
+        return legacy
+    return fallback
 
 
 def _normalize_phase_recommendation(recommended: object, valid_phases: set[str]) -> str | None:
@@ -169,6 +181,33 @@ class SquadController:
         self._cancelled = False
         signal.signal(signal.SIGINT, self._handle_sigint)
 
+    def _detect_project_mode(self, requested_mode: str) -> str:
+        """Return the project type stored in state.mode.
+
+        `requested_mode` is the user-selected autonomy mode (`semi`/`banzai`/`guided`)
+        for normal CLI entrypoints, but older tests and internal callers may still
+        pass a project mode directly. Preserve that when present.
+        """
+        if requested_mode in PROJECT_MODES:
+            return requested_mode
+
+        script = self._ext_dir / "scripts" / "bash" / "detect-project.sh"
+        if not script.exists():
+            return "greenfield"
+        try:
+            proc = subprocess.run(
+                [str(script), str(self._project_root)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            detected = (proc.stdout or "").strip()
+            if proc.returncode == 0 and detected in PROJECT_MODES:
+                return detected
+        except Exception:
+            pass
+        return "greenfield"
+
     def run(
         self,
         user_message: str = "",
@@ -271,7 +310,7 @@ class SquadController:
         # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
             q = existing.get("escalation_question", "")
-            mode_at_block = existing.get("mode", mode)
+            mode_at_block = _state_autonomy_mode(existing, mode)
 
             if mode_at_block == "banzai":
                 print(
@@ -337,13 +376,15 @@ class SquadController:
         if not existing or existing_status not in ("running", "in_progress"):
             run_id = f"squad-{int(time.time())}"
             entry_phase = next_phase_override or self._graph.entry_phase()
+            project_mode = self._detect_project_mode(mode)
             self._state_store.initialize(
                 run_id=run_id,
-                mode=mode,
+                mode=project_mode,
                 user_message=user_message,
                 token_budget=self._token_budget,
                 entry_phase=entry_phase,
                 max_iterations=self._max_iterations,
+                autonomy_mode=mode,
             )
         else:
             print(f"[squad] resuming from phase: {self._state_store.current_phase()}", flush=True)
@@ -447,7 +488,7 @@ class SquadController:
             state_now = self._state_store.load()
             if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
                 q = state_now["escalation_question"]
-                run_mode = state_now.get("mode", mode)
+                run_mode = _state_autonomy_mode(state_now, mode)
                 if run_mode == "banzai":
                     print(
                         f"[squad] ~ {node.id}  escalation — banzai COMMANDER judgment",

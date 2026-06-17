@@ -267,14 +267,64 @@ class PhaseExecutor(ABC):
             if rel:
                 pre_path = self._ext_dir / rel
                 if pre_path.exists():
+                    prompt = self._assemble_pre_dispatch_prompt(pre_path, entry, state_store.load())
                     result = self._provider.exec_agent(
-                        str(self._project_root), pre_path.read_text()
+                        str(self._project_root), prompt
                     )
                     self._write_journal_entries(result, node.id)
                     for k, v in result.state_updates.items():
                         s = state_store.load()
                         s[k] = v
                         state_store.save(s)
+
+    def _assemble_pre_dispatch_prompt(
+        self,
+        agent_path: Path,
+        entry: dict,
+        state: dict,
+    ) -> str:
+        """Build a real prompt for pre-dispatch agents.
+
+        Brownfield GOLDDIGGER dispatch needs explicit Mode 1 instructions and
+        squad context. Sending only the raw agent file leaves the dispatch
+        under-specified and causes silent fallback to SCOUT manual discovery.
+        """
+        agent_text = agent_path.read_text()
+        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
+        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        run_id = state.get("run_id", "")
+        project_mode = state.get("mode", "")
+
+        if entry.get("id") == "golddigger_mode1":
+            return (
+                _shared_agent_contract()
+                + agent_text
+                + "\n\n"
+                + f"# Squad Run Context\n"
+                + f"SQUAD_DIR={squad_dir_str}\n"
+                + f"STAGING_DIR={staging_dir_str}\n"
+                + f"PROJECT_ROOT={self._project_root}\n\n"
+                + "<context>\n"
+                + f"project_root: {self._project_root}\n"
+                + f"run_id: {run_id}\n"
+                + f"mode: {project_mode}\n"
+                + "</context>\n\n"
+                + "<instructions>\n"
+                + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
+                + f"Run **Mode {entry.get('mode', 1)} (Survey)** for target path `{self._project_root}`. "
+                + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
+                + "</instructions>\n"
+            )
+
+        return (
+            _shared_agent_contract()
+            + agent_text
+            + "\n\n"
+            + f"# Squad Run Context\n"
+            + f"SQUAD_DIR={squad_dir_str}\n"
+            + f"STAGING_DIR={staging_dir_str}\n"
+            + f"PROJECT_ROOT={self._project_root}\n"
+        )
 
 
 class AgentExecutor(PhaseExecutor):

@@ -167,6 +167,64 @@ class TestCartographerResumeGuard:
 
 
 class TestSquadControllerBasics:
+    def test_fresh_run_detects_project_mode_separately_from_autonomy_mode(self, tmp_path):
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text("pass\n", encoding="utf-8")
+
+        ctrl, store = _controller(tmp_path, mode="banzai")
+
+        result = ctrl.run("msg", "banzai", next_phase_override="DONE")
+
+        assert result.status == "done"
+        state = store.load()
+        assert state["mode"] == "brownfield"
+        assert state["autonomy_mode"] == "banzai"
+
+    def test_brownfield_discovery_pre_dispatches_golddigger_mode1_with_context(self, tmp_path):
+        provider = MagicMock()
+        provider.exec_agent.side_effect = [
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"golddigger_status": "complete"},
+                },
+                raw_output="",
+                duration_ms=50,
+                timed_out=False,
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "DONE", "state_updates": {}},
+                raw_output="",
+                duration_ms=50,
+                timed_out=False,
+            ),
+        ]
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        squad_dir = tmp_path / "squad" / "run-test"
+        squad_dir.mkdir(parents=True, exist_ok=True)
+        (squad_dir / "staging").mkdir(exist_ok=True)
+        store = SquadStateStore(squad_dir)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-discover", autonomy_mode="banzai")
+        executor = AgentExecutor(
+            provider,
+            graph,
+            EXT_ROOT / "extension",
+            tmp_path,
+            squad_dir,
+        )
+
+        executor.execute(graph.get("phase1-discover"), store)
+
+        assert provider.exec_agent.call_count == 2
+        golddigger_prompt = provider.exec_agent.call_args_list[0].args[1]
+        assert "You are GOLDDIGGER." in golddigger_prompt
+        assert "Run **Mode 1 (Survey)**" in golddigger_prompt
+        assert f"project_root: {tmp_path}" in golddigger_prompt
+        assert "mode: brownfield" in golddigger_prompt
+        assert store.load()["golddigger_status"] == "complete"
+
     def test_starts_at_entry_phase(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "DONE")

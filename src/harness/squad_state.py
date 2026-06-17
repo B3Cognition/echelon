@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+AUTONOMY_MODES = {"guided", "semi", "banzai"}
+PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+
 if TYPE_CHECKING:
     from harness.squad_provider import SquadAgentResult
 
@@ -84,7 +87,11 @@ class SquadStateStore:
         token_budget: int,
         entry_phase: str,
         max_iterations: int = 5,
+        autonomy_mode: str = "semi",
     ) -> None:
+        if autonomy_mode == "semi" and mode in AUTONOMY_MODES and mode not in PROJECT_MODES:
+            autonomy_mode = mode
+            mode = "greenfield"
         logger.debug("squad init run_id=%s mode=%s entry_phase=%s", run_id, mode, entry_phase)
         ts = datetime.now(timezone.utc).isoformat()
         self.save({
@@ -92,6 +99,7 @@ class SquadStateStore:
             "status": "running",
             "phase": entry_phase,
             "mode": mode,
+            "autonomy_mode": autonomy_mode,
             "iteration": 0,
             "max_iterations": max_iterations,
             "token_usage": 0,

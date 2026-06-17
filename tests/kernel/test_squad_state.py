@@ -38,6 +38,22 @@ class TestSquadStateStore:
         assert state["phase"] == "init"
         assert state["status"] == "running"
         assert state["token_budget"] == 500_000
+        assert state["mode"] == "greenfield"
+        assert state["autonomy_mode"] == "semi"
+
+    def test_initialize_can_store_project_and_autonomy_modes_separately(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize(
+            "run-001",
+            "brownfield",
+            "do stuff",
+            500_000,
+            "init",
+            autonomy_mode="banzai",
+        )
+        state = store.load()
+        assert state["mode"] == "brownfield"
+        assert state["autonomy_mode"] == "banzai"
 
     def test_current_phase_returns_init_after_initialize(self, tmp_path):
         store = _store(tmp_path)

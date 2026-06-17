@@ -2226,7 +2226,7 @@ def _cmd_continue(
 
     state = _json.loads((squad_dir / "state.json").read_text())
     user_message = state.get("user_message", "")
-    mode = mode_override or state.get("mode", "semi")
+    mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
 
@@ -2431,7 +2431,7 @@ def _cmd_resume(
     )
     result = controller.run(
         user_message=state.get("user_message", ""),
-        mode=state.get("mode", "semi"),
+        mode=state.get("autonomy_mode") or state.get("mode", "semi"),
     )
 
     _banner("SQUAD RESUMED", [
