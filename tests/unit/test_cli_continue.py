@@ -53,3 +53,33 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
+
+
+def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
+    tmp_path: Path,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "terminal-blocked",
+            "completed_phases": ["phase1-constitution"],
+            "convergence_forced": True,
+            "phase_recommendation": "advance_past_consensus_to_delivery",
+        },
+    )
+    spec_dir = tmp_path / "specs" / "071-rule-studio-narrative"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n"
+        "## Verdict: FAIL\n\n"
+        "| Gate | Score | Threshold | Status | Notes |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| Structure | 0.677 | 0.75 | FAIL | not borderline |\n",
+        encoding="utf-8",
+    )
+    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    assert _next_continue_phase(tmp_path) is None

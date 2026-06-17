@@ -1973,6 +1973,8 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                     or current_state.get("convergence_detected")
                 )
             ):
+                if _phase_a_ready_to_build(project_root, current_state):
+                    return None
                 return recommended
         except Exception:
             current_state = {}
@@ -2040,6 +2042,32 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             break
 
     return None  # build is ready
+
+
+def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
+    """Return True when Phase A already produced enough artifacts for harness run."""
+    completed = current_state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
+    if current_state and "phase1-constitution" not in completed_phases:
+        return False
+
+    const_path = project_root / ".specify" / "memory" / "constitution.md"
+    if not const_path.exists():
+        return False
+    if _constitution_template_markers(const_path.read_text(errors="replace")):
+        return False
+
+    specs_root = project_root / "specs"
+    if not specs_root.exists():
+        return False
+
+    for spec_dir in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
+        return all(
+            (spec_dir / name).exists()
+            for name in ("plan.md", "research.md", "data-model.md", "tasks.md")
+        )
+
+    return False
 
 
 def _cmd_status(project_root: Path) -> None:
