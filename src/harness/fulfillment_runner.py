@@ -18,6 +18,7 @@ from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
 from kernel.fulfillment import (
     fulfillment_table_ids,
+    fulfillment_report_is_current,
     latest_fulfillment_report,
     read_fulfillment_metadata,
     stamp_fulfillment_report,
@@ -212,6 +213,15 @@ class FulfillmentRunner:
             changed_files=changed_files,
         )
         if not plan.impacted_requirement_ids:
+            if report is None or not fulfillment_report_is_current(
+                report, current_commit=commit
+            ):
+                return self.refresh(
+                    worktree_path,
+                    spec_id,
+                    orchestration_root=spec_dir.parent.parent,
+                    scope="full",
+                )
             return FulfillmentRefreshResult(
                 status="cached",
                 exit_code=0,

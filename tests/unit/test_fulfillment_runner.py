@@ -545,6 +545,14 @@ class TestFulfillmentRunner:
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
         _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\nverify_scope: full\nverified_commit: head456\n---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |\n",
+            encoding="utf-8",
+        )
         provider = MagicMock()
         provider.cli = "claude"
 
@@ -560,3 +568,45 @@ class TestFulfillmentRunner:
         assert result.scope == "scoped"
         assert result.reason == "scoped verify-spec skipped; no impacted requirements"
         provider.exec_prompt.assert_not_called()
+
+    def test_scoped_refresh_falls_back_to_full_when_report_is_stale(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\nverify_scope: full\nverified_commit: old123\n---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |\n",
+            encoding="utf-8",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_full_report(_worktree_path: str, prompt: str) -> int:
+            assert "scope=scoped" not in prompt
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-001 | IMPLEMENTED | src/a.swift | high | refreshed |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_full_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                "spec-001",
+                scope="scoped",
+                completed_task_ids=[],
+            )
+
+        assert result.status == "refreshed"
+        assert result.scope == "full"
+        assert result.reason == "full verify-spec completed"
+        metadata = read_fulfillment_metadata(report)
+        assert metadata["verified_commit"] == "head456"
+        assert metadata["verify_scope"] == "full"
