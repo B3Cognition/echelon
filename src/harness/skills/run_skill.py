@@ -14,8 +14,10 @@ from typing import Any, Dict
 from harness.config import load_config
 from harness.coordinator import StrategyCoordinator
 from harness.gc import run_gc
+from harness.harness_run_history import append_run, summarize_history
 from harness.paths import make_build_id, current_build_marker, runs_dir
 from harness.run_intent import parse_intent
+from harness.spec_frontmatter import find_spec_dir
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +147,73 @@ def _print_delivery_summary(
     _banner("DELIVERY SUMMARY", fields, file=sys.stderr)
 
 
+def _resolve_spec_dir(base_dir: str, spec_id: str) -> Path | None:
+    return find_spec_dir(spec_id, Path(base_dir).resolve())
+
+
+def _print_harness_history_summary(
+    *,
+    spec_dir: Path | None,
+    title: str,
+) -> None:
+    if spec_dir is None:
+        return
+    summary = summarize_history(spec_dir)
+    recent = summary.get("recent", [])
+    if not recent:
+        return
+
+    fields: list[tuple[str, str]] = []
+    for row in recent:
+        if not isinstance(row, dict):
+            continue
+        build_id = str(row.get("build_id") or "?")
+        short_build = build_id.replace("build-", "")
+        strategy = str(row.get("strategy_id") or "?")
+        status = str(row.get("status") or "?")
+        reason = str(row.get("termination_reason") or "?")
+        tokens = int(row.get("tokens_used") or 0)
+        fields.append(
+            (
+                f"{short_build}/{strategy}",
+                f"{status}  |  {reason}  |  {tokens:,} tokens",
+            )
+        )
+    if not fields:
+        return
+
+    subtitle = f"{summary['count']} runs tracked · {summary['total_tokens']:,} tokens total"
+    from echelon.ui import banner as _banner
+    _banner(title, fields, subtitle=subtitle, file=sys.stderr)
+
+
+def _append_harness_history(
+    *,
+    spec_dir: Path | None,
+    spec_id: str,
+    build_id: str,
+    mode: str,
+    result_map: Dict[str, Any],
+    comparison: Dict[str, Any],
+    coordinator: StrategyCoordinator,
+) -> None:
+    if spec_dir is None:
+        return
+    for sid, result in result_map.items():
+        info = comparison.get("strategies", {}).get(sid, {})
+        state = coordinator.status().get("strategies", {}).get(sid, {})
+        append_run(
+            spec_dir,
+            spec_id=spec_id,
+            build_id=build_id,
+            mode=mode,
+            strategy_id=sid,
+            result=result,
+            pr_url=info.get("pr_url") or getattr(result, "pr_url", None),
+            started_at=state.get("started_at"),
+        )
+
+
 def run(
     user_message: str,
     provider: Any,
@@ -188,6 +257,7 @@ def run(
     rd.mkdir(parents=True, exist_ok=True)
     current_build_marker(base_path, intent.spec_id).write_text(build_id)
     logger.info("Build ID: %s", build_id)
+    spec_dir = _resolve_spec_dir(base_dir, intent.spec_id)
 
     # 5. Create coordinator
     coordinator = StrategyCoordinator(
@@ -204,12 +274,24 @@ def run(
     except Exception as e:
         logger.warning("GC failed (continuing): %s", e)
 
+    _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
+
     # 7. Launch coordinator
     results = coordinator.start(intent)
 
     # 8. Print results
     result_map = dict(zip(intent.strategies, results))
     comparison = coordinator.compare_results(result_map)
+    _append_harness_history(
+        spec_dir=spec_dir,
+        spec_id=intent.spec_id,
+        build_id=build_id,
+        mode=intent.mode,
+        result_map=result_map,
+        comparison=comparison,
+        coordinator=coordinator,
+    )
+    _print_harness_history_summary(spec_dir=spec_dir, title="HARNESS HISTORY")
 
     _print_delivery_summary(intent, result_map, comparison, base_dir, config)
 

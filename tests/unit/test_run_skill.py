@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from harness.harness_run_history import history_path
 from harness.loop_result import LoopResult
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
@@ -404,6 +405,66 @@ class TestRunSkillAutoLand:
         assert "stopped: outer_cap" in captured.err
         assert "next: echelon harness run 001-demo" in captured.err
         assert "continue with a fresh outer-loop budget" in captured.err
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    @patch("harness.skills.run_skill._print_delivery_summary")
+    def test_run_prints_harness_history_before_and_after_and_appends_entry(
+        self,
+        mock_delivery: MagicMock,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_config: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import run
+
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        history_path(spec_dir).write_text(
+            '{"runs":[{"build_id":"build-old","strategy_id":"default","status":"failed","termination_reason":"outer_cap","tokens_used":1200}]}',
+            encoding="utf-8",
+        )
+
+        intent = RunIntent(spec_id="001-demo", mode="banzai", auto_merge=False)
+        mock_parse.return_value = intent
+
+        coordinator_instance = MagicMock()
+        result = _make_failed_result()
+        coordinator_instance.start.return_value = [result]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "branch": result.branch,
+                    "converged": False,
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": result.tokens_used},
+        }
+        coordinator_instance.status.return_value = {"strategies": {"default": {}}}
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        gitops = MagicMock()
+        provider = MagicMock()
+
+        with patch("harness.skills.run_skill._print_harness_history_summary") as mock_history:
+            run("spec 001-demo mode=banzai", provider=provider, gitops=gitops, base_dir=str(tmp_path))
+
+        assert mock_history.call_count == 2
+        history = history_path(spec_dir).read_text(encoding="utf-8")
+        assert '"build_id": "build-old"' in history
+        assert '"termination_reason": "outer_cap"' in history
+        assert '"tokens_used": 50000' in history
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
