@@ -143,6 +143,23 @@ else
   echo "  ✓ CodeGraph bridge dependencies installed → $RE_NODE_DIR/node_modules"
 fi
 
+# ── 3b. Optional upstream CodeGraph CLI ─────────────────────────────────────
+echo "▶ Checking upstream CodeGraph CLI..."
+if command -v codegraph &>/dev/null; then
+  CODEGRAPH_CLI_VER="$(codegraph version 2>/dev/null || codegraph --version 2>/dev/null || echo "installed")"
+  echo "  ✓ CodeGraph CLI found ($CODEGRAPH_CLI_VER)"
+elif [ "${ECHELON_INSTALL_CODEGRAPH_CLI:-0}" = "1" ]; then
+  if command -v npm &>/dev/null; then
+    npm install -g @colbymchenry/codegraph --silent
+    echo "  ✓ CodeGraph CLI installed"
+  else
+    echo "  ⚠ npm not found; cannot install CodeGraph CLI."
+  fi
+else
+  echo "  ℹ CodeGraph CLI not found; optional install:"
+  echo "    ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh"
+fi
+
 # ── 4. Memory directory ──────────────────────────────────────────────────────
 echo "▶ Setting up memory directory..."
 mkdir -p "$MEMORY_DIR"
@@ -180,6 +197,11 @@ if [ -d "$RE_NODE_DIR/node_modules" ]; then
   echo "  CodeGraph bridge → $RE_NODE_DIR/node_modules"
 else
   echo "  CodeGraph bridge → not ready (run: npm ci --prefix \"$RE_NODE_DIR\")"
+fi
+if command -v codegraph &>/dev/null; then
+  echo "  CodeGraph CLI    → $(command -v codegraph)"
+else
+  echo "  CodeGraph CLI    → optional (ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh)"
 fi
 echo "  Memory        → $MEMORY_DIR"
 echo ""
