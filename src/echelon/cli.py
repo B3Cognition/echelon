@@ -2098,6 +2098,9 @@ def _cmd_status(project_root: Path) -> None:
             ("Status", f"{status_icon}  {run_status}"),
             ("Phase",  current_phase),
         ]
+        spec_ref = str(state.get("spec_dir") or state.get("spec_id") or "").strip()
+        if spec_ref:
+            fields.insert(1, ("Spec", spec_ref))
         if task_msg:
             snippet = task_msg[:72] + ("…" if len(task_msg) > 72 else "")
             fields.append(("Task", snippet))

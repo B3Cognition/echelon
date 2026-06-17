@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from echelon.cli import _find_converged_harness_build, _print_next_steps
+from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
 
 
 def _write_build_state(
@@ -189,3 +189,32 @@ def test_next_steps_for_docker_unavailable_tells_user_to_start_docker(
     assert "start Docker Desktop" in captured.out
     assert "echelon harness run 001-demo" in captured.out
     assert "--reset" not in captured.out
+
+
+def test_status_prints_authoritative_spec_dir_for_active_squad_run(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_id = "spec-20260616-204126-899927"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_id, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "squad-1781635287",
+                "status": "blocked",
+                "phase": "phase3-consensus",
+                "spec_dir": "specs/071-rule-studio-narrative",
+                "user_message": "prepare me the proper design",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "RUN STATE" in captured.out
+    assert "Spec" in captured.out
+    assert "specs/071-rule-studio-narrative" in captured.out
