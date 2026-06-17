@@ -32,6 +32,7 @@ class AICodingCliProvider:
         self._bin = shutil.which(self._cli) or self._cli
         self.last_stdout = ""
         self.last_stderr = ""
+        self.last_token_usage = 0
 
     @property
     def cli(self) -> str:
@@ -70,6 +71,7 @@ class AICodingCliProvider:
         """Run a prompt with the configured LLM CLI and return its process exit code."""
         self.last_stdout = ""
         self.last_stderr = ""
+        self.last_token_usage = 0
         env = self._build_env(extra_env)
         start = time.monotonic()
         if self._cli == "claude":
@@ -93,6 +95,7 @@ class AICodingCliProvider:
         timed_out = False
         printer = StreamEventPrinter()
         captured_lines: list[str] = []
+        token_usage = 0
 
         def _kill():
             nonlocal timed_out
@@ -124,6 +127,8 @@ class AICodingCliProvider:
                     event = _json.loads(line)
                     if event.get("type") == "result" and event.get("is_error"):
                         _capture(event.get("result", ""))
+                    if event.get("type") == "result":
+                        token_usage = _extract_token_usage(event)
                     printer(event)
                 except _json.JSONDecodeError:
                     _capture(line)
@@ -134,6 +139,7 @@ class AICodingCliProvider:
             timer.cancel()
 
         self.last_stdout = "\n".join(captured_lines)
+        self.last_token_usage = token_usage
         return None if timed_out else proc.returncode
 
     def _run_plain(self, cmd: list, cwd: str, env: dict, start: float):
@@ -151,3 +157,34 @@ class AICodingCliProvider:
         if self._config_dir and self._cli == "claude":
             env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
         return env
+
+
+def _extract_token_usage(event: Mapping[str, object]) -> int:
+    usage = event.get("usage")
+    if isinstance(usage, Mapping):
+        total = 0
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        ):
+            try:
+                total += int(usage.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+        if total > 0:
+            return total
+
+    total = 0
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+    ):
+        try:
+            total += int(event.get(key) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total

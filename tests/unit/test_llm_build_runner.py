@@ -99,3 +99,11 @@ class TestLlmBuildRunner:
 
         assert result.status == "timeout"
         assert result.exit_code == -1
+
+    def test_exec_build_preserves_prompt_executor_token_usage(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+        executor.last_token_usage = 4321
+
+        result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        assert result.token_usage == 4321

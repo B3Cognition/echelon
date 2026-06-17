@@ -46,6 +46,7 @@ class BuildResult:
     stdout: str
     stderr: str
     duration_ms: int
+    token_usage: int = 0
     reason: Optional[str] = None
     task_ids: list[str] | None = None
 
@@ -84,6 +85,7 @@ class BuildResult:
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
+                token_usage=0,
             )
         except Exception:
             return cls(
@@ -95,6 +97,7 @@ class BuildResult:
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
+                token_usage=0,
             )
 
 

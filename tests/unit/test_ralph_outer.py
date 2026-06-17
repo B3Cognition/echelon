@@ -1412,6 +1412,45 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_tokens_are_counted_for_provider_backed_builds(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.build_result import BuildResult
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="done",
+            stderr="",
+            duration_ms=1000,
+            token_usage=4321,
+            task_ids=["T-001"],
+        )
+        controller, _provider, gitops, _state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.tokens_used == 4321
+
     def test_allows_empty_completed_task_ids_for_zero_change_slice(
         self, tmp_path: Path
     ) -> None:

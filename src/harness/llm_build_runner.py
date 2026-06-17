@@ -43,6 +43,7 @@ class LlmBuildRunner:
         duration_ms = int((time.monotonic() - start) * 1000)
         stdout = str(getattr(self._prompt_executor, "last_stdout", "") or "")
         stderr = str(getattr(self._prompt_executor, "last_stderr", "") or "")
+        token_usage = int(getattr(self._prompt_executor, "last_token_usage", 0) or 0)
 
         if exit_code == -1:
             return BuildResult(
@@ -53,15 +54,18 @@ class LlmBuildRunner:
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
+                token_usage=token_usage,
             )
 
-        return BuildResult.from_status_file(
+        result = BuildResult.from_status_file(
             status_file,
             exit_code=exit_code,
             stdout=stdout,
             stderr=stderr,
             duration_ms=duration_ms,
         )
+        result.token_usage = token_usage
+        return result
 
     def exec_feedback(self, worktree_path: str, prompt: str) -> BuildResult:
         return self.exec_build(worktree_path, prompt)

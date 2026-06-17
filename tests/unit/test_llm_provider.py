@@ -169,6 +169,55 @@ class TestAICodingCliProvider:
         assert "session limit" in provider.last_stdout
         assert "resets 9:10pm" in provider.last_stdout
 
+    def test_streaming_captures_token_usage_from_result_event(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+
+        class FakeProcess:
+            stdout = io.BytesIO(
+                (
+                    json.dumps(
+                        {
+                            "type": "assistant",
+                            "message": {
+                                "content": [
+                                    {"type": "text", "text": "building slice"}
+                                ]
+                            },
+                        }
+                    )
+                    + "\n"
+                    + json.dumps(
+                        {
+                            "type": "result",
+                            "is_error": False,
+                            "result": "ok",
+                            "num_turns": 1,
+                            "duration_ms": 0,
+                            "usage": {
+                                "input_tokens": 1200,
+                                "output_tokens": 300,
+                                "cache_creation_input_tokens": 50,
+                                "cache_read_input_tokens": 25,
+                            },
+                        }
+                    )
+                    + "\n"
+                ).encode()
+            )
+            returncode = 0
+
+            def kill(self):
+                return None
+
+            def wait(self):
+                return self.returncode
+
+        with patch("harness.llm_provider.subprocess.Popen", return_value=FakeProcess()):
+            result = provider.exec_prompt(str(tmp_path), "build this")
+
+        assert result == 0
+        assert provider.last_token_usage == 1575
+
     def test_non_claude_cli_uses_plain_run(self, tmp_path):
         """copilot/opencode/codex use _run_plain, not _run_streaming."""
         with _mock_plain() as mock_plain, \

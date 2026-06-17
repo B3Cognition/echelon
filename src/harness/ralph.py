@@ -1014,7 +1014,7 @@ class RalphController:
                 "build_status": result.status,
                 "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
-                "tokens": 0,
+                "tokens": result.token_usage,
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
                 "task_ids": result.task_ids or [],
