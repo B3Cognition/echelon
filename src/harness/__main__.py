@@ -8,6 +8,8 @@ Subcommands:
   validate-task-progress — reconcile canonical tasks.md progress with state.json
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
+  write-judgment-prepass — write deterministic verify-spec judgment pre-pass artifacts
+  assemble-fulfillment-report — assemble final fulfillment report from pre-pass and fallback rows
   apply-task-requirement-mapping — apply deterministic req= metadata mappings
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
@@ -233,6 +235,53 @@ def _write_progress_integrity() -> None:
     out_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     out_md.write_text(_progress_integrity_markdown(payload), encoding="utf-8")
     print(f"OK: wrote progress integrity to {out_json} and {out_md}")
+
+
+def _write_judgment_prepass() -> None:
+    if len(sys.argv) != 4:
+        print(
+            "Usage: python -m harness write-judgment-prepass <spec-dir> <verify-run-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.judgment_prepass import write_judgment_prepass
+
+    result = write_judgment_prepass(
+        spec_dir=Path(sys.argv[2]).resolve(),
+        verify_run_dir=Path(sys.argv[3]).resolve(),
+    )
+    print(
+        f"OK: wrote judgment pre-pass to {result.json_path} "
+        f"(mechanical={result.mechanical_count}, fallback={result.fallback_count})"
+    )
+
+
+def _assemble_fulfillment_report() -> None:
+    if len(sys.argv) not in {6, 7}:
+        print(
+            "Usage: python -m harness assemble-fulfillment-report "
+            "<canonical-requirements.json> <judgment-prepass.json> "
+            "<fallback-report.md> <out-report.md> [state.json]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.judgment_prepass import assemble_fulfillment_report
+
+    state_path = Path(sys.argv[6]).resolve() if len(sys.argv) == 7 else None
+    assemble_fulfillment_report(
+        canonical_inventory_path=Path(sys.argv[2]).resolve(),
+        judgment_prepass_path=Path(sys.argv[3]).resolve(),
+        fallback_report_path=Path(sys.argv[4]).resolve(),
+        output_report_path=Path(sys.argv[5]).resolve(),
+        state_path=state_path,
+    )
+    print(f"OK: assembled fulfillment report at {Path(sys.argv[5]).resolve()}")
 
 
 def _progress_integrity_markdown(payload: dict[str, object]) -> str:
@@ -561,6 +610,10 @@ def main() -> None:
         _plan_reopen_gaps()
     elif subcommand == "write-canonical-requirements":
         _write_canonical_requirements()
+    elif subcommand == "write-judgment-prepass":
+        _write_judgment_prepass()
+    elif subcommand == "assemble-fulfillment-report":
+        _assemble_fulfillment_report()
     elif subcommand == "write-codegraph-evidence":
         _write_codegraph_evidence()
     elif subcommand == "write-codegraph-evidence-map":
@@ -577,7 +630,8 @@ def main() -> None:
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
             "'write-progress-integrity', 'apply-task-requirement-mapping', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
-            "'write-canonical-requirements', 'write-codegraph-evidence', "
+            "'write-canonical-requirements', 'write-judgment-prepass', "
+            "'assemble-fulfillment-report', 'write-codegraph-evidence', "
             "'write-codegraph-evidence-map', 'migrate-tasks', "
             "'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,

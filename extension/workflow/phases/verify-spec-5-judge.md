@@ -8,6 +8,8 @@ Provide SPEC-GUARD with:
 - `{verify_run_dir}/canonical-requirements.json`
 - `{verify_run_dir}/canonical-requirements.md`
 - `{verify_run_dir}/requirement-audit.md`
+- `{verify_run_dir}/judgment-prepass.json`
+- `{verify_run_dir}/judgment-prepass.md`
 - fulfillment checklist
 - implementation evidence map
 - `spec.md`
@@ -16,18 +18,48 @@ Provide SPEC-GUARD with:
 - `progress-integrity.md`
 - verification `state.json`
 
+## Deterministic Pre-judge
+
+Before dispatching SPEC-GUARD, run:
+
+```bash
+python -m harness write-judgment-prepass "{spec_dir}" "{verify_run_dir}"
+```
+
+This writes `{verify_run_dir}/judgment-prepass.json` and
+`{verify_run_dir}/judgment-prepass.md`.
+
+If `fallback_ids` in `judgment-prepass.json` is empty, skip SPEC-GUARD and
+assemble the final report directly with:
+
+```bash
+python -m harness assemble-fulfillment-report \
+  "{verify_run_dir}/canonical-requirements.json" \
+  "{verify_run_dir}/judgment-prepass.json" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{verify_run_dir}/state.json"
+```
+
+Then proceed directly to row-set integrity validation and summary.
+
 ## Dispatch Prompt
 
 Run SPEC-GUARD in fulfillment mode. Assign exactly one status per item:
 `IMPLEMENTED`, `PARTIAL`, `UNVERIFIED`, `MISSING`, `DEVIATED`, or
 `OBSOLETE_SPEC`.
 
+Python owns mechanical judgments and the final report row set. SPEC-GUARD must
+judge only IDs listed in `fallback_ids` from `judgment-prepass.json`.
+SPEC-GUARD must not emit rows for mechanically decided IDs.
+
 Use `{verify_run_dir}/canonical-requirements.json` as the only allowed
 requirement row set. Judge every canonical ID exactly once. Do not add report
 rows for IDs outside the inventory; record such discoveries separately as
 `unmapped_candidate` notes.
 
-When `verify_scope=scoped` in `state.json`, judge only IDs listed in `scoped_ids`.
+When `verify_scope=scoped` in `state.json`, judge only unresolved IDs listed in
+`scoped_ids` and `fallback_ids`.
 The scoped output may contain rows for those IDs only; Ralph will merge those
 rows over the last full fulfillment report and preserve unaffected rows. Include
 `base_full_verify_commit` in the scoped run summary so the harness can prove
@@ -58,6 +90,18 @@ Also judge task-progress integrity from `progress-integrity.json` and
 Write:
 - `{spec_dir}/fulfillment-report.md`
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
+
+After SPEC-GUARD writes fallback-only fulfillment rows, assemble the final
+report with:
+
+```bash
+python -m harness assemble-fulfillment-report \
+  "{verify_run_dir}/canonical-requirements.json" \
+  "{verify_run_dir}/judgment-prepass.json" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{verify_run_dir}/state.json"
+```
 
 Before returning DONE in full scope, perform row-set integrity validation: every
 item ID in `{verify_run_dir}/canonical-requirements.json` must appear exactly

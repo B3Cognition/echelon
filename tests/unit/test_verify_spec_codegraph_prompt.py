@@ -82,3 +82,18 @@ def test_verify_spec_preserves_runtime_evidence_semantics() -> None:
         assert "runtime" in lowered or "ci artifact" in lowered
         assert "must not" in lowered
         assert "assertion_only" in lowered
+
+
+def test_verify_spec_stage5_references_judgment_prepass() -> None:
+    text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+
+    assert "judgment-prepass.json" in text
+    assert "fallback_ids" in text
+
+
+def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:
+    agent_dir = ROOT / "extension" / "agents" / "build"
+    text = (agent_dir / "spec-guard.md").read_text(encoding="utf-8")
+
+    assert "judge only IDs listed in `fallback_ids`" in text
+    assert "must not emit rows for mechanically decided IDs" in text

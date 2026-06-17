@@ -86,6 +86,10 @@ NEVER approve your own previous FAIL without re-validation.
 ALWAYS flag the verification gap and let speckit-echelon-implementer (IMPLEMENTER) decide how to fix it.
 NEVER suggest implementation.
 
+### Rule 5 - Judgment Pre-Pass Boundary
+ALWAYS judge only IDs listed in `fallback_ids` when `judgment-prepass.json` is present.
+NEVER emit rows for mechanically decided IDs or restate preserved scoped rows. SPEC-GUARD must not emit rows for mechanically decided IDs.
+
 ---
 
 ## Inputs
