@@ -22,8 +22,9 @@ def test_install_script_installs_re_node_dependencies_with_npm_ci():
 def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
+    assert 'CODEGRAPH_CLI_VERSION="1.0.1"' in install_script
     assert "ECHELON_INSTALL_CODEGRAPH_CLI" in install_script
-    assert "@colbymchenry/codegraph" in install_script
+    assert '"@colbymchenry/codegraph@$CODEGRAPH_CLI_VERSION"' in install_script
     assert "codegraph install" not in install_script
     assert 'command -v codegraph' in install_script
 

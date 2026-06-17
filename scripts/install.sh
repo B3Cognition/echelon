@@ -5,6 +5,7 @@ set -e
 
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOAR_VERSION="9.6.4"
+CODEGRAPH_CLI_VERSION="1.0.1"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
@@ -147,11 +148,24 @@ fi
 echo "▶ Checking upstream CodeGraph CLI..."
 if command -v codegraph &>/dev/null; then
   CODEGRAPH_CLI_VER="$(codegraph version 2>/dev/null || codegraph --version 2>/dev/null || echo "installed")"
-  echo "  ✓ CodeGraph CLI found ($CODEGRAPH_CLI_VER)"
+  if [ "$CODEGRAPH_CLI_VER" = "$CODEGRAPH_CLI_VERSION" ]; then
+    echo "  ✓ CodeGraph CLI found ($CODEGRAPH_CLI_VER)"
+  elif [ "${ECHELON_INSTALL_CODEGRAPH_CLI:-0}" = "1" ]; then
+    if command -v npm &>/dev/null; then
+      npm install -g "@colbymchenry/codegraph@$CODEGRAPH_CLI_VERSION" --silent
+      echo "  ✓ CodeGraph CLI updated to $CODEGRAPH_CLI_VERSION"
+    else
+      echo "  ⚠ CodeGraph CLI is $CODEGRAPH_CLI_VER; pinned version is $CODEGRAPH_CLI_VERSION."
+      echo "    npm not found; cannot update CodeGraph CLI."
+    fi
+  else
+    echo "  ⚠ CodeGraph CLI is $CODEGRAPH_CLI_VER; pinned version is $CODEGRAPH_CLI_VERSION."
+    echo "    Update with: ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh"
+  fi
 elif [ "${ECHELON_INSTALL_CODEGRAPH_CLI:-0}" = "1" ]; then
   if command -v npm &>/dev/null; then
-    npm install -g @colbymchenry/codegraph --silent
-    echo "  ✓ CodeGraph CLI installed"
+    npm install -g "@colbymchenry/codegraph@$CODEGRAPH_CLI_VERSION" --silent
+    echo "  ✓ CodeGraph CLI installed ($CODEGRAPH_CLI_VERSION)"
   else
     echo "  ⚠ npm not found; cannot install CodeGraph CLI."
   fi
