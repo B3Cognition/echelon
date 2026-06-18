@@ -109,6 +109,8 @@ echelon land 001                           # lands the target repo branch, then 
 echelon review 001 pr_url=https://github.com/org/repo/pull/42
 ```
 
+Echelon models every project as a workspace with zero or more source roots. See [`docs/workspace-model.md`](docs/workspace-model.md) for single-repo, polyrepo, and lightweight workspace Git setup.
+
 Set `ECHELON_LLM` to switch AI provider for any command above — see [AI Provider Support](#ai-provider-support) below.
 
 Echelon has separate Phase A spec-authoring choices and Phase B build-strategy

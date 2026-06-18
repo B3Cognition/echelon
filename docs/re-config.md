@@ -33,6 +33,8 @@ All brownfield extraction (re-* commands) configuration lives under the `re:` to
 - `re.polyrepo.discovery` — `flat` (scan immediate subdirs, default)
 - `re.polyrepo.exclude` / `include` — repo name filters
 
+`re.polyrepo.*` controls source-root discovery inside the workspace. It does not decide whether the workspace root itself is implementation code; that comes from the workspace manifest. New reverse-engineering tooling should prefer `workspace-manifest.json` and use `repos-manifest.json` only as a compatibility fallback.
+
 ## Layer-2 overrides (GOLDDIGGER)
 
 When echelon's GOLDDIGGER agent runs brownfield extraction, it writes a temporary layer-2 override to `.specify/extensions/echelon/local-config.yml` under the `re:` key. This file is automatically removed after extraction completes. Do not manually create or modify this file during a GOLDDIGGER run.

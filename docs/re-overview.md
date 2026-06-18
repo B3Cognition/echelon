@@ -119,6 +119,6 @@ All brownfield configuration lives under the `re:` top-level key in `echelon-con
 
 When run from a directory containing multiple repositories as immediate subdirectories, `re-analyze` (and `re-extract`) automatically run `discover-repos.sh` to detect qualifying repos. A directory qualifies if it has a recognized project marker (`package.json`, `go.mod`, `pom.xml`, `Cargo.toml`, `*.sln`, etc.) or more than 5 source files.
 
-The discovery result is written to the resolved RE output directory as `repos-manifest.json`. Each repo is then analyzed independently and cross-repo dependency data is captured in `cross-repo.json`. Coverage thresholds are evaluated as a combined total across all repos.
+The discovery result is written to the resolved RE output directory as `workspace-manifest.json` and, for compatibility, `repos-manifest.json`. New tooling should read `workspace-manifest.json` first because it distinguishes orchestration workspace files from implementation source roots. Each source root is then analyzed independently and cross-repo dependency data is captured in `cross-repo.json`. Coverage thresholds are evaluated as a combined total across all source roots.
 
 Set `re.polyrepo.enabled: false` in `echelon-config.yml` to force single-repo mode, or `true` to force polyrepo mode unconditionally. The default `auto` detects based on directory contents.
