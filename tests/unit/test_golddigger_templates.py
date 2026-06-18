@@ -11,3 +11,9 @@ class TestGolddiggerTemplates:
 
         assert "agent: speckit-echelon-golddigger (GOLDDIGGER)" in text
         assert "agent: EXTRACT" not in text
+
+    def test_golddigger_derives_polyrepo_mode_from_manifest_count(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert '.mode // (if (.repo_count // 0) > 1 then "polyrepo" else "single" end)' in text
+        assert "jq -r '.mode' \"$MANIFEST\"" not in text

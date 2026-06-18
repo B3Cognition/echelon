@@ -54,6 +54,7 @@ count_source_files() {
 ROOT_DIR="$(pwd)"
 REPOS_JSON="[]"
 ROOT_IS_REPO=false
+ROOT_HAS_NON_GIT_MARKER=false
 
 # Helper to check if a directory has repo markers
 check_markers() {
@@ -61,7 +62,7 @@ check_markers() {
     local found_markers=()
     local found_git=false
 
-    if [[ -d "$dir/.git" ]]; then
+    if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then
         found_git=true
         found_markers+=(".git")
     fi
@@ -84,14 +85,37 @@ if check_markers "$ROOT_DIR"; then
     ROOT_IS_REPO=true
 fi
 
-# Scan entries: if root is a repo, only process root; otherwise scan children
-if [[ "$ROOT_IS_REPO" == "true" ]]; then
+for marker in $EXACT_MARKERS; do
+    if [[ -f "$ROOT_DIR/$marker" ]]; then
+        ROOT_HAS_NON_GIT_MARKER=true
+    fi
+done
+for pattern in "*.sln" "*.dpr"; do
+    for f in "$ROOT_DIR"/$pattern; do
+        [[ -f "$f" ]] && ROOT_HAS_NON_GIT_MARKER=true
+    done
+done
+
+CHILD_ENTRIES=()
+for child in "$ROOT_DIR"/*/; do
+    [[ -d "$child" ]] || continue
+    dir_name=$(basename "$child")
+    is_skipped "$dir_name" && continue
+    if check_markers "${child%/}"; then
+        CHILD_ENTRIES+=("$child")
+    fi
+done
+
+# Scan entries: a wrapper with only .git at root and child project repos is a polyrepo.
+# A root with its own project markers remains single-repo unless explicitly analyzed as children.
+if [[ "$ROOT_IS_REPO" == "true" && "$ROOT_HAS_NON_GIT_MARKER" == "true" ]]; then
+    SCAN_ENTRIES=("$ROOT_DIR")
+elif [[ ${#CHILD_ENTRIES[@]} -gt 0 ]]; then
+    SCAN_ENTRIES=("${CHILD_ENTRIES[@]}")
+elif [[ "$ROOT_IS_REPO" == "true" ]]; then
     SCAN_ENTRIES=("$ROOT_DIR")
 else
     SCAN_ENTRIES=()
-    for child in "$ROOT_DIR"/*/; do
-        [[ -d "$child" ]] && SCAN_ENTRIES+=("$child")
-    done
 fi
 
 for entry in "${SCAN_ENTRIES[@]}"; do
@@ -108,7 +132,7 @@ for entry in "${SCAN_ENTRIES[@]}"; do
     has_git=false
 
     # Check for .git
-    if [[ -d "$entry/.git" ]]; then
+    if [[ -d "$entry/.git" || -f "$entry/.git" ]]; then
         has_git=true
         markers+=(".git")
     fi
@@ -216,17 +240,23 @@ PY
 done
 
 # ---------- build output ----------
-# Note: mode is derived from repo_count (>1 = polyrepo), not stored explicitly
+# Mode is stored explicitly and also derivable from repo_count (>1 = polyrepo).
 
 REPO_COUNT=$(echo "$REPOS_JSON" | jq 'length')
+if [[ "$REPO_COUNT" -gt 1 ]]; then
+    MODE="polyrepo"
+else
+    MODE="single"
+fi
 DISCOVERED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 OUTPUT_JSON=$(jq -n \
     --arg discovered_at "$DISCOVERED_AT" \
     --arg root "$ROOT_DIR" \
+    --arg mode "$MODE" \
     --argjson repo_count "$REPO_COUNT" \
     --argjson repos "$REPOS_JSON" \
-    '{discovered_at: $discovered_at, root: $root, repo_count: $repo_count, repos: $repos}')
+    '{discovered_at: $discovered_at, root: $root, mode: $mode, repo_count: $repo_count, repos: $repos}')
 
 # ---------- write ----------
 

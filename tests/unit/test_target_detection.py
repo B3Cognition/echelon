@@ -9,6 +9,11 @@ def _git_marker(path: Path) -> None:
     (path / ".git").mkdir(parents=True)
 
 
+def _git_file_marker(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / ".git").write_text("gitdir: ../.git/modules/repo\n", encoding="utf-8")
+
+
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -62,6 +67,30 @@ def test_detect_target_blocks_on_tie(tmp_path: Path) -> None:
     assert result.recommended_target is None
     assert result.decision == "ambiguous"
     assert result.confidence < 0.80
+
+
+@pytest.mark.unit
+def test_detect_target_treats_git_file_children_as_polyrepo_repos(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    _git_marker(root)
+    spec_dir = root / "specs" / "001-web-fix"
+    spec_dir.mkdir(parents=True)
+    _write(spec_dir / "tasks.md", "Fix `src/app/page.tsx`\n")
+
+    target = root / "web-app"
+    _git_file_marker(target)
+    _write(target / "src/app/page.tsx", "export default function Page() {}\n")
+
+    other = root / "api"
+    _git_file_marker(other)
+    _write(other / "README.md", "# api\n")
+
+    result = detect_target(spec_dir=spec_dir, polyrepo_root=root)
+
+    assert result.recommended_target == "web-app"
+    assert result.decision == "recommend"
 
 
 @pytest.mark.unit

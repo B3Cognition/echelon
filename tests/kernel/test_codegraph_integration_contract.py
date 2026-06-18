@@ -86,6 +86,17 @@ def test_run_analysis_writes_compact_codegraph_summary():
     assert "codegraph-summary.json" in run_analysis
 
 
+def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
+    run_analysis = (
+        EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
+    ).read_text()
+
+    assert '"$REPO_OUTPUT/codegraph-analysis.json"' in run_analysis
+    assert '"$REPO_OUTPUT/codegraph-summary.json"' in run_analysis
+    assert "write_polyrepo_codegraph_summary()" in run_analysis
+    assert '"mode": "polyrepo"' in run_analysis
+
+
 def test_re_preflight_prefers_active_run_output_dir_and_tracks_codegraph_artifacts():
     preflight = (
         EXT_ROOT / "extension" / "workflow" / "phases" / "re-extract-0-preflight.md"

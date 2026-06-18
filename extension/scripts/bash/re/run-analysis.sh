@@ -97,12 +97,69 @@ write_codegraph_summary() {
     }' "$analysis_path" > "$summary_path" || true
 }
 
+write_polyrepo_codegraph_summary() {
+    local output_dir="$1"
+    local manifest_path="$2"
+    local summary_path="$output_dir/codegraph-summary.json"
+    local repo_summaries="[]"
+    local repo_count
+    local repo_name
+    local repo_summary
+    local index_state
+    local symbols
+
+    repo_count=$(jq '.repos | length' "$manifest_path" 2>/dev/null || echo 0)
+    for (( i=0; i<repo_count; i++ )); do
+        repo_name=$(jq -r ".repos[$i].name" "$manifest_path")
+        repo_summary="$output_dir/$repo_name/codegraph-summary.json"
+        if [[ -f "$repo_summary" ]]; then
+            index_state=$(jq -r '.index_state // "unknown"' "$repo_summary" 2>/dev/null || echo "unknown")
+            symbols=$(jq -r '.index_stats.total_symbols // .index_stats.symbol_count // 0' "$repo_summary" 2>/dev/null || echo 0)
+            repo_summaries=$(echo "$repo_summaries" | jq \
+                --arg name "$repo_name" \
+                --arg path "$repo_name/codegraph-summary.json" \
+                --arg state "$index_state" \
+                --argjson symbols "$symbols" \
+                '. + [{repo: $name, summary_path: $path, index_state: $state, symbols: $symbols}]')
+        fi
+    done
+
+    if [[ "$(echo "$repo_summaries" | jq 'length')" -eq 0 ]]; then
+        return 0
+    fi
+
+    jq -n \
+        --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --argjson repo_count "$repo_count" \
+        --argjson repos "$repo_summaries" \
+        '{
+            "mode": "polyrepo",
+            "generated_at": $generated_at,
+            "index_state": "polyrepo",
+            "repo_count": $repo_count,
+            "repos": $repos
+        }' > "$summary_path"
+}
+
 # ---------- Manifest-driven mode (1 or more repos in subdirectories) ----------
 
 if [[ "$USE_MANIFEST" == "true" ]]; then
     echo "Running reverse engineering analysis ($REPO_COUNT repo(s))..." >&2
     echo "Output directory: $OUTPUT_DIR" >&2
     echo "" >&2
+
+    RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
+    BRIDGE_SCRIPT="$RE_NODE_DIR/codegraph-bridge.js"
+    NODE_MODULES_DIR="$RE_NODE_DIR/node_modules"
+    CODEGRAPH_AVAILABLE=false
+    if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
+        if [[ ! -d "$NODE_MODULES_DIR" ]]; then
+            echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
+            echo "   Run: npm ci --prefix \"$RE_NODE_DIR\"" >&2
+        else
+            CODEGRAPH_AVAILABLE=true
+        fi
+    fi
 
     for (( i=0; i<REPO_COUNT; i++ )); do
         REPO_NAME=$(jq -r ".repos[$i].name" "$MANIFEST_PATH")
@@ -194,6 +251,12 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
                 configs: $configs[0]
             }' > "$REPO_OUTPUT/analysis.json"
 
+        if [[ "$CODEGRAPH_AVAILABLE" == "true" ]]; then
+            echo "  Running structural analysis (CodeGraph) for $REPO_NAME..." >&2
+            (cd "$REPO_PATH" && run_codegraph_bridge "$BRIDGE_SCRIPT" "$REPO_OUTPUT/codegraph-analysis.json") 2>>"$REPO_LOG" || true
+            write_codegraph_summary "$REPO_OUTPUT/codegraph-analysis.json" "$REPO_OUTPUT/codegraph-summary.json"
+        fi
+
         echo "" >&2
     done
 
@@ -254,21 +317,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             }' > "$OUTPUT_DIR/analysis.json"
     fi
 
-    # Structural Code Intelligence (conditional — fail-open, non-blocking)
-    # Runs once at root level covering all repos via aggregate analysis
-    RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
-    BRIDGE_SCRIPT="$RE_NODE_DIR/codegraph-bridge.js"
-    NODE_MODULES_DIR="$RE_NODE_DIR/node_modules"
-    if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
-        if [[ ! -d "$NODE_MODULES_DIR" ]]; then
-            echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-            echo "   Run: npm ci --prefix \"$RE_NODE_DIR\"" >&2
-        else
-            echo "Running structural analysis (CodeGraph)..." >&2
-            run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
-            write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
-        fi
-    fi
+    write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH"
 
     echo "Analysis complete! ($REPO_COUNT repo(s))" >&2
     echo "Per-repo outputs in: $OUTPUT_DIR/{repo-name}/" >&2
