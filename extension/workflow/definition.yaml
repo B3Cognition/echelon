@@ -416,7 +416,16 @@ phases:
     outputs:
       - spec.md
       - 00-overview.md
+      - lexicon_pass → state.json        # only when lexicon_gate.enabled; drives the re-dispatch below
     transitions:
+      # Lexicon gate (INERT unless lexicon_gate.enabled in echelon-config.yml).
+      # CARTOGRAPHER runs the in-dispatch repair loop (the "fix"); this is the
+      # COMMANDER-level re-dispatch on the controlled validator outcome (the
+      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # is disabled this condition is false and flow falls through unchanged.
+      - to: phase1-what
+        condition: "lexicon_gate.enabled AND NOT lexicon_pass AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase1-why2
         condition: always
 

@@ -195,4 +195,44 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 [ -f "${spec_dir}/glossary.md" ]    || echo "WARN: staging artifacts may not have been moved to spec_dir"
 ```
 
+### 4.4 Lexicon Gate (when `lexicon_gate.enabled` in echelon-config.yml)
+
+This subsection is INERT when `lexicon_gate.enabled` is false (the default) — the standard
+flow above is unchanged. When it is true, the deterministic controlled-grammar gate applies.
+
+**Dispatch additions.** Include in the CARTOGRAPHER prompt:
+- `lexicon_gate.enabled: true`, plus `artifact_type`, `glossary_file`, and `max_repair_attempts`
+  from `echelon-config.yml`.
+- The controlled glossary (`{glossary_file}`, already in the context pack as `glossary.md`).
+- Instruction: "Author in Lexicon Gate Mode — see `cartographer.md §Lexicon Gate Mode`. Emit
+  the spec in the Lexicon grammar, self-validate and repair with `lexicon validate`, and return
+  `lexicon_pass`."
+
+CARTOGRAPHER owns the in-dispatch repair loop (the "fix"). COMMANDER owns the re-dispatch
+decision on the controlled outcome (the "re-dispatch"). COMMANDER does NOT run `lexicon` itself.
+
+**Controlled-outcome routing.** After the dispatch, read `state.json.lexicon_pass`:
+- `lexicon_pass == true` → proceed to `phase1-why2` (soft `understanding`/SAGE scoring runs there,
+  once, on a structurally-clean spec).
+- `lexicon_pass == false AND iteration < max_iterations` → re-dispatch `phase1-what`
+  (`increment_iteration`). This is the only condition that re-dispatches CARTOGRAPHER on the
+  Lexicon outcome — see the transitions in `workflow/definition.yaml`.
+- `iteration >= max_iterations` → honor `lexicon_gate.on_exhausted`:
+  `warn` → proceed to `phase1-why2` with a `lexicon_gate_exhausted` warning journal entry;
+  `block` → set `spec_status: blocked`, `blocked_reason: "lexicon gate not satisfied"`, and stop.
+
+**State updates (added to the §4.3 block when the gate is enabled):**
+
+```yaml
+echelon_result:
+  state_updates:
+    lexicon_pass: true        # authoritative validator verdict for this pass
+    lexicon_attempts: <int>
+    lexicon_findings: <int>
+```
+
+> Ordering invariant: Lexicon is the FIRST, hard, deterministic gate; `understanding`/SAGE
+> (phase1-why2) is the soft score that runs only AFTER `lexicon_pass`. Never let the soft score
+> gate structure — that is the "score-quality-later" anti-pattern this gate replaces.
+
 **Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`

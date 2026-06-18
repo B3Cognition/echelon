@@ -26,6 +26,8 @@ dependencies = [
   "graphviz>=0.20.0",
   "transformers>=4.30.0",
   "torch>=2.0.0",
+  # lexicon
+  "lark>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -40,6 +42,7 @@ dev = [
 echelon       = "echelon.cli:main"
 codegen       = "codegen.cli.codegen_cli:main"
 understanding = "understanding.cli:main"
+lexicon       = "lexicon.cli:main"
 hormone-calc  = "hormone_calc.cli:main"
 
 [tool.setuptools.packages.find]
@@ -47,6 +50,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "codegen" = ["soar/*.soar", "library/packs/**/*.yaml"]
+"lexicon" = ["*.lark"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

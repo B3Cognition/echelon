@@ -1,0 +1,72 @@
+// Lexicon controlled specification grammar (template level).
+//
+// Faithful to the "Deterministic Grammar Driven Authoring" templates:
+//   ARTIFACT: SPEC | STORY | ARTICLE
+//   TITLE: <text>
+//   then one or more colon-keyword blocks.
+//
+// The grammar enforces STRUCTURE only (which labelled lines appear, in which
+// order, per block). Semantic gates — single uppercase modal (D), banned
+// words, term resolution (T), observability (O) — are enforced by the
+// linter/resolver/determinism modules, not here. That mirrors the design:
+// P(A) is parse-pass; D/T/O/E are equation gates.
+//
+// Clause values carry named rules (given/when/main_clause/...) so the gate
+// modules can walk the parse tree instead of re-scanning text. Each block's
+// THEN line has a distinct rule because its obligations differ:
+//   main_clause (REQ)  — normative, must carry exactly one modal (D gate)
+//   then_obs   (AC)    — an observable outcome, no modal
+//   recover    (ERROR) — a recovery/reject action, no modal
+//   then_rule  (RULE)  — a consequence, no modal
+//
+// Parsed with the LALR contextual lexer so a value line (TEXT) never swallows
+// the next keyword: at each point only the expected terminals are considered.
+
+start: header block+
+
+header: "ARTIFACT:" TYPE _NL "TITLE:" TEXT _NL
+
+block: req
+     | ac
+     | error_block
+     | rule
+     | input_block
+     | claim
+     | evidence
+     | limit
+     | placeholder
+
+req: "REQ:" ID _NL given when main_clause output? constraint?
+ac: "AC:" ID _NL given when then_obs constraint?
+error_block: "ERROR:" ID _NL when recover error_code
+rule: "RULE:" ID _NL if_clause then_rule else_clause? except_clause?
+input_block: "INPUT:" TEXT _NL "TYPE:" TEXT _NL "REQUIRED:" TEXT _NL "SOURCE:" TEXT _NL "VALID_WHEN:" TEXT _NL example?
+
+claim: "CLAIM:" ID _NL TEXT _NL
+evidence: "EVIDENCE:" ID _NL TEXT _NL
+limit: "LIMIT:" ID _NL TEXT _NL
+
+placeholder: "TBR:" ID _NL "OWNER:" TEXT _NL "RESOLVE_BY:" TEXT _NL "IMPACT:" TEXT _NL
+
+given: "GIVEN:" TEXT _NL
+when: "WHEN:" TEXT _NL
+main_clause: "THEN:" TEXT _NL
+then_obs: "THEN:" TEXT _NL
+recover: "THEN:" TEXT _NL
+then_rule: "THEN:" TEXT _NL
+if_clause: "IF:" TEXT _NL
+else_clause: "ELSE:" TEXT _NL
+except_clause: "EXCEPT:" TEXT _NL
+output: "OUTPUT:" TEXT _NL
+constraint: "CONSTRAINT:" TEXT _NL
+error_code: "ERROR_CODE:" TEXT _NL
+example: "EXAMPLE:" TEXT _NL
+
+TYPE: "SPEC" | "STORY" | "ARTICLE"
+ID: /[A-Za-z][A-Za-z0-9_-]*/
+TEXT: /[^\n]+/
+
+_NL: /(\r?\n[ \t]*)+/
+
+%import common.WS_INLINE
+%ignore WS_INLINE

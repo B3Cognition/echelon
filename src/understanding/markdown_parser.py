@@ -16,7 +16,7 @@ Four-phase extraction:
 """
 
 import re
-from typing import List
+from typing import List, Tuple
 
 # Optional spaCy import — gracefully degrade if not installed
 try:
@@ -42,6 +42,86 @@ def _preprocess(text: str) -> str:
     text = _CODE_BLOCK_RE.sub("", text)
     text = _HTML_COMMENT_RE.sub("", text)
     return text
+
+
+# ---------- Phase 0: Lexicon controlled grammar ----------
+#
+# When spec.md is authored in the Lexicon controlled grammar (ARTIFACT: SPEC
+# header + REQ:/GIVEN:/WHEN:/THEN: blocks) there are NO `- **FR-001**:` bullets,
+# so the bullet/structured-ID strategies below either find nothing or wrongly
+# grab the `REQ: FR-001` id line. This strategy extracts the real normative
+# prose — the THEN main clause of each REQ block — so the 34 metrics score the
+# requirement statement, not an id line.
+
+_LEXICON_HEADER_RE = re.compile(r"^\s*ARTIFACT:\s*(?:SPEC|STORY|ARTICLE)\b", re.MULTILINE)
+_LEXICON_REQ_LINE_RE = re.compile(r"^\s*REQ:\s*\S")
+_LEXICON_REQ_ID_RE = re.compile(r"^\s*REQ:\s*(\S+)\s*$")
+_LEXICON_GIVEN_RE = re.compile(r"^\s*GIVEN:\s*(.+\S)\s*$")
+_LEXICON_WHEN_RE = re.compile(r"^\s*WHEN:\s*(.+\S)\s*$")
+_LEXICON_THEN_RE = re.compile(r"^\s*THEN:\s*(.+\S)\s*$")
+_LEXICON_OUTPUT_RE = re.compile(r"^\s*OUTPUT:\s*(.+\S)\s*$")
+_LEXICON_CONSTRAINT_RE = re.compile(r"^\s*CONSTRAINT:\s*(.+\S)\s*$")
+
+
+def is_lexicon_spec(text: str) -> bool:
+    """True if the text is authored in the Lexicon controlled grammar."""
+    if _LEXICON_HEADER_RE.search(text):
+        return True
+    return any(_LEXICON_REQ_LINE_RE.match(line) for line in text.splitlines())
+
+
+def extract_lexicon_requirements(
+    text: str, fold_output_constraint: bool = True
+) -> List[Tuple[str, str]]:
+    """Return (req_id, requirement_text) for every REQ block in a Lexicon spec.
+
+    The THEN main clause (actor + modal + action + object) is the atomic
+    requirement statement. With ``fold_output_constraint=True`` (default) the
+    full requirement context is reconstructed as an EARS-style sentence — GIVEN
+    (guard) + WHEN (trigger) + THEN (action) + OUTPUT (outcome) + CONSTRAINT
+    (threshold) — so semantic (trigger/outcome), behavioral (guard→action→
+    outcome), and testability (constraint) metrics see every part. With
+    ``fold_output_constraint=False`` the THEN clause is returned alone — correct
+    for atomicity/structure metrics, which would read the folded form as
+    multiple statements.
+    AC / ERROR / RULE blocks are not normative requirements and are skipped."""
+    out: List[Tuple[str, str]] = []
+    for block in re.split(r"\n\s*\n", text):
+        lines = block.strip().splitlines()
+        if not lines:
+            continue
+        m_id = _LEXICON_REQ_ID_RE.match(lines[0])
+        if not m_id:  # only blocks that open with `REQ:` are normative requirements
+            continue
+        given = when = then = output = constraint = None
+        for line in lines[1:]:
+            if given is None and _LEXICON_GIVEN_RE.match(line):
+                given = _LEXICON_GIVEN_RE.match(line).group(1).strip()
+            elif when is None and _LEXICON_WHEN_RE.match(line):
+                when = _LEXICON_WHEN_RE.match(line).group(1).strip()
+            elif then is None and _LEXICON_THEN_RE.match(line):
+                then = _LEXICON_THEN_RE.match(line).group(1).strip()
+            elif output is None and _LEXICON_OUTPUT_RE.match(line):
+                output = _LEXICON_OUTPUT_RE.match(line).group(1).strip()
+            elif constraint is None and _LEXICON_CONSTRAINT_RE.match(line):
+                constraint = _LEXICON_CONSTRAINT_RE.match(line).group(1).strip()
+        if then is None:
+            continue
+        if fold_output_constraint:
+            head = []
+            if given:
+                head.append(f"Given {given.rstrip('.')}")
+            if when:
+                head.append(f"when {when.rstrip('.')}")
+            head.append(then.rstrip("."))
+            req_text = ", ".join(head) + "."
+            for extra in (output, constraint):
+                if extra:
+                    req_text += " " + extra.rstrip(".") + "."
+        else:
+            req_text = then
+        out.append((m_id.group(1), req_text))
+    return out
 
 
 # ---------- Phase 1: Structured IDs ----------
@@ -130,19 +210,26 @@ def extract_requirements(text: str) -> List[str]:
     """
     cleaned = _preprocess(text)
 
-    requirements: List[str] = []
+    # Phase 0 — Lexicon controlled grammar (highest priority, exclusive).
+    # If this is a Lexicon spec, the bullet/ID/Gherkin strategies would only
+    # produce id-line noise, so use the THEN-clause extraction alone.
+    if is_lexicon_spec(cleaned):
+        return _deduplicate_filter(
+            [then for _id, then in extract_lexicon_requirements(cleaned)]
+        )
 
-    # Phase 1 — structured IDs (highest priority)
-    requirements.extend(_extract_structured_ids(cleaned))
+    # Strategies in PRIORITY ORDER — use the first that yields results, do NOT
+    # union them. A "- **FR-001**: ..." line matches both the structured-ID and
+    # bullet strategies, and unrelated bullets/GWT lines inflate the count, so
+    # summing over-counts a spec's requirements several-fold.
+    for strategy in (
+        _extract_structured_ids,  # Phase 1 — canonical FR/REQ/NFR requirements
+        _extract_bullets,         # Phase 2 — markdown bullets
+        _extract_gherkin,         # Phase 3 — Given/When/Then
+        _extract_prose,           # Phase 4 — prose fallback
+    ):
+        found = _deduplicate_filter(strategy(cleaned))
+        if found:
+            return found
 
-    # Phase 2 — markdown bullets
-    requirements.extend(_extract_bullets(cleaned))
-
-    # Phase 3 — Gherkin
-    requirements.extend(_extract_gherkin(cleaned))
-
-    # Phase 4 — prose fallback (only if earlier phases found nothing)
-    if not requirements:
-        requirements.extend(_extract_prose(cleaned))
-
-    return _deduplicate_filter(requirements)
+    return []

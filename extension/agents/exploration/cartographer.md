@@ -68,6 +68,116 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 
 **Always write requirements as bullets. NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
 
+## Lexicon Gate Mode (when `lexicon_gate.enabled`)
+
+**Activation — read the flag yourself, deterministically.** Do NOT wait for the flag to be
+injected into your prompt. Before authoring, read it directly from the canonical project
+config (the same path the `echelon` CLI uses). Run:
+
+```bash
+python3 -c "import yaml; c=yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}; g=(c.get('lexicon_gate') or {}); print('LEXICON_GATE=on' if g.get('enabled') else 'LEXICON_GATE=off'); print('artifact_type='+str(g.get('artifact_type','spec'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
+```
+
+If the output is `LEXICON_GATE=off` (or the file/key is absent), this entire section is INERT —
+author the standard bullet-format spec per "Spec Format Invariants" above. Only when it reads
+`LEXICON_GATE=on` do you enter Lexicon mode using the `artifact_type` / `glossary_file` /
+`max_repair_attempts` values printed above.
+
+ALWAYS resolve the gate flag by reading `.specify/extensions/echelon/echelon-config.yml` yourself.
+NEVER assume the gate is off just because the flag was not handed to you in the prompt.
+
+When the flag IS true, you author the spec in the **Lexicon controlled grammar** instead
+of bullet requirements, and you VALIDATE AND REPAIR it yourself with the deterministic
+`lexicon` validator before returning. The `lexicon_pass` outcome you emit is the controlled
+signal COMMANDER uses to decide whether to re-dispatch you (see `phase1-what.md §4.4`).
+
+### Output format (Lexicon grammar)
+
+Author `spec.md` as an `ARTIFACT: SPEC` document of colon-keyword blocks — NOT `- **FR-001**:`
+bullets. Each normative requirement is a `REQ` block; acceptance criteria are `AC` blocks;
+error paths are `ERROR` blocks:
+
+```
+ARTIFACT: SPEC
+TITLE: <real title>
+
+REQ: <ID>
+GIVEN: <initial state>
+WHEN: <trigger>
+THEN: <subject> MUST <action> <object>      # EXACTLY ONE uppercase modal: MUST / MUST NOT / SHALL / SHOULD / MAY
+OUTPUT: <observable result>                  # REQUIRED on every REQ
+CONSTRAINT: <metric comparator value unit>   # optional
+
+AC: <ID>
+GIVEN: <state>
+WHEN: <action>
+THEN: <observable outcome>                    # NO modal
+
+ERROR: <ID>
+WHEN: <invalid condition>
+THEN: <reject/recover action>
+ERROR_CODE: <CODE>
+```
+
+Every multi-word domain identifier (snake_case or CamelCase) MUST come from the controlled
+glossary. Plain English words are fine. Banned vague words (easy, simple, intuitive, robust,
+seamless, efficient, optimized, appropriate, various, some, fast, slow, user-friendly,
+high-quality, as needed) are forbidden — replace with a measurable CONSTRAINT.
+
+### Self-Validation Repair Loop (the "fix")
+
+After writing `spec.md`, run the validator and repair until clean or capped:
+
+```bash
+# Prefer the installed CLI; fall back to the module if not on PATH.
+LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
+$LEXICON validate "{spec_dir}/spec.md" --type {artifact_type} \
+  --glossary "{spec_dir}/{glossary_file}" --json
+```
+
+1. Parse the JSON: `ok` (bool) and `findings[]` (each has `code`, `message`, `line`, `span`).
+2. If `ok` is true → the spec is lexicon-clean. Stop the loop; set `lexicon_pass: true`.
+3. If `ok` is false → apply the LOCALIZED fix for each finding **at its `line`**, leaving every
+   passing block byte-for-byte unchanged (locality — never rewrite the whole spec):
+
+   | `code`            | Localized repair                                                            |
+   |-------------------|-----------------------------------------------------------------------------|
+   | `parse-error`     | fix the block to match the grammar (add/reorder the missing required line)  |
+   | `banned-word`     | replace the flagged word with a measurable CONSTRAINT, or delete it         |
+   | `unresolved-term` | use an approved glossary term, or add the term to the glossary if it is a legitimate governed concept |
+   | `modal`           | rewrite the THEN main clause to carry EXACTLY ONE uppercase modal           |
+   | `incomplete-slot` | replace the `<placeholder>` with real content                               |
+   | `missing-output`  | add an `OUTPUT:` line with the observable result                            |
+   | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
+
+4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
+5. If still not `ok` after the cap → set `lexicon_pass: false` and return; COMMANDER decides
+   (re-dispatch or escalate per `on_exhausted`). Do NOT ship a spec you know is not `ok` while
+   claiming success — the validator's verdict is authoritative, not your own assessment.
+
+### ALWAYS / NEVER (Lexicon mode)
+
+ALWAYS treat the `lexicon validate` verdict as the source of truth for structural validity.
+NEVER report `lexicon_pass: true` without a final validator run that returned `ok: true`.
+
+ALWAYS repair only the spans named in `findings[]`, preserving passing blocks verbatim.
+NEVER regenerate the whole spec in response to a single finding.
+
+ALWAYS bind every domain identifier to a glossary term (or add it to the glossary).
+NEVER invent an ungoverned identifier to satisfy a sentence.
+
+### echelon_result additions (Lexicon mode)
+
+Add these to your `echelon_result` so COMMANDER can route on the controlled outcome:
+
+```yaml
+echelon_result:
+  state_updates:
+    lexicon_pass: true            # final validator ok? (true|false) — authoritative
+    lexicon_attempts: <int>       # repair rounds used
+    lexicon_findings: <int>       # remaining findings (0 when lexicon_pass true)
+```
+
 ## Tool Hygiene
 
 1. **Read before Write.** Always Read a file before writing to it in the current session. `state.json`, `spec.md`, `sage-decisions.yaml`, or any output file — read first or the Write tool will fail.
