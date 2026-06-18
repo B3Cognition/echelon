@@ -88,6 +88,29 @@ def test_cmake_marker_qualifies_child_source_root(tmp_path: Path) -> None:
     assert manifest.sources[0].project_markers == ("CMakeLists.txt",)
 
 
+def test_workspace_model_matches_legacy_discovery_markers(tmp_path: Path) -> None:
+    _git_dir(tmp_path)
+    markers = {
+        "php-lib": "composer.json",
+        "ruby-lib": "Gemfile",
+        "python-setup": "setup.py",
+        "dotnet-solution": "Example.sln",
+        "delphi-project": "Example.dpr",
+    }
+    for dirname, marker in markers.items():
+        source = tmp_path / dirname
+        source.mkdir()
+        (source / marker).write_text("marker\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert [source.path for source in manifest.sources] == sorted(markers)
+    marker_by_source = {
+        source.path: source.project_markers[0] for source in manifest.sources
+    }
+    assert marker_by_source == markers
+
+
 def test_manifest_json_round_trips(tmp_path: Path) -> None:
     _git_dir(tmp_path)
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")

@@ -18,9 +18,14 @@ SOURCE_MARKERS = (
     "build.gradle",
     "build.gradle.kts",
     "CMakeLists.txt",
+    "composer.json",
+    "Gemfile",
+    "setup.py",
     "Package.swift",
     "*.xcodeproj",
     "*.xcworkspace",
+    "*.sln",
+    "*.dpr",
     "nx.json",
     "Makefile",
 )
@@ -124,8 +129,7 @@ def project_markers(path: Path) -> tuple[str, ...]:
     found: list[str] = []
     for marker in SOURCE_MARKERS:
         if "*" in marker:
-            if any(path.glob(marker)):
-                found.append(marker)
+            found.extend(sorted(item.name for item in path.glob(marker) if item.exists()))
         elif (path / marker).exists():
             found.append(marker)
     return tuple(found)
