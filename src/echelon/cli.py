@@ -2299,11 +2299,10 @@ def _cmd_continue(
         f"[squad] Mode:  {mode}",
         flush=True,
     )
-    _cmd_run(
-        ["--next-phase", next_phase, "--mode", mode, user_message],
-        project_root=project_root,
-        ext_dir=ext_dir,
-    )
+    state["phase"] = next_phase
+    state["status"] = "running"
+    (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
+    _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
 
 
 def _cmd_resume(

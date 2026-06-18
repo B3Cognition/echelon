@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from echelon.cli import _next_continue_phase
+from echelon.cli import _cmd_continue, _next_continue_phase
 
 
 def _write_run_state(project_root: Path, state: dict) -> Path:
@@ -83,3 +83,40 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
+
+
+def test_continue_reopens_completed_run_in_same_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "user_message": "build the dashboard",
+            "autonomy_mode": "semi",
+            "completed_phases": ["phase1-constitution"],
+        },
+    )
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase3-how"
+    assert calls == [["build the dashboard", "--mode", "semi"]]
