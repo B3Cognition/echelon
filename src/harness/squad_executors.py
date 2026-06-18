@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -388,16 +389,81 @@ class PhaseExecutor(ABC):
 class AgentExecutor(PhaseExecutor):
     """Handles type: agent phases — the common case."""
 
+    def _canonical_spec_dir(self, state: dict) -> Path | None:
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        if not spec_dir_ref:
+            return None
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        return spec_dir
+
+    def _run_local_shadow_spec_dir(self, spec_dir: Path) -> Path:
+        return self._squad_dir / spec_dir.parent.name / spec_dir.name
+
+    def _claimed_required_phase_outputs(self, node: "PhaseNode", state: dict, result: "SquadAgentResult") -> set[str]:
+        required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if not required:
+            return set()
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return set()
+        payload = result.echelon_result or {}
+        output_files = payload.get("output_files")
+        if not isinstance(output_files, list):
+            return set()
+        claimed: set[Path] = set()
+        for item in output_files:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            candidate = Path(item.strip().rstrip("/"))
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            claimed.add(candidate.resolve())
+
+        matched: set[str] = set()
+        for rel in required:
+            expected = (spec_dir / rel.rstrip("/")).resolve()
+            if expected in claimed:
+                matched.add(rel)
+        return matched
+
+    def _recover_required_phase_outputs_from_shadow(self, node: "PhaseNode", state: dict, result: "SquadAgentResult") -> list[str]:
+        required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if not required:
+            return []
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return []
+        claimed = self._claimed_required_phase_outputs(node, state, result)
+        if not claimed:
+            return []
+        shadow_dir = self._run_local_shadow_spec_dir(spec_dir)
+        if not shadow_dir.exists():
+            return []
+        recovered: list[str] = []
+        for rel in required:
+            if rel not in claimed:
+                continue
+            src = shadow_dir / rel
+            dst = spec_dir / rel
+            if rel == "contracts":
+                if src.is_dir() and not dst.exists():
+                    shutil.copytree(src, dst)
+                    recovered.append(f"{rel}/")
+            elif src.exists() and not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                recovered.append(rel)
+        return recovered
+
     def _required_phase_outputs_missing(self, node: "PhaseNode", state: dict) -> list[str]:
         required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
         if not required:
             return []
-        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
-        if not spec_dir_ref:
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
             return list(required)
-        spec_dir = Path(spec_dir_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
         missing: list[str] = []
         for rel in required:
             path = spec_dir / rel
@@ -421,6 +487,14 @@ class AgentExecutor(PhaseExecutor):
         self._write_journal_entries(result, node.id)
         state_store.increment_cost(result.cost_usd)
         if result.echelon_result is not None:
+            recovered = self._recover_required_phase_outputs_from_shadow(node, state, result)
+            if recovered:
+                updates = (result.echelon_result.setdefault("state_updates", {}))
+                existing = updates.get("shadow_output_recovered")
+                if isinstance(existing, list):
+                    updates["shadow_output_recovered"] = [*existing, *recovered]
+                else:
+                    updates["shadow_output_recovered"] = recovered
             missing_outputs = self._required_phase_outputs_missing(node, state)
             if missing_outputs:
                 result = SquadAgentResult(

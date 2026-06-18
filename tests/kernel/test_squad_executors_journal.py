@@ -806,3 +806,122 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
         "risk-matrix.md",
         "dependencies.md",
     ]
+
+
+def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    shadow_spec_dir = squad_dir / "specs" / "006-element-creator"
+    shadow_spec_dir.mkdir(parents=True)
+    (shadow_spec_dir / "test-strategy.md").write_text("# Test Strategy\n", encoding="utf-8")
+    (shadow_spec_dir / "test-architecture.md").write_text("# Test Architecture\n", encoding="utf-8")
+    (shadow_spec_dir / "coverage-map.md").write_text("# Coverage Map\n", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "sentinel.md").write_text("# Sentinel\nRole-specific instructions.")
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {},
+            "output_files": [
+                "specs/006-element-creator/test-strategy.md",
+                "specs/006-element-creator/test-architecture.md",
+                "specs/006-element-creator/coverage-map.md",
+            ],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/sentinel.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-sentinel")
+    state = store.load()
+    state["spec_dir"] = "specs/006-element-creator"
+    store.save(state)
+
+    node = PhaseNode(
+        id="phase3-sentinel",
+        type="agent",
+        agent="SENTINEL",
+    )
+
+    result = ex.execute(node, store)
+
+    assert result.verdict == "COMPLETE"
+    assert (spec_dir / "test-strategy.md").exists()
+    assert (spec_dir / "test-architecture.md").exists()
+    assert (spec_dir / "coverage-map.md").exists()
+    assert result.state_updates["shadow_output_recovered"] == [
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+    ]
+
+
+def test_phase3_sentinel_does_not_recover_shadow_outputs_without_explicit_output_claims(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    shadow_spec_dir = squad_dir / "specs" / "006-element-creator"
+    shadow_spec_dir.mkdir(parents=True)
+    (shadow_spec_dir / "test-strategy.md").write_text("# Test Strategy\n", encoding="utf-8")
+    (shadow_spec_dir / "test-architecture.md").write_text("# Test Architecture\n", encoding="utf-8")
+    (shadow_spec_dir / "coverage-map.md").write_text("# Coverage Map\n", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "sentinel.md").write_text("# Sentinel\nRole-specific instructions.")
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {},
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/sentinel.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-sentinel")
+    state = store.load()
+    state["spec_dir"] = "specs/006-element-creator"
+    store.save(state)
+
+    node = PhaseNode(
+        id="phase3-sentinel",
+        type="agent",
+        agent="SENTINEL",
+    )
+
+    result = ex.execute(node, store)
+
+    assert result.verdict == "BLOCKED"
+    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
+    assert not (spec_dir / "test-strategy.md").exists()
