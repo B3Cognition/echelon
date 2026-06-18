@@ -683,10 +683,8 @@ def _cmd_harness_run(args: list[str]) -> None:
         print("echelon harness run: missing spec_id\n", file=sys.stderr)
         sys.exit(1)
 
-    _workspace_git_preflight(
-        Path.cwd(),
-        command_name=_command_display("echelon harness run", args),
-    )
+    rerun_command = _command_display("echelon harness run", args)
+    _workspace_git_preflight(Path.cwd(), command_name=rerun_command)
 
     spec_id = args[0]
     kv: dict[str, str] = {}
@@ -800,7 +798,7 @@ def _cmd_harness_run(args: list[str]) -> None:
                     )
                 )
                 + f"  Confirm with: echelon spec target {resolved_spec_id} {detection.recommended_target}\n"
-                + f"  Then rerun:  echelon harness run {resolved_spec_id}",
+                + f"  Then rerun:  {rerun_command}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -862,7 +860,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             f"  Error: {e}\n"
             f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
             f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
-            f"  Then rerun:        echelon harness run {spec_id}",
+            f"  Then rerun:        {rerun_command}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -876,7 +874,7 @@ def _cmd_harness_run(args: list[str]) -> None:
                 f"  Error: {e}\n"
                 f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
                 f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
-                f"  Then rerun:        echelon harness run {spec_id}",
+                f"  Then rerun:        {rerun_command}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -909,7 +907,7 @@ def _cmd_harness_run(args: list[str]) -> None:
                 f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
                 f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                f"       echelon harness run {spec_id}",
+                f"       {rerun_command}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -917,7 +915,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             project_root=Path.cwd(),
             spec_id=spec_id,
             strategy=strategy,
-            command="echelon harness run",
+            command=rerun_command,
             exc=exc,
         )
 
@@ -1025,7 +1023,7 @@ def _print_harness_error_and_exit(
         "✗ Harness run failed before completion.\n"
         f"  Error: {exc}\n"
         "  State was marked blocked instead of left running.\n"
-        f"  Next:  {command} {spec_id}",
+        f"  Next:  {command if spec_id in command else f'{command} {spec_id}'}",
         file=sys.stderr,
     )
     sys.exit(1)
