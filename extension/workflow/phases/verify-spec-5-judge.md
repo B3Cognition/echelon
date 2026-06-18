@@ -58,13 +58,15 @@ requirement row set. Judge every canonical ID exactly once. Do not add report
 rows for IDs outside the inventory; record such discoveries separately as
 `unmapped_candidate` notes.
 
-When `verify_scope=scoped` in `state.json`, judge only unresolved IDs listed in
-`scoped_ids` and `fallback_ids`.
-The scoped output may contain rows for those IDs only; Ralph will merge those
-rows over the last full fulfillment report and preserve unaffected rows. Include
-`base_full_verify_commit` in the scoped run summary so the harness can prove
-which full report the scoped judgment extends. Do not summarize a scoped run as
-a replacement for full land-time verification.
+When `verify_scope=scoped` in `state.json`, the scoped report boundary is strict:
+judge only IDs listed in `scoped_ids`. Within that boundary, SPEC-GUARD must
+manually judge only unresolved IDs also listed in `fallback_ids`; mechanically
+decided scoped IDs are carried by Ralph. The scoped output may contain rows for
+`scoped_ids` only; Ralph will merge those rows over the last full fulfillment
+report and preserve unaffected rows. Include `base_full_verify_commit` in the
+scoped run summary so the harness can prove which full report the scoped
+judgment extends. Do not summarize a scoped run as a replacement for full
+land-time verification.
 
 Judge item fulfillment from the implementation evidence map and the requirement's
 acceptance signal. Task progress is bookkeeping integrity evidence only. SPEC-GUARD
