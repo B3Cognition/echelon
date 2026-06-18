@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
+from echelon.workspace_model import SourceRoot, WorkspaceManifest
+
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.80
 
@@ -64,12 +66,64 @@ def _referenced_paths(text: str) -> set[str]:
     return paths
 
 
+def _source_candidate(source: SourceRoot, confidence: float = 1.0) -> TargetCandidate:
+    repo = "." if source.path == "." else source.path
+    evidence = [f"workspace source root `{repo}`"]
+    if source.id != source.path:
+        evidence.append(f"workspace source id `{source.id}`")
+    return TargetCandidate(repo=repo, confidence=confidence, evidence=evidence)
+
+
+def _source_candidates(sources: tuple[SourceRoot, ...]) -> list[TargetCandidate]:
+    return [_source_candidate(source, confidence=0.0) for source in sources]
+
+
+def _matches_explicit_target(source: SourceRoot, explicit_target: str) -> bool:
+    target = explicit_target.strip().strip("/")
+    return target in {source.id, source.path}
+
+
+def _recommend_source(source: SourceRoot, decision: str) -> TargetDetectionResult:
+    recommended_target = "." if source.path == "." else source.id
+    return TargetDetectionResult(
+        recommended_target,
+        1.0,
+        decision,
+        [_source_candidate(source)],
+    )
+
+
 def detect_target(
     *,
     spec_dir: Path,
     polyrepo_root: Path,
     threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+    workspace_manifest: WorkspaceManifest | None = None,
+    explicit_target: str | None = None,
 ) -> TargetDetectionResult:
+    if workspace_manifest is not None:
+        sources = workspace_manifest.sources
+        candidates = _source_candidates(sources)
+
+        if len(sources) == 0:
+            return TargetDetectionResult(None, 0.0, "no_source_roots", [])
+
+        if explicit_target is not None:
+            for source in sources:
+                if _matches_explicit_target(source, explicit_target):
+                    return _recommend_source(source, "recommend")
+            return TargetDetectionResult(None, 0.0, "invalid_target", candidates)
+
+        if len(sources) == 1:
+            return _recommend_source(sources[0], "single_source_root")
+
+        return TargetDetectionResult(
+            None,
+            0.0,
+            "multiple_source_roots_need_target",
+            candidates,
+        )
+
     repos = _candidate_repos(polyrepo_root)
     if len(repos) <= 1:
         return TargetDetectionResult(None, 0.0, "not_polyrepo", [])

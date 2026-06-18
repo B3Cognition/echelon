@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from echelon.target_detection import detect_target
+from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
 
 
 def _git_marker(path: Path) -> None:
@@ -17,6 +18,21 @@ def _git_file_marker(path: Path) -> None:
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def _workspace_manifest(
+    root: Path,
+    sources: tuple[SourceRoot, ...],
+) -> WorkspaceManifest:
+    return WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(
+            root=root.resolve(),
+            git_role="orchestration",
+            git_present=True,
+        ),
+        sources=sources,
+    )
 
 
 @pytest.mark.unit
@@ -105,3 +121,137 @@ def test_detect_target_returns_not_polyrepo_for_single_repo(tmp_path: Path) -> N
 
     assert result.decision == "not_polyrepo"
     assert result.recommended_target is None
+
+
+@pytest.mark.unit
+def test_detect_target_recommends_single_child_workspace_source(
+    tmp_path: Path,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(
+                id="web-app",
+                path="web-app",
+                git_present=True,
+            ),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+    )
+
+    assert result.recommended_target == "web-app"
+    assert result.confidence == 1.0
+    assert result.decision == "single_source_root"
+    assert [candidate.repo for candidate in result.candidates] == ["web-app"]
+
+
+@pytest.mark.unit
+def test_detect_target_blocks_multi_source_workspace_without_explicit_target(
+    tmp_path: Path,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(id="web-app", path="web-app", git_present=True),
+            SourceRoot(id="api", path="services/api", git_present=True),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+    )
+
+    assert result.recommended_target is None
+    assert result.confidence == 0.0
+    assert result.decision == "multiple_source_roots_need_target"
+    assert [candidate.repo for candidate in result.candidates] == [
+        "web-app",
+        "services/api",
+    ]
+
+
+@pytest.mark.unit
+def test_detect_target_recommends_single_repo_dot_workspace_source(
+    tmp_path: Path,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(
+                id=".",
+                path=".",
+                git_present=True,
+            ),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+    )
+
+    assert result.recommended_target == "."
+    assert result.confidence == 1.0
+    assert result.decision == "single_source_root"
+    assert [candidate.repo for candidate in result.candidates] == ["."]
+
+
+@pytest.mark.unit
+def test_detect_target_accepts_explicit_workspace_source_target(
+    tmp_path: Path,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(id="web-app", path="apps/web", git_present=True),
+            SourceRoot(id="api", path="services/api", git_present=True),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+        explicit_target="apps/web",
+    )
+
+    assert result.recommended_target == "web-app"
+    assert result.confidence == 1.0
+    assert result.decision == "recommend"
+    assert [candidate.repo for candidate in result.candidates] == ["apps/web"]
+
+
+@pytest.mark.unit
+def test_detect_target_rejects_invalid_explicit_workspace_source_target(
+    tmp_path: Path,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(id="web-app", path="apps/web", git_present=True),
+            SourceRoot(id="api", path="services/api", git_present=True),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+        explicit_target=".",
+    )
+
+    assert result.recommended_target is None
+    assert result.confidence == 0.0
+    assert result.decision == "invalid_target"
+    assert [candidate.repo for candidate in result.candidates] == [
+        "apps/web",
+        "services/api",
+    ]
