@@ -76,6 +76,18 @@ def test_git_file_counts_as_git_presence_for_worktree_or_submodule(tmp_path: Pat
     assert manifest.sources[0].git_present is True
 
 
+def test_cmake_marker_qualifies_child_source_root(tmp_path: Path) -> None:
+    _git_dir(tmp_path)
+    source = tmp_path / "native-lib"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text("project(native-lib)\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert [source.path for source in manifest.sources] == ["native-lib"]
+    assert manifest.sources[0].project_markers == ("CMakeLists.txt",)
+
+
 def test_manifest_json_round_trips(tmp_path: Path) -> None:
     _git_dir(tmp_path)
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")

@@ -17,6 +17,7 @@ SOURCE_MARKERS = (
     "pom.xml",
     "build.gradle",
     "build.gradle.kts",
+    "CMakeLists.txt",
     "Package.swift",
     "*.xcodeproj",
     "*.xcworkspace",
