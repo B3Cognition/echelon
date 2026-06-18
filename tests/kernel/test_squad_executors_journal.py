@@ -663,6 +663,51 @@ def test_agent_prompt_declares_subagent_and_forbids_skill_tool(tmp_path):
     assert "Do NOT invoke the Skill tool" in prompt
 
 
+def test_agent_prompt_substitutes_spec_dir_placeholders_in_phase_text(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("REAL SPEC", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "sentinel.md").write_text("# Sentinel\nRole-specific instructions.")
+    workflow_dir = ext_dir / "workflow" / "phases"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "phase3-sentinel.md").write_text(
+        "Produce outputs in `{spec_dir}/` and verify `{spec_dir}/test-strategy.md`.",
+        encoding="utf-8",
+    )
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/sentinel.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(
+        id="phase3-sentinel",
+        type="agent",
+        agent="SENTINEL",
+        spec_file="workflow/phases/phase3-sentinel.md",
+        context_pack=["{spec_dir}/spec.md"],
+    )
+    state = {
+        "squad_dir": str(squad_dir),
+        "staging_dir": str(staging_dir),
+        "spec_dir": "specs/006-element-creator",
+    }
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "{spec_dir}" not in prompt
+    assert "specs/006-element-creator/test-strategy.md" in prompt
+
+
 def test_phase3_sentinel_blocks_when_required_outputs_missing(tmp_path):
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"

@@ -120,3 +120,26 @@ def test_continue_reopens_completed_run_in_same_directory(
     assert state["status"] == "running"
     assert state["phase"] == "phase3-how"
     assert calls == [["build the dashboard", "--mode", "semi"]]
+
+
+def test_continue_blocked_non_escalation_run_points_to_rewind(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_phase_outputs",
+            "last_dispatch": {"phase_id": "phase3-sentinel"},
+            "completed_phases": ["phase1-constitution", "phase3-how"],
+        },
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert 'echelon rewind phase3-sentinel' in captured.out
+    assert 'echelon resume "<your answer>"' not in captured.out

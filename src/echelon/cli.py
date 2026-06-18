@@ -1186,6 +1186,15 @@ _REWIND_CLEANUP_OUTPUTS: dict[str, tuple[str, ...]] = {
 }
 
 
+def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
+    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+    last_dispatch = run_state.get("last_dispatch") or {}
+    phase_id = str(last_dispatch.get("phase_id") or "").strip()
+    if blocked_reason == "missing_phase_outputs" and phase_id in _SAFE_REWIND_PHASES:
+        return f"echelon rewind {phase_id}"
+    return None
+
+
 def _rewind_constitution_is_real(project_root: Path) -> bool:
     path = project_root / ".specify" / "memory" / "constitution.md"
     if not path.exists():
@@ -1523,6 +1532,18 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         ]
         _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
         return
+
+    if result_status == "blocked":
+        recovery = _blocked_non_escalation_recovery_command(run_state)
+        if recovery:
+            fields = [
+                ("reason", str(run_state.get("blocked_reason") or "blocked").strip()),
+                ("phase", str((run_state.get("last_dispatch") or {}).get("phase_id") or run_state.get("phase") or "?").strip()),
+                ("next", recovery),
+                ("then", "echelon continue"),
+            ]
+            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
+            return
 
     if quality_gates_file is None and run_state:
         staging_dir = Path(run_state.get("staging_dir") or str(run_dir / "staging"))
@@ -2368,6 +2389,18 @@ def _cmd_continue(
     # would exit immediately from that phase, so we repair state here — advance the
     # phase to the next runnable one — before resuming in the SAME squad dir.
     if cur_phase == "terminal-blocked":
+        recovery = _blocked_non_escalation_recovery_command(state)
+        if status == "blocked" and recovery:
+            _banner(
+                "CHECKPOINT",
+                [
+                    ("blocked by", str(state.get("blocked_reason") or "blocked").strip()),
+                    ("recover with", recovery),
+                    ("then", "echelon continue"),
+                ],
+                subtitle="Run paused. Deterministic recovery required.",
+            )
+            return
         next_phase = _next_continue_phase(project_root)
         if next_phase is None:
             print(
@@ -2397,6 +2430,18 @@ def _cmd_continue(
 
     if status == "blocked":
         q = (state.get("escalation_question") or "").strip()
+        recovery = _blocked_non_escalation_recovery_command(state)
+        if not q and recovery:
+            _banner(
+                "CHECKPOINT",
+                [
+                    ("blocked by", str(state.get("blocked_reason") or "blocked").strip()),
+                    ("recover with", recovery),
+                    ("then", "echelon continue"),
+                ],
+                subtitle="Run paused. Deterministic recovery required.",
+            )
+            return
         _banner(
             "CHECKPOINT",
             [

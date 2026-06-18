@@ -294,6 +294,7 @@ class PhaseExecutor(ABC):
             )
 
         prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)
+        prompt = prompt.replace("{spec_dir}", spec_dir_ref)
 
         # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
