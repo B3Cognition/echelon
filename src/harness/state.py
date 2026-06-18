@@ -262,6 +262,11 @@ class StateStore:
         spec_dir: str | None = None,
         spec_file: str | None = None,
         tasks_file: str | None = None,
+        workspace_root: str | None = None,
+        workspace_git_role: str | None = None,
+        source_root: str | None = None,
+        source_id: str | None = None,
+        source_git_role: str | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -303,6 +308,11 @@ class StateStore:
             "branch_name": None,
             "target_repo": target_repo,
             "target_path": target_path,
+            "workspace_root": workspace_root,
+            "workspace_git_role": workspace_git_role,
+            "source_root": source_root,
+            "source_id": source_id,
+            "source_git_role": source_git_role,
             "spec_dir": spec_dir,
             "spec_file": spec_file,
             "tasks_file": tasks_file,

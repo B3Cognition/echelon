@@ -158,3 +158,69 @@ class TestRunMultiTarget:
         assert captured["env"]["ECHELON_POLYREPO_ROOT"] == str(tmp_path)
         assert captured["env"]["ECHELON_TARGET_REPO_PATH"] == str(target)
         assert captured["env"]["ECHELON_TARGET_REPO_NAME"] == "r"
+        assert captured["env"]["ECHELON_WORKSPACE_ROOT"] == str(tmp_path)
+        assert captured["env"]["ECHELON_SOURCE_ROOT"] == str(target.resolve())
+        assert captured["env"]["ECHELON_SOURCE_ID"] == "r"
+
+    def test_nested_target_metadata_keeps_workspace_root_and_source_id(
+        self, tmp_path: Path
+    ) -> None:
+        workspace = tmp_path / "workspace"
+        target = workspace / "apps" / "web"
+        target.mkdir(parents=True)
+        captured: dict = {}
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            captured["env"] = env
+            captured["cwd"] = cwd
+            m = MagicMock()
+            m.stdout = iter([])
+            m.returncode = 0
+            m.wait.return_value = None
+            return m
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            run_multi_target(
+                "024",
+                [target],
+                [],
+                echelon_bin="echelon",
+                workspace_root=workspace,
+                source_ids={str(target.resolve()): "web-app"},
+            )
+
+        assert captured["cwd"] == str(target)
+        assert captured["env"]["ECHELON_POLYREPO_ROOT"] == str(workspace.resolve())
+        assert captured["env"]["ECHELON_WORKSPACE_ROOT"] == str(workspace.resolve())
+        assert captured["env"]["ECHELON_TARGET_REPO_PATH"] == str(target.resolve())
+        assert captured["env"]["ECHELON_SOURCE_ROOT"] == str(target.resolve())
+        assert captured["env"]["ECHELON_SOURCE_ID"] == "web-app"
+
+    def test_single_repo_dot_metadata_uses_source_workspace_role(
+        self, tmp_path: Path
+    ) -> None:
+        target = tmp_path / "workspace"
+        target.mkdir()
+        captured: dict = {}
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            captured["env"] = env
+            m = MagicMock()
+            m.stdout = iter([])
+            m.returncode = 0
+            m.wait.return_value = None
+            return m
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            run_multi_target(
+                "024",
+                [target],
+                [],
+                echelon_bin="echelon",
+                workspace_root=target,
+                workspace_git_role="source",
+                source_ids={str(target.resolve()): "."},
+            )
+
+        assert captured["env"]["ECHELON_WORKSPACE_GIT_ROLE"] == "source"
+        assert captured["env"]["ECHELON_SOURCE_ID"] == "."

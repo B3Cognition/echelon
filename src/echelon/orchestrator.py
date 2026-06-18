@@ -7,7 +7,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Mapping, Optional
 
 
 _ECHELON_YML_REL = ".specify/extensions/echelon/echelon-config.yml"
@@ -73,6 +73,10 @@ def run_multi_target(
     targets: List[Path],
     extra_args: List[str],
     echelon_bin: Optional[str] = None,
+    workspace_root: Optional[Path] = None,
+    workspace_git_role: Optional[str] = None,
+    source_ids: Optional[Mapping[str, str]] = None,
+    source_git_roles: Optional[Mapping[str, str]] = None,
 ) -> int:
     """Run 'echelon harness run <spec_id> [extra_args]' in each target in parallel.
 
@@ -87,17 +91,34 @@ def run_multi_target(
     """
     if echelon_bin is None:
         echelon_bin = shutil.which("echelon") or sys.argv[0]
+    resolved_workspace_root = workspace_root.resolve() if workspace_root else None
+    source_ids = source_ids or {}
+    source_git_roles = source_git_roles or {}
 
     results: dict[str, int] = {}
     lock = threading.Lock()
 
     def _run_one(target: Path) -> None:
         name = target.name
+        target_resolved = target.resolve()
+        target_key = str(target_resolved)
+        target_workspace_root = resolved_workspace_root or target_resolved.parent
+        source_id = source_ids.get(target_key, name)
+        target_workspace_git_role = (
+            workspace_git_role
+            or ("source" if target_workspace_root == target_resolved and source_id == "." else "orchestration")
+        )
+        source_git_role = source_git_roles.get(target_key, "source")
         cmd = [echelon_bin, "harness", "run", spec_id] + extra_args
         env = os.environ.copy()
-        env["ECHELON_POLYREPO_ROOT"] = str(target.parent)
-        env["ECHELON_TARGET_REPO_PATH"] = str(target)
+        env["ECHELON_POLYREPO_ROOT"] = str(target_workspace_root)
+        env["ECHELON_TARGET_REPO_PATH"] = str(target_resolved)
         env["ECHELON_TARGET_REPO_NAME"] = name
+        env["ECHELON_WORKSPACE_ROOT"] = str(target_workspace_root)
+        env["ECHELON_WORKSPACE_GIT_ROLE"] = target_workspace_git_role
+        env["ECHELON_SOURCE_ROOT"] = str(target_resolved)
+        env["ECHELON_SOURCE_ID"] = source_id
+        env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
         proc = subprocess.Popen(
             cmd,
             cwd=str(target),

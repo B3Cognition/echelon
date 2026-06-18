@@ -693,6 +693,28 @@ def _target_candidate_lines(candidates: list[object]) -> str:
     return "\n".join(lines)
 
 
+def _source_dispatch_metadata(
+    *,
+    target: Path,
+    polyrepo_root: Path,
+    source_id: str | None,
+) -> dict[str, object]:
+    resolved_target = target.resolve()
+    resolved_workspace = polyrepo_root.resolve()
+    resolved_source_id = source_id or ("." if resolved_target == resolved_workspace else target.name)
+    workspace_git_role = (
+        "source"
+        if resolved_target == resolved_workspace and resolved_source_id == "."
+        else "orchestration"
+    )
+    return {
+        "workspace_root": resolved_workspace,
+        "workspace_git_role": workspace_git_role,
+        "source_ids": {str(resolved_target): resolved_source_id},
+        "source_git_roles": {str(resolved_target): "source"},
+    }
+
+
 def _cmd_harness_run(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -785,7 +807,17 @@ def _cmd_harness_run(args: list[str]) -> None:
                     if detection.recommended_target != targets_rel[0]:
                         write_targets(spec_dir, [detection.recommended_target])
                     target = validate_single_target([detection.recommended_target], polyrepo_root)
-                    sys.exit(run_multi_target(spec_id, [target], args[1:]))
+                    source_id = detection.candidates[0].repo if detection.candidates else None
+                    sys.exit(run_multi_target(
+                        spec_id,
+                        [target],
+                        args[1:],
+                        **_source_dispatch_metadata(
+                            target=target,
+                            polyrepo_root=polyrepo_root,
+                            source_id=source_id,
+                        ),
+                    ))
                 if detection.decision == "invalid_target":
                     candidates = _target_candidate_lines(detection.candidates)
                     print(
@@ -799,14 +831,37 @@ def _cmd_harness_run(args: list[str]) -> None:
                     )
                     sys.exit(1)
                 target = validate_single_target(targets_rel, polyrepo_root)
-                sys.exit(run_multi_target(spec_id, [target], args[1:]))
+                sys.exit(run_multi_target(
+                    spec_id,
+                    [target],
+                    args[1:],
+                    **_source_dispatch_metadata(
+                        target=target,
+                        polyrepo_root=polyrepo_root,
+                        source_id=None,
+                    ),
+                ))
 
             # A spec may declare multiple targets. Multiple targets dispatch
             # to each sub-repo in parallel via run_multi_target (the polyrepo
             # design documented in CLAUDE.md).
             targets = validate_targets(targets_rel, polyrepo_root)
             _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-            sys.exit(run_multi_target(spec_id, targets, args[1:]))
+            dispatch_metadata: dict[str, object] = {
+                "workspace_root": polyrepo_root.resolve(),
+                "workspace_git_role": "orchestration",
+                "source_ids": {},
+                "source_git_roles": {},
+            }
+            for target in targets:
+                target_metadata = _source_dispatch_metadata(
+                    target=target,
+                    polyrepo_root=polyrepo_root,
+                    source_id=None,
+                )
+                dispatch_metadata["source_ids"].update(target_metadata["source_ids"])  # type: ignore[union-attr]
+                dispatch_metadata["source_git_roles"].update(target_metadata["source_git_roles"])  # type: ignore[union-attr]
+            sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
         detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
         if target_env:
@@ -816,11 +871,21 @@ def _cmd_harness_run(args: list[str]) -> None:
                 write_targets(spec_dir, [detection.recommended_target])
                 target = validate_single_target([detection.recommended_target], polyrepo_root)
                 _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
+                source_id = detection.candidates[0].repo if detection.candidates else None
                 print(
                     f"✓ Wrote inferred implementation target: {detection.recommended_target} "
                     f"(confidence {detection.confidence:.2f})"
                 )
-                sys.exit(run_multi_target(spec_id, [target], args[1:]))
+                sys.exit(run_multi_target(
+                    spec_id,
+                    [target],
+                    args[1:],
+                    **_source_dispatch_metadata(
+                        target=target,
+                        polyrepo_root=polyrepo_root,
+                        source_id=source_id,
+                    ),
+                ))
             print(
                 f"✗ No implementation target configured.\n"
                 f"  Recommended implementation target: {detection.recommended_target} "

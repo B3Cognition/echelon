@@ -98,6 +98,7 @@ class TestSingleRepoPathUnchanged:
         This is the kill-gate scenario: a polyrepo root that has its own echelon-config.yml
         (e.g. for deploy) must not silently run the harness against itself.
         """
+        (tmp_path / ".git").mkdir()
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
@@ -190,6 +191,7 @@ class TestSingleRepoPathUnchanged:
     def test_spec_without_targets_in_polyrepo_blocks_before_wrapper_harness(
         self, tmp_path: Path, capsys
     ) -> None:
+        (tmp_path / ".git").mkdir()
         spec_dir = tmp_path / "specs" / "024-test"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Wrapper spec\n", encoding="utf-8")
@@ -211,7 +213,7 @@ class TestSingleRepoPathUnchanged:
             os.chdir(orig)
 
         err = capsys.readouterr().err
-        assert "No implementation target configured" in err
+        assert "Multiple source roots found" in err
         assert "echelon spec target" in err
 
     def test_find_spec_dir_local_takes_precedence(self, tmp_path: Path) -> None:

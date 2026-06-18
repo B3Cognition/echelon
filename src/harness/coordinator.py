@@ -271,7 +271,19 @@ class StrategyCoordinator:
         run_id = str(uuid.uuid4())
         target_repo_name = os.environ.get("ECHELON_TARGET_REPO_NAME")
         target_repo_path = os.environ.get("ECHELON_TARGET_REPO_PATH")
+        workspace_root = os.environ.get("ECHELON_WORKSPACE_ROOT")
+        workspace_git_role = os.environ.get("ECHELON_WORKSPACE_GIT_ROLE")
+        source_root = os.environ.get("ECHELON_SOURCE_ROOT")
+        source_id = os.environ.get("ECHELON_SOURCE_ID")
+        source_git_role = os.environ.get("ECHELON_SOURCE_GIT_ROLE")
         spec_search_root = Path(os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir).resolve()
+        workspace_root = workspace_root or str(spec_search_root)
+        source_root = source_root or target_repo_path or str(Path(self._base_dir).resolve())
+        source_id = source_id or target_repo_name or Path(source_root).name
+        if workspace_git_role is None:
+            workspace_git_role = "orchestration" if target_repo_path else "source"
+        if source_git_role is None:
+            source_git_role = "source"
         spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
         spec_file = spec_dir / "spec.md" if spec_dir is not None else None
         tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
@@ -302,6 +314,11 @@ class StrategyCoordinator:
                     token_budget=budget or 0,
                     target_repo=target_repo_name,
                     target_path=target_repo_path,
+                    workspace_root=workspace_root,
+                    workspace_git_role=workspace_git_role,
+                    source_root=source_root,
+                    source_id=source_id,
+                    source_git_role=source_git_role,
                     spec_dir=str(spec_dir) if spec_dir is not None else None,
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,
