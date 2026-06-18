@@ -269,8 +269,10 @@ echelon_result:
       cross_repo: "{RE_OUTPUT_DIR}/cross-repo.json"
       per_repo:
         - "{RE_OUTPUT_DIR}/<repo-name>/"
-      codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json"
       codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"
+      per_repo_codegraph:
+        - "{RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json"
+        - "{RE_OUTPUT_DIR}/<repo-name>/codegraph-analysis.json"
     golddigger_notes: []
 ```
 
@@ -423,6 +425,8 @@ Status: <complete|partial|failed>
 Repos: <count>
 Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json
 Cross-repo: {RE_OUTPUT_DIR}/cross-repo.json
+CodeGraph summary: {RE_OUTPUT_DIR}/codegraph-summary.json
+Per-source CodeGraph: {RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json
 ```
 
 **Mode 2:**

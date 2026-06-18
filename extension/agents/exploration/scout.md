@@ -80,7 +80,7 @@ Read the artifacts directly — no intermediate normalization layer.
 2. Read `golddigger_artifacts.cross_repo` for dependency links and shared tech.
 3. For each repo: read `golddigger_artifacts.per_repo[]/analysis.json` for structure, dependencies, git history, hotspots.
 4. If domain specs exist (from auto-promoted full-depth repos): read `specs/NNN-re-{repo}-{domain}/spec.md`
-5. If `golddigger_artifacts.codegraph_summary` exists, read it before full CodeGraph analysis; read `golddigger_artifacts.codegraph_analysis` only when structural detail is needed.
+5. If `golddigger_artifacts.codegraph_summary` exists in polyrepo mode, treat it as an aggregate index of per-source summaries. Read each `{source}/codegraph-summary.json` listed in `golddigger_artifacts.per_repo_codegraph` before using full `{source}/codegraph-analysis.json` structural detail. In single-repo mode, read `golddigger_artifacts.codegraph_summary` before `golddigger_artifacts.codegraph_analysis` when structural detail is needed.
 
 Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
 

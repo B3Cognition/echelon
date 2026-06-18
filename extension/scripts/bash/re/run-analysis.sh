@@ -104,6 +104,71 @@ copy_manifest_artifacts() {
     fi
 }
 
+write_workspace_compat_repos_manifest() {
+    local workspace_manifest="$1"
+    local legacy_repos_manifest="$2"
+    local output_path="$3"
+    local legacy_json="{}"
+
+    if [[ -n "$legacy_repos_manifest" && -f "$legacy_repos_manifest" ]]; then
+        legacy_json="$(cat "$legacy_repos_manifest")"
+    fi
+
+    jq -n \
+        --slurpfile workspace "$workspace_manifest" \
+        --argjson legacy "$legacy_json" \
+        --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        '
+        def basename_path:
+            split("/") | map(select(. != "")) | last;
+
+        ($workspace[0]) as $wm
+        | ($wm.workspace.root // "") as $root
+        | [
+            ($wm.sources // [])[]
+            | . as $source
+            | (
+                if (($source.id // "") != "" and ($source.id // "") != ".") then
+                    $source.id
+                elif (($source.path // "") != "" and ($source.path // "") != ".") then
+                    ($source.path | basename_path)
+                else
+                    ($root | basename_path)
+                end
+              ) as $name
+            | (
+                if (($source.path // "") | startswith("/")) then
+                    $source.path
+                elif (($source.path // "") == "." or ($source.path // "") == "") then
+                    $root
+                else
+                    ($root + "/" + $source.path)
+                end
+              ) as $abs_path
+            | (
+                ($legacy.repos // [])
+                | map(select(.name == $name or .path == $abs_path or (.path | endswith("/" + $name))))
+                | first
+              ) as $legacy_repo
+            | {
+                name: $name,
+                path: $abs_path,
+                has_git: ($source.git_present // false),
+                markers: ($source.project_markers // []),
+                source_file_count: ($source.source_file_count // 0),
+                pkg_identifiers: (($legacy_repo.pkg_identifiers // []))
+              }
+          ] as $repos
+        | {
+            discovered_at: $generated_at,
+            root: $root,
+            mode: (if ($repos | length) > 1 then "polyrepo" else "single" end),
+            repo_count: ($repos | length),
+            repos: $repos
+          }
+        ' > "$output_path"
+}
+
 mkdir -p "$OUTPUT_DIR"
 # Resolve to absolute paths — required because polyrepo mode cd's into repo dirs
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -233,6 +298,11 @@ write_polyrepo_codegraph_summary() {
 
 if [[ "$USE_MANIFEST" == "true" ]]; then
     copy_manifest_artifacts "$MANIFEST_PATH" "$WORKSPACE_MANIFEST"
+    ANALYSIS_REPOS_MANIFEST="$MANIFEST_PATH"
+    if [[ -n "$WORKSPACE_MANIFEST" ]]; then
+        ANALYSIS_REPOS_MANIFEST="$OUTPUT_DIR/repos-manifest.json"
+        write_workspace_compat_repos_manifest "$WORKSPACE_MANIFEST" "$MANIFEST_PATH" "$ANALYSIS_REPOS_MANIFEST"
+    fi
 
     echo "Running reverse engineering analysis ($REPO_COUNT repo(s))..." >&2
     echo "Output directory: $OUTPUT_DIR" >&2
@@ -358,7 +428,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     # Cross-repo extraction only makes sense with multiple repos
     CROSS_REPO_PATH=""
     if [[ "$REPO_COUNT" -gt 1 ]]; then
-        "$SCRIPT_DIR/extract-cross-repo.sh" "$OUTPUT_DIR" "$MANIFEST_PATH"
+        "$SCRIPT_DIR/extract-cross-repo.sh" "$OUTPUT_DIR" "$ANALYSIS_REPOS_MANIFEST"
         CROSS_REPO_PATH="cross-repo.json"
     fi
 

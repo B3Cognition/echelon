@@ -76,7 +76,9 @@ Read `$RE_OUTPUT_DIR/analysis.json` to extract: `metadata`, `structure.file_coun
 
 ### Load Structural Intelligence (REQUIRED if available)
 
-Check whether `$RE_OUTPUT_DIR/codegraph-summary.json` exists, then whether `$RE_OUTPUT_DIR/codegraph-analysis.json` exists.
+Check whether `$RE_OUTPUT_DIR/workspace-manifest.json` describes more than one source. In that case, `$RE_OUTPUT_DIR/codegraph-summary.json` is an aggregate per-source index; read each `$RE_OUTPUT_DIR/{source}/codegraph-summary.json` first, then `$RE_OUTPUT_DIR/{source}/codegraph-analysis.json` only when domain identification needs modules, inheritance, or cross-file call detail for that source.
+
+For single-repo runs, check whether `$RE_OUTPUT_DIR/codegraph-summary.json` exists, then whether `$RE_OUTPUT_DIR/codegraph-analysis.json` exists.
 
 **If summary exists — read it first** to get counts, symbol kinds, top callers, top callees, and index state.
 

@@ -190,6 +190,17 @@ def test_golddigger_reports_workspace_manifest_as_primary_artifact():
     assert 'manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"' in text
     assert 'repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"' in text
     assert "Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json" in text
+    assert "per_repo_codegraph" in text
+    assert '"{RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json"' in text
+
+
+def test_polyrepo_prompts_describe_per_source_codegraph_shape():
+    scout = (EXT_ROOT / "extension/agents/exploration/scout.md").read_text()
+    specifier = (EXT_ROOT / "extension/agents/re/specifier.md").read_text()
+
+    assert "aggregate index of per-source summaries" in scout
+    assert "$RE_OUTPUT_DIR/{source}/codegraph-summary.json" in specifier
+    assert "$RE_OUTPUT_DIR/{source}/codegraph-analysis.json" in specifier
 
 
 def test_exploration_agents_do_not_hardcode_re_artifact_reads():

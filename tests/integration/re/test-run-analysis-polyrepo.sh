@@ -218,6 +218,48 @@ assert_file_exists "legacy repos-manifest.json copied to output" "$TMPDIR4/repos
 assert_file_not_exists "legacy workspace-manifest.json absent" "$TMPDIR4/workspace-manifest.json"
 assert_json_field "legacy root analysis records repos manifest" "$TMPDIR4/analysis.json" '.manifest_path' "repos-manifest.json"
 
+# ---------- Test 5: Workspace manifest drives cross-repo extraction ----------
+
+echo ""
+echo "=== Test 5: workspace manifest drives cross-repo extraction ==="
+
+TMPROOT5=$(mktemp -d)
+TMPDIR5=$(mktemp -d)
+MANIFEST5_DIR=$(mktemp -d)
+MANIFEST5="$MANIFEST5_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$TMPROOT5" "$TMPDIR5" "$MANIFEST4_DIR" "$MANIFEST5_DIR"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
+
+cat > "$TMPROOT5/package.json" <<'JSON'
+{"name": "workspace-wrapper"}
+JSON
+mkdir -p "$TMPROOT5/app-a/src" "$TMPROOT5/app-b/src"
+cat > "$TMPROOT5/app-a/package.json" <<'JSON'
+{"name": "app-a", "dependencies": {"app-b": "workspace:*"}}
+JSON
+cat > "$TMPROOT5/app-a/src/index.ts" <<'TS'
+import "app-b";
+TS
+cat > "$TMPROOT5/app-b/package.json" <<'JSON'
+{"name": "app-b"}
+JSON
+cat > "$TMPROOT5/app-b/src/index.ts" <<'TS'
+export const value = 1;
+TS
+
+(cd "$TMPROOT5" && "$DISCOVER_SCRIPT" "$MANIFEST5" 2>/dev/null)
+
+assert_json_field "legacy manifest sees wrapper root" "$MANIFEST5" '.repo_count' "1"
+assert_json_field "workspace manifest sees child sources" "$MANIFEST5_DIR/workspace-manifest.json" '.sources | length' "2"
+
+(cd "$TMPROOT5" && "$RUN_ANALYSIS" "$TMPDIR5" "$MANIFEST5" 2>/dev/null)
+
+assert_file_exists "workspace-driven app-a analysis exists" "$TMPDIR5/app-a/analysis.json"
+assert_file_exists "workspace-driven app-b analysis exists" "$TMPDIR5/app-b/analysis.json"
+assert_json_field "workspace-driven root analysis repo_count" "$TMPDIR5/analysis.json" '.metadata.repo_count' "2"
+assert_json_field "workspace-driven cross-repo repo_count" "$TMPDIR5/cross-repo.json" '.repo_count' "2"
+assert_json_field "workspace-driven compatibility manifest repo_count" "$TMPDIR5/repos-manifest.json" '.repo_count' "2"
+assert_json_field "workspace-driven dependency link detected" "$TMPDIR5/cross-repo.json" '.dependency_links | length' "1"
+
 # ---------- summary ----------
 
 echo ""
