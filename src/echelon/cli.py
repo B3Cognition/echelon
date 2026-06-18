@@ -675,6 +675,24 @@ def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path
     )
 
 
+def _target_candidate_lines(candidates: list[object]) -> str:
+    lines: list[str] = []
+    for candidate in candidates:
+        repo = str(getattr(candidate, "repo", ""))
+        evidence = [str(item) for item in getattr(candidate, "evidence", [])]
+        source_path = None
+        for item in evidence:
+            prefix = "workspace source path `"
+            if item.startswith(prefix) and item.endswith("`"):
+                source_path = item[len(prefix):-1]
+                break
+        if source_path and source_path != repo:
+            lines.append(f"  - {repo} (path: {source_path})")
+        elif repo:
+            lines.append(f"  - {repo}")
+    return "\n".join(lines)
+
+
 def _cmd_harness_run(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -707,13 +725,6 @@ def _cmd_harness_run(args: list[str]) -> None:
     if reset:
         parts.append("--reset")
     user_message = " ".join(parts)
-
-    from harness.config import load_config, ValidationError as HarnessValidationError
-    from harness.docker_provider import DockerWorktreeProvider
-    from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run, _count_tasks
-    from harness.plan_validation import PlanValidationError, validate_plan_file
-    from harness.task_validation import TaskValidationError
 
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
@@ -764,10 +775,35 @@ def _cmd_harness_run(args: list[str]) -> None:
         frontmatter = read_frontmatter(spec_dir)
         targets_rel: list[str] = frontmatter.get("targets") or []
         if targets_rel and not target_env:
-            # A spec may declare one or many targets. Multiple targets dispatch
+            if len(targets_rel) == 1:
+                detection = detect_target(
+                    spec_dir=spec_dir,
+                    polyrepo_root=polyrepo_root,
+                    explicit_target=targets_rel[0],
+                )
+                if detection.decision == "recommend" and detection.recommended_target:
+                    if detection.recommended_target != targets_rel[0]:
+                        write_targets(spec_dir, [detection.recommended_target])
+                    target = validate_single_target([detection.recommended_target], polyrepo_root)
+                    sys.exit(run_multi_target(spec_id, [target], args[1:]))
+                if detection.decision == "invalid_target":
+                    candidates = _target_candidate_lines(detection.candidates)
+                    print(
+                        "✗ Configured implementation target does not match a workspace source root.\n\n"
+                        f"  Configured target: {targets_rel[0]}\n"
+                        "  Source roots:\n"
+                        f"{candidates}\n\n"
+                        f"  Fix: run 'echelon spec target {resolved_spec_id} <source-path>'.\n"
+                        f"  Then rerun:  {rerun_command}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                target = validate_single_target(targets_rel, polyrepo_root)
+                sys.exit(run_multi_target(spec_id, [target], args[1:]))
+
+            # A spec may declare multiple targets. Multiple targets dispatch
             # to each sub-repo in parallel via run_multi_target (the polyrepo
-            # design documented in CLAUDE.md); a single target is just the
-            # one-element case of the same path.
+            # design documented in CLAUDE.md).
             targets = validate_targets(targets_rel, polyrepo_root)
             _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
             sys.exit(run_multi_target(spec_id, targets, args[1:]))
@@ -810,14 +846,12 @@ def _cmd_harness_run(args: list[str]) -> None:
             )
             sys.exit(1)
         if detection and detection.decision == "multiple_source_roots_need_target":
-            candidates = "\n".join(
-                f"  - {candidate.repo}" for candidate in detection.candidates
-            )
+            candidates = _target_candidate_lines(detection.candidates)
             print(
                 "✗ Multiple source roots found; choose one before running harness.\n\n"
                 "  Source roots:\n"
                 f"{candidates}\n\n"
-                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-root>'.\n"
+                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-path>'.\n"
                 f"  Then rerun:  {rerun_command}",
                 file=sys.stderr,
             )
@@ -831,18 +865,23 @@ def _cmd_harness_run(args: list[str]) -> None:
             )
             sys.exit(1)
         if detection and detection.decision == "invalid_target":
-            candidates = "\n".join(
-                f"  - {candidate.repo}" for candidate in detection.candidates
-            )
+            candidates = _target_candidate_lines(detection.candidates)
             print(
                 "✗ Configured implementation target does not match a workspace source root.\n\n"
                 "  Source roots:\n"
                 f"{candidates}\n\n"
-                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-root>'.\n"
+                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-path>'.\n"
                 f"  Then rerun:  {rerun_command}",
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.skills.run_skill import run, _count_tasks
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+    from harness.task_validation import TaskValidationError
 
     # Single-repo mode: require local echelon-config.yml (harness config).
     echelon_yml = config_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"

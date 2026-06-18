@@ -492,6 +492,61 @@ class TestHarnessTargetPreflight:
         assert read_frontmatter(spec_dir)["targets"] == ["rbf-opta-points"]
         mock_run.assert_called_once()
 
+    def test_existing_target_id_is_canonicalized_to_source_path_before_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n- api\n---\n# Feature\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        target = root / "services" / "api"
+        (target / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
+
+        monkeypatch.chdir(root)
+        from echelon import target_detection
+        from echelon.cli import _cmd_harness_run
+        from echelon.target_detection import TargetCandidate, TargetDetectionResult
+        from harness.spec_frontmatter import read_frontmatter
+
+        def fake_detect_target(**kwargs):
+            assert kwargs["explicit_target"] == "api"
+            return TargetDetectionResult(
+                recommended_target="services/api",
+                confidence=1.0,
+                decision="recommend",
+                candidates=[
+                    TargetCandidate(
+                        repo="api",
+                        confidence=1.0,
+                        evidence=[
+                            "workspace source root",
+                            "workspace source path `services/api`",
+                        ],
+                    )
+                ],
+            )
+
+        monkeypatch.setattr(target_detection, "detect_target", fake_detect_target)
+        with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001", "mode=banzai"])
+
+        assert exc.value.code == 0
+        assert read_frontmatter(spec_dir)["targets"] == ["services/api"]
+        dispatched_targets = mock_run.call_args.args[1]
+        assert dispatched_targets == [target.resolve()]
+
     def test_multiple_workspace_source_roots_stop_before_workspace_config(
         self,
         tmp_path: Path,
@@ -529,7 +584,7 @@ class TestHarnessTargetPreflight:
         assert "Multiple source roots found" in err
         assert "og-platform" in err
         assert "pbg-api" in err
-        assert "echelon spec target 001-feature <source-root>" in err
+        assert "echelon spec target 001-feature <source-path>" in err
 
     def test_no_workspace_source_roots_stop_before_workspace_config(
         self,
