@@ -61,6 +61,11 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
         (spec_dir / name).write_text(content, encoding="utf-8")
 
 
+@pytest.fixture(autouse=True)
+def _git_backed_workspace(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+
+
 @pytest.mark.unit
 class TestHarnessRunArgParsing:
     """Verify the user_message built by _cmd_harness_run reaches parse_intent correctly."""

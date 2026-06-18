@@ -53,6 +53,7 @@ SKILL_MAP = {
 CLI_VERSION = "3.0.0"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
+from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
 
 
@@ -115,6 +116,28 @@ Skill file locations (auto-detected from ECHELON_LLM env var):
 
 
 # ── init (pure Python, no LLM) ────────────────────────────────────────────
+
+def _workspace_git_preflight(project_root: Path, *, command_name: str) -> None:
+    manifest = discover_workspace(project_root)
+    if manifest.workspace.git_present:
+        return
+
+    source_paths = [source.path for source in manifest.sources if source.path != "."]
+    ignore_lines = "\n".join(f"/{path}/" for path in source_paths) or "/source-repo/"
+    print(
+        "✗ Echelon workspace root is not a Git repo.\n\n"
+        "Echelon requires workspace Git so specs, run state, and recovery metadata "
+        "have durable version history.\n\n"
+        "Fix:\n"
+        "  git init\n"
+        f"  printf \"{ignore_lines}\\n/runs/build-*/\\n/runs/verify-*/\\n\" >> .gitignore\n"
+        "  git add .gitignore .specify specs\n"
+        "  git commit -m \"chore: initialize echelon workspace\"\n\n"
+        "Then rerun:\n"
+        f"  {command_name}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 def _derive_wing_suggestion(project_dir: Path) -> str:
     """Suggest a wing name: git remote slug if available, else dirname-hash6."""
@@ -610,6 +633,8 @@ def _cmd_harness_run(args: list[str]) -> None:
         print("echelon harness run: missing spec_id\n", file=sys.stderr)
         sys.exit(1)
 
+    _workspace_git_preflight(Path.cwd(), command_name=f"echelon harness run {args[0]}")
+
     spec_id = args[0]
     kv: dict[str, str] = {}
     free_text: list[str] = []
@@ -968,6 +993,8 @@ def _cmd_harness_resume(args: list[str]) -> None:
             "  2. Run: echelon harness resume <spec_id>\n",
         )
         return
+
+    _workspace_git_preflight(Path.cwd(), command_name=f"echelon harness resume {args[0]}")
 
     spec_id = args[0]
     kv: dict[str, str] = {}
@@ -2480,6 +2507,7 @@ def _cmd_run(
 
     _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
+    _workspace_git_preflight(project_root, command_name="echelon run")
 
     # Parse optional flags
     mode = "semi"
@@ -3262,6 +3290,7 @@ def _cmd_continue(
     import json as _json
 
     _print_extension_drift_warning(project_root, ext_dir)
+    _workspace_git_preflight(project_root, command_name="echelon continue")
 
     # Optionally accept --mode override
     mode_override = ""

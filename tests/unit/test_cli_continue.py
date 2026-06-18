@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from echelon.cli import _cmd_continue, _next_continue_phase
+
+
+@pytest.fixture(autouse=True)
+def _git_backed_workspace(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
 
 
 def _write_run_state(project_root: Path, state: dict) -> Path:
