@@ -74,6 +74,8 @@ Commands:
                                             prompt needed. Handles: resume if running,
                                             escalation guidance if blocked, or determines
                                             the correct next phase if done.
+  rewind  <phase-id>                        Rewind the active squad run to a safe checkpoint
+                                            phase and prepare it for `echelon continue`.
   resume  "<answers>"                       Answer escalation questions from a blocked run
                                             and continue it. Use when the run printed
                                             "blocked — human input required".
@@ -1139,6 +1141,129 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
     # No .current pointer — fall back to newest run dir that has state.json
     all_runs = _iter_run_dirs(project_root)
     return all_runs[0] if all_runs else None
+
+
+_SAFE_REWIND_PHASES: tuple[str, ...] = (
+    "phase3-how",
+    "phase3-sentinel",
+    "phase3-plan",
+)
+
+_REWIND_PHASE_ORDER: tuple[str, ...] = (
+    "phase3-how",
+    "phase3-sentinel",
+    "phase3-plan",
+    "phase3-consensus",
+    "checkpoint-plan",
+    "phase4-document",
+)
+
+_REWIND_REQUIRED_INPUTS: dict[str, tuple[str, ...]] = {
+    "phase3-how": ("spec.md",),
+    "phase3-sentinel": ("spec.md", "plan.md", "research.md", "data-model.md", "contracts/"),
+    "phase3-plan": (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "contracts/",
+        "test-strategy.md",
+    ),
+}
+
+_REWIND_CLEANUP_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "phase3-sentinel": (
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+    ),
+    "phase3-plan": (
+        "tasks.md",
+        "critical-path.md",
+        "risk-matrix.md",
+        "dependencies.md",
+    ),
+}
+
+
+def _rewind_constitution_is_real(project_root: Path) -> bool:
+    path = project_root / ".specify" / "memory" / "constitution.md"
+    if not path.exists():
+        return False
+    text = path.read_text(errors="replace")
+    template_markers = (
+        "[PROJECT_NAME]",
+        "[CONSTITUTION_VERSION]",
+        "[RATIFICATION_DATE]",
+        "[LAST_AMENDED_DATE]",
+    )
+    return not any(marker in text for marker in template_markers)
+
+
+def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
+    ref = str(state.get("spec_dir") or "").strip()
+    if ref:
+        candidate = Path(ref)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        parts = candidate.parts
+        if "specs" in parts:
+            idx = parts.index("specs")
+            suffix = Path(*parts[idx:])
+            project_candidate = project_root / suffix
+            if project_candidate.exists():
+                return project_candidate, str(suffix)
+        if candidate.exists():
+            try:
+                return candidate, str(candidate.relative_to(project_root))
+            except ValueError:
+                return candidate, str(candidate)
+    return None, None
+
+
+def _collect_rewind_missing_inputs(spec_dir: Path, phase: str) -> list[str]:
+    missing: list[str] = []
+    for rel in _REWIND_REQUIRED_INPUTS.get(phase, ()):
+        path = spec_dir / rel.rstrip("/")
+        if rel.endswith("/"):
+            if not path.is_dir():
+                missing.append(rel)
+        elif not path.exists():
+            missing.append(rel)
+    return missing
+
+
+def _cleanup_rewind_outputs(spec_dir: Path, phase: str) -> list[str]:
+    removed: list[str] = []
+    for rel in _REWIND_CLEANUP_OUTPUTS.get(phase, ()):
+        path = spec_dir / rel
+        if path.exists():
+            path.unlink()
+            removed.append(rel)
+    return removed
+
+
+def _reset_rewind_state(state: dict, phase: str, spec_dir_ref: str) -> dict:
+    rewound = dict(state)
+    rewound["phase"] = phase
+    rewound["status"] = "running"
+    rewound["spec_dir"] = spec_dir_ref
+    rewound["blocked_reason"] = None
+    rewound["escalation_question"] = None
+    rewound["escalation_resolved"] = False
+    rewound["escalation_resolver"] = None
+    if phase in _REWIND_PHASE_ORDER:
+        cutoff = _REWIND_PHASE_ORDER.index(phase)
+        downstream = set(_REWIND_PHASE_ORDER[cutoff:])
+        completed = rewound.get("completed_phases")
+        if isinstance(completed, list):
+            rewound["completed_phases"] = [p for p in completed if p not in downstream]
+        counts = rewound.get("phase_dispatch_counts")
+        if isinstance(counts, dict):
+            rewound["phase_dispatch_counts"] = {
+                key: value for key, value in counts.items() if key not in downstream
+            }
+    return rewound
 
 
 def _iter_run_dirs(project_root: Path) -> list[Path]:
@@ -2305,6 +2430,87 @@ def _cmd_continue(
     _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
 
 
+def _cmd_rewind(
+    args: list[str],
+    project_root: Path,
+) -> None:
+    if len(args) != 1:
+        print(
+            "Usage: echelon rewind <phase-id>\n"
+            f"Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    target = args[0].strip()
+    if target not in _SAFE_REWIND_PHASES:
+        print(
+            "✗ Unsupported rewind target.\n"
+            f"  Phase: {target}\n"
+            f"  Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    squad_dir = _find_current_run_dir(project_root)
+    if squad_dir is None or not (squad_dir / "state.json").exists():
+        print(
+            "✗ No active squad run found.\n"
+            "  Start or resume a run before rewinding.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from harness.squad_state import SquadStateStore
+
+    store = SquadStateStore(squad_dir)
+    state = store.load()
+    spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
+    if spec_dir is None or spec_dir_ref is None:
+        print(
+            f"✗ Cannot rewind to {target}.\n"
+            "  Could not resolve the canonical spec directory from state.json.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    if not _rewind_constitution_is_real(project_root):
+        print(
+            f"✗ Cannot rewind to {target}.\n"
+            "  constitution.md is missing or still contains template placeholders.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    missing = _collect_rewind_missing_inputs(spec_dir, target)
+    if missing:
+        print(
+            f"✗ Cannot rewind to {target}.\n"
+            "  Missing required inputs:",
+            file=sys.stderr,
+        )
+        for item in missing:
+            print(f"  - {spec_dir / item.rstrip('/')}", file=sys.stderr)
+        print(
+            "  Next step: regenerate the missing upstream artifacts or rewind to an earlier safe phase.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    removed = _cleanup_rewind_outputs(spec_dir, target)
+    rewound = _reset_rewind_state(state, target, spec_dir_ref)
+    store.save(rewound)
+
+    details = [
+        ("run dir", str(squad_dir)),
+        ("phase", target),
+        ("spec dir", spec_dir_ref),
+        ("cleaned", ", ".join(removed) if removed else "(none)"),
+        ("next step", "echelon continue"),
+    ]
+    _banner("REWIND PREPARED", details)
+
+
 def _cmd_resume(
     args: list[str],
     project_root: Path,
@@ -2714,6 +2920,10 @@ def main() -> None:
             )
             sys.exit(1)
         _cmd_continue(args[1:], project_root=project_root, ext_dir=ext_dir)
+        return
+
+    if command == "rewind":
+        _cmd_rewind(args[1:], project_root=Path.cwd())
         return
 
     if command == "resume":
