@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import re
 
-from echelon.workspace_model import SourceRoot, WorkspaceManifest
+from echelon.workspace_model import SourceRoot, WorkspaceManifest, discover_workspace
 
 
 DEFAULT_CONFIDENCE_THRESHOLD = 0.80
@@ -67,11 +67,8 @@ def _referenced_paths(text: str) -> set[str]:
 
 
 def _source_candidate(source: SourceRoot, confidence: float = 1.0) -> TargetCandidate:
-    repo = "." if source.path == "." else source.path
-    evidence = [f"workspace source root `{repo}`"]
-    if source.id != source.path:
-        evidence.append(f"workspace source id `{source.id}`")
-    return TargetCandidate(repo=repo, confidence=confidence, evidence=evidence)
+    evidence = [f"workspace source path `{source.path}`"]
+    return TargetCandidate(repo=source.id, confidence=confidence, evidence=evidence)
 
 
 def _source_candidates(sources: tuple[SourceRoot, ...]) -> list[TargetCandidate]:
@@ -84,12 +81,38 @@ def _matches_explicit_target(source: SourceRoot, explicit_target: str) -> bool:
 
 
 def _recommend_source(source: SourceRoot, decision: str) -> TargetDetectionResult:
-    recommended_target = "." if source.path == "." else source.id
     return TargetDetectionResult(
-        recommended_target,
+        source.path,
         1.0,
         decision,
         [_source_candidate(source)],
+    )
+
+
+def _detect_from_workspace_manifest(
+    workspace_manifest: WorkspaceManifest,
+    explicit_target: str | None,
+) -> TargetDetectionResult:
+    sources = workspace_manifest.sources
+    candidates = _source_candidates(sources)
+
+    if len(sources) == 0:
+        return TargetDetectionResult(None, 0.0, "no_source_roots", [])
+
+    if explicit_target is not None:
+        for source in sources:
+            if _matches_explicit_target(source, explicit_target):
+                return _recommend_source(source, "recommend")
+        return TargetDetectionResult(None, 0.0, "invalid_target", candidates)
+
+    if len(sources) == 1:
+        return _recommend_source(sources[0], "single_source_root")
+
+    return TargetDetectionResult(
+        None,
+        0.0,
+        "multiple_source_roots_need_target",
+        candidates,
     )
 
 
@@ -102,27 +125,11 @@ def detect_target(
     explicit_target: str | None = None,
 ) -> TargetDetectionResult:
     if workspace_manifest is not None:
-        sources = workspace_manifest.sources
-        candidates = _source_candidates(sources)
+        return _detect_from_workspace_manifest(workspace_manifest, explicit_target)
 
-        if len(sources) == 0:
-            return TargetDetectionResult(None, 0.0, "no_source_roots", [])
-
-        if explicit_target is not None:
-            for source in sources:
-                if _matches_explicit_target(source, explicit_target):
-                    return _recommend_source(source, "recommend")
-            return TargetDetectionResult(None, 0.0, "invalid_target", candidates)
-
-        if len(sources) == 1:
-            return _recommend_source(sources[0], "single_source_root")
-
-        return TargetDetectionResult(
-            None,
-            0.0,
-            "multiple_source_roots_need_target",
-            candidates,
-        )
+    discovered_manifest = discover_workspace(polyrepo_root)
+    if discovered_manifest.sources:
+        return _detect_from_workspace_manifest(discovered_manifest, explicit_target)
 
     repos = _candidate_repos(polyrepo_root)
     if len(repos) <= 1:
