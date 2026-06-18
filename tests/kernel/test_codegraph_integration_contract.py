@@ -184,6 +184,14 @@ def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
         assert "compatibility fallback" in text, rel_path
 
 
+def test_golddigger_reports_workspace_manifest_as_primary_artifact():
+    text = (EXT_ROOT / "extension/agents/exploration/golddigger.md").read_text()
+
+    assert 'manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"' in text
+    assert 'repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"' in text
+    assert "Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json" in text
+
+
 def test_exploration_agents_do_not_hardcode_re_artifact_reads():
     stale = []
     for rel_path in [

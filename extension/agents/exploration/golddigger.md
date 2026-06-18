@@ -229,7 +229,7 @@ Use the Skill tool to invoke the echelon re-extract command. The Mode 1 config i
 speckit.echelon.re-extract
 ```
 
-When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. echelon's re-* commands will automatically read the local-config.yml overrides. In polyrepo mode, re-extract reads `repos-manifest.json` and handles the per-repo extraction loop internally.
+When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. echelon's re-* commands will automatically read the local-config.yml overrides. In polyrepo mode, re-extract writes and prefers `workspace-manifest.json` when present, while retaining `repos-manifest.json` as a compatibility fallback for older runs.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 3 with the generated artifacts
@@ -264,7 +264,8 @@ echelon_result:
     golddigger_status: complete
     golddigger_mode: polyrepo-survey
     golddigger_artifacts:
-      manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
+      manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"
+      repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
       cross_repo: "{RE_OUTPUT_DIR}/cross-repo.json"
       per_repo:
         - "{RE_OUTPUT_DIR}/<repo-name>/"
@@ -420,7 +421,7 @@ Artifacts: {RE_OUTPUT_DIR}/analysis.json
 speckit-echelon-golddigger (GOLDDIGGER) POLYREPO SURVEY COMPLETE
 Status: <complete|partial|failed>
 Repos: <count>
-Manifest: {RE_OUTPUT_DIR}/repos-manifest.json
+Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json
 Cross-repo: {RE_OUTPUT_DIR}/cross-repo.json
 ```
 
