@@ -118,10 +118,13 @@ quality_gates:
 # convergence.max_squad_iterations. Soft `understanding`/SAGE scoring runs once
 # AFTER the spec is lexicon-clean — never as the structural gate.
 #
-# Default OFF: when enabled=false the standard bullet-format authoring path and
-# every existing transition are completely unchanged.
+# Default ON: CARTOGRAPHER authors every Phase A spec.md in the Lexicon grammar.
+# Set enabled=false to restore the standard bullet-format authoring path.
+# NOTE: downstream consumers of spec.md beyond WHY2 (ARCHITECT/plan,
+# ORCHESTRATOR/tasks, SENTINEL, build phase, verify-spec/spec-guard) must be made
+# Lexicon-aware before relying on this in the full Phase A→B pipeline.
 lexicon_gate:
-  enabled: false                # master switch for Lexicon-mode authoring
+  enabled: true                 # master switch for Lexicon-mode authoring
   artifact_type: spec           # spec | story | article
   glossary_file: glossary.md    # controlled vocabulary (resolved in spec_dir / staging)
   max_repair_attempts: 3        # in-dispatch self-repair rounds before returning lexicon_pass=false
