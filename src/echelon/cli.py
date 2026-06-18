@@ -3380,14 +3380,21 @@ def _cmd_continue(
         return
 
     state = _json.loads((squad_dir / "state.json").read_text())
-    if not _workspace_git_present(project_root):
-        _print_legacy_branchless_recovery_notice(
-            _command_display("echelon continue", args)
-        )
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
+    if not _workspace_git_present(project_root):
+        if status in ("running", "in_progress"):
+            _print_legacy_branchless_recovery_notice(
+                _command_display("echelon continue", args)
+            )
+        else:
+            _workspace_git_preflight(
+                project_root,
+                command_name=_command_display("echelon continue", args),
+            )
+
     prepared_state, _ = _ensure_active_continue_spec_context(
         project_root,
         squad_dir,
