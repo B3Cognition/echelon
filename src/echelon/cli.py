@@ -23,6 +23,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from harness.phase_a_readiness import validate_phase_a_readiness
@@ -715,6 +716,121 @@ def _source_dispatch_metadata(
     }
 
 
+@dataclass(frozen=True)
+class HarnessWorkspaceTarget:
+    workspace_root: Path
+    workspace_git_role: str
+    source_root: Path
+    source_id: str
+    source_git_role: str
+
+
+def _resolve_harness_workspace_target(
+    project_root: Path,
+    explicit_target: str | None,
+    *,
+    spec_dir: Path | None = None,
+    spec_id: str | None = None,
+    rerun_command: str | None = None,
+) -> HarnessWorkspaceTarget:
+    from echelon.target_detection import detect_target
+    from echelon.workspace_model import SourceRoot, discover_workspace
+
+    manifest = discover_workspace(project_root)
+    result = detect_target(
+        spec_dir=spec_dir or project_root,
+        polyrepo_root=project_root,
+        workspace_manifest=manifest,
+        explicit_target=explicit_target,
+    )
+
+    def _candidate_lines() -> str:
+        return _target_candidate_lines(result.candidates)
+
+    if result.decision == "no_source_roots":
+        print(
+            "✗ No source roots found; harness build needs at least one implementation source root.\n\n"
+            "  Add or checkout the source repo(s), or add source project markers to this workspace."
+            + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    if result.decision == "multiple_source_roots_need_target":
+        spec_ref = spec_id or "<spec-id>"
+        print(
+            "✗ Multiple source roots found; choose one before running harness.\n\n"
+            "  Source roots:\n"
+            f"{_candidate_lines()}\n\n"
+            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    if result.decision == "invalid_target":
+        spec_ref = spec_id or "<spec-id>"
+        configured = f"\n  Configured target: {explicit_target}" if explicit_target else ""
+        print(
+            "✗ Configured implementation target does not match a workspace source root.\n"
+            f"{configured}\n\n"
+            "  Source roots:\n"
+            f"{_candidate_lines()}\n\n"
+            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    if not result.recommended_target:
+        print(
+            "✗ No implementation target configured and target detection was ambiguous.\n"
+            f"  Fix: run 'echelon spec target {spec_id or '<spec-id>'} <repo>'.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    source_root = (
+        manifest.workspace.root
+        if result.recommended_target == "."
+        else (manifest.workspace.root / result.recommended_target).resolve()
+    )
+    source: SourceRoot | None = None
+    for candidate in manifest.sources:
+        candidate_root = (
+            manifest.workspace.root
+            if candidate.path == "."
+            else (manifest.workspace.root / candidate.path).resolve()
+        )
+        if candidate_root == source_root:
+            source = candidate
+            break
+    if source is None:
+        print(
+            "✗ Recommended implementation target does not match a workspace source root.\n"
+            f"  Target: {result.recommended_target}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    return HarnessWorkspaceTarget(
+        workspace_root=manifest.workspace.root,
+        workspace_git_role=manifest.workspace.git_role,
+        source_root=source_root,
+        source_id=source.id,
+        source_git_role=source.git_role,
+    )
+
+
+def _workspace_target_dispatch_metadata(target: HarnessWorkspaceTarget) -> dict[str, object]:
+    return {
+        "workspace_root": target.workspace_root,
+        "workspace_git_role": target.workspace_git_role,
+        "source_ids": {str(target.source_root.resolve()): target.source_id},
+        "source_git_roles": {str(target.source_root.resolve()): target.source_git_role},
+    }
+
+
 def _cmd_harness_run(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -763,7 +879,6 @@ def _cmd_harness_run(args: list[str]) -> None:
         validate_single_target,
         validate_targets,
     )
-    from echelon.target_detection import detect_target
 
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
@@ -798,48 +913,26 @@ def _cmd_harness_run(args: list[str]) -> None:
         targets_rel: list[str] = frontmatter.get("targets") or []
         if targets_rel and not target_env:
             if len(targets_rel) == 1:
-                detection = detect_target(
+                workspace_target = _resolve_harness_workspace_target(
+                    polyrepo_root,
+                    targets_rel[0],
                     spec_dir=spec_dir,
-                    polyrepo_root=polyrepo_root,
-                    explicit_target=targets_rel[0],
+                    spec_id=resolved_spec_id,
+                    rerun_command=rerun_command,
                 )
-                if detection.decision == "recommend" and detection.recommended_target:
-                    if detection.recommended_target != targets_rel[0]:
-                        write_targets(spec_dir, [detection.recommended_target])
-                    target = validate_single_target([detection.recommended_target], polyrepo_root)
-                    source_id = detection.candidates[0].repo if detection.candidates else None
-                    sys.exit(run_multi_target(
-                        spec_id,
-                        [target],
-                        args[1:],
-                        **_source_dispatch_metadata(
-                            target=target,
-                            polyrepo_root=polyrepo_root,
-                            source_id=source_id,
-                        ),
-                    ))
-                if detection.decision == "invalid_target":
-                    candidates = _target_candidate_lines(detection.candidates)
-                    print(
-                        "✗ Configured implementation target does not match a workspace source root.\n\n"
-                        f"  Configured target: {targets_rel[0]}\n"
-                        "  Source roots:\n"
-                        f"{candidates}\n\n"
-                        f"  Fix: run 'echelon spec target {resolved_spec_id} <source-path>'.\n"
-                        f"  Then rerun:  {rerun_command}",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-                target = validate_single_target(targets_rel, polyrepo_root)
+                target_rel = (
+                    "."
+                    if workspace_target.source_root == workspace_target.workspace_root
+                    else workspace_target.source_root.relative_to(workspace_target.workspace_root).as_posix()
+                )
+                if target_rel != targets_rel[0]:
+                    write_targets(spec_dir, [target_rel])
+                target = validate_single_target([target_rel], polyrepo_root)
                 sys.exit(run_multi_target(
                     spec_id,
                     [target],
                     args[1:],
-                    **_source_dispatch_metadata(
-                        target=target,
-                        polyrepo_root=polyrepo_root,
-                        source_id=None,
-                    ),
+                    **_workspace_target_dispatch_metadata(workspace_target),
                 ))
 
             # A spec may declare multiple targets. Multiple targets dispatch
@@ -847,99 +940,47 @@ def _cmd_harness_run(args: list[str]) -> None:
             # design documented in CLAUDE.md).
             targets = validate_targets(targets_rel, polyrepo_root)
             _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-            dispatch_metadata: dict[str, object] = {
-                "workspace_root": polyrepo_root.resolve(),
-                "workspace_git_role": "orchestration",
-                "source_ids": {},
-                "source_git_roles": {},
-            }
+            source_ids: dict[str, str] = {}
+            source_git_roles: dict[str, str] = {}
             for target in targets:
                 target_metadata = _source_dispatch_metadata(
                     target=target,
                     polyrepo_root=polyrepo_root,
                     source_id=None,
                 )
-                dispatch_metadata["source_ids"].update(target_metadata["source_ids"])  # type: ignore[union-attr]
-                dispatch_metadata["source_git_roles"].update(target_metadata["source_git_roles"])  # type: ignore[union-attr]
+                source_ids.update(target_metadata["source_ids"])
+                source_git_roles.update(target_metadata["source_git_roles"])
+            dispatch_metadata: dict[str, object] = {
+                "workspace_root": polyrepo_root.resolve(),
+                "workspace_git_role": "orchestration",
+                "source_ids": source_ids,
+                "source_git_roles": source_git_roles,
+            }
             sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
-        detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
-        if target_env:
-            detection = None
-        if detection and detection.decision == "recommend":
-            if mode == "banzai" and detection.recommended_target:
-                write_targets(spec_dir, [detection.recommended_target])
-                target = validate_single_target([detection.recommended_target], polyrepo_root)
+        if not target_env:
+            workspace_target = _resolve_harness_workspace_target(
+                polyrepo_root,
+                None,
+                spec_dir=spec_dir,
+                spec_id=resolved_spec_id,
+                rerun_command=rerun_command,
+            )
+            if workspace_target.source_root != workspace_target.workspace_root:
+                target_rel = workspace_target.source_root.relative_to(
+                    workspace_target.workspace_root
+                ).as_posix()
+                if mode == "banzai":
+                    write_targets(spec_dir, [target_rel])
+                    print(f"✓ Wrote inferred implementation target: {target_rel}")
+                target = validate_single_target([target_rel], polyrepo_root)
                 _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-                source_id = detection.candidates[0].repo if detection.candidates else None
-                print(
-                    f"✓ Wrote inferred implementation target: {detection.recommended_target} "
-                    f"(confidence {detection.confidence:.2f})"
-                )
                 sys.exit(run_multi_target(
                     spec_id,
                     [target],
                     args[1:],
-                    **_source_dispatch_metadata(
-                        target=target,
-                        polyrepo_root=polyrepo_root,
-                        source_id=source_id,
-                    ),
+                    **_workspace_target_dispatch_metadata(workspace_target),
                 ))
-            print(
-                f"✗ No implementation target configured.\n"
-                f"  Recommended implementation target: {detection.recommended_target} "
-                f"(confidence {detection.confidence:.2f})\n"
-                "  Evidence:\n"
-                + "".join(
-                    f"  - {item}\n"
-                    for item in (
-                        detection.candidates[0].evidence
-                        if detection.candidates else []
-                    )
-                )
-                + f"  Confirm with: echelon spec target {resolved_spec_id} {detection.recommended_target}\n"
-                + f"  Then rerun:  {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if detection and detection.decision == "ambiguous":
-            print(
-                "✗ No implementation target configured and target detection was ambiguous.\n"
-                f"  Fix: run 'echelon spec target {spec_id} <repo>'.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if detection and detection.decision == "multiple_source_roots_need_target":
-            candidates = _target_candidate_lines(detection.candidates)
-            print(
-                "✗ Multiple source roots found; choose one before running harness.\n\n"
-                "  Source roots:\n"
-                f"{candidates}\n\n"
-                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-path>'.\n"
-                f"  Then rerun:  {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if detection and detection.decision == "no_source_roots":
-            print(
-                "✗ No source roots found; harness build needs at least one implementation source root.\n\n"
-                "  Add or checkout the source repo(s), or add source project markers to this workspace.\n"
-                f"  Then rerun:  {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if detection and detection.decision == "invalid_target":
-            candidates = _target_candidate_lines(detection.candidates)
-            print(
-                "✗ Configured implementation target does not match a workspace source root.\n\n"
-                "  Source roots:\n"
-                f"{candidates}\n\n"
-                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-path>'.\n"
-                f"  Then rerun:  {rerun_command}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider

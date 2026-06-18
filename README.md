@@ -96,10 +96,10 @@ echelon rewind <phase-id>                  # recover a safe Phase 3 checkpoint, 
 echelon harness run 001                    # echelon squad build (default)
 echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
-# Polyrepo: record the implementation repo before build
-echelon spec target 001 og-platform            # explicit target in spec frontmatter
-echelon harness run 001 mode=semi              # recommends a target and stops if missing
-echelon harness run 001 mode=banzai            # writes a high-confidence target and continues
+# Polyrepo/workspace: select the implementation source root before build when needed
+echelon spec target 001 og-platform            # explicit source path in spec frontmatter
+echelon harness run 001 mode=semi              # uses a single source root, blocks on multiple
+echelon harness run 001 mode=banzai            # same deterministic source-root selection
 
 # After build converges, fulfillment passes, and PR is open
 echelon land 001                           # lands the target repo branch, then marks the spec landed
