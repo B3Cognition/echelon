@@ -128,6 +128,12 @@ another branch number and forks the same spec across multiple branches.
    SPECIFY_FEATURE_DIRECTORY=specs/069-tf-resource-matching tf-resource-matching feature description
    ```
 
+   Skill invocation loads the `speckit.specify` instructions; it does not prove
+   that branch/spec creation has completed. After the Skill tool returns, execute the loaded skill instructions until `spec.md` exists or the skill reports a concrete error.
+   NEVER treat `Launching skill: speckit-specify`, displayed operating instructions,
+   or a successful Skill load as proof that the feature branch or spec directory
+   was created.
+
    `speckit.specify` treats an explicit `SPECIFY_FEATURE_DIRECTORY` as its highest-priority resolution path and will not scan `specs/`.
 
    **Always set `SPECIFY_FEATURE_DIRECTORY` from the dry-run result before calling `speckit.specify`. NEVER call `speckit.specify` without it.** Omitting it falls back to `speckit.specify`'s independent `specs/` scan, which produces a mismatched number whenever remote branches exist without local spec dirs.
@@ -144,7 +150,15 @@ another branch number and forks the same spec across multiple branches.
 
    **Always move staging artifacts into the new spec directory. NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
 
-5. **Always emit BLOCKED when the spec directory is missing after the first successful call. NEVER re-invoke `speckit.specify`.** A missing spec dir after a successful Skill invocation means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — spec_dir missing after speckit.specify succeeded` and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
+5. **Always emit BLOCKED when the spec directory is missing after executing the loaded skill instructions. NEVER re-invoke `speckit.specify`.** A missing spec dir after executing the skill instructions means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit this parseable block and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
+
+```yaml
+echelon_result:
+  verdict: BLOCKED
+  state_updates:
+    status: blocked
+    blocked_reason: "spec_dir missing after speckit.specify succeeded"
+```
 
 6. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
 
@@ -169,6 +183,8 @@ This gives us: spec-kit's proven templates + branch workflow + squad's domain an
 **MANDATORY — This gate is NOT optional.** `speckit.specify` is non-negotiable. Manual spec creation produces inconsistent templates, skips branch creation, and bypasses spec-kit's versioning. There is NO fallback mode.
 
 Before Step 1 on a first WHAT pass, you MUST invoke `speckit.specify` via the Skill tool. This invocation serves as both an availability check and the beginning of the spec creation workflow. If the Resume / Amendment Guard above applies, skip this preflight and proceed directly to Step 2 using the existing `spec_dir`.
+
+Skill invocation loads the `speckit.specify` instructions; it does not prove that branch/spec creation has completed. You must execute the loaded skill instructions and verify the resulting branch and spec files before declaring success.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 
@@ -217,6 +233,12 @@ Phase: WHAT (requirements definition)
 Error: <exact error from Skill tool invocation — verbatim, not summarized>
 Action required: Install spec-kit or ensure speckit.specify skill is registered.
 Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
+
+echelon_result:
+  verdict: BLOCKED
+  state_updates:
+    status: blocked
+    blocked_reason: "speckit.specify unavailable"
 ```
 
   3. speckit-echelon-commander (COMMANDER) will set state.json status to "blocked" and escalate to human.

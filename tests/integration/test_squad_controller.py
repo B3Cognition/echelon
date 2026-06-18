@@ -135,6 +135,33 @@ class TestSolutionPhaseOrdering:
         assert sentinel_targets == ["phase3-plan"]
 
 
+class TestAgentResultIntegrity:
+    def test_agent_phase_without_parseable_echelon_result_blocks(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result=None,
+            raw_output=(
+                "speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — "
+                "speckit.specify execution incomplete"
+            ),
+            duration_ms=100,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["status"] == "blocked"
+        assert state["blocked_reason"] == "missing_echelon_result"
+        assert "phase1-what" not in state.get("completed_phases", [])
+
+
 class TestCartographerResumeGuard:
     def test_phase1_what_prompt_blocks_duplicate_specify_on_resume(self, tmp_path):
         graph = PhaseGraph(DEFINITION, EXT_YML)
