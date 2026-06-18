@@ -174,6 +174,7 @@ def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
         "extension/agents/re/verifier.md",
         "extension/agents/re/constituter.md",
         "extension/agents/exploration/scout.md",
+        "extension/agents/exploration/golddigger.md",
     ]:
         text = (EXT_ROOT / rel_path).read_text()
 

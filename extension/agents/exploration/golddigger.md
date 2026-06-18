@@ -107,16 +107,24 @@ re:
 
 ### Step 1: Detect polyrepo mode
 
-Read the repos manifest to determine if this is a polyrepo:
+Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
+Read the workspace manifest first, falling back to the repos manifest, to determine if this is a polyrepo:
 
 ```bash
 RE_OUTPUT_DIR="${RE_OUTPUT_DIR:-runs/$(cat runs/.current 2>/dev/null)/re}"
 if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
   RE_OUTPUT_DIR=".specify/echelon/re"  # standalone fallback
 fi
-MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
+WORKSPACE_MANIFEST="$RE_OUTPUT_DIR/workspace-manifest.json"
+REPOS_MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
+MANIFEST="$REPOS_MANIFEST"
 export MANIFEST
-if [ -f "$MANIFEST" ]; then
+if [ -f "$WORKSPACE_MANIFEST" ]; then
+    MANIFEST="$WORKSPACE_MANIFEST"
+    export MANIFEST
+    MODE=$(jq -r 'if (.sources // [] | length) > 1 then "polyrepo" else "single" end' "$MANIFEST")
+elif [ -f "$MANIFEST" ]; then
     MODE=$(jq -r '.mode // (if (.repo_count // 0) > 1 then "polyrepo" else "single" end)' "$MANIFEST")
 else
     MODE="single"
@@ -145,8 +153,11 @@ with open(os.environ['MANIFEST']) as f:
 threshold = int('$THRESHOLD')
 overrides = {}
 
-for repo in manifest.get('repos', []):
-    name = repo['name']
+entries = manifest.get('sources') or manifest.get('repos') or []
+for repo in entries:
+    name = repo.get('id') or repo.get('name') or repo.get('path')
+    if not name:
+        continue
     count = repo.get('source_file_count', 0)
     if count <= threshold:
         overrides[name] = {
