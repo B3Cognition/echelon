@@ -1190,7 +1190,7 @@ def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
     blocked_reason = str(run_state.get("blocked_reason") or "").strip()
     last_dispatch = run_state.get("last_dispatch") or {}
     phase_id = str(last_dispatch.get("phase_id") or "").strip()
-    if blocked_reason == "missing_phase_outputs" and phase_id in _SAFE_REWIND_PHASES:
+    if blocked_reason in {"missing_phase_outputs", "missing_echelon_result"} and phase_id in _SAFE_REWIND_PHASES:
         return f"echelon rewind {phase_id}"
     return None
 
@@ -1242,12 +1242,21 @@ def _collect_rewind_missing_inputs(spec_dir: Path, phase: str) -> list[str]:
     return missing
 
 
-def _cleanup_rewind_outputs(spec_dir: Path, phase: str) -> list[str]:
+def _cleanup_rewind_outputs(spec_dir: Path, phase: str, run_dir: Path | None = None) -> list[str]:
     removed: list[str] = []
+    roots = [spec_dir]
+    if run_dir is not None:
+        run_shadow = run_dir / spec_dir.parent.name / spec_dir.name
+        if run_shadow not in roots:
+            roots.append(run_shadow)
     for rel in _REWIND_CLEANUP_OUTPUTS.get(phase, ()):
-        path = spec_dir / rel
-        if path.exists():
-            path.unlink()
+        removed_here = False
+        for root in roots:
+            path = root / rel
+            if path.exists():
+                path.unlink()
+                removed_here = True
+        if removed_here:
             removed.append(rel)
     return removed
 
@@ -2542,7 +2551,7 @@ def _cmd_rewind(
         )
         sys.exit(1)
 
-    removed = _cleanup_rewind_outputs(spec_dir, target)
+    removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
     rewound = _reset_rewind_state(state, target, spec_dir_ref)
     store.save(rewound)
 

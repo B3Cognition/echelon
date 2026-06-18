@@ -99,6 +99,34 @@ def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
     assert "echelon continue" in captured.out
 
 
+def test_rewind_phase3_sentinel_cleans_run_local_shadow_outputs(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_phase3_spec(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "spec_dir": "specs/006-element-creator",
+            "last_dispatch": {"phase_id": "phase3-sentinel"},
+            "blocked_reason": "missing_echelon_result",
+        },
+    )
+    run_shadow = run_dir / "specs" / "006-element-creator"
+    run_shadow.mkdir(parents=True)
+    for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
+        (run_shadow / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    _cmd_rewind(["phase3-sentinel"], project_root=tmp_path)
+
+    assert not (run_shadow / "test-strategy.md").exists()
+    assert not (run_shadow / "test-architecture.md").exists()
+    assert not (run_shadow / "coverage-map.md").exists()
+
+
 def test_rewind_phase3_sentinel_refuses_when_required_how_inputs_missing(
     tmp_path: Path,
     capsys,

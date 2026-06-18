@@ -145,7 +145,7 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
             {
                 "status": "blocked",
                 "phase": "terminal-blocked",
-                "blocked_reason": "missing_phase_outputs",
+                "blocked_reason": "missing_echelon_result",
                 "last_dispatch": {"phase_id": "phase3-sentinel"},
                 "completed_phases": ["phase1-constitution", "phase3-how"],
             }
@@ -158,5 +158,5 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     captured = capsys.readouterr()
     assert "READY TO BUILD" not in captured.out
     assert "RUN BLOCKED" in captured.out
-    assert "missing_phase_outputs" in captured.out
+    assert "missing_echelon_result" in captured.out
     assert "echelon rewind phase3-sentinel" in captured.out

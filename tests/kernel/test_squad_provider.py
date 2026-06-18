@@ -185,3 +185,20 @@ journal_entries:
         entries = result.get("journal_entries", [])
         assert len(entries) == 1
         assert entries[0]["type"] == "quality_check"
+
+    def test_extracts_xml_style_echelon_result_block(self):
+        raw = """
+<echelon_result>
+  <verdict>COMPLETE</verdict>
+  <output_files>
+    - specs/006-element-creator/test-strategy.md
+  </output_files>
+  <journal_entries>
+    - type: decision
+      phase: phase3-sentinel
+  </journal_entries>
+</echelon_result>
+"""
+        result = _extract_echelon_result(raw)
+        assert result is not None
+        assert result["verdict"] == "COMPLETE"

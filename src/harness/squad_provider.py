@@ -41,7 +41,7 @@ class SquadAgentResult:
 def _extract_echelon_result(raw: str) -> Optional[dict]:
     """Find the last echelon_result block in raw output and parse it.
 
-    Handles two formats agents emit:
+    Handles three formats agents emit:
 
     1. YAML-key format (COMMANDER and ~10 agents):
          echelon_result:
@@ -53,6 +53,12 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
          verdict: FAIL
          state_updates: ...
          ```
+
+    3. XML-style wrapper occasionally emitted by Codex:
+         <echelon_result>
+           <verdict>COMPLETE</verdict>
+           ...
+         </echelon_result>
 
     Uses rfind to find the last occurrence of each format, then picks
     whichever starts later in the text (most likely to be the actual
@@ -67,11 +73,27 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
     _FENCE = "```echelon_result"
     yaml_idx = raw.rfind("echelon_result:")
     fence_idx = raw.rfind(_FENCE)
+    xml_start = raw.rfind("<echelon_result>")
+    xml_end = raw.rfind("</echelon_result>")
 
-    if yaml_idx == -1 and fence_idx == -1:
+    if yaml_idx == -1 and fence_idx == -1 and (xml_start == -1 or xml_end == -1 or xml_end < xml_start):
         return None
 
     snippet: str
+    if xml_start != -1 and xml_end != -1 and xml_end > xml_start and xml_start > max(yaml_idx, fence_idx):
+        body = raw[xml_start: xml_end + len("</echelon_result>")]
+        verdict_match = None
+        try:
+            import re as _re
+            verdict_match = _re.search(r"<verdict>\s*([^<\n]+?)\s*</verdict>", body, _re.IGNORECASE)
+        except Exception:
+            verdict_match = None
+        if verdict_match:
+            return {
+                "verdict": verdict_match.group(1).strip(),
+                "state_updates": {},
+            }
+        return None
     if fence_idx != -1 and fence_idx > yaml_idx:
         # Fenced format: extract body and wrap in echelon_result: key so
         # _parse sees a standard YAML mapping with the expected root key.

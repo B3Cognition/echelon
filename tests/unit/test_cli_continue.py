@@ -132,7 +132,7 @@ def test_continue_blocked_non_escalation_run_points_to_rewind(
         {
             "status": "blocked",
             "phase": "terminal-blocked",
-            "blocked_reason": "missing_phase_outputs",
+            "blocked_reason": "missing_echelon_result",
             "last_dispatch": {"phase_id": "phase3-sentinel"},
             "completed_phases": ["phase1-constitution", "phase3-how"],
         },
