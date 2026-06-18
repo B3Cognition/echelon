@@ -23,7 +23,11 @@ from lark.exceptions import LarkError
 
 from .completeness import completeness, placeholder_findings
 from .determinism import determinism, modal_findings
-from .examples import example_coverage, unsupported_claim_findings
+from .examples import (
+    example_coverage,
+    missing_example_findings,
+    unsupported_claim_findings,
+)
 from .linter import Finding, banned_word_findings
 from .observability import missing_output_findings, observability
 from .parser import artifact_type as _detect_type
@@ -81,6 +85,8 @@ def validate(
     # Type-specific gates.
     if kind == "SPEC":
         findings.extend(missing_output_findings(text))
+    if kind in ("SPEC", "STORY"):
+        findings.extend(missing_example_findings(text))  # every REQ must link an AC
     if kind == "ARTICLE":
         findings.extend(unsupported_claim_findings(text))
 

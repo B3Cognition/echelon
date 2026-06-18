@@ -3,7 +3,11 @@
 import pytest
 
 from lexicon.completeness import completeness, placeholder_findings
-from lexicon.examples import example_coverage, unsupported_claim_findings
+from lexicon.examples import (
+    example_coverage,
+    missing_example_findings,
+    unsupported_claim_findings,
+)
 from lexicon.observability import missing_output_findings, observability
 from lexicon.parser import artifact_type
 
@@ -132,8 +136,66 @@ def test_claim_without_evidence_is_flagged():
     assert example_coverage(ARTICLE_UNSUPPORTED) == pytest.approx(0.5)
 
 
+# --- E: spec/story example coverage (REQ -> AC via EXAMPLE ref) ------------
+
+SPEC_LINKED = """ARTIFACT: SPEC
+TITLE: t
+
+REQ: FR-001
+GIVEN: g
+WHEN: w
+THEN: the system MUST act
+OUTPUT: a result
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: g
+WHEN: w
+THEN: the result is visible
+"""
+
+SPEC_UNLINKED = """ARTIFACT: SPEC
+TITLE: t
+
+REQ: FR-001
+GIVEN: g
+WHEN: w
+THEN: the system MUST act
+OUTPUT: a result
+
+AC: AC-001
+GIVEN: g
+WHEN: w
+THEN: the result is visible
+"""
+
+SPEC_DANGLING = SPEC_LINKED.replace("EXAMPLE: AC-001", "EXAMPLE: AC-999")
+
+
 @pytest.mark.unit
-def test_spec_has_vacuous_example_coverage():
-    # No CLAIMs in a spec -> example coverage is vacuously 1.0, no findings.
-    assert example_coverage(SPEC_FULL) == 1.0
-    assert unsupported_claim_findings(SPEC_FULL) == []
+def test_req_with_resolved_example_is_covered():
+    assert example_coverage(SPEC_LINKED) == 1.0
+    assert missing_example_findings(SPEC_LINKED) == []
+
+
+@pytest.mark.unit
+def test_req_without_example_is_flagged():
+    findings = missing_example_findings(SPEC_UNLINKED)
+    assert len(findings) == 1
+    assert findings[0].code == "missing-example"
+    assert findings[0].span == "FR-001"
+    assert example_coverage(SPEC_UNLINKED) == 0.0
+
+
+@pytest.mark.unit
+def test_req_with_dangling_example_ref_is_flagged():
+    findings = missing_example_findings(SPEC_DANGLING)
+    assert any(f.code == "unresolved-example" and "AC-999" in f.message for f in findings)
+    assert example_coverage(SPEC_DANGLING) == 0.0
+
+
+@pytest.mark.unit
+def test_article_coverage_unaffected_by_spec_logic():
+    # Article CLAIM->EVIDENCE coverage still works; no REQ example findings.
+    assert example_coverage(ARTICLE_SUPPORTED) == 1.0
+    assert missing_example_findings(ARTICLE_SUPPORTED) == []

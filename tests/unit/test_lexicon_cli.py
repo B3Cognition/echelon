@@ -16,6 +16,12 @@ WHEN: the user opens the task dashboard
 THEN: the dashboard MUST display the overdue list sorted by due_date ascending
 OUTPUT: a visible overdue list
 CONSTRAINT: latency <= 500 ms for p95 requests
+EXAMPLE: AC-1
+
+AC: AC-1
+GIVEN: the user has at least one overdue task
+WHEN: the user opens the task dashboard
+THEN: the overdue list is shown
 """
 
 BANNED_SPEC = GOOD_SPEC.replace("the overdue list", "a robust overdue list")

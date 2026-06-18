@@ -13,6 +13,12 @@ WHEN: the user opens the task dashboard
 THEN: the dashboard MUST display the overdue list sorted by due_date ascending
 OUTPUT: a visible overdue list
 CONSTRAINT: latency <= 500 ms for p95 requests
+EXAMPLE: AC-1
+
+AC: AC-1
+GIVEN: the user has at least one overdue task
+WHEN: the user opens the task dashboard
+THEN: the overdue list is shown
 """
 
 BANNED_SPEC = GOOD_SPEC.replace("the overdue list", "a robust overdue list")
@@ -46,6 +52,17 @@ WHEN: w
 THEN: the dashboard MUST display the overdue list sorted by due_date ascending
 """
 
+# A structurally fine spec whose REQ links no acceptance criterion.
+NO_EXAMPLE_SPEC = """ARTIFACT: SPEC
+TITLE: t
+
+REQ: R1
+GIVEN: g
+WHEN: w
+THEN: the system MUST act
+OUTPUT: a result
+"""
+
 GOOD_STORY = """ARTIFACT: STORY
 TITLE: Manage profile
 
@@ -53,6 +70,7 @@ REQ: STORY-1
 GIVEN: a signed-in account holder
 WHEN: the account holder edits their display name
 THEN: the system MUST persist the new display name
+EXAMPLE: A1
 
 RULE: R1
 IF: the display name is empty
@@ -116,6 +134,16 @@ def test_req_without_output_makes_spec_invalid():
     assert report.ok is False
     assert report.observability < 1.0
     assert any(f.code == "missing-output" for f in report.findings)
+
+
+@pytest.mark.unit
+def test_missing_example_makes_spec_invalid():
+    # Every REQ must link an acceptance criterion via EXAMPLE; an unlinked REQ
+    # fails the gate even when otherwise structurally clean.
+    report = validate(NO_EXAMPLE_SPEC)
+    assert report.ok is False
+    assert report.example_coverage < 1.0
+    assert any(f.code == "missing-example" for f in report.findings)
 
 
 @pytest.mark.unit

@@ -107,6 +107,7 @@ WHEN: <trigger>
 THEN: <subject> MUST <action> <object>      # EXACTLY ONE uppercase modal: MUST / MUST NOT / SHALL / SHOULD / MAY
 OUTPUT: <observable result>                  # REQUIRED on every REQ
 CONSTRAINT: <metric comparator value unit>   # optional
+EXAMPLE: <AC-ID>                             # REQUIRED: >=1 ref to an AC block that exercises this REQ
 
 AC: <ID>
 GIVEN: <state>
@@ -148,6 +149,8 @@ $LEXICON validate "{spec_dir}/spec.md" --type {artifact_type} \
    | `modal`           | rewrite the THEN main clause to carry EXACTLY ONE uppercase modal           |
    | `incomplete-slot` | replace the `<placeholder>` with real content                               |
    | `missing-output`  | add an `OUTPUT:` line with the observable result                            |
+   | `missing-example` | add an `EXAMPLE: <AC-ID>` line to the REQ and author the AC block it names   |
+   | `unresolved-example` | point the `EXAMPLE` ref at an AC id that actually exists                  |
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
