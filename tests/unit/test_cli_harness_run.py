@@ -11,8 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.run_intent import parse_intent
+from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+from harness.run_intent import parse_intent
 
 
 VALID_PLAN = """# Implementation Plan: Demo
@@ -183,6 +184,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -222,6 +224,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -257,6 +260,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -299,6 +303,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -342,6 +347,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -407,6 +413,21 @@ class TestHarnessTargetPreflight:
         (other / ".git").mkdir(parents=True)
 
         monkeypatch.chdir(root)
+        from echelon import target_detection
+
+        monkeypatch.setattr(
+            target_detection,
+            "discover_workspace",
+            lambda _: WorkspaceManifest(
+                schema_version=1,
+                workspace=WorkspaceInfo(
+                    root=root.resolve(),
+                    git_role="orchestration",
+                    git_present=False,
+                ),
+                sources=(),
+            ),
+        )
         from echelon.cli import _cmd_harness_run
 
         with pytest.raises(SystemExit) as exc:
@@ -446,9 +467,23 @@ class TestHarnessTargetPreflight:
         (other / ".git").mkdir(parents=True)
 
         monkeypatch.chdir(root)
+        from echelon import target_detection
         from echelon.cli import _cmd_harness_run
         from harness.spec_frontmatter import read_frontmatter
 
+        monkeypatch.setattr(
+            target_detection,
+            "discover_workspace",
+            lambda _: WorkspaceManifest(
+                schema_version=1,
+                workspace=WorkspaceInfo(
+                    root=root.resolve(),
+                    git_role="orchestration",
+                    git_present=False,
+                ),
+                sources=(),
+            ),
+        )
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001", "mode=banzai"])
@@ -456,3 +491,73 @@ class TestHarnessTargetPreflight:
         assert exc.value.code == 0
         assert read_frontmatter(spec_dir)["targets"] == ["rbf-opta-points"]
         mock_run.assert_called_once()
+
+    def test_multiple_workspace_source_roots_stop_before_workspace_config(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        root = tmp_path
+        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        for name in ["og-platform", "pbg-api"]:
+            source = root / name
+            (source / ".git").mkdir(parents=True)
+            (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+        monkeypatch.chdir(root)
+        from echelon.cli import _cmd_harness_run
+
+        with patch("harness.config.load_config") as mock_load_config:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001", "mode=banzai"])
+
+        assert exc.value.code == 1
+        mock_load_config.assert_not_called()
+        err = capsys.readouterr().err
+        assert "Multiple source roots found" in err
+        assert "og-platform" in err
+        assert "pbg-api" in err
+        assert "echelon spec target 001-feature <source-root>" in err
+
+    def test_no_workspace_source_roots_stop_before_workspace_config(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        root = tmp_path
+        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(root)
+        from echelon.cli import _cmd_harness_run
+
+        with patch("harness.config.load_config") as mock_load_config:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001"])
+
+        assert exc.value.code == 1
+        mock_load_config.assert_not_called()
+        err = capsys.readouterr().err
+        assert "No source roots found" in err

@@ -67,17 +67,40 @@ def _referenced_paths(text: str) -> set[str]:
 
 
 def _source_candidate(source: SourceRoot, confidence: float = 1.0) -> TargetCandidate:
-    evidence = [f"workspace source path `{source.path}`"]
+    evidence = ["workspace source root", f"workspace source path `{source.path}`"]
     return TargetCandidate(repo=source.id, confidence=confidence, evidence=evidence)
 
 
 def _source_candidates(sources: tuple[SourceRoot, ...]) -> list[TargetCandidate]:
-    return [_source_candidate(source, confidence=0.0) for source in sources]
+    return [_source_candidate(source) for source in sources]
 
 
-def _matches_explicit_target(source: SourceRoot, explicit_target: str) -> bool:
-    target = explicit_target.strip().strip("/")
-    return target in {source.id, source.path}
+def _normalize_target_path(target: str) -> str:
+    normalized = Path(target.strip()).as_posix()
+    if normalized == ".":
+        return "."
+    if normalized.endswith("/."):
+        normalized = normalized[:-2]
+    return normalized.removeprefix("./").strip("/")
+
+
+def _explicit_target_forms(explicit_target: str, polyrepo_root: Path) -> set[str]:
+    target = explicit_target.strip()
+    forms = {_normalize_target_path(target)}
+
+    target_path = Path(target).expanduser()
+    if not target_path.is_absolute():
+        target_path = polyrepo_root / target_path
+    try:
+        forms.add(target_path.resolve().relative_to(polyrepo_root.resolve()).as_posix())
+    except ValueError:
+        forms.add(_normalize_target_path(target_path.as_posix()))
+
+    return {form for form in forms if form}
+
+
+def _matches_explicit_target(source: SourceRoot, explicit_forms: set[str]) -> bool:
+    return source.id in explicit_forms or _normalize_target_path(source.path) in explicit_forms
 
 
 def _recommend_source(source: SourceRoot, decision: str) -> TargetDetectionResult:
@@ -92,6 +115,7 @@ def _recommend_source(source: SourceRoot, decision: str) -> TargetDetectionResul
 def _detect_from_workspace_manifest(
     workspace_manifest: WorkspaceManifest,
     explicit_target: str | None,
+    polyrepo_root: Path,
 ) -> TargetDetectionResult:
     sources = workspace_manifest.sources
     candidates = _source_candidates(sources)
@@ -100,8 +124,9 @@ def _detect_from_workspace_manifest(
         return TargetDetectionResult(None, 0.0, "no_source_roots", [])
 
     if explicit_target is not None:
+        explicit_forms = _explicit_target_forms(explicit_target, polyrepo_root)
         for source in sources:
-            if _matches_explicit_target(source, explicit_target):
+            if _matches_explicit_target(source, explicit_forms):
                 return _recommend_source(source, "recommend")
         return TargetDetectionResult(None, 0.0, "invalid_target", candidates)
 
@@ -125,15 +150,26 @@ def detect_target(
     explicit_target: str | None = None,
 ) -> TargetDetectionResult:
     if workspace_manifest is not None:
-        return _detect_from_workspace_manifest(workspace_manifest, explicit_target)
+        return _detect_from_workspace_manifest(workspace_manifest, explicit_target, polyrepo_root)
 
     discovered_manifest = discover_workspace(polyrepo_root)
-    if discovered_manifest.sources:
-        return _detect_from_workspace_manifest(discovered_manifest, explicit_target)
+    if discovered_manifest.workspace.git_present:
+        return _detect_from_workspace_manifest(discovered_manifest, explicit_target, polyrepo_root)
 
     repos = _candidate_repos(polyrepo_root)
     if len(repos) <= 1:
         return TargetDetectionResult(None, 0.0, "not_polyrepo", [])
+
+    if explicit_target is not None:
+        explicit_forms = _explicit_target_forms(explicit_target, polyrepo_root)
+        candidates = [
+            TargetCandidate(repo=repo.name, confidence=1.0, evidence=[f"legacy repo `{repo.name}`"])
+            for repo in repos
+        ]
+        for repo in repos:
+            if repo.name in explicit_forms or repo.relative_to(polyrepo_root).as_posix() in explicit_forms:
+                return TargetDetectionResult(repo.name, 1.0, "recommend", candidates)
+        return TargetDetectionResult(None, 0.0, "invalid_target", candidates)
 
     text = _spec_text(spec_dir)
     lowered = text.lower()

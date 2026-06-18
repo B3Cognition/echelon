@@ -64,7 +64,15 @@ def test_detect_target_legacy_scores_repo_with_referenced_source_paths_when_disc
     monkeypatch.setattr(
         target_detection,
         "discover_workspace",
-        lambda _: _workspace_manifest(root, ()),
+        lambda _: WorkspaceManifest(
+            schema_version=1,
+            workspace=WorkspaceInfo(
+                root=root.resolve(),
+                git_role="orchestration",
+                git_present=False,
+            ),
+            sources=(),
+        ),
     )
 
     result = detect_target(spec_dir=spec_dir, polyrepo_root=root)
@@ -91,8 +99,8 @@ def test_detect_target_blocks_on_tie(tmp_path: Path) -> None:
     result = detect_target(spec_dir=spec_dir, polyrepo_root=root)
 
     assert result.recommended_target is None
-    assert result.decision == "multiple_source_roots_need_target"
-    assert result.confidence == 0.0
+    assert result.decision == "ambiguous"
+    assert result.confidence < 0.80
 
 
 @pytest.mark.unit
@@ -122,7 +130,6 @@ def test_detect_target_treats_git_file_children_as_polyrepo_repos(
 @pytest.mark.unit
 def test_detect_target_returns_not_polyrepo_for_single_repo(tmp_path: Path) -> None:
     root = tmp_path
-    _git_marker(root)
     spec_dir = root / "specs" / "001-local"
     spec_dir.mkdir(parents=True)
     _write(spec_dir / "tasks.md", "Fix local code\n")
@@ -131,6 +138,23 @@ def test_detect_target_returns_not_polyrepo_for_single_repo(tmp_path: Path) -> N
 
     assert result.decision == "not_polyrepo"
     assert result.recommended_target is None
+
+
+@pytest.mark.unit
+def test_detect_target_returns_no_source_roots_for_git_backed_empty_workspace(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path
+    _git_marker(root)
+    spec_dir = root / "specs" / "001-local"
+    spec_dir.mkdir(parents=True)
+
+    result = detect_target(spec_dir=spec_dir, polyrepo_root=root)
+
+    assert result.decision == "no_source_roots"
+    assert result.recommended_target is None
+    assert result.confidence == 0.0
+    assert result.candidates == []
 
 
 @pytest.mark.unit
@@ -287,6 +311,54 @@ def test_detect_target_accepts_explicit_workspace_source_id_and_returns_path(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("explicit_target", ["./apps/web", "apps/web/.", "apps/web/"])
+def test_detect_target_normalizes_explicit_workspace_source_paths(
+    tmp_path: Path,
+    explicit_target: str,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(id="web-app", path="apps/web", git_present=True),
+            SourceRoot(id="api", path="services/api", git_present=True),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+        explicit_target=explicit_target,
+    )
+
+    assert result.recommended_target == "apps/web"
+    assert result.decision == "recommend"
+
+
+@pytest.mark.unit
+def test_detect_target_accepts_absolute_explicit_workspace_source_path(
+    tmp_path: Path,
+) -> None:
+    manifest = _workspace_manifest(
+        tmp_path,
+        (
+            SourceRoot(id="web-app", path="apps/web", git_present=True),
+            SourceRoot(id="api", path="services/api", git_present=True),
+        ),
+    )
+
+    result = detect_target(
+        spec_dir=tmp_path / "specs" / "001-feature",
+        polyrepo_root=tmp_path,
+        workspace_manifest=manifest,
+        explicit_target=str(tmp_path / "apps" / "web"),
+    )
+
+    assert result.recommended_target == "apps/web"
+    assert result.decision == "recommend"
+
+
+@pytest.mark.unit
 def test_detect_target_source_candidates_use_ids_with_paths_in_evidence(
     tmp_path: Path,
 ) -> None:
@@ -305,6 +377,8 @@ def test_detect_target_source_candidates_use_ids_with_paths_in_evidence(
     )
 
     assert [candidate.repo for candidate in result.candidates] == ["web-app", "api"]
+    assert [candidate.confidence for candidate in result.candidates] == [1.0, 1.0]
+    assert "workspace source root" in result.candidates[0].evidence
     assert any("apps/web" in item for item in result.candidates[0].evidence)
     assert any("services/api" in item for item in result.candidates[1].evidence)
 

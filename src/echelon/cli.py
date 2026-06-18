@@ -809,6 +809,40 @@ def _cmd_harness_run(args: list[str]) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        if detection and detection.decision == "multiple_source_roots_need_target":
+            candidates = "\n".join(
+                f"  - {candidate.repo}" for candidate in detection.candidates
+            )
+            print(
+                "✗ Multiple source roots found; choose one before running harness.\n\n"
+                "  Source roots:\n"
+                f"{candidates}\n\n"
+                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-root>'.\n"
+                f"  Then rerun:  {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if detection and detection.decision == "no_source_roots":
+            print(
+                "✗ No source roots found; harness build needs at least one implementation source root.\n\n"
+                "  Add or checkout the source repo(s), or add source project markers to this workspace.\n"
+                f"  Then rerun:  {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if detection and detection.decision == "invalid_target":
+            candidates = "\n".join(
+                f"  - {candidate.repo}" for candidate in detection.candidates
+            )
+            print(
+                "✗ Configured implementation target does not match a workspace source root.\n\n"
+                "  Source roots:\n"
+                f"{candidates}\n\n"
+                f"  Fix: run 'echelon spec target {resolved_spec_id} <source-root>'.\n"
+                f"  Then rerun:  {rerun_command}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Single-repo mode: require local echelon-config.yml (harness config).
     echelon_yml = config_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
