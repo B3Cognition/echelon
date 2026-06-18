@@ -153,6 +153,7 @@ echo ""
 echo "=== Test 3: polyrepo mode ==="
 
 TMPDIR3=$(mktemp -d)
+RE_OUTPUT_DIR="$TMPDIR3"
 MANIFEST3=$(mktemp)
 trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
 
@@ -164,31 +165,58 @@ MANIFEST3_COUNT=$(jq -r '.repo_count' "$MANIFEST3")
 assert_eq "manifest repo_count is 3" "3" "$MANIFEST3_COUNT"
 
 # Run analysis in polyrepo mode
-(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" "$TMPDIR3" "$MANIFEST3" 2>/dev/null)
+(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" "$RE_OUTPUT_DIR" "$MANIFEST3" 2>/dev/null)
+
+assert_file_exists "workspace-manifest.json copied to output" "$RE_OUTPUT_DIR/workspace-manifest.json"
+assert_json_field "workspace manifest has 3 sources" "$RE_OUTPUT_DIR/workspace-manifest.json" '.sources | length' "3"
+assert_path_not_exists "analysis output does not include workspace .specify" "$RE_OUTPUT_DIR/.specify"
 
 # Per-repo output directories with analysis.json
-assert_file_exists "repo-a/analysis.json exists" "$TMPDIR3/repo-a/analysis.json"
-assert_file_exists "repo-b/analysis.json exists" "$TMPDIR3/repo-b/analysis.json"
-assert_file_exists "repo-c/analysis.json exists" "$TMPDIR3/repo-c/analysis.json"
+assert_file_exists "repo-a/analysis.json exists" "$RE_OUTPUT_DIR/repo-a/analysis.json"
+assert_file_exists "repo-b/analysis.json exists" "$RE_OUTPUT_DIR/repo-b/analysis.json"
+assert_file_exists "repo-c/analysis.json exists" "$RE_OUTPUT_DIR/repo-c/analysis.json"
 assert_path_not_exists "polyrepo fixture remains free of .codegraph" "$FIXTURES_DIR/polyrepo/.codegraph"
 
 # cross-repo.json at root
-assert_file_exists "cross-repo.json exists" "$TMPDIR3/cross-repo.json"
+assert_file_exists "cross-repo.json exists" "$RE_OUTPUT_DIR/cross-repo.json"
 
 # Root-level aggregate analysis.json
-assert_file_exists "root-level analysis.json" "$TMPDIR3/analysis.json"
-assert_json_field "root analysis has metadata" "$TMPDIR3/analysis.json" '.metadata | type' "object"
-assert_json_field "root analysis has repo_count" "$TMPDIR3/analysis.json" '.metadata.repo_count' "3"
-assert_json_field "root analysis has repos array" "$TMPDIR3/analysis.json" '.repos | type' "array"
+assert_file_exists "root-level analysis.json" "$RE_OUTPUT_DIR/analysis.json"
+assert_json_field "root analysis has metadata" "$RE_OUTPUT_DIR/analysis.json" '.metadata | type' "object"
+assert_json_field "root analysis has repo_count" "$RE_OUTPUT_DIR/analysis.json" '.metadata.repo_count' "3"
+assert_json_field "root analysis has repos array" "$RE_OUTPUT_DIR/analysis.json" '.repos | type' "array"
+assert_json_field "root analysis records preferred manifest" "$RE_OUTPUT_DIR/analysis.json" '.manifest_path' "workspace-manifest.json"
 
 # Per-repo analysis.json should have repo_name field
-assert_json_field "repo-a analysis has repo_name" "$TMPDIR3/repo-a/analysis.json" '.repo_name' "repo-a"
-assert_json_field "repo-b analysis has repo_name" "$TMPDIR3/repo-b/analysis.json" '.repo_name' "repo-b"
-assert_json_field "repo-c analysis has repo_name" "$TMPDIR3/repo-c/analysis.json" '.repo_name' "repo-c"
+assert_json_field "repo-a analysis has repo_name" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.repo_name' "repo-a"
+assert_json_field "repo-b analysis has repo_name" "$RE_OUTPUT_DIR/repo-b/analysis.json" '.repo_name' "repo-b"
+assert_json_field "repo-c analysis has repo_name" "$RE_OUTPUT_DIR/repo-c/analysis.json" '.repo_name' "repo-c"
 
 # Per-repo analysis.json should have expected structure fields
-assert_json_field "repo-a has metadata" "$TMPDIR3/repo-a/analysis.json" '.metadata | type' "object"
-assert_json_field "repo-a has structure" "$TMPDIR3/repo-a/analysis.json" '.structure | type' "object"
+assert_json_field "repo-a has metadata" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.metadata | type' "object"
+assert_json_field "repo-a has structure" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.structure | type' "object"
+
+# ---------- Test 4: Legacy repos-manifest fallback ----------
+
+echo ""
+echo "=== Test 4: legacy repos-manifest fallback ==="
+
+TMPDIR4=$(mktemp -d)
+MANIFEST4_DIR=$(mktemp -d)
+MANIFEST4="$MANIFEST4_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$MANIFEST4_DIR"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
+
+(cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$MANIFEST4" 2>/dev/null)
+rm -f "$MANIFEST4_DIR/workspace-manifest.json"
+
+(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" "$TMPDIR4" "$MANIFEST4" 2>/dev/null)
+
+assert_file_exists "legacy repo-a/analysis.json exists" "$TMPDIR4/repo-a/analysis.json"
+assert_file_exists "legacy repo-b/analysis.json exists" "$TMPDIR4/repo-b/analysis.json"
+assert_file_exists "legacy repo-c/analysis.json exists" "$TMPDIR4/repo-c/analysis.json"
+assert_file_exists "legacy repos-manifest.json copied to output" "$TMPDIR4/repos-manifest.json"
+assert_file_not_exists "legacy workspace-manifest.json absent" "$TMPDIR4/workspace-manifest.json"
+assert_json_field "legacy root analysis records repos manifest" "$TMPDIR4/analysis.json" '.manifest_path' "repos-manifest.json"
 
 # ---------- summary ----------
 

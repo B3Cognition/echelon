@@ -40,9 +40,11 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
 
-Check `$RE_OUTPUT_DIR/repos-manifest.json`:
-- File absent or `repo_count == 1` → single-repo flow.
-- `repo_count > 1` → multi-repo flow: process each repo independently, generate per-repo specs with IDs `NNN-re-{repo}-{domain}`, generate cross-repo overview from `cross-repo.json`, add "Repository Map" table to `specs/000-re-overview/overview.md`.
+Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
+Check `$RE_OUTPUT_DIR/workspace-manifest.json` first, then `$RE_OUTPUT_DIR/repos-manifest.json` as fallback:
+- File absent or one source/repo → single-repo flow.
+- More than one source/repo → multi-repo flow: process each source root independently, generate per-source specs with IDs `NNN-re-{source}-{domain}`, generate cross-repo overview from `cross-repo.json`, add "Repository Map" table to `specs/000-re-overview/overview.md`.
 
 Per-repo depth overrides: resolve config with `specify extension config resolve echelon --format json` and check `polyrepo.repos.{repo-name}.depth.level`. If present, use that depth for this repo instead of the top-level `depth.level`.
 

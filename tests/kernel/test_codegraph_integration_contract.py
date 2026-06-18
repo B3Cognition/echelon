@@ -158,10 +158,29 @@ def test_re_preflight_prefers_active_run_output_dir_and_tracks_codegraph_artifac
 def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
     analyzer = (EXT_ROOT / "extension" / "agents" / "re" / "analyzer.md").read_text()
 
+    assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" "$RE_OUTPUT_DIR" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
+    assert "repos-manifest.json" in analyzer
+    assert "Prefer workspace-manifest.json" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" ".specify/echelon/re"' not in analyzer
+
+
+def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
+    for rel_path in [
+        "extension/agents/re/analyzer.md",
+        "extension/agents/re/specifier.md",
+        "extension/agents/re/verifier.md",
+        "extension/agents/re/constituter.md",
+        "extension/agents/exploration/scout.md",
+    ]:
+        text = (EXT_ROOT / rel_path).read_text()
+
+        assert "workspace-manifest.json" in text, rel_path
+        assert "repos-manifest.json" in text, rel_path
+        assert "Prefer workspace-manifest.json" in text, rel_path
+        assert "compatibility fallback" in text, rel_path
 
 
 def test_exploration_agents_do_not_hardcode_re_artifact_reads():

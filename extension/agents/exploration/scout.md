@@ -82,8 +82,11 @@ Read the artifacts directly — no intermediate normalization layer.
 4. If domain specs exist (from auto-promoted full-depth repos): read `specs/NNN-re-{repo}-{domain}/spec.md`
 5. If `golddigger_artifacts.codegraph_summary` exists, read it before full CodeGraph analysis; read `golddigger_artifacts.codegraph_analysis` only when structural detail is needed.
 
+Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
 Use the data to seed your output artifacts:
-- `repos-manifest.json` → seeds **boundaries** (each repo is a top-level boundary)
+- `workspace-manifest.json` → seeds **boundaries** (each source root is a top-level boundary)
+- `repos-manifest.json` → compatibility fallback for older runs
 - `cross-repo.json` → seeds **dependencies** between boundaries and **integration points**
 - Per-repo `analysis.json` → seeds **glossary** (tech stack, entry points), **mental-model** (domain inventory, hotspots)
 - Per-repo domain specs (if exist) → seeds **assumptions** and **unknowns** with evidence
