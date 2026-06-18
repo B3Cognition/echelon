@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -138,6 +139,55 @@ def _workspace_git_preflight(project_root: Path, *, command_name: str) -> None:
         file=sys.stderr,
     )
     raise SystemExit(2)
+
+
+def _workspace_git_present(project_root: Path) -> bool:
+    return discover_workspace(project_root).workspace.git_present
+
+
+def _print_legacy_branchless_recovery_notice(command_name: str) -> None:
+    print(
+        "legacy branchless run detected; continuing for recovery only\n"
+        "Initialize workspace Git before starting new Echelon runs.",
+        file=sys.stderr,
+    )
+
+
+def _command_display(prefix: str, args: list[str]) -> str:
+    return shlex.join([*prefix.split(), *args])
+
+
+def _workspace_git_preflight_for_squad_run(
+    project_root: Path,
+    *,
+    command_name: str,
+    user_message: str,
+    reset: bool,
+) -> None:
+    if _workspace_git_present(project_root):
+        return
+    if reset:
+        _workspace_git_preflight(project_root, command_name=command_name)
+
+    existing_dir = _find_current_run_dir(project_root)
+    if not existing_dir or not (existing_dir / "state.json").exists():
+        _workspace_git_preflight(project_root, command_name=command_name)
+
+    try:
+        import json as _json
+
+        state = _json.loads((existing_dir / "state.json").read_text(encoding="utf-8"))
+    except Exception:
+        _workspace_git_preflight(project_root, command_name=command_name)
+
+    if state.get("status") in ("running", "in_progress") and (
+        not user_message or user_message == state.get("user_message", "")
+    ):
+        _print_legacy_branchless_recovery_notice(command_name)
+        return
+
+    _workspace_git_preflight(project_root, command_name=command_name)
+
 
 def _derive_wing_suggestion(project_dir: Path) -> str:
     """Suggest a wing name: git remote slug if available, else dirname-hash6."""
@@ -633,7 +683,10 @@ def _cmd_harness_run(args: list[str]) -> None:
         print("echelon harness run: missing spec_id\n", file=sys.stderr)
         sys.exit(1)
 
-    _workspace_git_preflight(Path.cwd(), command_name=f"echelon harness run {args[0]}")
+    _workspace_git_preflight(
+        Path.cwd(),
+        command_name=_command_display("echelon harness run", args),
+    )
 
     spec_id = args[0]
     kv: dict[str, str] = {}
@@ -994,8 +1047,6 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         return
 
-    _workspace_git_preflight(Path.cwd(), command_name=f"echelon harness resume {args[0]}")
-
     spec_id = args[0]
     kv: dict[str, str] = {}
     for arg in args[1:]:
@@ -1037,6 +1088,16 @@ def _cmd_harness_resume(args: list[str]) -> None:
         state_dir = runs_dir(cwd) / "state"
     state_store = StateStore(state_dir, spec_id, strategy)
     state = state_store.read()
+    if not _workspace_git_present(cwd):
+        if state:
+            _print_legacy_branchless_recovery_notice(
+                _command_display("echelon harness resume", args)
+            )
+        else:
+            _workspace_git_preflight(
+                cwd,
+                command_name=_command_display("echelon harness resume", args),
+            )
 
     if not state:
         print(
@@ -2532,6 +2593,12 @@ def _cmd_run(
             message_parts.append(args[i])
             i += 1
     message = " ".join(message_parts)
+    _workspace_git_preflight_for_squad_run(
+        project_root,
+        command_name=_command_display("echelon run", args),
+        user_message=message,
+        reset=reset,
+    )
 
     prev_dir = _find_current_run_dir(project_root)
     squad_dir, is_fresh = _select_squad_dir(project_root, message, reset=reset)
@@ -3290,7 +3357,6 @@ def _cmd_continue(
     import json as _json
 
     _print_extension_drift_warning(project_root, ext_dir)
-    _workspace_git_preflight(project_root, command_name="echelon continue")
 
     # Optionally accept --mode override
     mode_override = ""
@@ -3304,6 +3370,10 @@ def _cmd_continue(
 
     squad_dir = _find_current_run_dir(project_root)
     if not squad_dir or not (squad_dir / "state.json").exists():
+        _workspace_git_preflight(
+            project_root,
+            command_name=_command_display("echelon continue", args),
+        )
         print(
             "No prior run found in this project.\n"
             "Start a new run:  echelon run \"<task description>\"",
@@ -3312,6 +3382,10 @@ def _cmd_continue(
         return
 
     state = _json.loads((squad_dir / "state.json").read_text())
+    if not _workspace_git_present(project_root):
+        _print_legacy_branchless_recovery_notice(
+            _command_display("echelon continue", args)
+        )
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
     status = state.get("status", "")

@@ -121,6 +121,29 @@ class TestHarnessRunArgParsing:
 
 @pytest.mark.unit
 class TestHarnessRunTaskFormatErrors:
+    def test_branchless_harness_run_blocks_with_full_rerun_command(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        (tmp_path / ".git").rmdir()
+        source = tmp_path / "og-platform"
+        source.mkdir()
+        (source / ".git").mkdir()
+        (source / "package.json").write_text("{}", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        from echelon.cli import _cmd_harness_run
+
+        with pytest.raises(SystemExit) as exc:
+            _cmd_harness_run(["003", "mode=banzai", "strategy=soar", "finish slice"])
+
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "workspace root is not a Git repo" in err
+        assert "echelon harness run 003 mode=banzai strategy=soar 'finish slice'" in err
+
     def test_harness_run_snapshots_spec_before_preflight_exit(
         self,
         tmp_path: Path,

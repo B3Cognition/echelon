@@ -397,6 +397,59 @@ def test_continue_retries_incomplete_phase_before_constitution(
     assert calls == [["make terminal ascii art", "--mode", "semi"]]
 
 
+def test_continue_blocks_new_branchless_workspace(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / ".git").rmdir()
+    source = tmp_path / "og-platform"
+    source.mkdir()
+    (source / ".git").mkdir()
+    (source / "package.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_continue(["--mode", "banzai"], project_root=tmp_path, ext_dir=tmp_path)
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "workspace root is not a Git repo" in err
+    assert "echelon continue --mode banzai" in err
+
+
+def test_continue_allows_legacy_branchless_running_recovery(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    (tmp_path / ".git").rmdir()
+    source = tmp_path / "og-platform"
+    source.mkdir()
+    (source / ".git").mkdir()
+    (source / "package.json").write_text("{}", encoding="utf-8")
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "running",
+            "phase": "phase1-what",
+            "user_message": "build the dashboard",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path)
+
+    assert calls == [["build the dashboard", "--mode", "semi"]]
+    err = capsys.readouterr().err
+    assert "legacy branchless run detected; continuing for recovery only" in err
+
+
 def test_continue_retries_timeout_without_resume_dead_end(
     tmp_path: Path,
     monkeypatch,
