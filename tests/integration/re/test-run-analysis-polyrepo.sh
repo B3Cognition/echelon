@@ -232,17 +232,17 @@ trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$TMPROOT5" "$TMPDIR5" 
 cat > "$TMPROOT5/package.json" <<'JSON'
 {"name": "workspace-wrapper"}
 JSON
-mkdir -p "$TMPROOT5/app-a/src" "$TMPROOT5/app-b/src"
+mkdir -p "$TMPROOT5/app-a/src" "$TMPROOT5/lib/src"
 cat > "$TMPROOT5/app-a/package.json" <<'JSON'
-{"name": "app-a", "dependencies": {"app-b": "workspace:*"}}
+{"name": "app-a", "dependencies": {"@scope/contracts": "workspace:*"}}
 JSON
 cat > "$TMPROOT5/app-a/src/index.ts" <<'TS'
-import "app-b";
+import "@scope/contracts";
 TS
-cat > "$TMPROOT5/app-b/package.json" <<'JSON'
-{"name": "app-b"}
+cat > "$TMPROOT5/lib/package.json" <<'JSON'
+{"name": "@scope/contracts"}
 JSON
-cat > "$TMPROOT5/app-b/src/index.ts" <<'TS'
+cat > "$TMPROOT5/lib/src/index.ts" <<'TS'
 export const value = 1;
 TS
 
@@ -254,10 +254,11 @@ assert_json_field "workspace manifest sees child sources" "$MANIFEST5_DIR/worksp
 (cd "$TMPROOT5" && "$RUN_ANALYSIS" "$TMPDIR5" "$MANIFEST5" 2>/dev/null)
 
 assert_file_exists "workspace-driven app-a analysis exists" "$TMPDIR5/app-a/analysis.json"
-assert_file_exists "workspace-driven app-b analysis exists" "$TMPDIR5/app-b/analysis.json"
+assert_file_exists "workspace-driven lib analysis exists" "$TMPDIR5/lib/analysis.json"
 assert_json_field "workspace-driven root analysis repo_count" "$TMPDIR5/analysis.json" '.metadata.repo_count' "2"
 assert_json_field "workspace-driven cross-repo repo_count" "$TMPDIR5/cross-repo.json" '.repo_count' "2"
 assert_json_field "workspace-driven compatibility manifest repo_count" "$TMPDIR5/repos-manifest.json" '.repo_count' "2"
+assert_json_field "workspace-driven package identifier derived" "$TMPDIR5/repos-manifest.json" '.repos[] | select(.name == "lib") | .pkg_identifiers[0].id' "@scope/contracts"
 assert_json_field "workspace-driven dependency link detected" "$TMPDIR5/cross-repo.json" '.dependency_links | length' "1"
 
 # ---------- summary ----------

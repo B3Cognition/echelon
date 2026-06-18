@@ -167,6 +167,70 @@ write_workspace_compat_repos_manifest() {
             repos: $repos
           }
         ' > "$output_path"
+
+    local repo_count
+    local i
+    local repo_path
+    local pkg_identifiers
+    local npm_name
+    local go_module
+    local py_name
+    local tmp_path
+
+    repo_count=$(jq '.repos | length' "$output_path")
+    for (( i=0; i<repo_count; i++ )); do
+        repo_path=$(jq -r ".repos[$i].path" "$output_path")
+        pkg_identifiers=$(jq -c ".repos[$i].pkg_identifiers // []" "$output_path")
+
+        if [[ -f "$repo_path/package.json" ]]; then
+            npm_name=$(jq -r '.name // empty' "$repo_path/package.json" 2>/dev/null || true)
+            if [[ -n "$npm_name" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$npm_name" --arg type "npm" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        fi
+
+        if [[ -f "$repo_path/go.mod" ]]; then
+            go_module=$(head -1 "$repo_path/go.mod" | sed -n 's/^module //p' | tr -d '\r' || true)
+            if [[ -n "$go_module" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$go_module" --arg type "go" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        fi
+
+        if [[ -f "$repo_path/pyproject.toml" ]] && command -v python3 >/dev/null 2>&1; then
+            py_name=$(python3 - "$repo_path/pyproject.toml" 2>/dev/null <<'PY' || true
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        sys.exit(0)
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except Exception:
+    sys.exit(0)
+
+name = data.get("project", {}).get("name")
+if not name:
+    name = data.get("tool", {}).get("poetry", {}).get("name")
+if isinstance(name, str):
+    print(name)
+PY
+)
+            if [[ -n "$py_name" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$py_name" --arg type "pip" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        fi
+
+        tmp_path="$output_path.tmp"
+        jq --argjson index "$i" --argjson pkg_identifiers "$pkg_identifiers" \
+            '.repos[$index].pkg_identifiers = $pkg_identifiers' \
+            "$output_path" > "$tmp_path"
+        mv "$tmp_path" "$output_path"
+    done
 }
 
 mkdir -p "$OUTPUT_DIR"
