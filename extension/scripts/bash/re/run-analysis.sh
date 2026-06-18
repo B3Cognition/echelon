@@ -223,6 +223,11 @@ PY
             if [[ -n "$py_name" ]]; then
                 pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$py_name" --arg type "pip" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
             fi
+        elif [[ -f "$repo_path/setup.py" ]]; then
+            py_name=$(grep -E 'name[[:space:]]*=' "$repo_path/setup.py" 2>/dev/null | head -1 | sed 's/.*name[ ]*=[ ]*["'"'"']\([^"'"'"']*\)["'"'"'].*/\1/' || true)
+            if [[ -n "$py_name" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$py_name" --arg type "pip" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
         fi
 
         tmp_path="$output_path.tmp"

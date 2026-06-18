@@ -261,6 +261,39 @@ assert_json_field "workspace-driven compatibility manifest repo_count" "$TMPDIR5
 assert_json_field "workspace-driven package identifier derived" "$TMPDIR5/repos-manifest.json" '.repos[] | select(.name == "lib") | .pkg_identifiers[0].id' "@scope/contracts"
 assert_json_field "workspace-driven dependency link detected" "$TMPDIR5/cross-repo.json" '.dependency_links | length' "1"
 
+# ---------- Test 6: Workspace manifest derives setup.py package identifiers ----------
+
+echo ""
+echo "=== Test 6: workspace manifest derives setup.py package identifiers ==="
+
+TMPROOT6=$(mktemp -d)
+TMPDIR6=$(mktemp -d)
+MANIFEST6_DIR=$(mktemp -d)
+MANIFEST6="$MANIFEST6_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$TMPROOT5" "$TMPDIR5" "$TMPROOT6" "$TMPDIR6" "$MANIFEST4_DIR" "$MANIFEST5_DIR" "$MANIFEST6_DIR"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
+
+cat > "$TMPROOT6/package.json" <<'JSON'
+{"name": "workspace-wrapper"}
+JSON
+mkdir -p "$TMPROOT6/api" "$TMPROOT6/lib"
+cat > "$TMPROOT6/api/requirements.txt" <<'REQ'
+shared-contracts==1.0.0
+REQ
+cat > "$TMPROOT6/api/setup.py" <<'PY'
+from setuptools import setup
+setup(name="api-app")
+PY
+cat > "$TMPROOT6/lib/setup.py" <<'PY'
+from setuptools import setup
+setup(name="shared-contracts")
+PY
+
+(cd "$TMPROOT6" && "$DISCOVER_SCRIPT" "$MANIFEST6" 2>/dev/null)
+(cd "$TMPROOT6" && "$RUN_ANALYSIS" "$TMPDIR6" "$MANIFEST6" 2>/dev/null)
+
+assert_json_field "workspace-driven setup.py package identifier derived" "$TMPDIR6/repos-manifest.json" '.repos[] | select(.name == "lib") | .pkg_identifiers[0].id' "shared-contracts"
+assert_json_field "workspace-driven setup.py dependency link detected" "$TMPDIR6/cross-repo.json" '.dependency_links | length' "1"
+
 # ---------- summary ----------
 
 echo ""
