@@ -17,6 +17,13 @@ if TYPE_CHECKING:
 def _shared_agent_contract() -> str:
     """Static cross-agent instructions injected before role-specific prompt text."""
     return (
+        "You were dispatched as a subagent to execute a specific task.\n"
+        "You are operating inside an Echelon squad phase, not a general interactive "
+        "assistant session.\n"
+        "Do NOT invoke the Skill tool — skill lookup rules do not apply in this "
+        "session unless the phase contract explicitly requires a specific skill.\n"
+        "Do NOT ask the user what they want to do next. Execute the assigned phase "
+        "contract with the provided context and return `echelon_result`.\n\n"
         "## Shared Agent Contract\n"
         "### Endocrine Context\n"
         "- ALWAYS read any `[ENDOCRINE]` block in your dispatched context pack before "
@@ -39,6 +46,13 @@ def _shared_agent_contract() -> str:
         "- NEVER treat calibration priors as optional when a matching belief "
         "register exists.\n\n"
     )
+
+
+_MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
+    "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
+    "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
+}
 
 
 def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
@@ -373,9 +387,31 @@ class PhaseExecutor(ABC):
 class AgentExecutor(PhaseExecutor):
     """Handles type: agent phases — the common case."""
 
+    def _required_phase_outputs_missing(self, node: "PhaseNode", state: dict) -> list[str]:
+        required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if not required:
+            return []
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        if not spec_dir_ref:
+            return list(required)
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        missing: list[str] = []
+        for rel in required:
+            path = spec_dir / rel
+            if rel == "contracts":
+                if not path.is_dir():
+                    missing.append(f"{rel}/")
+            elif not path.exists():
+                missing.append(rel)
+        return missing
+
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
     ) -> "SquadAgentResult":
+        from harness.squad_provider import SquadAgentResult
+
         state = state_store.load()
         self._run_pre_dispatch(node, state, state_store)
         state = state_store.load()  # re-load after pre_dispatch
@@ -383,6 +419,23 @@ class AgentExecutor(PhaseExecutor):
         result = self._provider.exec_agent(str(self._project_root), prompt)
         self._write_journal_entries(result, node.id)
         state_store.increment_cost(result.cost_usd)
+        if result.echelon_result is not None:
+            missing_outputs = self._required_phase_outputs_missing(node, state)
+            if missing_outputs:
+                result = SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "BLOCKED",
+                        "state_updates": {
+                            "blocked_reason": "missing_phase_outputs",
+                            "missing_outputs": missing_outputs,
+                        },
+                    },
+                    raw_output=result.raw_output,
+                    duration_ms=result.duration_ms,
+                    timed_out=result.timed_out,
+                    cost_usd=result.cost_usd,
+                )
         return result
 
 

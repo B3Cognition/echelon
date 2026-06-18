@@ -537,6 +537,9 @@ class SquadController:
         if result.exit_code != 0:
             return f"agent_exit_code_{result.exit_code}"
         if (result.verdict or "").upper() == "BLOCKED":
+            explicit_reason = (result.state_updates or {}).get("blocked_reason")
+            if isinstance(explicit_reason, str) and explicit_reason.strip():
+                return explicit_reason.strip()
             return "agent_blocked"
         return None
 

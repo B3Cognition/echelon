@@ -18,6 +18,7 @@ if str(EXT_ROOT) not in sys.path:
 from harness.phase_graph import PhaseGraph
 from harness.squad_executors import AgentExecutor, StagedParallelExecutor
 from harness.squad_provider import SquadAgentResult
+from harness.squad_state import SquadStateStore
 
 
 def _executor(tmp_path: Path, squad_dir: Path = None) -> AgentExecutor:
@@ -622,3 +623,141 @@ def test_staged_prompt_prefers_project_spec_dir_over_poisoned_run_relative_spec_
 
     assert "REAL SPEC" in prompt
     assert "WRONG RUN SPEC" not in prompt
+
+
+def test_agent_prompt_declares_subagent_and_forbids_skill_tool(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("REAL SPEC", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "sentinel.md").write_text("# Sentinel\nRole-specific instructions.")
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/sentinel.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(
+        id="phase3-sentinel",
+        type="agent",
+        agent="SENTINEL",
+        context_pack=["{spec_dir}/spec.md"],
+    )
+    state = {
+        "squad_dir": str(squad_dir),
+        "staging_dir": str(staging_dir),
+        "spec_dir": "specs/006-element-creator",
+    }
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "You were dispatched as a subagent to execute a specific task." in prompt
+    assert "Do NOT invoke the Skill tool" in prompt
+
+
+def test_phase3_sentinel_blocks_when_required_outputs_missing(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "sentinel.md").write_text("# Sentinel\nRole-specific instructions.")
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {}},
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/sentinel.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-sentinel")
+    state = store.load()
+    state["spec_dir"] = "specs/006-element-creator"
+    store.save(state)
+
+    node = PhaseNode(
+        id="phase3-sentinel",
+        type="agent",
+        agent="SENTINEL",
+    )
+
+    result = ex.execute(node, store)
+
+    assert result.verdict == "BLOCKED"
+    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
+    assert result.state_updates["missing_outputs"] == [
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+    ]
+
+
+def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260618-123456"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "test-strategy.md").write_text("# Test Strategy\n", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "orchestrator.md").write_text("# Orchestrator\nRole-specific instructions.")
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {}},
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/orchestrator.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase3-plan")
+    state = store.load()
+    state["spec_dir"] = "specs/006-element-creator"
+    store.save(state)
+
+    node = PhaseNode(
+        id="phase3-plan",
+        type="agent",
+        agent="ORCHESTRATOR",
+    )
+
+    result = ex.execute(node, store)
+
+    assert result.verdict == "BLOCKED"
+    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
+    assert result.state_updates["missing_outputs"] == [
+        "tasks.md",
+        "critical-path.md",
+        "risk-matrix.md",
+        "dependencies.md",
+    ]
