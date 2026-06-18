@@ -41,6 +41,42 @@ def _shared_agent_contract() -> str:
     )
 
 
+def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
+    """Return a robust repo-relative/absolute spec_dir reference.
+
+    If state.spec_dir was accidentally written under runs/.../specs/<spec>, strip the
+    run-local prefix and prefer PROJECT_ROOT/specs/<spec> when it exists.
+    """
+    ref = (spec_dir_ref or "").strip()
+    if not ref:
+        return ""
+
+    candidate = Path(ref)
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+
+    parts = candidate.parts
+    if "specs" in parts:
+        idx = parts.index("specs")
+        suffix = Path(*parts[idx:])
+        project_candidate = project_root / suffix
+        if project_candidate.exists():
+            return str(suffix)
+
+    return ref
+
+
+def _spec_search_bases(spec_dir_ref: str, project_root: Path, staging_dir: str) -> list[Path]:
+    bases: list[Path] = []
+    if spec_dir_ref:
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = project_root / spec_dir
+        bases.append(spec_dir)
+    bases.extend([Path(staging_dir), project_root])
+    return bases
+
+
 def _routing_contract(node: "PhaseNode") -> str:
     """Build a compact echelon_result contract from the phase's transition conditions.
 
@@ -200,15 +236,22 @@ class PhaseExecutor(ABC):
         # 3. Context pack files (read each that exists on disk).
         # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
         # items may reference these legacy paths (e.g. .specify/squad/staging/glossary.md).
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
         for item in node.context_pack:
             # Items may have inline comments: ".specify/echelon/re/state.json — current run state"
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            resolved = _translate_squad_path(file_ref)
-            candidate = Path(resolved) if resolved.startswith("/") else self._project_root / resolved
-            if candidate.exists():
-                dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+            resolved = _translate_squad_path(file_ref.replace("{spec_dir}", spec_dir_ref))
+            if resolved.startswith("/"):
+                candidates = [Path(resolved)]
+            else:
+                candidates = [base / resolved for base in search_bases]
+            for candidate in candidates:
+                if candidate.exists():
+                    dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                    break
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
@@ -415,14 +458,8 @@ class StagedParallelExecutor(PhaseExecutor):
         # and contaminate staged consensus prompts.
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
-        search_bases: list[Path] = []
-        spec_dir_ref = str(state.get("spec_dir") or "").strip()
-        if spec_dir_ref:
-            spec_dir = Path(spec_dir_ref)
-            if not spec_dir.is_absolute():
-                spec_dir = self._project_root / spec_dir
-            search_bases.append(spec_dir)
-        search_bases.extend([Path(staging_dir_str), self._project_root])
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
 
         for item in agent_entry.get("context_pack", []):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
@@ -498,7 +535,7 @@ class StagedParallelExecutor(PhaseExecutor):
         # Stage 2: PLAN2 — requires implementability-report.md from ASSESS2
         impl_report_path: Optional[Path] = None
         report_bases: list[Path] = []
-        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         if spec_dir_ref:
             spec_dir = Path(spec_dir_ref)
             if not spec_dir.is_absolute():
