@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from echelon.cli import _print_next_steps
+from echelon.cli import _next_continue_phase, _print_next_steps
 
 
 def test_blocked_squad_escalation_prioritizes_resume(
@@ -160,3 +160,101 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     assert "RUN BLOCKED" in captured.out
     assert "missing_echelon_result" in captured.out
     assert "echelon rewind phase3-sentinel" in captured.out
+
+
+def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
+    staging_dir = run_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "phase": "DONE",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "staging_dir": str(staging_dir),
+                "completed_phases": [
+                    "phase1-constitution",
+                    "phase1-what",
+                    "phase1-why2",
+                    "phase3-how",
+                    "phase3-plan",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (staging_dir / "quality-gates.md").write_text(
+        "\n".join(
+            [
+                "# Quality Gates",
+                "",
+                "## Verdict: FAIL",
+                "",
+                "| Gate | Score | Threshold | Result | Note |",
+                "| --- | --- | --- | --- | --- |",
+                "| Overall | 0.68 | 0.75 | FAIL | hard fail |",
+                "| Testability | 0.52 | 0.75 | FAIL | hard fail |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    captured = capsys.readouterr()
+    assert "READY TO BUILD" in captured.out
+    assert "echelon harness run 001-demo" in captured.out
+    assert "BUILD BLOCKED" not in captured.out
+    assert "WHY2 quality gates FAIL" not in captured.out
+
+
+def test_continue_phase_treats_done_published_artifacts_as_build_ready(
+    tmp_path: Path,
+) -> None:
+    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
+    staging_dir = run_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "phase": "DONE",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "staging_dir": str(staging_dir),
+                "completed_phases": ["phase1-constitution", "phase3-how", "phase3-plan"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (staging_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: FAIL\n",
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) is None
