@@ -17,6 +17,22 @@ git add .gitignore .specify specs
 git commit -m "chore: initialize echelon workspace"
 ```
 
+For an existing branchless workspace, use the one-time migration script from the workspace root:
+
+```bash
+python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py          # dry-run plan
+python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --write  # git init, update .gitignore, stage workspace files
+python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --commit # also commit staged workspace files
+```
+
+The script stages only `.gitignore`, `.specify`, and `specs`. Detected source roots are added to `.gitignore` before staging so implementation repositories are not committed into the lightweight workspace Git repo.
+
+When running from an Echelon source checkout instead of an installed workspace extension, pass the target workspace explicitly:
+
+```bash
+python scripts/python/migrate_workspace_git.py /path/to/workspace --write
+```
+
 Do not use a branchless workspace for new runs. Echelon only allows branchless workspaces for legacy recovery.
 
 When a workspace has multiple source roots, select the implementation target before harness build:
