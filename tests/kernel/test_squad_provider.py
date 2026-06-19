@@ -92,10 +92,9 @@ echelon_result:
         result = _extract_echelon_result(raw)
         assert result["verdict"] == "DONE"
 
-    # ── Fenced block format (```echelon_result) ───────────────────────────
-    # 40 of 50 agents emit this format. Regression guard for the bug where
-    # rfind("echelon_result:") returned -1 and _extract returned None,
-    # causing state_updates to be silently lost and quality_scores to stay [].
+    # ── Legacy fenced block format (```echelon_result) ─────────────────────
+    # Kept as a compatibility parser for older run logs and provider drift.
+    # Current prompts require an unfenced YAML root block as the final output.
 
     def test_extracts_fenced_block_verdict(self):
         raw = """Some preamble.
@@ -186,7 +185,7 @@ journal_entries:
         assert len(entries) == 1
         assert entries[0]["type"] == "quality_check"
 
-    def test_extracts_xml_style_echelon_result_block(self):
+    def test_rejects_xml_style_echelon_result_block(self):
         raw = """
 <echelon_result>
   <verdict>COMPLETE</verdict>
@@ -199,6 +198,4 @@ journal_entries:
   </journal_entries>
 </echelon_result>
 """
-        result = _extract_echelon_result(raw)
-        assert result is not None
-        assert result["verdict"] == "COMPLETE"
+        assert _extract_echelon_result(raw) is None

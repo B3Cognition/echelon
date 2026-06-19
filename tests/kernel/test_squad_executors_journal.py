@@ -378,6 +378,35 @@ def test_agent_output_blocks_do_not_put_list_directly_under_echelon_result():
     )
 
 
+def test_markdown_prose_does_not_teach_xml_echelon_result_blocks():
+    """The canonical output contract is YAML; XML examples train the wrong shape."""
+    violations = []
+    for md_file in (EXT_ROOT / "extension").rglob("*.md"):
+        if "node_modules" in md_file.parts:
+            continue
+        text = md_file.read_text(encoding="utf-8", errors="ignore")
+        if "<echelon_result>" in text or "</echelon_result>" in text:
+            violations.append(str(md_file.relative_to(EXT_ROOT)))
+
+    assert not violations, (
+        "Markdown prompts must not teach XML-style echelon_result blocks:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_production_echelon_result_template_exists_and_is_canonical():
+    template = EXT_ROOT / "extension" / "templates" / "echelon-result-template.yaml"
+
+    text = template.read_text(encoding="utf-8")
+
+    assert template.exists()
+    assert "echelon_result:" in text
+    assert "state_updates:" in text
+    assert "journal_entries:" in text
+    assert "NEVER emit `<echelon_result>` XML" in text
+    assert "```echelon_result" in text
+
+
 def test_why2_routing_contract_uses_full_quality_score_shape():
     from harness.phase_graph import PhaseNode
     from harness.squad_executors import _routing_contract
@@ -450,6 +479,43 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
     assert prompt.index("# Scout") < prompt.index("# Squad Run Context")
+    assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
+    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "NEVER emit `<echelon_result>` XML" in prompt
+
+
+def test_assemble_prompt_uses_echelon_result_template(tmp_path):
+    """The canonical final result block is owned by extension/templates."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    template_dir = ext_dir / "templates"
+    agent_dir.mkdir(parents=True)
+    template_dir.mkdir(parents=True)
+    (agent_dir / "scout.md").write_text("# Scout\nRole-specific instructions.")
+    (template_dir / "echelon-result-template.yaml").write_text(
+        "CANONICAL_TEMPLATE_MARKER\n"
+        "echelon_result:\n"
+        "  verdict: <DONE>\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n",
+        encoding="utf-8",
+    )
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/scout.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(id="phase1-test", type="agent", agent="SCOUT")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "CANONICAL_TEMPLATE_MARKER" in prompt
+    assert prompt.rstrip().endswith("journal_entries: []")
 
 
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
@@ -480,6 +546,41 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
     assert prompt.index("# WHY3") < prompt.index("# Squad Run Context")
+    assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
+    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "NEVER emit `<echelon_result>` XML" in prompt
+
+
+def test_staged_prompt_uses_echelon_result_template(tmp_path):
+    """Staged consensus prompts use the same template-backed final block."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    template_dir = ext_dir / "templates"
+    agent_dir.mkdir(parents=True)
+    template_dir.mkdir(parents=True)
+    (agent_dir / "why3.md").write_text("# WHY3\nRole-specific instructions.")
+    (template_dir / "echelon-result-template.yaml").write_text(
+        "STAGED_TEMPLATE_MARKER\n"
+        "echelon_result:\n"
+        "  verdict: <PASS>\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n",
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._build_agent_prompt({"id": "WHY3", "mode": "WHY3"}, state)
+
+    assert "STAGED_TEMPLATE_MARKER" in prompt
+    assert prompt.rstrip().endswith("journal_entries: []")
 
 
 def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):

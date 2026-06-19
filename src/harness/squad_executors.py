@@ -56,6 +56,43 @@ def _shared_agent_contract() -> str:
     )
 
 
+_FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
+# The harness appends this template to every squad-agent prompt.
+# Agents fill values, but must keep the unfenced YAML root shape.
+#
+# Rules:
+# - ALWAYS include state_updates; use {} when no state changes are needed.
+# - ALWAYS include journal_entries; use [] when no journal entries are needed.
+# - NEVER wrap this block in markdown fences such as ```yaml or ```echelon_result.
+# - NEVER emit `<echelon_result>` XML, JSON, or prose-only summaries as the contract.
+# - NEVER put summaries, bullets, or sign-off text after the echelon_result block.
+
+echelon_result:
+  verdict: <DONE|COMPLETE|PASS|FAIL|BLOCKED|KILL|DEFER>
+  output_files:
+    - <path/to/artifact.md>
+  state_updates: {}
+  journal_entries:
+    - type: <entry_type>"""
+
+
+def _canonical_echelon_result_contract(ext_dir: Path) -> str:
+    """Return the final cross-agent output contract appended to every prompt."""
+    template_path = ext_dir / "templates" / "echelon-result-template.yaml"
+    template = (
+        template_path.read_text(encoding="utf-8").strip()
+        if template_path.exists()
+        else _FALLBACK_ECHELON_RESULT_TEMPLATE
+    )
+    return (
+        "\n\n---\n"
+        "## Canonical echelon_result contract — REQUIRED FINAL BLOCK\n"
+        "Use the template below exactly as the final response shape. Fill values, "
+        "but do not change the root key or wrapper.\n\n"
+        f"{template}"
+    )
+
+
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
@@ -328,7 +365,7 @@ class PhaseExecutor(ABC):
 
         # Append harness routing contract so agents know exactly what
         # state_updates fields the harness needs for transition evaluation.
-        prompt = prompt + _routing_contract(node)
+        prompt = prompt + _routing_contract(node) + _canonical_echelon_result_contract(self._ext_dir)
 
         return _shared_agent_contract() + prompt
 
@@ -396,6 +433,7 @@ class PhaseExecutor(ABC):
                 + f"Run **Mode {entry.get('mode', 1)} (Survey)** for target path `{self._project_root}`. "
                 + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
                 + "</instructions>\n"
+                + _canonical_echelon_result_contract(self._ext_dir)
             )
 
         return (
@@ -406,6 +444,7 @@ class PhaseExecutor(ABC):
             + f"SQUAD_DIR={squad_dir_str}\n"
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + _canonical_echelon_result_contract(self._ext_dir)
         )
 
 
@@ -642,7 +681,8 @@ class StagedParallelExecutor(PhaseExecutor):
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
-        return _shared_agent_contract() + "\n\n".join(static_parts + [preamble] + dynamic_parts)
+        prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
+        return _shared_agent_contract() + prompt + _canonical_echelon_result_contract(self._ext_dir)
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
