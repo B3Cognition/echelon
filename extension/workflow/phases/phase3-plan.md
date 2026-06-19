@@ -60,14 +60,14 @@ speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `{spec_
 
 ```bash
 for f in tasks.md critical-path.md risk-matrix.md dependencies.md; do
-  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-orchestrator (ORCHESTRATOR) missing $f" >&2; exit 1; }
+  [ -f "{spec_dir}/$f" ] || { echo "ERROR: speckit-echelon-orchestrator (ORCHESTRATOR) missing $f" >&2; exit 1; }
 done
 ```
 
 Also verify `tasks.md` uses canonical task rows:
 
 ```bash
-python -m harness validate-tasks "specs/${SPEC_DIR}/tasks.md"
+python -m harness validate-tasks "{spec_dir}/tasks.md"
 ```
 
 **MANDATORY — run before transitioning to phase3-consensus:**

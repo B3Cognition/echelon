@@ -545,18 +545,17 @@ def test_assemble_prompt_injects_state_json_from_squad_dir(tmp_path):
     assert "phase1-legacy" not in prompt
 
 
-def test_assemble_prompt_prefers_project_spec_dir_over_poisoned_run_relative_spec_dir(tmp_path):
-    """A bad state.spec_dir under runs/.../specs/... must resolve back to PROJECT_ROOT/specs/..."""
+def test_assemble_prompt_preserves_active_run_spec_dir(tmp_path):
+    """state.spec_dir under runs/.../specs/... is the active squad artifact root."""
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
     staging_dir.mkdir(parents=True)
     real_spec = tmp_path / "specs" / "006-element-creator"
     real_spec.mkdir(parents=True)
     (real_spec / "spec.md").write_text("REAL SPEC", encoding="utf-8")
-    # Poisoned path mirrors the bug seen in the SENTINEL run.
-    poisoned = squad_dir / "specs" / "006-element-creator"
-    poisoned.mkdir(parents=True)
-    (poisoned / "spec.md").write_text("WRONG RUN SPEC", encoding="utf-8")
+    active_spec = squad_dir / "specs" / "006-element-creator"
+    active_spec.mkdir(parents=True)
+    (active_spec / "spec.md").write_text("ACTIVE RUN SPEC", encoding="utf-8")
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -579,26 +578,28 @@ def test_assemble_prompt_prefers_project_spec_dir_over_poisoned_run_relative_spe
     state = {
         "squad_dir": str(squad_dir),
         "staging_dir": str(staging_dir),
-        "spec_dir": str(poisoned.relative_to(tmp_path)),
+        "spec_dir": str(active_spec.relative_to(tmp_path)),
     }
 
     prompt = ex._assemble_prompt(node, state)
 
-    assert "REAL SPEC" in prompt
-    assert "WRONG RUN SPEC" not in prompt
+    assert "ACTIVE RUN SPEC" in prompt
+    assert "REAL SPEC" not in prompt
+    assert "ACTIVE_SPEC_DIR=" in prompt
+    assert "PUBLISHED_SPEC_DIR=" in prompt
 
 
-def test_staged_prompt_prefers_project_spec_dir_over_poisoned_run_relative_spec_dir(tmp_path):
-    """Staged agent prompts must normalize bad runs/.../specs/... state.spec_dir the same way."""
+def test_staged_prompt_preserves_active_run_spec_dir(tmp_path):
+    """Staged agent prompts must keep the active squad artifact root."""
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
     staging_dir.mkdir(parents=True)
     real_spec = tmp_path / "specs" / "006-element-creator"
     real_spec.mkdir(parents=True)
     (real_spec / "spec.md").write_text("REAL SPEC", encoding="utf-8")
-    poisoned = squad_dir / "specs" / "006-element-creator"
-    poisoned.mkdir(parents=True)
-    (poisoned / "spec.md").write_text("WRONG RUN SPEC", encoding="utf-8")
+    active_spec = squad_dir / "specs" / "006-element-creator"
+    active_spec.mkdir(parents=True)
+    (active_spec / "spec.md").write_text("ACTIVE RUN SPEC", encoding="utf-8")
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -614,15 +615,15 @@ def test_staged_prompt_prefers_project_spec_dir_over_poisoned_run_relative_spec_
     state = {
         "squad_dir": str(squad_dir),
         "staging_dir": str(staging_dir),
-        "spec_dir": str(poisoned.relative_to(tmp_path)),
+        "spec_dir": str(active_spec.relative_to(tmp_path)),
     }
     prompt = ex._build_agent_prompt(
         {"id": "WHY3", "mode": "WHY3", "context_pack": ["{spec_dir}/spec.md"]},
         state,
     )
 
-    assert "REAL SPEC" in prompt
-    assert "WRONG RUN SPEC" not in prompt
+    assert "ACTIVE RUN SPEC" in prompt
+    assert "REAL SPEC" not in prompt
 
 
 def test_agent_prompt_declares_subagent_and_forbids_skill_tool(tmp_path):

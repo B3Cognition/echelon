@@ -1116,7 +1116,7 @@ def _setup_run_dir(project_root: Path, run_id: str) -> Path:
     run_dir.mkdir(exist_ok=True)
     (run_dir / "staging").mkdir(exist_ok=True)
 
-    (runs_root / ".current").write_text(run_id)
+    (runs_root / ".current").write_text(f"{run_id}\n")
     return run_dir
 
 
@@ -1215,6 +1215,13 @@ def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | 
         candidate = Path(ref)
         if not candidate.is_absolute():
             candidate = project_root / candidate
+        try:
+            rel_candidate = candidate.relative_to(project_root)
+            if rel_candidate.parts and rel_candidate.parts[0] in {"runs", "squad"}:
+                if candidate.exists():
+                    return candidate, str(rel_candidate)
+        except ValueError:
+            pass
         parts = candidate.parts
         if "specs" in parts:
             idx = parts.index("specs")
@@ -1502,27 +1509,24 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         else:
             ready_items.append("constitution.md ✓")
 
-    # 2. Quality gates — check specs/ first, then staging/ for mid-run blocked states
+    # 2. Quality gates — prefer the active run spec root. Published specs/ is
+    # the build-harness target, not the source of truth for an in-progress squad.
     specs_root = project_root / "specs"
+    active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
 
     # Pre-check: if tasks.md already exists, the run completed all phases past quality gates.
     # Also capture newest_spec_id here so the build command always has the actual spec name.
     tasks_exist_in_spec = False
-    newest_spec_id = ""
-    if specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            newest_spec_id = d.name
-            if (d / "tasks.md").exists():
-                tasks_exist_in_spec = True
-            break
+    newest_spec_id = str(current_state.get("spec_id") or "").strip()
+    if active_spec_dir is not None:
+        newest_spec_id = newest_spec_id or active_spec_dir.name
+        tasks_exist_in_spec = (active_spec_dir / "tasks.md").exists()
 
     quality_gates_file: Optional[Path] = None
-    if specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            qg = d / "quality-gates.md"
-            if qg.exists():
-                quality_gates_file = qg
-                break
+    if active_spec_dir is not None:
+        qg = active_spec_dir / "quality-gates.md"
+        if qg.exists():
+            quality_gates_file = qg
 
     # Blocked runs may not have finalized to specs/ yet — load state once for reuse
     run_dir = _find_current_run_dir(project_root)
@@ -1532,6 +1536,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             run_state = _json.loads((run_dir / "state.json").read_text())
         except Exception:
             pass
+    if not newest_spec_id:
+        newest_spec_id = str(run_state.get("spec_id") or "").strip()
 
     if result_status == "blocked" and run_state.get("escalation_question"):
         fields = [
@@ -1634,14 +1640,12 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     )
     how_present = 0
     how_missing = []
-    if why2_passed and not tasks_exist_in_spec and specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            for fname in ("plan.md", "research.md", "data-model.md"):
-                if (d / fname).exists():
-                    how_present += 1
-                else:
-                    how_missing.append(fname)
-            break  # only check most recent spec dir
+    if why2_passed and not tasks_exist_in_spec and active_spec_dir is not None:
+        for fname in ("plan.md", "research.md", "data-model.md"):
+            if (active_spec_dir / fname).exists():
+                how_present += 1
+            else:
+                how_missing.append(fname)
 
     if how_missing:
         missing_str = ", ".join(dict.fromkeys(how_missing))  # dedup, preserve order
@@ -1655,12 +1659,9 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
 
     # 4. tasks.md — only surface when quality gates have passed
     tasks_present = False
-    if why2_passed and specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            if (d / "tasks.md").exists():
-                tasks_present = True
-                ready_items.append("tasks.md ✓")
-            break
+    if why2_passed and active_spec_dir is not None and (active_spec_dir / "tasks.md").exists():
+        tasks_present = True
+        ready_items.append("tasks.md ✓")
 
     if why2_passed and not tasks_present:
         blockers.append(
@@ -2134,6 +2135,112 @@ def _cmd_run(
     _print_next_steps(project_root, result.status)
 
 
+def _repo_relative_or_absolute(path: Path, project_root: Path) -> str:
+    try:
+        return str(path.relative_to(project_root))
+    except ValueError:
+        return str(path)
+
+
+def _spec_id_from_ref(ref: str) -> str:
+    value = (ref or "").strip()
+    if not value:
+        return ""
+    parts = Path(value).parts
+    if "specs" in parts:
+        idx = parts.index("specs")
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    name = Path(value).name
+    return name if name and name != "specs" else ""
+
+
+def _single_project_spec_dir(project_root: Path) -> Path | None:
+    specs_root = project_root / "specs"
+    if not specs_root.exists():
+        return None
+    specs = sorted(d for d in specs_root.iterdir() if d.is_dir())
+    return specs[0] if len(specs) == 1 else None
+
+
+def _copy_missing_tree(src: Path, dst: Path) -> None:
+    if not src.exists():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    for child in src.iterdir():
+        target = dst / child.name
+        if target.exists():
+            continue
+        if child.is_dir():
+            shutil.copytree(child, target)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(child, target)
+
+
+def _ensure_active_continue_spec_context(
+    project_root: Path,
+    run_dir: Path,
+    state: dict,
+    *,
+    sync_missing: bool,
+) -> tuple[dict, Path | None]:
+    """Resolve the active run-local spec dir for squad continue.
+
+    Squad phases operate from the active run directory. The published
+    project-root specs/<id> directory remains the build-harness target and is
+    mirrored into the run-local copy only for missing files.
+    """
+    spec_id = str(state.get("spec_id") or "").strip()
+    spec_ref = str(state.get("spec_dir") or "").strip()
+    published_ref = str(state.get("published_spec_dir") or "").strip()
+
+    spec_id = spec_id or _spec_id_from_ref(spec_ref) or _spec_id_from_ref(published_ref)
+    if not spec_id:
+        only_spec = _single_project_spec_dir(project_root)
+        if only_spec is None:
+            return state, None
+        spec_id = only_spec.name
+
+    active_spec_dir = run_dir / "specs" / spec_id
+    published_spec_dir = project_root / "specs" / spec_id
+
+    source_dirs: list[Path] = []
+    if published_spec_dir.exists():
+        source_dirs.append(published_spec_dir)
+    if spec_ref:
+        candidate = Path(spec_ref)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        if candidate.exists() and candidate != active_spec_dir and candidate not in source_dirs:
+            source_dirs.append(candidate)
+
+    if sync_missing:
+        active_spec_dir.mkdir(parents=True, exist_ok=True)
+        for source in source_dirs:
+            _copy_missing_tree(source, active_spec_dir)
+
+    updated = dict(state)
+    updated["spec_id"] = spec_id
+    updated["spec_dir"] = _repo_relative_or_absolute(active_spec_dir, project_root)
+    if published_spec_dir.exists() or published_ref:
+        updated["published_spec_dir"] = _repo_relative_or_absolute(published_spec_dir, project_root)
+    return updated, active_spec_dir
+
+
+def _active_continue_spec_dir(project_root: Path, current_state: dict, run_dir: Path | None) -> Path | None:
+    if run_dir is None:
+        only_spec = _single_project_spec_dir(project_root)
+        return only_spec
+    _, active_spec_dir = _ensure_active_continue_spec_context(
+        project_root,
+        run_dir,
+        current_state,
+        sync_missing=False,
+    )
+    return active_spec_dir
+
+
 def _next_continue_phase(project_root: Path) -> Optional[str]:
     """Return the phase ID to continue from, or None when build is ready.
 
@@ -2162,6 +2269,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                 return recommended
         except Exception:
             current_state = {}
+    active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
 
     # 0. Constitution phase provenance first, artifact integrity second.
     completed = current_state.get("completed_phases")
@@ -2176,14 +2284,11 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-constitution"
 
     # 1. WHY2 failures — fix spec first, so CARTOGRAPHER runs before HOW
-    specs_root = project_root / "specs"
     quality_gates_file: Optional[Path] = None
-    if specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            qg = d / "quality-gates.md"
-            if qg.exists():
-                quality_gates_file = qg
-            break
+    if active_spec_dir is not None:
+        qg = active_spec_dir / "quality-gates.md"
+        if qg.exists():
+            quality_gates_file = qg
 
     # Also check staging/ for mid-run blocked states (same as _print_next_steps)
     if quality_gates_file is None:
@@ -2212,18 +2317,13 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                 return "phase1-what"  # hard gate fail → CARTOGRAPHER amendment
 
     # 2. HOW artifacts missing
-    if specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            if not all((d / f).exists() for f in ("plan.md", "research.md", "data-model.md")):
-                return "phase3-how"
-            break
+    if active_spec_dir is not None:
+        if not all((active_spec_dir / f).exists() for f in ("plan.md", "research.md", "data-model.md")):
+            return "phase3-how"
 
     # 3. tasks.md missing
-    if specs_root.exists():
-        for d in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-            if not (d / "tasks.md").exists():
-                return "phase3-plan"
-            break
+    if active_spec_dir is not None and not (active_spec_dir / "tasks.md").exists():
+        return "phase3-plan"
 
     return None  # build is ready
 
@@ -2241,17 +2341,12 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     if _constitution_template_markers(const_path.read_text(errors="replace")):
         return False
 
-    specs_root = project_root / "specs"
-    if not specs_root.exists():
+    run_dir = _find_current_run_dir(project_root)
+    spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    if spec_dir is None:
         return False
 
-    for spec_dir in sorted(specs_root.iterdir(), key=lambda p: p.name, reverse=True):
-        return all(
-            (spec_dir / name).exists()
-            for name in ("plan.md", "research.md", "data-model.md", "tasks.md")
-        )
-
-    return False
+    return all((spec_dir / name).exists() for name in ("plan.md", "research.md", "data-model.md", "tasks.md"))
 
 
 def _cmd_status(project_root: Path) -> None:
@@ -2384,6 +2479,15 @@ def _cmd_continue(
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
+    prepared_state, _ = _ensure_active_continue_spec_context(
+        project_root,
+        squad_dir,
+        state,
+        sync_missing=True,
+    )
+    if prepared_state != state:
+        state = prepared_state
+        (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
 
     phase_labels = {
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
@@ -2418,6 +2522,12 @@ def _cmd_continue(
                 flush=True,
             )
             return
+        state, _ = _ensure_active_continue_spec_context(
+            project_root,
+            squad_dir,
+            state,
+            sync_missing=True,
+        )
         state["phase"] = next_phase
         state["status"] = "running"
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
@@ -2477,6 +2587,12 @@ def _cmd_continue(
         f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
         f"[squad] Mode:  {mode}",
         flush=True,
+    )
+    state, _ = _ensure_active_continue_spec_context(
+        project_root,
+        squad_dir,
+        state,
+        sync_missing=True,
     )
     state["phase"] = next_phase
     state["status"] = "running"

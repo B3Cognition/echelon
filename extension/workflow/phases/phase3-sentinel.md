@@ -62,7 +62,7 @@ The phase produces exactly three files in `{spec_dir}/`. Skipping any of them is
 
 ```bash
 for f in test-strategy.md test-architecture.md coverage-map.md; do
-  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-sentinel (SENTINEL) missing $f" >&2; exit 1; }
+  [ -f "{spec_dir}/$f" ] || { echo "ERROR: speckit-echelon-sentinel (SENTINEL) missing $f" >&2; exit 1; }
 done
 ```
 

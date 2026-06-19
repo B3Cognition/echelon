@@ -94,10 +94,27 @@ def bare_repo(tmp_path):
     return bare_dir
 
 
+def _write_minimal_runtime_extension(project_root):
+    """Create the minimum local Echelon extension GitOps worktree sync requires."""
+    source = project_root / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "# Commander\n",
+        encoding="utf-8",
+    )
+    (source / "workflow" / "definition.yaml").write_text(
+        "phases: {}\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture
 def harness_config(tmp_path, bare_repo):
     """Create a minimal HarnessConfig for testing."""
     from harness.config import HarnessConfig
+
+    _write_minimal_runtime_extension(tmp_path)
 
     return HarnessConfig(
         target_repo=str(bare_repo),

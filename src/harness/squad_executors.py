@@ -59,24 +59,20 @@ _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
 def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
     """Return a robust repo-relative/absolute spec_dir reference.
 
-    If state.spec_dir was accidentally written under runs/.../specs/<spec>, strip the
-    run-local prefix and prefer PROJECT_ROOT/specs/<spec> when it exists.
+    During squad phases, spec_dir is allowed to point at the active run copy
+    under runs/<run>/specs/<spec>. Do not rewrite it back to PROJECT_ROOT/specs;
+    the published project specs directory is a separate target/build artifact.
     """
     ref = (spec_dir_ref or "").strip()
     if not ref:
         return ""
 
     candidate = Path(ref)
-    if not candidate.is_absolute():
-        candidate = project_root / candidate
-
-    parts = candidate.parts
-    if "specs" in parts:
-        idx = parts.index("specs")
-        suffix = Path(*parts[idx:])
-        project_candidate = project_root / suffix
-        if project_candidate.exists():
-            return str(suffix)
+    if candidate.is_absolute():
+        try:
+            return str(candidate.relative_to(project_root))
+        except ValueError:
+            return str(candidate)
 
     return ref
 
@@ -280,6 +276,26 @@ class PhaseExecutor(ABC):
             f"STAGING_DIR={staging_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
         )
+        if spec_dir_ref:
+            spec_dir_path = Path(spec_dir_ref)
+            if not spec_dir_path.is_absolute():
+                spec_dir_path = self._project_root / spec_dir_path
+            published_ref = str(state.get("published_spec_dir") or "").strip()
+            if not published_ref:
+                spec_id = spec_dir_path.name
+                published_ref = f"specs/{spec_id}" if spec_id else ""
+            if published_ref:
+                published_path = Path(published_ref)
+                if not published_path.is_absolute():
+                    published_path = self._project_root / published_path
+                context_preamble += (
+                    "## Active Spec Artifact Roots\n"
+                    f"ACTIVE_SPEC_DIR={spec_dir_path}\n"
+                    f"PUBLISHED_SPEC_DIR={published_path}\n"
+                    "- ALWAYS read and write squad phase artifacts under ACTIVE_SPEC_DIR / `{spec_dir}`.\n"
+                    "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
+                    "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n\n"
+                )
         if node.id == "phase1-what" and state.get("cartographer_resume_existing_spec"):
             spec_dir = state.get("spec_dir", "")
             feature_branch = state.get("feature_branch", "")
