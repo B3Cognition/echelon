@@ -37,6 +37,57 @@ class TestPhaseGraph:
         assert node.type == "staged_parallel"
         assert len(node.agents) >= 2
 
+    def test_phase3_consensus_context_packs_cover_spec_plan_and_tasks(self):
+        """Consensus agents must receive enough artifacts to validate plan/tasks."""
+        node = self.graph.get("phase3-consensus")
+        agents = {agent["mode"]: agent for agent in node.agents}
+
+        why3_pack = set(agents["WHY3"]["context_pack"])
+        assess2_pack = set(agents["ASSESS2"]["context_pack"])
+        plan2_pack = set(agents["PLAN2"]["context_pack"])
+
+        assert {
+            "spec.md",
+            "plan.md",
+            "research.md",
+            "data-model.md",
+            "contracts/",
+            "tasks.md",
+            "test-strategy.md",
+            "coverage-map.md",
+        }.issubset(why3_pack)
+
+        assert {
+            "spec.md",
+            "plan.md",
+            "research.md",
+            "data-model.md",
+            "contracts/",
+            "tasks.md",
+            "test-strategy.md",
+            "coverage-map.md",
+            "estimates.md",
+            "mvp-scope.md",
+            "constitution.md",
+        }.issubset(assess2_pack)
+
+        assert {
+            "spec.md",
+            "plan.md",
+            "research.md",
+            "data-model.md",
+            "contracts/",
+            "tasks.md",
+            "test-strategy.md",
+            "coverage-map.md",
+            "critical-path.md",
+            "risk-matrix.md",
+            "dependencies.md",
+            "implementability-report.md",
+            "quality-gates.md",
+            "issues.md",
+        }.issubset(plan2_pack)
+
     def test_phase1_discover_has_pre_dispatch(self):
         node = self.graph.get("phase1-discover")
         assert len(node.pre_dispatch) > 0

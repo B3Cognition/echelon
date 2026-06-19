@@ -132,6 +132,21 @@ def _spec_search_bases(spec_dir_ref: str, project_root: Path, staging_dir: str) 
     return bases
 
 
+def _render_context_candidate(file_ref: str, candidate: Path) -> str:
+    """Render a context-pack file or directory into deterministic prompt text."""
+    if candidate.is_dir():
+        chunks = [f"\n---\n# {file_ref.rstrip('/')}/"]
+        for path in sorted(p for p in candidate.rglob("*") if p.is_file()):
+            rel = path.relative_to(candidate)
+            display = f"{file_ref.rstrip('/')}/{rel.as_posix()}"
+            chunks.append(
+                f"\n## {display}\n"
+                f"{path.read_text(encoding='utf-8', errors='replace')}"
+            )
+        return "\n".join(chunks)
+    return f"\n---\n# {file_ref}\n{candidate.read_text(encoding='utf-8', errors='replace')}"
+
+
 def _routing_contract(node: "PhaseNode") -> str:
     """Build a compact echelon_result contract from the phase's transition conditions.
 
@@ -305,7 +320,7 @@ class PhaseExecutor(ABC):
                 candidates = [base / resolved for base in search_bases]
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                    dynamic_parts.append(_render_context_candidate(file_ref, candidate))
                     break
 
         # 4. Current state.json for context
@@ -662,7 +677,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 candidates = [base / resolved_ref for base in search_bases]
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                    dynamic_parts.append(_render_context_candidate(file_ref, candidate))
                     break
 
         # 3. Any extra files (e.g. implementability-report.md for PLAN2)

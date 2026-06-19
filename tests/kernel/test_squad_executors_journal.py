@@ -634,6 +634,41 @@ def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
     assert "WRONG TASKS 063" not in prompt
 
 
+def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):
+    """Directory context items such as contracts/ are expanded deterministically."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "assess2.md").write_text("# ASSESS2\nRole-specific instructions.")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    contracts = spec_dir / "contracts"
+    contracts.mkdir(parents=True)
+    (contracts / "internal-interfaces.md").write_text("CONTRACT CONTENT", encoding="utf-8")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/assess2.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    prompt = ex._build_agent_prompt(
+        {"id": "ASSESS2", "mode": "ASSESS2", "context_pack": ["contracts/"]},
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(staging_dir),
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    assert "# contracts/" in prompt
+    assert "## contracts/internal-interfaces.md" in prompt
+    assert "CONTRACT CONTENT" in prompt
+
+
 def test_assemble_prompt_translates_legacy_paths(tmp_path):
     """Legacy .specify/squad/staging/ references in spec content are replaced."""
     squad_dir = tmp_path / "squad" / "run-test"

@@ -718,9 +718,16 @@ phases:
         tier: exploration
         context_pack:
           - spec.md
-          - architecture.md
+          - plan.md
+          - research.md
+          - data-model.md
+          - contracts/
           - tasks.md
           - test-strategy.md
+          - coverage-map.md
+          - critical-path.md
+          - risk-matrix.md
+          - dependencies.md
         outputs:
           - why3-verdict: PASS | FAIL
           - issues (CRITICAL | HIGH | MEDIUM)
@@ -730,9 +737,17 @@ phases:
         stage: 1
         tier: feasibility
         context_pack:
-          - architecture.md
+          - spec.md
+          - plan.md
+          - research.md
+          - data-model.md
+          - contracts/
           - tasks.md
           - test-strategy.md
+          - coverage-map.md
+          - estimates.md
+          - mvp-scope.md
+          - constitution.md
         outputs:
           - assess2-verdict: PASS | REJECTED
           - implementability-report.md     # required by PLAN2
@@ -743,9 +758,19 @@ phases:
         depends_on: [speckit-echelon-gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
         context_pack:
+          - spec.md
+          - plan.md
+          - research.md
+          - data-model.md
+          - contracts/
           - tasks.md
-          - why3-issues               # from speckit-echelon-sage (SAGE) WHY3 output
-          - assess2-concerns          # from speckit-echelon-gatekeeper (GATEKEEPER) ASSESS2 output
+          - test-strategy.md
+          - coverage-map.md
+          - critical-path.md
+          - risk-matrix.md
+          - dependencies.md
+          - quality-gates.md          # from speckit-echelon-sage (SAGE) WHY3 output
+          - issues.md                 # from speckit-echelon-sage (SAGE) WHY3 output
           - implementability-report.md  # MUST exist before PLAN2 is dispatched
         outputs:
           - revised tasks.md  # if changes needed
