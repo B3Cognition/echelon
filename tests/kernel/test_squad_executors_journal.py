@@ -285,6 +285,7 @@ _DIRECT_JOURNAL_INSTRUCTION_RE = re.compile(
     r"|\bThen append .* to `reasoning-journal\.jsonl`"
 )
 _PHASES_DIR = EXT_ROOT / "extension/workflow/phases"
+_AGENTS_DIR = EXT_ROOT / "extension/agents"
 
 
 def test_no_direct_journal_appends_in_phase_specs():
@@ -315,6 +316,36 @@ def test_phase_specs_do_not_instruct_agents_to_append_to_journal():
     assert not violations, (
         "Phase specs must instruct agents to return echelon_result.journal_entries, "
         "not append directly to reasoning-journal.jsonl:\n" + "\n".join(violations)
+    )
+
+
+def test_agent_files_do_not_instruct_direct_reasoning_journal_writes():
+    """Agent protocols should route journal data through echelon_result."""
+    direct_patterns = re.compile(
+        r"\bappend (?:a |the |.*? )?reasoning journal entry\b"
+        r"|\bappend .* to the reasoning journal\b"
+        r"|\blog .* to the reasoning journal\b"
+        r"|\blog .* to your reasoning journal\b"
+        r"|\blog in your reasoning journal\b"
+        r"|\brecord(?:ed)? in the reasoning journal\b"
+        r"|\brecord(?:ed)? .* in reasoning journal\b"
+        r"|\brecord(?:ed)? .* in the reasoning journal\b"
+        r"|\bflag .* in the reasoning journal\b",
+        re.IGNORECASE,
+    )
+    allowed_patterns = re.compile(
+        r"echelon_result|commander .*writes to the reasoning journal|writes to the reasoning journal",
+        re.IGNORECASE,
+    )
+    violations = []
+    for md_file in _AGENTS_DIR.rglob("*.md"):
+        for lineno, line in enumerate(md_file.read_text().splitlines(), start=1):
+            if direct_patterns.search(line) and not allowed_patterns.search(line):
+                violations.append(f"{md_file.relative_to(EXT_ROOT)}:{lineno}: {line.strip()}")
+
+    assert not violations, (
+        "Agent files must return journal_entries in echelon_result instead of "
+        "instructing direct reasoning journal writes:\n" + "\n".join(violations)
     )
 
 
@@ -414,6 +445,7 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER ignore endocrine state" in prompt
     assert "ALWAYS end your response with an `echelon_result` block" in prompt
     assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
+    assert "NEVER use Write, Edit, Bash redirection" in prompt
     assert "ALWAYS read your agent-specific belief register when present" in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
@@ -443,6 +475,7 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER ignore endocrine state" in prompt
     assert "ALWAYS end your response with an `echelon_result` block" in prompt
     assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
+    assert "NEVER use Write, Edit, Bash redirection" in prompt
     assert "ALWAYS read your agent-specific belief register when present" in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
