@@ -117,7 +117,7 @@ fi
 MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
 export MANIFEST
 if [ -f "$MANIFEST" ]; then
-    MODE=$(jq -r '.mode' "$MANIFEST")
+    MODE=$(jq -r '.mode // (if (.repo_count // 0) > 1 then "polyrepo" else "single" end)' "$MANIFEST")
 else
     MODE="single"
 fi

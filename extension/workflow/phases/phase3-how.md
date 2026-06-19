@@ -54,10 +54,10 @@ speckit-echelon-architect (ARCHITECT) produces these files in `{spec_dir}/`. Mis
 
 ```bash
 for f in plan.md research.md data-model.md; do
-  [ -f "specs/${SPEC_DIR}/$f" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing $f" >&2; exit 1; }
+  [ -f "{spec_dir}/$f" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing $f" >&2; exit 1; }
 done
-[ -d "specs/${SPEC_DIR}/contracts" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing contracts/" >&2; exit 1; }
-python -m harness validate-plan "specs/${SPEC_DIR}/plan.md"
+[ -d "{spec_dir}/contracts" ] || { echo "ERROR: speckit-echelon-architect (ARCHITECT) missing contracts/" >&2; exit 1; }
+python -m harness validate-plan "{spec_dir}/plan.md"
 ```
 
 **Transition:** `phases[phase3-sentinel]` — see `workflow/definition.yaml`

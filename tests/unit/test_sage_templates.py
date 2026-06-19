@@ -76,6 +76,16 @@ class TestSageTemplates:
         assert "agent: speckit-echelon-sage (SAGE)" in text
         assert "agent: WHY" not in text
 
+    def test_sage_pass_verdict_forbids_required_amendments(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "report PASS but flag the borderline metrics" not in text
+        assert "PASS means no required amendments remain" in text
+        assert "NEVER return `verdict: PASS`" in text
+        assert "mandatory amendments" in text
+        assert "route to CARTOGRAPHER" in text
+        assert "If any issue requires CARTOGRAPHER" in text
+
     def test_why1_dispatch_includes_sage_templates(self) -> None:
         text = WHY1_PHASE.read_text(encoding="utf-8")
 
@@ -91,6 +101,15 @@ class TestSageTemplates:
         assert "using the provided templates" in text
         assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
         assert "Produce outputs in `{spec_dir}/`" in text
+
+    def test_why2_dispatch_blocks_required_amendments_even_without_critical(self) -> None:
+        text = WHY2_PHASE.read_text(encoding="utf-8")
+
+        assert "required amendments remain" in text
+        assert "mandatory amendments" in text
+        assert "HIGH issues marked required" in text
+        assert "Quality gates pass AND no CRITICAL issues**" not in text
+        assert "Quality gates pass AND no CRITICAL issues AND no required amendments remain" in text
 
     def test_why3_dispatch_includes_sage_templates(self) -> None:
         text = WHY3_PHASE.read_text(encoding="utf-8")

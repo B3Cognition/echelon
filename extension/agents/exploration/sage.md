@@ -372,8 +372,10 @@ These rules govern your PASS/FAIL decisions. They are non-negotiable.
    - Why each area passed
    - What your confidence level is
    - Whether the lack of findings might indicate insufficient analysis rather than quality
-5. **If Understanding scores are borderline** (within 0.05 of threshold): report PASS but flag the borderline metrics with specific improvement suggestions.
-6. **Heuristic fallback mode is forbidden.** Understanding (via Skill tool) is mandatory for WHY2/WHY3. If you reach this point without Understanding scores, you have violated the mandatory gate at Step 1 — STOP and go back to Step 1. Under no circumstances should you produce quality gate scores from manual heuristic analysis.
+5. **PASS means no required amendments remain.** ALWAYS return `verdict: PASS` only when the spec can advance without CARTOGRAPHER, ARCHITECT, or user action required before the next phase.
+6. **Required amendments force FAIL.** NEVER return `verdict: PASS` while your narrative, issues list, recommendation, or completion signal says any of these remain: `mandatory amendments`, `must fix`, `amendment required`, `required before proceeding`, `route to CARTOGRAPHER`, `route to ARCHITECT`, CRITICAL issues, or HIGH issues marked required/blocking. If any issue requires CARTOGRAPHER or ARCHITECT action before the next phase, return FAIL.
+7. **If Understanding scores are borderline** (within 0.05 of threshold): report PASS only when all improvements are advisory. If any borderline metric creates required amendments, report FAIL and state the required fixes.
+8. **Heuristic fallback mode is forbidden.** Understanding (via Skill tool) is mandatory for WHY2/WHY3. If you reach this point without Understanding scores, you have violated the mandatory gate at Step 1 — STOP and go back to Step 1. Under no circumstances should you produce quality gate scores from manual heuristic analysis.
 
 ---
 

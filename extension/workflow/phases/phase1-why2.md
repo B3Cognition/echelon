@@ -96,8 +96,8 @@ Use the Agent tool to dispatch a subagent with:
 
 Read WHY2 outputs:
 
-1. **Quality gates pass AND no CRITICAL issues** → proceed to ASSESS
-2. **Quality gates fail OR CRITICAL issues found** → route back to WHAT with specific amendment demands. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in speckit-echelon-cartographer (CARTOGRAPHER)'s context pack so speckit-echelon-cartographer (CARTOGRAPHER) knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
+1. **Quality gates pass AND no CRITICAL issues AND no required amendments remain** → proceed to ASSESS
+2. **Quality gates fail OR CRITICAL issues found OR required amendments remain** → route back to WHAT with specific amendment demands. Required amendments include `mandatory amendments`, HIGH issues marked required/blocking, or any SAGE recommendation to `route to CARTOGRAPHER` / `route to ARCHITECT` before proceeding. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in speckit-echelon-cartographer (CARTOGRAPHER)'s context pack so speckit-echelon-cartographer (CARTOGRAPHER) knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
 3. **Track quality scores — MANDATORY return on every WHY2 pass (pass or fail):** include the full updated `quality_scores` list in `echelon_result.state_updates`, appending an object with **every** field below. Missing a field breaks the convergence delta check in step 4.
 
    ```yaml
@@ -127,8 +127,8 @@ COMMANDER evaluates these in priority order after each WHY2 pass. Execute the **
 | 2 | `token_usage >= token_budget_k * 1000` (from `echelon-config.yml budget:`) | → phase2-decide | `convergence_forced: true`, `convergence_reason: "token_budget_exhausted"` |
 | 3 | `iteration >= 4` AND cumulative improvement in `overall` score (iteration 1 → now) < `0.05` | → phase2-decide | `convergence_forced: true`, `convergence_reason: "hard_plateau"` |
 | 4 | MAX(abs(delta)) across all 7 score categories < `convergence_delta` for 2 consecutive passes | → phase2-decide | `convergence_detected: true`, `convergence_reason: "delta_converged"` |
-| 5 | Quality gates pass AND no CRITICAL issues | → phase2-decide | `convergence_detected: true` |
-| 6 | All other cases (gates fail or CRITICAL issues present) | → phase1-what (increment iteration) | — |
+| 5 | Quality gates pass AND no CRITICAL issues AND no required amendments remain | → phase2-decide | `convergence_detected: true` |
+| 6 | All other cases (gates fail, CRITICAL issues present, or required amendments remain) | → phase1-what (increment iteration) | — |
 
 When transitioning on conditions 1–3 (`convergence_forced: true`), write a quality report noting what was not completed and why, and flag artifacts as "forced convergence."
 

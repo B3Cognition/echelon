@@ -78,6 +78,9 @@ trap 'rm -f "$TMPOUT1"' EXIT
 REPO_COUNT=$(jq '.repo_count' "$TMPOUT1")
 assert_eq "repo_count is 3" "3" "$REPO_COUNT"
 
+MODE=$(jq -r '.mode' "$TMPOUT1")
+assert_eq "mode is polyrepo" "polyrepo" "$MODE"
+
 REPOS_LEN=$(jq '.repos | length' "$TMPOUT1")
 assert_eq "discovers 3 repos" "3" "$REPOS_LEN"
 
@@ -161,6 +164,22 @@ assert_eq "repo-b has_git true" "true" "$HAS_GIT_B"
 # Clean up the .git dir immediately
 rm -rf "$FIXTURES_DIR/polyrepo/repo-b/.git"
 
+# Simulate a checked-out Git submodule/worktree where .git is a file.
+printf 'gitdir: ../.git/modules/repo-b\n' > "$FIXTURES_DIR/polyrepo/repo-b/.git"
+
+TMPOUT4_FILE=$(mktemp)
+trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4" "$TMPOUT4_FILE"; rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
+
+(cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT4_FILE")
+
+HAS_GIT_FILE_B=$(jq -r '.repos[] | select(.name == "repo-b") | .has_git' "$TMPOUT4_FILE")
+assert_eq "repo-b .git file has_git true" "true" "$HAS_GIT_FILE_B"
+
+MARKERS_FILE_B=$(jq -r '.repos[] | select(.name == "repo-b") | .markers | join(",")' "$TMPOUT4_FILE")
+assert_contains "repo-b .git file marker recorded" ".git" "$MARKERS_FILE_B"
+
+rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"
+
 # Re-run without .git to check repo-c has_git false
 TMPOUT4b=$(mktemp)
 trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4" "$TMPOUT4b"' EXIT
@@ -188,6 +207,26 @@ echo "=== Test 6: source_file_count ==="
 
 SRC_COUNT_A=$(jq '.repos[] | select(.name == "repo-a") | .source_file_count' "$TMPOUT1")
 assert_gt "repo-a source_file_count > 0" 0 "$SRC_COUNT_A"
+
+# ---------- Test 6b: wrapper repo with child repos remains polyrepo ----------
+
+echo ""
+echo "=== Test 6b: wrapper repo with child repos ==="
+
+mkdir -p "$FIXTURES_DIR/polyrepo/.git"
+
+TMPOUT6B=$(mktemp)
+trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4" "$TMPOUT4b" "$TMPOUT4_FILE" "$TMPOUT6B"; rm -rf "$FIXTURES_DIR/polyrepo/.git"; rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
+
+(cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT6B")
+
+MODE_6B=$(jq -r '.mode' "$TMPOUT6B")
+assert_eq "wrapper with child repos is polyrepo" "polyrepo" "$MODE_6B"
+
+REPO_COUNT_6B=$(jq '.repo_count' "$TMPOUT6B")
+assert_eq "wrapper repo itself is not the only discovered repo" "3" "$REPO_COUNT_6B"
+
+rm -rf "$FIXTURES_DIR/polyrepo/.git"
 
 # ---------- Test 7: discovered_at field ----------
 

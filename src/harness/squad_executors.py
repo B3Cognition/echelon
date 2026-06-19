@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -17,6 +18,13 @@ if TYPE_CHECKING:
 def _shared_agent_contract() -> str:
     """Static cross-agent instructions injected before role-specific prompt text."""
     return (
+        "You were dispatched as a subagent to execute a specific task.\n"
+        "You are operating inside an Echelon squad phase, not a general interactive "
+        "assistant session.\n"
+        "Do NOT invoke the Skill tool — skill lookup rules do not apply in this "
+        "session unless the phase contract explicitly requires a specific skill.\n"
+        "Do NOT ask the user what they want to do next. Execute the assigned phase "
+        "contract with the provided context and return `echelon_result`.\n\n"
         "## Shared Agent Contract\n"
         "### Endocrine Context\n"
         "- ALWAYS read any `[ENDOCRINE]` block in your dispatched context pack before "
@@ -39,6 +47,45 @@ def _shared_agent_contract() -> str:
         "- NEVER treat calibration priors as optional when a matching belief "
         "register exists.\n\n"
     )
+
+
+_MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
+    "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
+    "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
+}
+
+
+def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
+    """Return a robust repo-relative/absolute spec_dir reference.
+
+    During squad phases, spec_dir is allowed to point at the active run copy
+    under runs/<run>/specs/<spec>. Do not rewrite it back to PROJECT_ROOT/specs;
+    the published project specs directory is a separate target/build artifact.
+    """
+    ref = (spec_dir_ref or "").strip()
+    if not ref:
+        return ""
+
+    candidate = Path(ref)
+    if candidate.is_absolute():
+        try:
+            return str(candidate.relative_to(project_root))
+        except ValueError:
+            return str(candidate)
+
+    return ref
+
+
+def _spec_search_bases(spec_dir_ref: str, project_root: Path, staging_dir: str) -> list[Path]:
+    bases: list[Path] = []
+    if spec_dir_ref:
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = project_root / spec_dir
+        bases.append(spec_dir)
+    bases.extend([Path(staging_dir), project_root])
+    return bases
 
 
 def _routing_contract(node: "PhaseNode") -> str:
@@ -200,15 +247,22 @@ class PhaseExecutor(ABC):
         # 3. Context pack files (read each that exists on disk).
         # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
         # items may reference these legacy paths (e.g. .specify/squad/staging/glossary.md).
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
         for item in node.context_pack:
             # Items may have inline comments: ".specify/echelon/re/state.json — current run state"
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            resolved = _translate_squad_path(file_ref)
-            candidate = Path(resolved) if resolved.startswith("/") else self._project_root / resolved
-            if candidate.exists():
-                dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+            resolved = _translate_squad_path(file_ref.replace("{spec_dir}", spec_dir_ref))
+            if resolved.startswith("/"):
+                candidates = [Path(resolved)]
+            else:
+                candidates = [base / resolved for base in search_bases]
+            for candidate in candidates:
+                if candidate.exists():
+                    dynamic_parts.append(f"\n---\n# {file_ref}\n{candidate.read_text()}")
+                    break
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
@@ -222,6 +276,26 @@ class PhaseExecutor(ABC):
             f"STAGING_DIR={staging_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
         )
+        if spec_dir_ref:
+            spec_dir_path = Path(spec_dir_ref)
+            if not spec_dir_path.is_absolute():
+                spec_dir_path = self._project_root / spec_dir_path
+            published_ref = str(state.get("published_spec_dir") or "").strip()
+            if not published_ref:
+                spec_id = spec_dir_path.name
+                published_ref = f"specs/{spec_id}" if spec_id else ""
+            if published_ref:
+                published_path = Path(published_ref)
+                if not published_path.is_absolute():
+                    published_path = self._project_root / published_path
+                context_preamble += (
+                    "## Active Spec Artifact Roots\n"
+                    f"ACTIVE_SPEC_DIR={spec_dir_path}\n"
+                    f"PUBLISHED_SPEC_DIR={published_path}\n"
+                    "- ALWAYS read and write squad phase artifacts under ACTIVE_SPEC_DIR / `{spec_dir}`.\n"
+                    "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
+                    "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n\n"
+                )
         if node.id == "phase1-what" and state.get("cartographer_resume_existing_spec"):
             spec_dir = state.get("spec_dir", "")
             feature_branch = state.get("feature_branch", "")
@@ -237,6 +311,7 @@ class PhaseExecutor(ABC):
             )
 
         prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)
+        prompt = prompt.replace("{spec_dir}", spec_dir_ref)
 
         # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
@@ -330,9 +405,96 @@ class PhaseExecutor(ABC):
 class AgentExecutor(PhaseExecutor):
     """Handles type: agent phases — the common case."""
 
+    def _canonical_spec_dir(self, state: dict) -> Path | None:
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        if not spec_dir_ref:
+            return None
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        return spec_dir
+
+    def _run_local_shadow_spec_dir(self, spec_dir: Path) -> Path:
+        return self._squad_dir / spec_dir.parent.name / spec_dir.name
+
+    def _claimed_required_phase_outputs(self, node: "PhaseNode", state: dict, result: "SquadAgentResult") -> set[str]:
+        required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if not required:
+            return set()
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return set()
+        payload = result.echelon_result or {}
+        output_files = payload.get("output_files")
+        if not isinstance(output_files, list):
+            return set()
+        claimed: set[Path] = set()
+        for item in output_files:
+            if not isinstance(item, str) or not item.strip():
+                continue
+            candidate = Path(item.strip().rstrip("/"))
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            claimed.add(candidate.resolve())
+
+        matched: set[str] = set()
+        for rel in required:
+            expected = (spec_dir / rel.rstrip("/")).resolve()
+            if expected in claimed:
+                matched.add(rel)
+        return matched
+
+    def _recover_required_phase_outputs_from_shadow(self, node: "PhaseNode", state: dict, result: "SquadAgentResult") -> list[str]:
+        required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if not required:
+            return []
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return []
+        claimed = self._claimed_required_phase_outputs(node, state, result)
+        if not claimed:
+            return []
+        shadow_dir = self._run_local_shadow_spec_dir(spec_dir)
+        if not shadow_dir.exists():
+            return []
+        recovered: list[str] = []
+        for rel in required:
+            if rel not in claimed:
+                continue
+            src = shadow_dir / rel
+            dst = spec_dir / rel
+            if rel == "contracts":
+                if src.is_dir() and not dst.exists():
+                    shutil.copytree(src, dst)
+                    recovered.append(f"{rel}/")
+            elif src.exists() and not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                recovered.append(rel)
+        return recovered
+
+    def _required_phase_outputs_missing(self, node: "PhaseNode", state: dict) -> list[str]:
+        required = _MANDATORY_PHASE_OUTPUTS.get(node.id, ())
+        if not required:
+            return []
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return list(required)
+        missing: list[str] = []
+        for rel in required:
+            path = spec_dir / rel
+            if rel == "contracts":
+                if not path.is_dir():
+                    missing.append(f"{rel}/")
+            elif not path.exists():
+                missing.append(rel)
+        return missing
+
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
     ) -> "SquadAgentResult":
+        from harness.squad_provider import SquadAgentResult
+
         state = state_store.load()
         self._run_pre_dispatch(node, state, state_store)
         state = state_store.load()  # re-load after pre_dispatch
@@ -340,6 +502,31 @@ class AgentExecutor(PhaseExecutor):
         result = self._provider.exec_agent(str(self._project_root), prompt)
         self._write_journal_entries(result, node.id)
         state_store.increment_cost(result.cost_usd)
+        if result.echelon_result is not None:
+            recovered = self._recover_required_phase_outputs_from_shadow(node, state, result)
+            if recovered:
+                updates = (result.echelon_result.setdefault("state_updates", {}))
+                existing = updates.get("shadow_output_recovered")
+                if isinstance(existing, list):
+                    updates["shadow_output_recovered"] = [*existing, *recovered]
+                else:
+                    updates["shadow_output_recovered"] = recovered
+            missing_outputs = self._required_phase_outputs_missing(node, state)
+            if missing_outputs:
+                result = SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "BLOCKED",
+                        "state_updates": {
+                            "blocked_reason": "missing_phase_outputs",
+                            "missing_outputs": missing_outputs,
+                        },
+                    },
+                    raw_output=result.raw_output,
+                    duration_ms=result.duration_ms,
+                    timed_out=result.timed_out,
+                    cost_usd=result.cost_usd,
+                )
         return result
 
 
@@ -415,14 +602,8 @@ class StagedParallelExecutor(PhaseExecutor):
         # and contaminate staged consensus prompts.
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
-        search_bases: list[Path] = []
-        spec_dir_ref = str(state.get("spec_dir") or "").strip()
-        if spec_dir_ref:
-            spec_dir = Path(spec_dir_ref)
-            if not spec_dir.is_absolute():
-                spec_dir = self._project_root / spec_dir
-            search_bases.append(spec_dir)
-        search_bases.extend([Path(staging_dir_str), self._project_root])
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
 
         for item in agent_entry.get("context_pack", []):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
@@ -498,7 +679,7 @@ class StagedParallelExecutor(PhaseExecutor):
         # Stage 2: PLAN2 — requires implementability-report.md from ASSESS2
         impl_report_path: Optional[Path] = None
         report_bases: list[Path] = []
-        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         if spec_dir_ref:
             spec_dir = Path(spec_dir_ref)
             if not spec_dir.is_absolute():

@@ -466,6 +466,11 @@ class SquadController:
             else:
                 result = executor.execute(node, self._state_store)
 
+            blocked_result = self._blocked_executor_reason(result)
+            if blocked_result:
+                self._block_after_executor_failure(phase, blocked_result, result)
+                return SquadResult.from_state(self._state_store.load())
+
             next_phase = self._evaluate_transitions(node, result)
             self._state_store.advance(phase, next_phase, result)
 
@@ -521,6 +526,43 @@ class SquadController:
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
+
+    def _blocked_executor_reason(
+        self, result: SquadAgentResult
+    ) -> str | None:
+        if result.echelon_result is None:
+            return "missing_echelon_result"
+        if result.timed_out:
+            return "agent_timeout"
+        if result.exit_code != 0:
+            return f"agent_exit_code_{result.exit_code}"
+        if (result.verdict or "").upper() == "BLOCKED":
+            explicit_reason = (result.state_updates or {}).get("blocked_reason")
+            if isinstance(explicit_reason, str) and explicit_reason.strip():
+                return explicit_reason.strip()
+            return "agent_blocked"
+        return None
+
+    def _block_after_executor_failure(
+        self, phase: str, reason: str, result: SquadAgentResult
+    ) -> None:
+        from datetime import datetime, timezone
+
+        state = self._state_store.load()
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        state["blocked_reason"] = reason
+        state["last_dispatch"] = {
+            "phase_id": phase,
+            "verdict": result.verdict,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._state_store.save(state)
+        print(
+            f"[squad] ✗ {phase} blocked: {reason} "
+            "(phase not marked complete)",
+            flush=True,
+        )
 
     def _guard_constitution_provenance(self, phase: str) -> str:
         """Route normal spec/build phases through CHIEF until constitution is proven.

@@ -164,6 +164,21 @@ Do not edit `{spec_dir}/run-history.json` in this phase. Ralph writes the
 authoritative Phase B implementation run after build, verify, task progress
 integrity, fulfillment, commit, and publish all converge.
 
+The published run history must still expose `authoritative_run`; Ralph owns
+that field and appends it outside this build-finalize agent phase.
+
+**Constitution Amendment Candidate Ownership:**
+
+Consolidation may surface constitution amendment candidates, but COMMANDER must
+not auto-apply them. The detailed consolidation contract lives in
+`workflow/phases/appendices/build-8-feedback-reference.md` and remains
+authoritative for:
+
+- writing `{spec_dir}/constitution-amendment-candidates.md`
+- formatting candidate blocks as `[PROPOSED: ...]`
+- returning `constitution_amendments_pending`
+- requiring human review through `speckit.constitution`
+
 ### 8.3b Run speckit-echelon-consolidator (CONSOLIDATOR)
 
 After the implementation is verified and before speckit-echelon-scorekeeper (SCOREKEEPER), dispatch speckit-echelon-consolidator (CONSOLIDATOR) in `offline_consolidation` mode so build-phase lessons become reusable schemas.
