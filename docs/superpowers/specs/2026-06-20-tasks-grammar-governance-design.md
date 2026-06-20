@@ -120,10 +120,11 @@ soft score), so tasks is governed at the same depth, not just structurally.
 ### Unit 4 — CLI surface (`src/lexicon/cli.py`)
 
 ```
-lexicon validate tasks.md --type tasks --spec spec.md --glossary glossary.md [--json]
+lexicon validate tasks.md --type tasks --spec-ref spec.md --glossary glossary.md [--json]
 ```
-`--glossary` feeds term resolution (T), shared with the spec gate; `--spec` feeds the
-cross-doc checks. Exit 0 iff `Valid_tasks`; findings localized to `tasks.md:line`.
+`--glossary` feeds term resolution (T), shared with the spec gate; `--spec-ref` feeds the
+cross-doc checks (named `--spec-ref` because the positional argument is already the file under
+validation). Exit 0 iff `Valid_tasks`; findings localized to `tasks.md:line`.
 
 ### Unit 5 — ORCHESTRATOR "Tasks Gate Mode" (`extension/agents/.../orchestrator.md`)
 
