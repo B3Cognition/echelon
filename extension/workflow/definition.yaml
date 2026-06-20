@@ -715,7 +715,13 @@ phases:
       # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
       # is disabled this condition is false and flow falls through unchanged.
       - to: phase3-plan
-        condition: "lexicon_gate.enabled AND lexicon_gate.artifacts.tasks.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
+        # Mirrors the proven phase1-what guard shape: references only keys the
+        # COMMANDER state evaluator resolves (lexicon_gate.enabled + the persisted
+        # tasks_lexicon_pass). The deeper config path lexicon_gate.artifacts.tasks.enabled
+        # is intentionally NOT in the condition — it is unresolvable as state and made
+        # the guard indeterminate; gate enablement is enforced by ORCHESTRATOR only
+        # emitting tasks_lexicon_pass when artifacts.tasks.enabled (see phase3-plan.md).
+        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
         action: increment_iteration
       - to: phase3-consensus
         condition: always
