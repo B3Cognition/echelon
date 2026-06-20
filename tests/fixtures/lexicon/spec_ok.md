@@ -1,0 +1,14 @@
+ARTIFACT: SPEC
+TITLE: t
+
+REQ: REQ-001
+GIVEN: g
+WHEN: w
+THEN: the system MUST act
+OUTPUT: r
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: g
+WHEN: w
+THEN: visible
