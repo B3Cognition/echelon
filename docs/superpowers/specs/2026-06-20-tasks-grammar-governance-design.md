@@ -70,13 +70,28 @@ TEST: <how completion is verified>
 Structural (parse-level) rules: every `TASK` has `PHASE`, `COMPLEXITY`, `REQ`, `DEPENDS`,
 `ACCEPTANCE`, `TEST`; `REQ`/`DEPENDS` hold id-shaped tokens or the literals `INFRA`/`none`.
 
-### Unit 2 — tasks validator (`src/lexicon/tasks.py`)
+### Unit 2 — tasks validator (`src/lexicon/tasks.py`) — **full parity with the spec gate**
 
-Pure functions over the parsed tree, mirroring `determinism.py`/`examples.py`:
+The `tasks` validator reuses the *same* `lexicon` modules the spec gate uses, applied to the
+NL fields (`ACCEPTANCE`, `TEST`, and the task body). It is not a thinner gate — every
+within-document check the spec gets, tasks get too:
 
-- `parse_pass` (P) — conforms to the grammar.
-- Field completeness (C) — required fields present per task.
-- `TEST` presence (every task has a non-empty `TEST`).
+- **P — parse** (`parser`): conforms to the `TASKS` grammar.
+- **banned-word** (`linter.banned_word_findings`): `ACCEPTANCE`/`TEST` must be measurable —
+  no `works correctly`, `robust`, `fast`, `as needed`, etc. A task whose done-condition is
+  vague is not verifiable.
+- **T — term resolution** (`resolver`): domain identifiers in task fields resolve to the
+  **same glossary `spec.md` uses** (shared controlled vocabulary across the two artifacts).
+- **A — atomicity** (the `tasks` analogue of spec's single-modal `D`): each `TASK` states
+  **one deliverable** — exactly one `ACCEPTANCE` condition and one `TEST`; compound
+  acceptance (`and`-joined obligations) → `task-not-atomic`.
+- **C — completeness / no-placeholder** (`completeness`): required fields present AND no
+  leftover `<placeholder>`/`TBD`/`TODO` in any field.
+- **O — observability**: `ACCEPTANCE` (observable done-condition) + `TEST` (verification)
+  are mandatory and non-empty — the task's observable outcome.
+
+These run *standalone* on `tasks.md` (no `--spec` needed), exactly as the spec gates run on
+`spec.md`. The cross-document checks (Unit 3) are the *additional* layer tasks gets on top.
 
 ### Unit 3 — cross-document gate (`src/lexicon/crossdoc.py`)
 
@@ -89,14 +104,26 @@ Takes `tasks.md` + `spec.md`. Deterministic checks, each emitting localized `Fin
 | Dependency acyclicity | `DEPENDS` graph is a DAG; all `T-ids` exist | `dep-cycle` / `dep-missing` |
 | Test linkage | every `TASK` has a `TEST`; every spec `AC` is *tasked* — i.e. the REQ it belongs to (spec `REQ → EXAMPLE → AC`) has ≥1 covering task | `task-no-test` / `ac-untasked` |
 
-`Valid_tasks(A) = parse ∧ field-complete ∧ coverage ∧ refint ∧ acyclic ∧ test-linked`.
+`Valid_tasks(A) = parse ∧ no-banned ∧ terms-resolve ∧ atomic ∧ complete ∧ observable`
+` ∧ coverage ∧ refint ∧ acyclic ∧ test-linked` — i.e. the spec-parity within-doc gates
+(Unit 2) **and** the cross-doc gates (Unit 3), all binary, all deterministic.
+
+### Unit 3b — soft quality score (parity with `understanding` at WHY2)
+
+Just as `spec.md` gets the 34-metric `understanding` soft score *after* its hard gate, the
+hard-clean `tasks.md` gets a lightweight **task-quality score** (advisory, never the gate):
+`acceptance_measurability` (numeric/observable terms present), `test_concreteness`,
+`atomicity_ratio`, `dependency_depth` (over-coupling signal). Reported for repair-priority
+ordering; it does not block. This keeps the two-layer model identical to spec (hard gate +
+soft score), so tasks is governed at the same depth, not just structurally.
 
 ### Unit 4 — CLI surface (`src/lexicon/cli.py`)
 
 ```
-lexicon validate tasks.md --type tasks --spec spec.md [--json]
+lexicon validate tasks.md --type tasks --spec spec.md --glossary glossary.md [--json]
 ```
-Exit 0 iff `Valid_tasks`; findings localized to `tasks.md:line`.
+`--glossary` feeds term resolution (T), shared with the spec gate; `--spec` feeds the
+cross-doc checks. Exit 0 iff `Valid_tasks`; findings localized to `tasks.md:line`.
 
 ### Unit 5 — ORCHESTRATOR "Tasks Gate Mode" (`extension/agents/.../orchestrator.md`)
 
@@ -107,9 +134,13 @@ Mirrors CARTOGRAPHER's Lexicon Gate Mode exactly:
    apply localized fixes per finding code, re-run, up to `max_repair_attempts`.
 4. Emit `tasks_lexicon_pass` (+ attempts, findings) in `echelon_result.state_updates`.
 
-Repair table (finding → localized fix): `req-uncovered` → add a TASK for the REQ;
-`task-orphan-req` → fix the `REQ=` ref or drop the task; `task-no-test` → add a `TEST`;
-`dep-cycle`/`dep-missing` → fix `DEPENDS`; `ac-untasked` → add a task covering the AC.
+Repair table (finding → localized fix):
+- within-doc (parity gates): `banned-word` → replace vague text with a measurable condition;
+  `unresolved-term` → use/add a glossary term; `task-not-atomic` → split into single-deliverable
+  tasks; `incomplete-slot` → fill the placeholder; `task-no-test` → add a `TEST`.
+- cross-doc: `req-uncovered` → add a TASK for the REQ; `task-orphan-req` → fix the `REQ=` ref or
+  drop the task; `dep-cycle`/`dep-missing` → fix `DEPENDS`; `ac-untasked` → add a task covering
+  the AC's REQ.
 
 ### Unit 6 — COMMANDER re-dispatch wiring (`definition.yaml` + `phase3-plan.md`)
 
@@ -158,6 +189,9 @@ A dangling/cyclic dependency or uncovered REQ is a finding, not a crash. Unparse
 ## Testing (TDD, mirrors the lexicon suite)
 
 - grammar: valid TASKS doc parses; missing field / bad `REQ=` token → fail.
+- parity (within-doc): vague `ACCEPTANCE` ("works correctly") → `banned-word`; ungoverned
+  identifier in `TEST` → `unresolved-term`; `and`-joined compound acceptance → `task-not-atomic`;
+  `<TBD>` in a field → `incomplete-slot`; a glossary-bound term resolves clean.
 - coverage: spec with an uncovered REQ → `req-uncovered`; full coverage → pass.
 - refint: `REQ=REQ-999` (no such REQ) → `task-orphan-req`.
 - acyclicity: `T-001 depends=T-002`, `T-002 depends=T-001` → `dep-cycle`.
