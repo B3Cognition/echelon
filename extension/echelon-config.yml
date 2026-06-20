@@ -124,11 +124,13 @@ quality_gates:
 # ORCHESTRATOR/tasks, SENTINEL, build phase, verify-spec/spec-guard) must be made
 # Lexicon-aware before relying on this in the full Phase A→B pipeline.
 lexicon_gate:
-  enabled: true                 # master switch for Lexicon-mode authoring
-  artifact_type: spec           # spec | story | article
-  glossary_file: glossary.md    # controlled vocabulary (resolved in spec_dir / staging)
-  max_repair_attempts: 3        # in-dispatch self-repair rounds before returning lexicon_pass=false
-  on_exhausted: warn            # warn → proceed to WHY2 with warning; block → escalate to human
+  enabled: true
+  artifacts:
+    spec:  { enabled: true, type: spec }
+    tasks: { enabled: true, type: tasks, spec_ref: spec.md }
+  glossary_file: glossary.md
+  max_repair_attempts: 3
+  on_exhausted: warn
 
 # =============================================================================
 # HEURISTICS
