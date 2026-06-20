@@ -1,7 +1,6 @@
 """Tasks validator — extraction + within-doc gates (spec-parity)."""
 from __future__ import annotations
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from lark.exceptions import LarkError
 from .tasks_parser import parse
 
@@ -17,9 +16,6 @@ class TaskRecord:
     test: str
     line: int
 
-_FIELD = {"PHASE": "phase", "COMPLEXITY": "complexity", "PARALLEL": "parallel",
-          "REQ": "reqs", "DEPENDS": "depends", "ACCEPTANCE": "acceptance", "TEST": "test"}
-
 def extract_tasks(text: str) -> list[TaskRecord]:
     try:
         tree = parse(text)
@@ -28,7 +24,8 @@ def extract_tasks(text: str) -> list[TaskRecord]:
     out: list[TaskRecord] = []
     for node in tree.find_data("task"):
         toks = [c for c in node.children]
-        tid = str(toks[0]); line = toks[0].line
+        tid = str(toks[0])
+        line = toks[0].line
         vals = [str(t).strip() for t in toks[1:]]
         # grammar order: PHASE, COMPLEXITY, PARALLEL, REQ, DEPENDS, ACCEPTANCE, TEST
         phase, complexity, parallel, req, depends, acceptance, test = vals
