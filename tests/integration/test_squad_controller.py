@@ -1053,3 +1053,46 @@ class TestConstitutionPhase:
             "exec_agent was not called — phase1-constitution is still a harness no-op. "
             "It must be type=agent so CHIEF gets dispatched."
         )
+
+
+class TestLexiconGateGuardDeterminism:
+    """The lexicon-gate self-loop guards (phase3-plan tasks gate) must route
+    deterministically via ConditionEvaluator — never punt to COMMANDER.
+
+    Regression: a live run flagged the guard as referencing undefined state keys
+    (lexicon_gate.*, tasks_lexicon_pass), making the condition indeterminate.
+    Fix = NOT handler in ConditionEvaluator + merging the lexicon_gate config
+    block into the eval state so `lexicon_gate.enabled` resolves.
+    """
+
+    @staticmethod
+    def _result(updates: dict) -> SquadAgentResult:
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+
+    def test_gate_config_loads_lexicon_gate_block(self, tmp_path):
+        ctrl, _ = _controller(tmp_path)
+        cfg = ctrl._lexicon_gate_config()
+        assert "lexicon_gate" in cfg
+        assert cfg["lexicon_gate"].get("enabled") is True
+
+    def test_tasks_gate_failure_redispatches_without_commander(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-plan")
+        st = store.load(); st["iteration"] = 0; st["max_iterations"] = 3; store.save(st)
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
+            nxt = ctrl._evaluate_transitions(node, self._result({"tasks_lexicon_pass": False}))
+        assert nxt == "phase3-plan"   # deterministic re-dispatch on gate failure
+
+    def test_tasks_gate_pass_falls_through_to_consensus(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-plan")
+        st = store.load(); st["iteration"] = 0; st["max_iterations"] = 3; store.save(st)
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
+            nxt = ctrl._evaluate_transitions(node, self._result({"tasks_lexicon_pass": True}))
+        assert nxt == "phase3-consensus"   # deterministic fall-through on gate pass

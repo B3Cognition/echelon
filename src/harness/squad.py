@@ -171,6 +171,7 @@ class SquadController:
         self._max_iterations = max_iterations
         self._squad_dir = squad_dir or state_store.squad_dir
         self._evaluator = ConditionEvaluator()
+        self._gate_config_cache: Optional[dict] = None
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -666,13 +667,40 @@ class SquadController:
         )
         return recommended
 
+    def _lexicon_gate_config(self) -> dict:
+        """Load the `lexicon_gate` config block once for transition evaluation.
+
+        Self-loop guard conditions (phase1-what, phase3-plan) reference the
+        config-namespace key `lexicon_gate.enabled`, which does not live in
+        state.json. Merging this block into the eval state lets those guards
+        resolve deterministically instead of returning None and punting the
+        re-dispatch decision to COMMANDER. Only `lexicon_gate` is merged (not
+        the whole config) to keep the blast radius to the gate transitions.
+        Returns {} when the file is absent or unparseable.
+        """
+        if self._gate_config_cache is not None:
+            return self._gate_config_cache
+        cfg: dict = {}
+        try:
+            import yaml
+            data = yaml.safe_load((self._ext_dir / "echelon-config.yml").read_text()) or {}
+            block = data.get("lexicon_gate")
+            if isinstance(block, dict):
+                cfg = {"lexicon_gate": block}
+        except Exception:
+            cfg = {}
+        self._gate_config_cache = cfg
+        return cfg
+
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
         state = self._state_store.load()
-        # Merge result.state_updates so ALL condition evaluation sees freshly-written
-        # values (quality_scores, escalation_question, etc.) before advance() runs.
-        eval_state = {**state, **(result.state_updates or {})}
+        # Merge order (lowest→highest precedence): lexicon_gate config, then
+        # state, then result.state_updates — so freshly-written values
+        # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace
+        # keys (lexicon_gate.*) the self-loop guards reference still resolve.
+        eval_state = {**self._lexicon_gate_config(), **state, **(result.state_updates or {})}
 
         # ── WHY fail tracking + consecutive-fail safety net ──────────────────
         if node.id in WHY_PHASES:

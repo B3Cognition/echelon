@@ -281,3 +281,51 @@ class TestConditionEvaluator:
     def test_all_tasks_complete_but_more_checkpoints(self):
         state = {"all_tasks_complete": True, "no_more_phase_checkpoints": False}
         assert self.ev.evaluate("all_tasks_complete AND no_more_phase_checkpoints", state) is False
+
+    # ── NOT <field> negation ─────────────────────────────────────────────
+    # The lexicon-gate self-loop guards use `NOT lexicon_pass` / `NOT
+    # tasks_lexicon_pass`. Without a NOT handler these return None, making the
+    # whole AND indeterminate and punting the re-dispatch to COMMANDER instead
+    # of evaluating deterministically.
+
+    def test_not_false_field_is_true(self):
+        assert self.ev.evaluate("NOT tasks_lexicon_pass", {"tasks_lexicon_pass": False}) is True
+
+    def test_not_true_field_is_false(self):
+        assert self.ev.evaluate("NOT tasks_lexicon_pass", {"tasks_lexicon_pass": True}) is False
+
+    def test_not_absent_field_is_none(self):
+        # Unknown/absent field stays indeterminate → COMMANDER (contract preserved).
+        assert self.ev.evaluate("NOT tasks_lexicon_pass", {}) is None
+
+    def test_not_dotted_path(self):
+        assert self.ev.evaluate("NOT quality_gates.pass", {"quality_gates": {"pass": False}}) is True
+
+    # ── Lexicon-gate re-dispatch guards evaluate deterministically ───────
+    # Real conditions from definition.yaml phase1-what (spec) and phase3-plan
+    # (tasks). With lexicon_gate config merged into the eval state (squad.py
+    # does this) and the NOT handler, the failure path resolves to True
+    # (deterministic re-dispatch) instead of None (COMMANDER punt).
+
+    TASKS_GUARD = "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
+    SPEC_GUARD = "lexicon_gate.enabled AND NOT lexicon_pass AND iteration < max_iterations"
+
+    def test_tasks_guard_fail_path_redispatches(self):
+        state = {"lexicon_gate": {"enabled": True}, "tasks_lexicon_pass": False,
+                 "iteration": 0, "max_iterations": 3}
+        assert self.ev.evaluate(self.TASKS_GUARD, state) is True
+
+    def test_tasks_guard_pass_path_falls_through(self):
+        state = {"lexicon_gate": {"enabled": True}, "tasks_lexicon_pass": True,
+                 "iteration": 0, "max_iterations": 3}
+        assert self.ev.evaluate(self.TASKS_GUARD, state) is False
+
+    def test_tasks_guard_exhausted_iterations_falls_through(self):
+        state = {"lexicon_gate": {"enabled": True}, "tasks_lexicon_pass": False,
+                 "iteration": 3, "max_iterations": 3}
+        assert self.ev.evaluate(self.TASKS_GUARD, state) is False
+
+    def test_spec_guard_fail_path_redispatches(self):
+        state = {"lexicon_gate": {"enabled": True}, "lexicon_pass": False,
+                 "iteration": 0, "max_iterations": 3}
+        assert self.ev.evaluate(self.SPEC_GUARD, state) is True
