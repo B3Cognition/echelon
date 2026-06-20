@@ -1,7 +1,7 @@
 """Tasks validator — extraction + within-doc gates (spec-parity)."""
 from __future__ import annotations
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from lark.exceptions import LarkError
 from .tasks_parser import parse
 from .linter import Finding, banned_word_findings
@@ -56,3 +56,29 @@ def within_doc_findings(text: str, glossary: set[str]) -> list[Finding]:
                 message=f"TASK {t.id} ACCEPTANCE bundles multiple obligations; split into atomic tasks",
                 line=t.line, span=t.id))
     return findings
+
+
+@dataclass
+class TasksReport:
+    ok: bool
+    parse_pass: bool
+    findings: list = field(default_factory=list)
+
+
+def validate_tasks(text: str, glossary: set[str] | None = None,
+                   spec_text: str | None = None) -> TasksReport:
+    from .crossdoc import cross_doc_findings
+    glossary = glossary or set()
+    findings: list = []
+    try:
+        parse(text)
+        parse_pass = True
+    except LarkError as exc:
+        parse_pass = False
+        findings.append(Finding("parse-error",
+            f"does not parse under the TASKS grammar: {exc.__class__.__name__}",
+            getattr(exc, "line", 0) or 0, ""))
+    findings.extend(within_doc_findings(text, glossary))
+    if spec_text is not None:
+        findings.extend(cross_doc_findings(text, spec_text))
+    return TasksReport(ok=not findings, parse_pass=parse_pass, findings=findings)
