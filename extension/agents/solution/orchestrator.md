@@ -352,6 +352,10 @@ echelon_result:
 python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','spec.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
 ```
 
+If the output is `TASKS_GATE=off` (or the file/key is absent), this entire section is INERT —
+author `tasks.md` per the standard planning protocol above. Only when it reads `TASKS_GATE=on`
+do you enter Tasks Gate mode using the `spec_ref` / `max_repair` values printed above.
+
 If `TASKS_GATE=on`, author `tasks.md` in the TASKS controlled grammar (`ARTIFACT: TASKS`,
 one `TASK` block per task with `PHASE/COMPLEXITY/PARALLEL/REQ/DEPENDS/ACCEPTANCE/TEST`),
 then run the self-validation repair loop:
@@ -375,3 +379,6 @@ echelon_result:
 
 ALWAYS treat the `lexicon validate --type tasks` verdict as authoritative.
 NEVER report `tasks_lexicon_pass: true` without a final run that returned `ok: true`.
+
+ALWAYS apply the smallest fix that resolves a finding (add/split a single TASK, fix one REQ= or DEPENDS= field).
+NEVER rewrite tasks.md wholesale or discard passing TASK blocks while repairing a failing one.

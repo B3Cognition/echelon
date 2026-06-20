@@ -75,7 +75,7 @@ injected into your prompt. Before authoring, read it directly from the canonical
 config (the same path the `echelon` CLI uses). Run:
 
 ```bash
-python3 -c "import yaml; c=yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}; g=(c.get('lexicon_gate') or {}); print('LEXICON_GATE=on' if g.get('enabled') else 'LEXICON_GATE=off'); print('artifact_type='+str(g.get('artifact_type','spec'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
+python3 -c "import yaml; c=yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}; g=(c.get('lexicon_gate') or {}); print('LEXICON_GATE=on' if g.get('enabled') else 'LEXICON_GATE=off'); print('artifact_type='+str((g.get('artifacts') or {}).get('spec',{}).get('type','spec'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
 ```
 
 If the output is `LEXICON_GATE=off` (or the file/key is absent), this entire section is INERT —
