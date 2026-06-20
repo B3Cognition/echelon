@@ -71,16 +71,44 @@ def _load_glossary(path: Optional[Path]) -> set[str]:
 def validate(
     spec: Path = typer.Argument(..., exists=True, readable=True, help="Artifact file to validate."),
     artifact_type: Optional[str] = typer.Option(
-        None, "--type", help="Override artifact type (spec|story|article). Default: read from ARTIFACT header.",
+        None, "--type", help="Override artifact type (spec|story|article|tasks). Default: read from ARTIFACT header.",
     ),
     glossary: Optional[Path] = typer.Option(
         None, "--glossary", exists=True, readable=True,
         help="Glossary file of approved terms (one per line or **bold** in markdown).",
     ),
+    spec_ref: Optional[Path] = typer.Option(
+        None, "--spec-ref", exists=True, readable=True,
+        help="spec.md for cross-document checks (used with --type tasks)."),
     as_json: bool = typer.Option(False, "--json", help="Emit a machine-readable report."),
 ) -> None:
     """Validate an artifact against the Lexicon hard-gate stack."""
     text = spec.read_text(encoding="utf-8")
+
+    if (artifact_type or "").lower() == "tasks":
+        from .tasks import validate_tasks
+        from .tasks_score import task_quality
+        spec_text = spec_ref.read_text(encoding="utf-8") if spec_ref else None
+        report = validate_tasks(text, glossary=_load_glossary(glossary), spec_text=spec_text)
+        if as_json:
+            typer.echo(_json.dumps({
+                "file": str(spec),
+                "ok": report.ok,
+                "parse_pass": report.parse_pass,
+                "soft_score": task_quality(text),
+                "findings": [
+                    {"code": f.code, "message": f.message, "line": f.line, "span": f.span}
+                    for f in report.findings
+                ],
+            }, indent=2))
+        elif report.ok:
+            typer.echo(f"✓ {spec}: valid [TASKS] (soft={task_quality(text)['overall']:.2f})")
+        else:
+            typer.echo(f"✗ {spec}: invalid")
+            for f in report.findings:
+                typer.echo(f"  {spec}:{f.line}  [{f.code}] {f.message}")
+        raise typer.Exit(code=0 if report.ok else 1)
+
     report = _validate(
         text,
         glossary=_load_glossary(glossary),
