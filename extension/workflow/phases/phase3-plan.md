@@ -83,3 +83,5 @@ bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
 Confirm `state.json.phase_timings` is updated before dispatching consensus agents.
 
 **Transition:** `phases[phase3-consensus]` — see `workflow/definition.yaml`
+
+**Routing note:** When `lexicon_gate.artifacts.tasks.enabled`, ORCHESTRATOR self-validates `tasks.md` and returns `tasks_lexicon_pass`; COMMANDER persists it to state.json and re-dispatches `phase3-plan` on a false outcome (capped by max_iterations); soft `understanding`/consensus runs only after it passes.

@@ -703,11 +703,20 @@ phases:
       - critical-path.md
       - risk-matrix.md
       - dependencies.md
+      - tasks_lexicon_pass → state.json   # only when lexicon_gate.artifacts.tasks.enabled; drives the re-dispatch below
     timing_window_transition:        # closes phase3-solution, opens phase4-build
       close: phase3-solution
       open: phase4-build
       open_budget_seconds: 7200      # phase4-build budget (spans consensus + finalize)
     transitions:
+      # Tasks lexicon gate (INERT unless lexicon_gate.artifacts.tasks.enabled in echelon-config.yml).
+      # ORCHESTRATOR runs the in-dispatch repair loop (the "fix"); this is the
+      # COMMANDER-level re-dispatch on the controlled validator outcome (the
+      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # is disabled this condition is false and flow falls through unchanged.
+      - to: phase3-plan
+        condition: "lexicon_gate.enabled AND lexicon_gate.artifacts.tasks.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase3-consensus
         condition: always
 
