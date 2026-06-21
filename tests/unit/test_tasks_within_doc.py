@@ -18,7 +18,7 @@ def _doc(test_text="a concrete test runs and asserts the result",
 
 @pytest.mark.unit
 def test_banned_word_in_acceptance_flagged():
-    f = within_doc_findings(_doc(test_text="the system works correctly and is robust"), set())
+    f = within_doc_findings(_doc(acc_items=("the system is robust",)), set())
     assert any(x.code == "banned-word" for x in f)
 
 
