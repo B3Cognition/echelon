@@ -84,3 +84,39 @@ def unresolved_ref_findings(text: str, id_pattern: str, spec_text: str) -> list[
                 findings.append(Finding("unresolved-ref",
                                         f"reference {ref!r} matches no spec id", lineno, ref))
     return findings
+
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .completeness import placeholder_findings
+from .manifest import required_sections
+
+_TEMPLATES = Path("extension/templates")
+
+
+@dataclass(frozen=True)
+class StructuralReport:
+    ok: bool
+    findings: list[Finding] = field(default_factory=list)
+
+
+def structural_validate(text: str, entry: dict, spec_text: str = "") -> StructuralReport:
+    """Run the Tier-2 structural checks for one artifact. Never raises."""
+    findings: list[Finding] = []
+
+    template = entry.get("template")
+    if template:
+        findings += section_findings(text, required_sections(_TEMPLATES / template))
+
+    findings += placeholder_findings(text)
+
+    verdict = entry.get("verdict") or {}
+    if verdict.get("section") and verdict.get("enum"):
+        findings += verdict_findings(text, _norm_heading(verdict["section"]), list(verdict["enum"]))
+
+    for ref in entry.get("cross_refs") or []:
+        if ref.get("ids"):
+            findings += unresolved_ref_findings(text, str(ref["ids"]), spec_text)
+
+    return StructuralReport(ok=not findings, findings=findings)
