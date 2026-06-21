@@ -71,7 +71,7 @@ def _load_glossary(path: Optional[Path]) -> set[str]:
 def validate(
     spec: Path = typer.Argument(..., exists=True, readable=True, help="Artifact file to validate."),
     artifact_type: Optional[str] = typer.Option(
-        None, "--type", help="Override artifact type (spec|story|article|tasks). Default: read from ARTIFACT header.",
+        None, "--type", help="Override artifact type (spec|story|article|tasks|structural). Default: read from ARTIFACT header.",
     ),
     glossary: Optional[Path] = typer.Option(
         None, "--glossary", exists=True, readable=True,
@@ -79,11 +79,73 @@ def validate(
     ),
     spec_ref: Optional[Path] = typer.Option(
         None, "--spec-ref", exists=True, readable=True,
-        help="spec.md for cross-document checks (used with --type tasks)."),
+        help="spec.md for cross-document checks (used with --type tasks/structural)."),
     as_json: bool = typer.Option(False, "--json", help="Emit a machine-readable report."),
+    artifact_key: Optional[str] = typer.Option(
+        None, "--artifact", help="governance.artifacts key (used with --type structural).",
+    ),
 ) -> None:
     """Validate an artifact against the Lexicon hard-gate stack."""
     text = spec.read_text(encoding="utf-8")
+
+    if (artifact_type or "").lower() == "structural":
+        from .manifest import load_governance
+        from .structural import structural_validate
+        from .structural_score import structural_quality
+
+        # Resolve base dir that works in both dev (extension/) and deployed
+        # (.specify/extensions/echelon/) contexts — pick the first whose
+        # governance.artifacts mapping contains the requested artifact_key.
+        _candidate_bases = [
+            Path(".specify/extensions/echelon"),
+            Path("extension"),
+        ]
+        chosen_base = None
+        governance: dict = {}
+        for _base in _candidate_bases:
+            _cfg = _base / "echelon-config.yml"
+            _gov = load_governance(_cfg)
+            if artifact_key and artifact_key in _gov:
+                chosen_base = _base
+                governance = _gov
+                break
+
+        if chosen_base is None or not artifact_key or artifact_key not in governance:
+            typer.echo(f"unknown governance artifact {artifact_key!r}", err=True)
+            raise typer.Exit(2)
+
+        entry = governance[artifact_key]
+        # Resolve the template to an absolute path so structural_validate's
+        # internal `_TEMPLATES / entry["template"]` resolves correctly regardless
+        # of cwd — Path("anything") / "<absolute>" yields the absolute path.
+        if entry.get("template"):
+            abs_template = (chosen_base / "templates" / entry["template"]).resolve()
+            entry = {**entry, "template": str(abs_template)}
+
+        spec_text = spec_ref.read_text(encoding="utf-8") if spec_ref else ""
+        report = structural_validate(text, entry, spec_text)
+        score = structural_quality(text, entry, spec_text)
+        payload = {
+            "file": str(spec),
+            "ok": report.ok,
+            "soft_score": score,
+            "findings": [
+                {"code": f.code, "message": f.message, "line": f.line, "span": f.span}
+                for f in report.findings
+            ],
+        }
+        if as_json:
+            typer.echo(_json.dumps(payload, indent=2))
+        else:
+            status = "OK" if report.ok else "FAIL"
+            typer.echo(
+                f"{status} structural:{artifact_key} "
+                f"soft={score:.2f} findings={len(report.findings)}"
+            )
+            if not report.ok:
+                for f in report.findings:
+                    typer.echo(f"  {spec}:{f.line}  [{f.code}] {f.message}")
+        raise typer.Exit(0 if report.ok else 1)
 
     if (artifact_type or "").lower() == "tasks":
         from .tasks import validate_tasks
