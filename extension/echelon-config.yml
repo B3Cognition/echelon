@@ -108,6 +108,29 @@ quality_gates:
   high_compound_threshold: 3
 
 # =============================================================================
+# GOVERNANCE — WS3 Tier-2 structural gate (Phase A feasibility + alignment)
+# =============================================================================
+# Controls the structural artifact gate that runs before Phase A solution work.
+# Artifacts listed here are checked for presence and verdict by the gate harness.
+# governance.enabled resolves in ConditionEvaluator transition conditions the
+# same way lexicon_gate.enabled does (merged into eval_state by _governance_config).
+
+governance:
+  enabled: true
+  max_repair_attempts: 3
+  on_exhausted: warn
+  artifacts:
+    feasibility:
+      tier: structural
+      template: feasibility-template.md
+      verdict: { section: "Kill / Defer / Pass Decision", enum: [PASS, KILL, DEFER] }
+    intent-alignment-check:
+      tier: structural
+      template: intent-alignment-check-template.md
+      verdict: { section: "Alignment Verdict", enum: [ALIGNED, DRIFT] }
+      cross_refs: [{ ids: "REQ|FR|NFR", against: spec.md }]
+
+# =============================================================================
 # LEXICON GATE — deterministic controlled-grammar authoring gate (Phase A)
 # =============================================================================
 # The hard-gate counterpart to quality_gates (which is a SOFT score). When

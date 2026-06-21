@@ -1055,6 +1055,13 @@ class TestConstitutionPhase:
         )
 
 
+class TestGovernanceConfigMerge:
+    def test_governance_block_merged_into_eval_state(self, tmp_path):
+        ctrl, _ = _controller(tmp_path)
+        cfg = ctrl._governance_config()
+        assert cfg.get("governance", {}).get("enabled") is True
+
+
 class TestLexiconGateGuardDeterminism:
     """The lexicon-gate self-loop guards (phase3-plan tasks gate) must route
     deterministically via ConditionEvaluator — never punt to COMMANDER.
