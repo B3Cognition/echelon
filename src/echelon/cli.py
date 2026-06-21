@@ -626,7 +626,11 @@ def _cmd_harness_run(args: list[str]) -> None:
         write_targets,
     )
     from harness.spec_snapshot import snapshot_spec_dir
-    from echelon.orchestrator import run_multi_target, validate_single_target
+    from echelon.orchestrator import (
+        run_multi_target,
+        validate_single_target,
+        validate_targets,
+    )
     from echelon.target_detection import detect_target
 
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
@@ -661,8 +665,12 @@ def _cmd_harness_run(args: list[str]) -> None:
         frontmatter = read_frontmatter(spec_dir)
         targets_rel: list[str] = frontmatter.get("targets") or []
         if targets_rel and not target_env:
-            target = validate_single_target(targets_rel, polyrepo_root)
-            sys.exit(run_multi_target(spec_id, [target], args[1:]))
+            # A spec may declare one or many targets. Multiple targets dispatch
+            # to each sub-repo in parallel via run_multi_target (the polyrepo
+            # design documented in CLAUDE.md); a single target is just the
+            # one-element case of the same path.
+            targets = validate_targets(targets_rel, polyrepo_root)
+            sys.exit(run_multi_target(spec_id, targets, args[1:]))
 
         detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
         if target_env:
