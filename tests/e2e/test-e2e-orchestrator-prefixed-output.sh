@@ -32,6 +32,7 @@ printf -- "---\ntargets:\n  - repo-a\n  - repo-b\n---\n# spec\n" \
 for repo in repo-a repo-b; do
   mkdir -p "$tmpdir/$repo/$(dirname $ECHELON_YML)"
   printf 'harness:\n  target_repo: .\n' > "$tmpdir/$repo/$ECHELON_YML"
+  git -C "$tmpdir/$repo" init -q  # polyrepo targets must be git repos (validate_targets)
 done
 
 # ── Stub: echelon binary that echoes and exits 0 ──────────────────────────────
