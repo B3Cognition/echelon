@@ -43,11 +43,15 @@ Verification before transitioning to phase3-specialists:
 
 ### Intent Alignment Check Structural Gate — Controlled-Outcome Routing
 
-When `governance.artifacts.intent-alignment-check.enabled`, TRACKER authors `intent-alignment-check.md`
-in the STRUCTURAL grammar and runs the in-dispatch
+When `governance.enabled` and the artifact has `tier: structural`, TRACKER authors
+`intent-alignment-check.md` in the STRUCTURAL grammar and runs the in-dispatch
 `$LEXICON validate --type structural --artifact intent-alignment-check` repair loop
 (see `agents/control/tracker.md §Structural Gate Mode`). COMMANDER owns the re-dispatch decision
 on the controlled outcome and is the sole writer to `state.json`; COMMANDER does NOT run `lexicon` itself.
+
+> **Fail-open note:** If the gate is enabled but TRACKER returns no
+> `intent_alignment_check_structural_pass` flag, routing treats it as passed (fail-open, consistent
+> with `on_exhausted: warn`).
 
 **Controlled-outcome routing.** After the dispatch, COMMANDER persists TRACKER's
 `echelon_result.state_updates` and reads `state.json.intent_alignment_check_structural_pass`:

@@ -236,7 +236,7 @@ ASSESS2 can flag issues but has restricted blocking power:
 
 ---
 
-## Structural Gate Mode (when `governance.artifacts.feasibility.enabled`)
+## Structural Gate Mode (when `governance.enabled` and the artifact's `tier: structural`)
 
 **Activation — read the flag yourself.** Before finalising `feasibility.md`, run:
 

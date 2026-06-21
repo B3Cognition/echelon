@@ -124,7 +124,7 @@ Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders
 
 ---
 
-## Structural Gate Mode (when `governance.artifacts.intent-alignment-check.enabled`)
+## Structural Gate Mode (when `governance.enabled` and the artifact's `tier: structural`)
 
 **Activation — read the flag yourself.** Before finalising `intent-alignment-check.md`, run:
 

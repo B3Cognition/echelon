@@ -703,11 +703,28 @@ class SquadController:
 
         Also injects default `True` for the structural-gate pass flags
         (feasibility_structural_pass, intent_alignment_check_structural_pass).
-        Defaulting to True means "gate not triggered / already passed", so the
-        re-dispatch condition `governance.enabled AND NOT <flag>` evaluates
-        deterministically to False when the agent did not run the structural
-        repair loop. Agents that DO run the loop override these defaults via
-        result.state_updates (which merges at higher precedence in eval_state).
+        This is FAIL-OPEN by design — deliberate trade-off recorded here:
+
+        (a) Fail-open is consistent with `governance.on_exhausted: warn`: when
+            the gate exhausts its repair iterations the run proceeds with a
+            warning rather than blocking.  Defaulting absent flags to True
+            extends that same "warn and continue" philosophy to the case where
+            the agent simply did not emit the flag at all.
+
+        (b) The alternative — absent flag → COMMANDER judgment dispatch — would
+            make phase2-decide and phase2-tracker-alignment non-deterministic.
+            The lexicon gate (phase1-what, phase3-plan) lives with that
+            indeterminacy because CARTOGRAPHER/ORCHESTRATOR always emit
+            lexicon_pass; for the structural gates the flag is conditional on
+            the repair loop running, so a missing flag is the common case (gate
+            disabled or agent pre-empted).  Defaulting to True avoids that
+            COMMANDER punt entirely.
+
+        (c) A real gate failure (agent emits flag=False) is still honoured: the
+            re-dispatch condition `governance.enabled AND NOT <flag>` evaluates
+            to True, triggering a re-dispatch.  result.state_updates merges at
+            higher precedence than these defaults in eval_state (see
+            _evaluate_transitions), so an explicit False always wins.
         """
         if self._gov_config_cache is not None:
             return self._gov_config_cache

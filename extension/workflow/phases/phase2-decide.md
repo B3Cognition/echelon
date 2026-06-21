@@ -91,11 +91,16 @@ Phase budget map for consistency across all transitions:
 
 ### Feasibility Structural Gate — Controlled-Outcome Routing
 
-When `governance.artifacts.feasibility.enabled`, GATEKEEPER authors `feasibility.md` in the
-STRUCTURAL grammar and runs the in-dispatch `$LEXICON validate --type structural --artifact feasibility`
-repair loop (see `agents/feasibility/gatekeeper.md §Structural Gate Mode`). COMMANDER owns the
+When `governance.enabled` and the artifact has `tier: structural`, GATEKEEPER authors
+`feasibility.md` in the STRUCTURAL grammar and runs the in-dispatch
+`$LEXICON validate --type structural --artifact feasibility` repair loop
+(see `agents/feasibility/gatekeeper.md §Structural Gate Mode`). COMMANDER owns the
 re-dispatch decision on the controlled outcome and is the sole writer to `state.json`;
 COMMANDER does NOT run `lexicon` itself.
+
+> **Fail-open note:** If the gate is enabled but GATEKEEPER returns no
+> `feasibility_structural_pass` flag, routing treats it as passed (fail-open, consistent
+> with `on_exhausted: warn`).
 
 **Controlled-outcome routing.** After the dispatch, COMMANDER persists GATEKEEPER's
 `echelon_result.state_updates` and reads `state.json.feasibility_structural_pass`:

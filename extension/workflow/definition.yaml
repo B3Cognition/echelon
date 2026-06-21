@@ -495,7 +495,7 @@ phases:
       - gatekeeper_verdict: PASS | KILL | DEFER
       - kill-report.md    # if KILL
       - scope adjustments # if DEFER
-      - feasibility_structural_pass → state.json   # only when governance.artifacts.feasibility.enabled; drives the re-dispatch below
+      - feasibility_structural_pass → state.json   # only when governance.enabled and the artifact has tier: structural; drives the re-dispatch below
     transitions:
       # Feasibility structural gate (INERT unless governance.enabled in echelon-config.yml).
       # GATEKEEPER runs the in-dispatch repair loop (the "fix"); this is the
@@ -554,7 +554,7 @@ phases:
       - strategic-overview.md
     outputs:
       - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
-      - intent_alignment_check_structural_pass → state.json   # only when governance.artifacts.intent-alignment-check.enabled; drives the re-dispatch below
+      - intent_alignment_check_structural_pass → state.json   # only when governance.enabled and the artifact has tier: structural; drives the re-dispatch below
     transitions:
       # Intent alignment check structural gate (INERT unless governance.enabled in echelon-config.yml).
       # TRACKER runs the in-dispatch repair loop (the "fix"); this is the
