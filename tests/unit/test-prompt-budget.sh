@@ -42,10 +42,12 @@ count=$(bash "$SCRIPT" report | grep -c "^[a-z]")
 top_count=$(bash "$SCRIPT" top 5 | grep -c "^[0-9]")
 [[ "$top_count" -eq 5 ]] && assert "top 5 returns 5 rows" "OK" || assert "top 5 returns 5 rows" "got $top_count"
 
-# Test 6: check identifies the 2 known violators (AUDITOR was split, now under 500)
+# Test 6: check identifies the known violators at the 500-line cap.
+# After ws3-cifix slimming: commander.md = 320 lines, sage.md = 500 lines (at cap, not over).
+# Only cartographer (~632 lines) genuinely exceeds 500. AUDITOR was split; sage and commander
+# were slimmed — the harness/workflow now owns routing/token/budget logic for both.
 violations=$(bash "$SCRIPT" check --max 500 2>&1 || true)
-echo "$violations" | grep -q "sage" && assert "check flags sage" "OK" || assert "check flags sage" "missing"
-echo "$violations" | grep -q "commander" && assert "check flags commander" "OK" || assert "check flags commander" "missing"
+echo "$violations" | grep -q "cartographer" && assert "check flags cartographer" "OK" || assert "check flags cartographer" "missing"
 
 # Test 7: report shows TOTAL line
 bash "$SCRIPT" report | grep -q "TOTAL" && assert "report has TOTAL" "OK" || assert "report has TOTAL" "missing"

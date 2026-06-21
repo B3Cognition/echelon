@@ -26,15 +26,16 @@ assert_grep() {
 echo "=== GUARDIAN Always-On Unit Tests ==="
 echo ""
 
-# Commander: guardian.mode config
+# Commander: guardian.mode config — slim commander.md still holds the
+# guardian.mode key reference; the detailed dispatch content (always_on,
+# on_demand, GUARDIAN Dispatch Mode, Minimum Security Checklist,
+# guardian_dispatch_mode) was extracted to phase3-specialists.md.
 assert_grep "$COMMANDER" "guardian.mode" "commander.md references guardian.mode config"
-assert_grep "$COMMANDER" "always_on" "commander.md defines always_on mode"
-assert_grep "$COMMANDER" "on_demand" "commander.md defines on_demand mode"
-# Accept either ordering: "Dispatch GUARDIAN" (pre-restructure) or
-# "GUARDIAN... Dispatch Mode" (post-restructure with name-first heading).
-assert_grep "$COMMANDER" "GUARDIAN.*Dispatch Mode\|Dispatch GUARDIAN" "commander.md has GUARDIAN dispatch section"
-assert_grep "$COMMANDER" "Minimum Security Checklist" "commander.md references Minimum Security Checklist"
-assert_grep "$COMMANDER" "guardian_dispatch_mode" "commander.md logs guardian_dispatch_mode in state.json"
+assert_grep "$SQUAD_RUN" "always_on" "phase3-specialists.md defines always_on mode"
+assert_grep "$SQUAD_RUN" "on_demand" "phase3-specialists.md defines on_demand mode"
+assert_grep "$SQUAD_RUN" "SECURITY Dispatch" "phase3-specialists.md has GUARDIAN dispatch section"
+assert_grep "$SQUAD_RUN" "Minimum Security Checklist" "phase3-specialists.md references Minimum Security Checklist"
+assert_grep "$SQUAD_RUN" "guardian.mode" "phase3-specialists.md references guardian.mode (dispatch control key)"
 
 # Guardian: always-on awareness
 assert_grep "$GUARDIAN" "always_on" "guardian.md references always_on mode"

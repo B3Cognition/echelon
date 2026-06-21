@@ -33,8 +33,10 @@ for cmd in data.get('provides', {}).get('commands', []):
         print('extension/' + f)
 " | sort)
 
-# Get actual agent prompt files (exclude .gitkeep)
-actual_files=$(find "$REPO_ROOT/extension/agents" -name "*.md" -not -name ".gitkeep" | \
+# Get actual agent prompt files (exclude .gitkeep, appendices/, and templates/
+# which are reference docs extracted from agents, not agent entry points).
+actual_files=$(find "$REPO_ROOT/extension/agents" -name "*.md" -not -name ".gitkeep" \
+  -not -path "*/appendices/*" -not -path "*/templates/*" | \
   sed "s|$REPO_ROOT/||" | sort)
 
 # Check for unregistered files

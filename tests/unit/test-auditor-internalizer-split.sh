@@ -83,7 +83,7 @@ done
 echo ""
 echo "--- INTERNALIZER NEVER rules ---"
 
-if grep -q "NEVER modify calibration-profile.yaml" "$INTERNALIZER"; then
+if grep -E "NEVER modify .?calibration-profile\.yaml" "$INTERNALIZER"; then
   pass "INTERNALIZER has NEVER rule about calibration-profile.yaml"
 else
   fail "INTERNALIZER missing NEVER rule about calibration-profile.yaml"
@@ -123,22 +123,23 @@ else
   fail "INTERNALIZER not mapped to learning archetype"
 fi
 
-# --- commander.md references INTERNALIZER ---
+# --- phase4-document.md references INTERNALIZER ---
+# commander.md was slimmed; INTERNALIZER dispatch detail moved to phase4-document.md.
 echo ""
-echo "--- commander.md references ---"
+echo "--- phase4-document.md references ---"
 
-COMMANDER="$REPO_ROOT/extension/agents/control/commander.md"
+PHASE4_DOC="$REPO_ROOT/extension/workflow/phases/phase4-document.md"
 
-if grep -q "INTERNALIZER" "$COMMANDER"; then
-  pass "INTERNALIZER referenced in commander.md"
+if grep -q "INTERNALIZER" "$PHASE4_DOC"; then
+  pass "INTERNALIZER referenced in phase4-document.md"
 else
-  fail "INTERNALIZER not referenced in commander.md"
+  fail "INTERNALIZER not referenced in phase4-document.md"
 fi
 
-if grep -q "INTERNALIZER" "$COMMANDER" && grep -q "Internalization Measurement" "$COMMANDER"; then
-  pass "INTERNALIZER in FINALIZE dispatch sequence"
+if grep -q "INTERNALIZER" "$PHASE4_DOC" && grep -q "FINALIZE" "$PHASE4_DOC"; then
+  pass "INTERNALIZER in FINALIZE dispatch sequence (phase4-document.md)"
 else
-  fail "INTERNALIZER not in FINALIZE dispatch sequence"
+  fail "INTERNALIZER not in FINALIZE dispatch sequence in phase4-document.md"
 fi
 
 # --- Agent count summary (informational, not a gate) ---

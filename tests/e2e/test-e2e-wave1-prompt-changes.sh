@@ -51,16 +51,18 @@ check "BLOCKED verdict"                  "$REVIEWER" "BLOCKED"
 check "Stylistic Suppression section"    "$REVIEWER" "Stylistic Suppression"
 
 # ---------------------------------------------------------------------------
-# B-REQ-05: SAGE contradiction detection (agents/exploration/sage.md)
+# B-REQ-05: SAGE contradiction detection
+# Detailed contradiction-type content was extracted into the appendix file;
+# re-point checks to where the content now lives.
 # ---------------------------------------------------------------------------
-SAGE="extension/agents/exploration/sage.md"
+SAGE="extension/agents/exploration/appendices/sage-contradiction-detection-reference.md"
 
 printf "\n=== B-REQ-05: SAGE Contradiction Detection ===\n"
-check "Requirement conflicts type"               "$SAGE" "Requirement conflicts"
-check "Assumption-requirement misalignment type"  "$SAGE" "Assumption-requirement"
-check "Boundary violations type"                  "$SAGE" "Boundary violations"
-check "Priority inversions type"                  "$SAGE" "Priority inversions"
-check "Acceptance criteria conflicts type"        "$SAGE" "Acceptance criteria conflicts"
+check "Requirement conflicts type"               "$SAGE" "requirement_conflict"
+check "Assumption-requirement misalignment type"  "$SAGE" "assumption_requirement_misalignment"
+check "Boundary violations type"                  "$SAGE" "boundary_violation"
+check "Priority inversions type"                  "$SAGE" "priority_inversion"
+check "Acceptance criteria conflicts type"        "$SAGE" "acceptance_criteria_conflict"
 check "Structured report format (contradiction_type field)" "$SAGE" "contradiction_type"
 check "Report format (artifact_a field)"          "$SAGE" "artifact_a"
 check "Report format (artifact_b field)"          "$SAGE" "artifact_b"
