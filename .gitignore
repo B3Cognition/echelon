@@ -39,3 +39,6 @@ tests/benchmarks/reports/
 .claude/skills/
 .worktrees/
 docs/echelon-*run-*.md
+
+# superpowers brainstorming/planning working docs — not project source
+docs/superpowers/
