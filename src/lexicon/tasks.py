@@ -1,12 +1,12 @@
-"""Tasks validator — extraction + within-doc gates (spec-parity)."""
+"""Tasks validator — extraction + within-doc gates over canonical task rows."""
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
-from lark.exceptions import LarkError
-from .tasks_parser import parse
+from kernel.task_contract import parse_task_rows, validate_tasks_markdown, TASK_ID_PATTERN
 from .linter import Finding, banned_word_findings
 from .resolver import unresolved_terms
 from .completeness import placeholder_findings
+
 
 @dataclass
 class TaskRecord:
@@ -20,28 +20,57 @@ class TaskRecord:
     test: str
     line: int
 
-def extract_tasks(text: str) -> list[TaskRecord]:
-    try:
-        tree = parse(text)
-    except LarkError:
-        return []
-    out: list[TaskRecord] = []
-    for node in tree.find_data("task"):
-        toks = [c for c in node.children]
-        tid = str(toks[0])
-        line = toks[0].line
-        vals = [str(t).strip() for t in toks[1:]]
-        # grammar order: PHASE, COMPLEXITY, PARALLEL, REQ, DEPENDS, ACCEPTANCE, TEST
-        phase, complexity, parallel, req, depends, acceptance, test = vals
-        reqs = [] if req.strip() in ("", "none") else req.split()
-        deps = [] if depends.strip() in ("", "none") else depends.replace(",", " ").split()
-        out.append(TaskRecord(
-            id=tid, phase=phase, complexity=complexity, parallel=(parallel == "yes"),
-            reqs=reqs, depends=deps, acceptance=acceptance, test=test, line=line))
-    return out
-
 
 _COMPOUND_RE = re.compile(r"\band\b", re.IGNORECASE)
+
+_ROW_START = re.compile(rf"^- \[[ xX]\]\s+(?P<id>{TASK_ID_PATTERN})\b")
+_TEST_RE = re.compile(r"^\s*\*\*Test:\*\*\s*(?P<v>.+?)\s*$")
+_ACC_HDR = re.compile(r"^\s*\*\*Acceptance Criteria:\*\*\s*$")
+_ACC_ITEM = re.compile(r"^\s*- \[[ xX]\]\s*(?P<v>.+?)\s*$")
+
+
+def _row_start_lines(lines: list[str]) -> list[int]:
+    """1-based line numbers of canonical row starts, skipping fenced blocks
+    (matches parse_task_rows' fence handling so the two stay aligned)."""
+    starts, in_fence = [], False
+    for i, line in enumerate(lines):
+        if line.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if _ROW_START.match(line.rstrip()):
+            starts.append(i + 1)
+    return starts
+
+
+def extract_tasks(text: str) -> list[TaskRecord]:
+    """Parse canonical task rows (via kernel) + their nested Test/Acceptance."""
+    rows = parse_task_rows(text)
+    lines = text.splitlines()
+    starts = _row_start_lines(lines)
+    out: list[TaskRecord] = []
+    for idx, row in enumerate(rows):
+        line_no = starts[idx] if idx < len(starts) else 0
+        end = (starts[idx + 1] - 1) if idx + 1 < len(starts) else len(lines)
+        block = lines[line_no:end]  # lines AFTER the row line, up to next row
+        test, acc, in_acc = "", [], False
+        for bl in block:
+            mt = _TEST_RE.match(bl)
+            if mt:
+                test = mt.group("v")
+                continue
+            if _ACC_HDR.match(bl):
+                in_acc = True
+                continue
+            ma = _ACC_ITEM.match(bl)
+            if ma and in_acc:
+                acc.append(ma.group("v"))
+        out.append(TaskRecord(
+            id=row.task_id, phase=row.phase, complexity=row.complexity,
+            parallel=row.parallel, reqs=list(row.requirements), depends=list(row.dependencies),
+            acceptance="\n".join(acc), test=test, line=line_no))
+    return out
 
 
 def within_doc_findings(text: str, glossary: set[str]) -> list[Finding]:
@@ -70,14 +99,11 @@ def validate_tasks(text: str, glossary: set[str] | None = None,
     from .crossdoc import cross_doc_findings
     glossary = glossary or set()
     findings: list = []
-    try:
-        parse(text)
-        parse_pass = True
-    except LarkError as exc:
-        parse_pass = False
-        findings.append(Finding("parse-error",
-            f"does not parse under the TASKS grammar: {exc.__class__.__name__}",
-            getattr(exc, "line", 0) or 0, ""))
+    result = validate_tasks_markdown(text)
+    parse_pass = result.valid
+    if not parse_pass:
+        for err in result.errors:
+            findings.append(Finding("parse-error", f"tasks.md not canonical: {err}", 0, ""))
     findings.extend(within_doc_findings(text, glossary))
     if spec_text is not None:
         findings.extend(cross_doc_findings(text, spec_text))
