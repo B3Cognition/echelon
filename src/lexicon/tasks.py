@@ -53,6 +53,7 @@ def extract_tasks(text: str) -> list[TaskRecord]:
     for idx, row in enumerate(rows):
         line_no = starts[idx] if idx < len(starts) else 0
         end = (starts[idx + 1] - 1) if idx + 1 < len(starts) else len(lines)
+        # line_no is 1-based row line number; slice [line_no:end] skips the row line itself (1-based index used as 0-based slice start)
         block = lines[line_no:end]  # lines AFTER the row line, up to next row
         test, acc, in_acc = "", [], False
         for bl in block:
