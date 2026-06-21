@@ -169,16 +169,27 @@ done
 check "every agent file is in ALL_AGENTS" "[ $missing_in_list -eq 0 ]"
 
 # ---------------- Assertion 6 -------------------------------------------------
-section 6 "disk → endocrine-awareness marker"
+# The per-file **Endocrine awareness.** blockquote was DELIBERATELY REMOVED in
+# commit 2ba709e "docs: centralize endocrine agent contract".  The contract now
+# lives centrally in endocrine.sh (get_full_prompt_modifier) rather than being
+# copy-pasted into every agent file.  Verify the centralized contract exists:
+#   a) endocrine.sh exports the get_full_prompt_modifier subcommand
+#   b) endocrine.sh defines the cmd_get_full_prompt_modifier function
+section 6 "centralized endocrine contract present in endocrine.sh"
 
-missing_marker=0
-while IFS= read -r -d '' f; do
-  if ! grep -qF "$MARKER" "$f"; then
-    missing_marker=$((missing_marker + 1))
-    echo "    no marker: $f"
-  fi
-done < <(find "$AGENTS_DIR" -type f -name '*.md' -print0)
-check "every agent file contains the marker" "[ $missing_marker -eq 0 ]"
+has_subcommand=0
+has_function=0
+grep -qF "get_full_prompt_modifier" "$ENDOCRINE" && has_subcommand=1
+grep -qF "cmd_get_full_prompt_modifier" "$ENDOCRINE" && has_function=1
+
+if [[ $has_subcommand -eq 0 ]]; then
+  echo "    endocrine.sh missing get_full_prompt_modifier subcommand"
+fi
+if [[ $has_function -eq 0 ]]; then
+  echo "    endocrine.sh missing cmd_get_full_prompt_modifier function"
+fi
+
+check "endocrine.sh exposes get_full_prompt_modifier (centralized contract)" "[ $has_subcommand -eq 1 ] && [ $has_function -eq 1 ]"
 
 # ---------------- Summary -----------------------------------------------------
 echo
