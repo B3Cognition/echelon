@@ -42,3 +42,18 @@ def section_findings(text: str, required: list[str]) -> list[Finding]:
             findings.append(Finding("missing-section",
                                     f"required section {name!r} is empty", entry[0], name))
     return findings
+
+
+def verdict_findings(text: str, section: str, enum: list[str]) -> list[Finding]:
+    """Flag missing-verdict when the named section carries no enum value.
+
+    The decision must be machine-extractable: the section body must contain at
+    least one enum token as a whole word (case-insensitive)."""
+    entry = _sections(text).get(section)
+    line = entry[0] if entry else 0
+    body = entry[1] if entry else ""
+    pattern = re.compile(r"\b(" + "|".join(re.escape(v) for v in enum) + r")\b", re.IGNORECASE)
+    if pattern.search(body):
+        return []
+    return [Finding("missing-verdict",
+                    f"section {section!r} carries no decision in {enum}", line, section)]
