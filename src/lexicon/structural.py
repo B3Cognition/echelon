@@ -57,3 +57,30 @@ def verdict_findings(text: str, section: str, enum: list[str]) -> list[Finding]:
         return []
     return [Finding("missing-verdict",
                     f"section {section!r} carries no decision in {enum}", line, section)]
+
+
+from .crossdoc import _spec_ids
+
+
+def unresolved_ref_findings(text: str, id_pattern: str, spec_text: str) -> list[Finding]:
+    """Flag <PREFIX>-<n> ids cited in text that do not exist in the spec.
+
+    No spec (empty/unparseable) → no findings (nothing to resolve against)."""
+    if not spec_text.strip():
+        return []
+    try:
+        req_ids, _examples, ac_ids = _spec_ids(spec_text)
+    except Exception:
+        return []
+    known = req_ids | ac_ids
+    if not known:
+        return []
+    token = re.compile(r"\b(?:" + id_pattern + r")-\d+\b")
+    findings: list[Finding] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for m in token.finditer(line):
+            ref = m.group(0)
+            if ref not in known:
+                findings.append(Finding("unresolved-ref",
+                                        f"reference {ref!r} matches no spec id", lineno, ref))
+    return findings
