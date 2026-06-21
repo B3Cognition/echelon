@@ -236,6 +236,37 @@ ASSESS2 can flag issues but has restricted blocking power:
 
 ---
 
+## Structural Gate Mode (when `governance.artifacts.feasibility.enabled`)
+
+**Activation — read the flag yourself.** Before finalising `feasibility.md`, run:
+
+```bash
+python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('governance') or {}; a=(g.get('artifacts') or {}).get('feasibility') or {}; print('STRUCT_GATE=on' if (g.get('enabled') and a.get('tier')=='structural') else 'STRUCT_GATE=off'); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "STRUCT_GATE=off"
+```
+
+If `STRUCT_GATE=off` (or the key is absent) this section is INERT — author `feasibility.md` per the standard protocol above. If on, self-validate and repair:
+
+```bash
+LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
+$LEXICON validate "{spec_dir}/feasibility.md" --type structural --artifact feasibility --spec-ref "{spec_dir}/spec.md" --json
+```
+
+Parse JSON; on `ok:false` apply the smallest fix per finding (`missing-section` → add the section; `missing-verdict` → state PASS/KILL/DEFER explicitly; `unresolved-ref` → correct the id; `placeholder` → fill). Re-run, up to `max_repair`. Emit in `echelon_result.state_updates`:
+
+```yaml
+echelon_result:
+  state_updates:
+    feasibility_structural_pass: true   # authoritative final validator verdict
+    feasibility_structural_attempts: <int>
+```
+
+ALWAYS treat the `structural` validator verdict as authoritative.
+NEVER report `feasibility_structural_pass: true` without a final run that returned `ok: true`.
+ALWAYS apply the smallest fix that resolves a finding.
+NEVER rewrite passing sections while repairing a failing one.
+
+---
+
 ## Reasoning Journal
 
 Return this entry in the `echelon_result` block at the end of your response.

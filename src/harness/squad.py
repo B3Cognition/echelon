@@ -700,6 +700,14 @@ class SquadController:
         so conditions like `governance.enabled` evaluate deterministically instead
         of returning None and punting the routing decision to COMMANDER.
         Returns {} when the file is absent or unparseable.
+
+        Also injects default `True` for the structural-gate pass flags
+        (feasibility_structural_pass, intent_alignment_check_structural_pass).
+        Defaulting to True means "gate not triggered / already passed", so the
+        re-dispatch condition `governance.enabled AND NOT <flag>` evaluates
+        deterministically to False when the agent did not run the structural
+        repair loop. Agents that DO run the loop override these defaults via
+        result.state_updates (which merges at higher precedence in eval_state).
         """
         if self._gov_config_cache is not None:
             return self._gov_config_cache
@@ -712,6 +720,12 @@ class SquadController:
                 cfg = {"governance": block}
         except Exception:
             cfg = {}
+        # Structural gate pass flags default to True (= "not triggered" / "already
+        # passed"). GATEKEEPER and TRACKER override via state_updates when the gate
+        # is active. Without these defaults, absent flags produce NOT None = None,
+        # which triggers an unwanted COMMANDER judgment dispatch.
+        cfg.setdefault("feasibility_structural_pass", True)
+        cfg.setdefault("intent_alignment_check_structural_pass", True)
         self._gov_config_cache = cfg
         return cfg
 

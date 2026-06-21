@@ -88,3 +88,35 @@ Phase budget map for consistency across all transitions:
 - `phase4-build=7200`
 
 **Transition:** `phases[phase2-strategic-overview]` — see `workflow/definition.yaml`
+
+### Feasibility Structural Gate — Controlled-Outcome Routing
+
+When `governance.artifacts.feasibility.enabled`, GATEKEEPER authors `feasibility.md` in the
+STRUCTURAL grammar and runs the in-dispatch `$LEXICON validate --type structural --artifact feasibility`
+repair loop (see `agents/feasibility/gatekeeper.md §Structural Gate Mode`). COMMANDER owns the
+re-dispatch decision on the controlled outcome and is the sole writer to `state.json`;
+COMMANDER does NOT run `lexicon` itself.
+
+**Controlled-outcome routing.** After the dispatch, COMMANDER persists GATEKEEPER's
+`echelon_result.state_updates` and reads `state.json.feasibility_structural_pass`:
+- `feasibility_structural_pass == true` → proceed to `phase2-strategic-overview` (normal forward flow).
+- `feasibility_structural_pass == false AND iteration < max_iterations` → re-dispatch `phase2-decide`
+  (`increment_iteration`). This is the only condition that re-dispatches GATEKEEPER on the
+  structural outcome — see the transitions in `workflow/definition.yaml`.
+- `iteration >= max_iterations` → honor `governance.on_exhausted`:
+  `warn` → proceed to `phase2-strategic-overview` with a `structural_gate_exhausted` warning journal entry;
+  `block` → set `status: blocked`, `blocked_reason: "feasibility structural gate not satisfied"`, stop.
+
+**State updates (added to the dispatch's `echelon_result` block when the gate is enabled):**
+
+```yaml
+echelon_result:
+  state_updates:
+    feasibility_structural_pass: true     # authoritative validator verdict for this pass (true|false)
+    feasibility_structural_attempts: <int>
+```
+
+> Registration invariant: `feasibility_structural_pass` is an authoritative state key (declared in
+> this node's `outputs:` and read here), exactly as `lexicon_pass` is for phase1-what. The re-dispatch
+> guard in `definition.yaml` references only `governance.enabled` + `feasibility_structural_pass` so it
+> stays deterministically evaluable — it must NOT reference unresolvable config paths.
