@@ -1389,6 +1389,18 @@ def _constitution_template_markers(text: str) -> list[str]:
 _HARNESS_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 
 
+def _phase_a_buildable(result_status: str, blockers: list) -> bool:
+    """Single readiness predicate for Phase-A surfaces.
+
+    A run is buildable only when there are no outstanding blockers AND the run
+    is not in a blocked/interrupted lifecycle state. A blocked run with an empty
+    blocker list (e.g. it halted before the spec/HOW/tasks checks could flag
+    anything) must NOT be reported as ready — that was the false "READY TO BUILD"
+    bug (docs/findings/2026-06-20-blocked-run-reports-ready-to-build.md).
+    """
+    return not blockers and result_status not in ("blocked", "interrupted")
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -1513,6 +1525,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     # the build-harness target, not the source of truth for an in-progress squad.
     specs_root = project_root / "specs"
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    if result_status == "done":
+        published_spec_dir = _published_continue_spec_dir(project_root, current_state)
+        if published_spec_dir and (published_spec_dir / "tasks.md").exists():
+            active_spec_dir = published_spec_dir
 
     # Pre-check: if tasks.md already exists, the run completed all phases past quality gates.
     # Also capture newest_spec_id here so the build command always has the actual spec name.
@@ -1718,9 +1734,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             )
 
     # ── Print ──────────────────────────────────────────────────────────────
+    # Single readiness predicate: a blocked/interrupted run is never "READY TO
+    # BUILD", even when no explicit blocker was collected.
     fields: list[tuple[str, str]] = []
-    subtitle = "BUILD BLOCKED — fix blockers before running" if blockers else ""
-    if not blockers:
+    if _phase_a_buildable(result_status, blockers):
         if ready_items:
             fields.append(("ready", "\n".join(f"✓ {item}" for item in ready_items)))
         harness_cmd = f"echelon harness run {newest_spec_id}" if newest_spec_id else "echelon harness run <spec-id>"
@@ -1735,6 +1752,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
         if ready_items:
             fields.append(("already done", ", ".join(ready_items)))
+        subtitle = ("BUILD BLOCKED — fix blockers before running" if blockers
+                    else "RUN BLOCKED — resolve the block before building")
 
     _banner("NEXT STEP", fields, subtitle=subtitle)
 
@@ -2241,6 +2260,30 @@ def _active_continue_spec_dir(project_root: Path, current_state: dict, run_dir: 
     return active_spec_dir
 
 
+def _published_continue_spec_dir(project_root: Path, current_state: dict) -> Path | None:
+    """Return the project-root spec dir for completed/build-ready squad output."""
+    spec_id = str(current_state.get("spec_id") or "").strip()
+    spec_ref = str(current_state.get("spec_dir") or "").strip()
+    published_ref = str(current_state.get("published_spec_dir") or "").strip()
+    spec_id = spec_id or _spec_id_from_ref(spec_ref) or _spec_id_from_ref(published_ref)
+
+    candidates: list[Path] = []
+    if spec_id:
+        candidates.append(project_root / "specs" / spec_id)
+    for ref in (published_ref, spec_ref):
+        if not ref:
+            continue
+        candidate = Path(ref)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        candidates.append(candidate)
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+    return None
+
+
 def _next_continue_phase(project_root: Path) -> Optional[str]:
     """Return the phase ID to continue from, or None when build is ready.
 
@@ -2270,6 +2313,8 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         except Exception:
             current_state = {}
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    if current_state.get("status") == "done" and _phase_a_ready_to_build(project_root, current_state):
+        return None
 
     # 0. Constitution phase provenance first, artifact integrity second.
     completed = current_state.get("completed_phases")
@@ -2325,6 +2370,12 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if active_spec_dir is not None and not (active_spec_dir / "tasks.md").exists():
         return "phase3-plan"
 
+    # WS1 invariant: a run with no resolvable spec directory has not produced the
+    # build inputs (spec.md/tasks.md), so it is not ready. Route back to authoring
+    # instead of falling through to a false "Build is ready — nothing left to do".
+    if active_spec_dir is None:
+        return "phase1-what"
+
     return None  # build is ready
 
 
@@ -2343,6 +2394,12 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
 
     run_dir = _find_current_run_dir(project_root)
     spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    published_spec_dir = _published_continue_spec_dir(project_root, current_state)
+    if published_spec_dir and all(
+        (published_spec_dir / name).exists()
+        for name in ("plan.md", "research.md", "data-model.md", "tasks.md")
+    ):
+        return True
     if spec_dir is None:
         return False
 
@@ -2754,6 +2811,42 @@ def _cmd_resume(
         f"{answer}\n"
     )
 
+    graph = PhaseGraph(
+        ext_dir / "workflow/definition.yaml",
+        ext_dir / "extension.yml",
+    )
+    raw_options = state.get("escalation_options")
+    if not isinstance(raw_options, list) or not raw_options:
+        print(
+            "✗ Cannot resume: blocked run is missing executable escalation_options.\n"
+            "  Re-run the producing phase after updating COMMANDER prompts, or rewind to a safe phase.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    selected_option = _resolve_escalation_option(answer, raw_options)
+    if selected_option is None:
+        print(
+            "✗ Your answer does not match any executable escalation option.\n"
+            "  Answer with A/B/C, the option id, or the option label shown in the escalation.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if selected_option:
+        next_phase = str(selected_option.get("next_phase") or "").strip()
+        if next_phase:
+            valid_phases = set(graph.all_phase_ids())
+            if next_phase not in valid_phases:
+                print(
+                    f"✗ Escalation option {selected_option.get('id') or selected_option.get('label')!r} "
+                    f"routes to {next_phase!r}, which is not an executable phase.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            state["phase"] = next_phase
+        option_id = str(selected_option.get("id") or selected_option.get("label") or "").strip()
+        if option_id:
+            state["escalation_selected_option"] = option_id
+
     # Clear the blocked state.
     state["escalation_question"] = None
     state["escalation_resolved"] = True
@@ -2779,10 +2872,6 @@ def _cmd_resume(
     # Re-run from the current phase (same mode, same task).
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
-    graph = PhaseGraph(
-        ext_dir / "workflow/definition.yaml",
-        ext_dir / "extension.yml",
-    )
     token_budget = 0
     max_iterations = 5
     try:
@@ -2817,6 +2906,38 @@ def _cmd_resume(
         ("Artifacts", str(squad_dir)),
     ])
     _print_next_steps(project_root, result.status)
+
+
+def _resolve_escalation_option(answer: str, options: object) -> dict | None:
+    """Resolve a user resume answer against structured escalation options.
+
+    Supports A/B/C positional answers, exact option ids, and exact labels.
+    Missing or text-only escalations are rejected by _cmd_resume before this helper.
+    """
+    if not isinstance(options, list) or not options:
+        return None
+
+    normalized = answer.strip().lower()
+    if not normalized:
+        return None
+
+    first_token = normalized.split(maxsplit=1)[0].strip(").:-—–")
+    positional: dict[str, dict] = {}
+    by_id_or_label: dict[str, dict] = {}
+
+    for index, raw in enumerate(options):
+        if not isinstance(raw, dict):
+            continue
+        letter = chr(ord("a") + index)
+        positional[letter] = raw
+        option_id = str(raw.get("id") or "").strip().lower()
+        label = str(raw.get("label") or "").strip().lower()
+        if option_id:
+            by_id_or_label[option_id] = raw
+        if label:
+            by_id_or_label[label] = raw
+
+    return positional.get(first_token) or by_id_or_label.get(normalized)
 
 
 def _preserve_active_spec_context(project_root: Path, state: dict) -> None:

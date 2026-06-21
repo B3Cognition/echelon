@@ -77,6 +77,7 @@ echelon status                             # re-orient: run state, artifacts, co
 echelon artifacts 001                      # generate specs/001-*/ARTIFACTS.md
 echelon continue                           # advance to next pending phase automatically
 echelon resume "your clarification"        # unblock a paused run
+echelon rewind <phase-id>                  # recover a safe Phase 3 checkpoint, then continue
 
 # Phase B — build, verify in Docker, open PR
 echelon harness run 001                    # echelon squad build (default)
@@ -129,6 +130,39 @@ Available policies:
 
 Use `scoped` when full fulfillment refreshes are dominating cost or latency during
 active harness loops. Use `milestone` when you want the most conservative default.
+
+With `scoped` or `convergence_only`, harness output may show `verify: deferred`
+or `fulfillment refresh: cached`. That is not a failed build. It means the
+current slice did not require a full fulfillment refresh, or no requirements were
+deterministically impacted. In short: full fulfillment evidence is still required before convergence or land.
+
+Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
+
+### Active run recovery
+
+During spec authoring, `runs/.current` is the active-run pointer. `echelon
+continue` reads that pointer, loads the named run directory, and resumes from the
+phase recorded in that run's `state.json`.
+
+The active squad workspace is run-local: agents read and write
+`runs/<run>/specs/<id>`. The canonical `specs/<id>` folder is the published spec
+folder used by humans and by Phase B. The build harness reads canonical `specs/<id>`
+and should not consume run-local staging paths. When a squad run is
+continued after artifacts were already published, `echelon continue` syncs
+missing canonical artifacts back into the active run copy; it never guesses the newest `specs/*` directory.
+
+Use rewind when a resumed squad run reports `missing_echelon_result`,
+`missing_phase_outputs`, or a safe Phase 3 phase needs to be replayed with the
+proper context:
+
+```bash
+echelon rewind phase3-sentinel
+echelon continue
+```
+
+Safe rewind targets are intentionally narrow. They reset the active run state and
+clean downstream generated artifacts, but they do not ask you to manually copy
+`state.json` or `reasoning-journal.jsonl` into `specs/<id>`.
 
 ### Spec-kit skills (Claude session)
 
@@ -478,6 +512,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
 | `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
 | `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
+| `echelon rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
 | `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
 | `echelon land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
 | *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
@@ -493,9 +528,9 @@ This keeps commands readable and makes individual phases independently editable 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
 | `echelon harness init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
-| `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build |
+| `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
 | `echelon harness run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on escalation or missing `verify_command` |
+| `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on escalation or missing `verify_command`; prints `HARNESS HISTORY` |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
 
 ## Codegen Pipeline
@@ -985,7 +1020,9 @@ The `understanding` extension commands also use `green` — they are invoked by 
 
 ## Journal Architecture
 
-All agents return structured output via an `echelon_result` YAML block at the end of their response. COMMANDER is the sole writer to the reasoning journal and state.json — no agent writes these files directly.
+All agents return structured output via an `echelon_result` YAML block at the end of their response. Agents put durable reasoning records in `echelon_result.journal_entries` and state changes in `echelon_result.state_updates`. The harness/COMMANDER runtime is the only writer to `reasoning-journal.jsonl` and `state.json`.
+
+Agents must not use Write, Edit, Bash redirection, `cat >>`, or `tee` to mutate `reasoning-journal.jsonl` or `state.json` directly. Direct writes split ownership and make rewind/continue recovery nondeterministic.
 
 ```yaml
 echelon_result:

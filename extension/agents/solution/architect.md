@@ -85,7 +85,7 @@ speckit-echelon-architect (ARCHITECT) does NOT proceed to the next ADR until spe
 
 ## ADR Self-Check Protocol
 
-After completing each ADR draft — and BEFORE proceeding to the next ADR — produce a structured self-check entry and append it to the reasoning journal.
+After completing each ADR draft — and BEFORE proceeding to the next ADR — produce a structured self-check entry and return it in `echelon_result.journal_entries`.
 
 **ADR self-check entry schema (FR-INH-004 — use these exact field names):**
 ```json

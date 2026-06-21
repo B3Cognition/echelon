@@ -16,7 +16,7 @@ Lightweight mode: always run false-positive check + assertion-coverage check onl
 
 **Bypass B — Non-Testable Logic:**
 When the target class contains exclusively DTOs, configuration bindings, or pure delegates with no conditional logic and no state mutation.
-Action: always record as non-testable-logic in reasoning journal and record bypass rationale. Do NOT require coverage evidence.
+Action: always return a `journal_entries` item in `echelon_result` with `type: "non_testable_logic"` and the bypass rationale. Do NOT require coverage evidence.
 
 **Always execute full protocol when:**
 - `batch_test_addition_count ≥ 3`, AND

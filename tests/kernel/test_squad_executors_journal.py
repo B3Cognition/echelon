@@ -285,6 +285,7 @@ _DIRECT_JOURNAL_INSTRUCTION_RE = re.compile(
     r"|\bThen append .* to `reasoning-journal\.jsonl`"
 )
 _PHASES_DIR = EXT_ROOT / "extension/workflow/phases"
+_AGENTS_DIR = EXT_ROOT / "extension/agents"
 
 
 def test_no_direct_journal_appends_in_phase_specs():
@@ -318,6 +319,36 @@ def test_phase_specs_do_not_instruct_agents_to_append_to_journal():
     )
 
 
+def test_agent_files_do_not_instruct_direct_reasoning_journal_writes():
+    """Agent protocols should route journal data through echelon_result."""
+    direct_patterns = re.compile(
+        r"\bappend (?:a |the |.*? )?reasoning journal entry\b"
+        r"|\bappend .* to the reasoning journal\b"
+        r"|\blog .* to the reasoning journal\b"
+        r"|\blog .* to your reasoning journal\b"
+        r"|\blog in your reasoning journal\b"
+        r"|\brecord(?:ed)? in the reasoning journal\b"
+        r"|\brecord(?:ed)? .* in reasoning journal\b"
+        r"|\brecord(?:ed)? .* in the reasoning journal\b"
+        r"|\bflag .* in the reasoning journal\b",
+        re.IGNORECASE,
+    )
+    allowed_patterns = re.compile(
+        r"echelon_result|commander .*writes to the reasoning journal|writes to the reasoning journal",
+        re.IGNORECASE,
+    )
+    violations = []
+    for md_file in _AGENTS_DIR.rglob("*.md"):
+        for lineno, line in enumerate(md_file.read_text().splitlines(), start=1):
+            if direct_patterns.search(line) and not allowed_patterns.search(line):
+                violations.append(f"{md_file.relative_to(EXT_ROOT)}:{lineno}: {line.strip()}")
+
+    assert not violations, (
+        "Agent files must return journal_entries in echelon_result instead of "
+        "instructing direct reasoning journal writes:\n" + "\n".join(violations)
+    )
+
+
 def test_agent_output_blocks_do_not_request_null_journal_metadata():
     """Harness owns journal IDs/timestamps; agent examples should not show nulls."""
     violations = []
@@ -345,6 +376,35 @@ def test_agent_output_blocks_do_not_put_list_directly_under_echelon_result():
         "Agent examples must not place a list directly under echelon_result:\n"
         + "\n".join(violations)
     )
+
+
+def test_markdown_prose_does_not_teach_xml_echelon_result_blocks():
+    """The canonical output contract is YAML; XML examples train the wrong shape."""
+    violations = []
+    for md_file in (EXT_ROOT / "extension").rglob("*.md"):
+        if "node_modules" in md_file.parts:
+            continue
+        text = md_file.read_text(encoding="utf-8", errors="ignore")
+        if "<echelon_result>" in text or "</echelon_result>" in text:
+            violations.append(str(md_file.relative_to(EXT_ROOT)))
+
+    assert not violations, (
+        "Markdown prompts must not teach XML-style echelon_result blocks:\n"
+        + "\n".join(violations)
+    )
+
+
+def test_production_echelon_result_template_exists_and_is_canonical():
+    template = EXT_ROOT / "extension" / "templates" / "echelon-result-template.yaml"
+
+    text = template.read_text(encoding="utf-8")
+
+    assert template.exists()
+    assert "echelon_result:" in text
+    assert "state_updates:" in text
+    assert "journal_entries:" in text
+    assert "NEVER emit `<echelon_result>` XML" in text
+    assert "```echelon_result" in text
 
 
 def test_why2_routing_contract_uses_full_quality_score_shape():
@@ -414,10 +474,48 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER ignore endocrine state" in prompt
     assert "ALWAYS end your response with an `echelon_result` block" in prompt
     assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
+    assert "NEVER use Write, Edit, Bash redirection" in prompt
     assert "ALWAYS read your agent-specific belief register when present" in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
     assert prompt.index("# Scout") < prompt.index("# Squad Run Context")
+    assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
+    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "NEVER emit `<echelon_result>` XML" in prompt
+
+
+def test_assemble_prompt_uses_echelon_result_template(tmp_path):
+    """The canonical final result block is owned by extension/templates."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    template_dir = ext_dir / "templates"
+    agent_dir.mkdir(parents=True)
+    template_dir.mkdir(parents=True)
+    (agent_dir / "scout.md").write_text("# Scout\nRole-specific instructions.")
+    (template_dir / "echelon-result-template.yaml").write_text(
+        "CANONICAL_TEMPLATE_MARKER\n"
+        "echelon_result:\n"
+        "  verdict: <DONE>\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n",
+        encoding="utf-8",
+    )
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/scout.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(id="phase1-test", type="agent", agent="SCOUT")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "CANONICAL_TEMPLATE_MARKER" in prompt
+    assert prompt.rstrip().endswith("journal_entries: []")
 
 
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
@@ -443,10 +541,46 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER ignore endocrine state" in prompt
     assert "ALWAYS end your response with an `echelon_result` block" in prompt
     assert "NEVER write to `reasoning-journal.jsonl` directly" in prompt
+    assert "NEVER use Write, Edit, Bash redirection" in prompt
     assert "ALWAYS read your agent-specific belief register when present" in prompt
     assert "belief-registers/<agent-slug>.yaml" in prompt
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
     assert prompt.index("# WHY3") < prompt.index("# Squad Run Context")
+    assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
+    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "NEVER emit `<echelon_result>` XML" in prompt
+
+
+def test_staged_prompt_uses_echelon_result_template(tmp_path):
+    """Staged consensus prompts use the same template-backed final block."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    template_dir = ext_dir / "templates"
+    agent_dir.mkdir(parents=True)
+    template_dir.mkdir(parents=True)
+    (agent_dir / "why3.md").write_text("# WHY3\nRole-specific instructions.")
+    (template_dir / "echelon-result-template.yaml").write_text(
+        "STAGED_TEMPLATE_MARKER\n"
+        "echelon_result:\n"
+        "  verdict: <PASS>\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n",
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._build_agent_prompt({"id": "WHY3", "mode": "WHY3"}, state)
+
+    assert "STAGED_TEMPLATE_MARKER" in prompt
+    assert prompt.rstrip().endswith("journal_entries: []")
 
 
 def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
@@ -498,6 +632,41 @@ def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
     assert "RIGHT STAGING REPORT" in prompt
     assert "WRONG SPEC 016" not in prompt
     assert "WRONG TASKS 063" not in prompt
+
+
+def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):
+    """Directory context items such as contracts/ are expanded deterministically."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "assess2.md").write_text("# ASSESS2\nRole-specific instructions.")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    contracts = spec_dir / "contracts"
+    contracts.mkdir(parents=True)
+    (contracts / "internal-interfaces.md").write_text("CONTRACT CONTENT", encoding="utf-8")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/assess2.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    prompt = ex._build_agent_prompt(
+        {"id": "ASSESS2", "mode": "ASSESS2", "context_pack": ["contracts/"]},
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(staging_dir),
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    assert "# contracts/" in prompt
+    assert "## contracts/internal-interfaces.md" in prompt
+    assert "CONTRACT CONTENT" in prompt
 
 
 def test_assemble_prompt_translates_legacy_paths(tmp_path):

@@ -98,7 +98,7 @@ Use the data to seed your output artifacts:
 - `analysis.json` → seeds **glossary**, **mental-model**, **boundaries**
 - Domain specs (if exist) → seeds **assumptions** and **unknowns**
 
-**If `golddigger_status` is `failed` or absent:** Proceed with manual analysis (Steps 2-4). Log in your reasoning journal: "speckit-echelon-golddigger (GOLDDIGGER) artifacts not available — proceeding with manual structural analysis."
+**If `golddigger_status` is `failed` or absent:** Proceed with manual analysis (Steps 2-4). Return a `journal_entries` item in `echelon_result`: "speckit-echelon-golddigger (GOLDDIGGER) artifacts not available — proceeding with manual structural analysis."
 
 Treat extraction artifacts as a validated head-start, not as a complete answer. Always enrich, validate, and extend every section — do not copy blindly.
 

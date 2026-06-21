@@ -112,6 +112,19 @@ state_updates:
   # do NOT include next_phase — omit it or the harness will try to route to it
 ```
 
+If `escalation_question` offers choices (A/B/C, "proceed", "return to WHAT", etc.), every choice MUST have a matching structured entry in `escalation_options`. Do not offer any choice that cannot be represented as an executable option. For route choices, `next_phase` MUST be one of the valid workflow phase IDs from the harness context.
+
+```yaml
+state_updates:
+  escalation_options:
+    - id: "route_back_to_what"
+      label: "Return to WHAT"
+      next_phase: "phase1-what"
+    - id: "proceed_to_decide"
+      label: "Proceed to DECIDE"
+      next_phase: "phase2-decide"
+```
+
 The harness reads `status: blocked` + `escalation_question`, prints the blocked banner, and stops the run (semi/guided) or dispatches COMMANDER banzai judgment (banzai). Always let the harness perform the blocked flow; do not follow the old manual steps of editing state.json or printing `SQUAD BLOCKED`.
 
 **Banzai resolution** — include in `state_updates`:
