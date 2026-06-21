@@ -1389,6 +1389,18 @@ def _constitution_template_markers(text: str) -> list[str]:
 _HARNESS_CHECKPOINT_REASONS = {"build_incomplete", "publish_failed", "checkpoint_outer_cap"}
 
 
+def _phase_a_buildable(result_status: str, blockers: list) -> bool:
+    """Single readiness predicate for Phase-A surfaces.
+
+    A run is buildable only when there are no outstanding blockers AND the run
+    is not in a blocked/interrupted lifecycle state. A blocked run with an empty
+    blocker list (e.g. it halted before the spec/HOW/tasks checks could flag
+    anything) must NOT be reported as ready — that was the false "READY TO BUILD"
+    bug (docs/findings/2026-06-20-blocked-run-reports-ready-to-build.md).
+    """
+    return not blockers and result_status not in ("blocked", "interrupted")
+
+
 def _print_next_steps(project_root: Path, result_status: str) -> None:
     """Print actionable next-step guidance after a run completes or blocks.
 
@@ -1722,9 +1734,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             )
 
     # ── Print ──────────────────────────────────────────────────────────────
+    # Single readiness predicate: a blocked/interrupted run is never "READY TO
+    # BUILD", even when no explicit blocker was collected.
     fields: list[tuple[str, str]] = []
-    subtitle = "BUILD BLOCKED — fix blockers before running" if blockers else ""
-    if not blockers:
+    if _phase_a_buildable(result_status, blockers):
         if ready_items:
             fields.append(("ready", "\n".join(f"✓ {item}" for item in ready_items)))
         harness_cmd = f"echelon harness run {newest_spec_id}" if newest_spec_id else "echelon harness run <spec-id>"
@@ -1739,6 +1752,8 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
         if ready_items:
             fields.append(("already done", ", ".join(ready_items)))
+        subtitle = ("BUILD BLOCKED — fix blockers before running" if blockers
+                    else "RUN BLOCKED — resolve the block before building")
 
     _banner("NEXT STEP", fields, subtitle=subtitle)
 
@@ -2354,6 +2369,12 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     # 3. tasks.md missing
     if active_spec_dir is not None and not (active_spec_dir / "tasks.md").exists():
         return "phase3-plan"
+
+    # WS1 invariant: a run with no resolvable spec directory has not produced the
+    # build inputs (spec.md/tasks.md), so it is not ready. Route back to authoring
+    # instead of falling through to a false "Build is ready — nothing left to do".
+    if active_spec_dir is None:
+        return "phase1-what"
 
     return None  # build is ready
 
