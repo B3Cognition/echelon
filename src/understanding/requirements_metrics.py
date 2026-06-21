@@ -124,6 +124,22 @@ class RequirementQualityMetrics:
         }
 
 
+_SNAKE_RE = re.compile(r"_")
+_CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _humanize_identifiers(text: str) -> str:
+    """Expand snake_case and CamelCase identifiers into their constituent words.
+
+    Readability/syllable metrics treat ``Temperature_Converter`` as one long,
+    high-syllable "complex word"; expanding it to ``Temperature Converter``
+    gives a fair read of the underlying prose without de-governing the spec.
+    """
+    text = _SNAKE_RE.sub(" ", text)
+    text = _CAMEL_RE.sub(" ", text)
+    return text
+
+
 class RequirementsAnalyzer:
     """Deterministic analyzer for requirement quality."""
 
@@ -201,13 +217,37 @@ class RequirementsAnalyzer:
         # Clean text (remove markdown, code blocks, but keep structure)
         clean_text = self._clean_text(text)
 
-        # Extract individual requirements
-        requirements = self._extract_requirements(clean_text)
+        # Lexicon controlled-grammar specs have no terminal punctuation on their
+        # GIVEN:/WHEN:/THEN: lines, which would make sentence-counting (and every
+        # readability/cognitive metric derived from it) collapse to one giant
+        # "sentence". Score the extracted requirement prose instead — each item is
+        # a terminated sentence — and unify requirement extraction on the same
+        # canonical Lexicon extractor.
+        from .markdown_parser import extract_lexicon_requirements, is_lexicon_spec
+
+        if is_lexicon_spec(text):
+            # THEN-only (atomic) for structure/cognitive; join into terminated
+            # sentences so readability sentence-counting works.
+            requirements = [
+                then for _id, then in extract_lexicon_requirements(
+                    text, fold_output_constraint=False
+                )
+            ]
+            prose_text = ". ".join(r.rstrip(".") for r in requirements) + (
+                "." if requirements else ""
+            )
+            # Governed identifiers (snake_case / CamelCase) otherwise read as
+            # long "complex words" to Flesch/Fog/syllable metrics; expand them
+            # into their constituent words for a fair readability/cognitive read.
+            prose_text = _humanize_identifiers(prose_text)
+        else:
+            requirements = self._extract_requirements(clean_text)
+            prose_text = clean_text
 
         # Calculate all metrics
-        readability = self._calculate_readability(clean_text)
+        readability = self._calculate_readability(prose_text)
         structure = self._analyze_structure(requirements)
-        cognitive = self._analyze_cognitive_complexity(clean_text, requirements)
+        cognitive = self._analyze_cognitive_complexity(prose_text, requirements)
 
         # Calculate overall score (0-100)
         overall_score = self._calculate_overall_score(readability, structure, cognitive)

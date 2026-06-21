@@ -341,3 +341,44 @@ echelon_result:
         reasoning: "<why tasks are grouped or ordered this way>"
         rationale: "<constraint or dependency principle>"
         alternatives_considered: []
+
+---
+
+## Tasks Gate Mode (when `lexicon_gate.artifacts.tasks.enabled`)
+
+**Activation — read the flag yourself.** Before authoring `tasks.md`, run:
+
+```bash
+python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','spec.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
+```
+
+If the output is `TASKS_GATE=off` (or the file/key is absent), this entire section is INERT —
+author `tasks.md` per the standard planning protocol above. Only when it reads `TASKS_GATE=on`
+do you enter Tasks Gate mode using the `spec_ref` / `max_repair` values printed above.
+
+If `TASKS_GATE=on`, author `tasks.md` in the TASKS controlled grammar (`ARTIFACT: TASKS`,
+one `TASK` block per task with `PHASE/COMPLEXITY/PARALLEL/REQ/DEPENDS/ACCEPTANCE/TEST`),
+then run the self-validation repair loop:
+
+```bash
+LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
+$LEXICON validate "{spec_dir}/tasks.md" --type tasks --spec-ref "{spec_dir}/spec.md" --glossary "{spec_dir}/glossary.md" --json
+```
+
+Parse the JSON; if `ok` is false, apply the localized fix per finding code (`req-uncovered` →
+add a TASK for the REQ; `task-orphan-req` → fix `REQ=`; `task-not-atomic` → split; `banned-word`
+→ make measurable; `dep-cycle`/`dep-missing` → fix `DEPENDS`; `task-no-test` → add `TEST`;
+`incomplete-slot` → fill). Re-run, up to `max_repair_attempts`. Emit in `echelon_result.state_updates`:
+
+```yaml
+echelon_result:
+  state_updates:
+    tasks_lexicon_pass: true   # authoritative final validator verdict
+    tasks_lexicon_attempts: <int>
+```
+
+ALWAYS treat the `lexicon validate --type tasks` verdict as authoritative.
+NEVER report `tasks_lexicon_pass: true` without a final run that returned `ok: true`.
+
+ALWAYS apply the smallest fix that resolves a finding (add/split a single TASK, fix one REQ= or DEPENDS= field).
+NEVER rewrite tasks.md wholesale or discard passing TASK blocks while repairing a failing one.

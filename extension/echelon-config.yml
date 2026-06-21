@@ -108,6 +108,31 @@ quality_gates:
   high_compound_threshold: 3
 
 # =============================================================================
+# LEXICON GATE — deterministic controlled-grammar authoring gate (Phase A)
+# =============================================================================
+# The hard-gate counterpart to quality_gates (which is a SOFT score). When
+# enabled, CARTOGRAPHER authors spec.md in the Lexicon controlled grammar and
+# self-validates with `lexicon validate` in an in-dispatch repair loop BEFORE
+# returning (the "fix"). COMMANDER then re-dispatches phase1-what whenever the
+# controlled outcome `lexicon_pass` is false (the "re-dispatch"), capped by
+# convergence.max_squad_iterations. Soft `understanding`/SAGE scoring runs once
+# AFTER the spec is lexicon-clean — never as the structural gate.
+#
+# Default ON: CARTOGRAPHER authors every Phase A spec.md in the Lexicon grammar.
+# Set enabled=false to restore the standard bullet-format authoring path.
+# NOTE: downstream consumers of spec.md beyond WHY2 (ARCHITECT/plan,
+# ORCHESTRATOR/tasks, SENTINEL, build phase, verify-spec/spec-guard) must be made
+# Lexicon-aware before relying on this in the full Phase A→B pipeline.
+lexicon_gate:
+  enabled: true
+  artifacts:
+    spec:  { enabled: true, type: spec }
+    tasks: { enabled: true, type: tasks, spec_ref: spec.md }
+  glossary_file: glossary.md
+  max_repair_attempts: 3
+  on_exhausted: warn
+
+# =============================================================================
 # HEURISTICS
 # =============================================================================
 

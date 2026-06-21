@@ -550,6 +550,17 @@ def _parse_requirements(spec_text: str) -> dict:
     """
     import re
 
+    from .markdown_parser import extract_lexicon_requirements, is_lexicon_spec
+
+    # Lexicon controlled-grammar specs have no `- **FR-001**:` bullets; extract
+    # each REQ block's THEN clause keyed by its id instead.
+    if is_lexicon_spec(spec_text):
+        reqs = [
+            {"id": rid, "text": then}
+            for rid, then in extract_lexicon_requirements(spec_text)
+        ]
+        return {"requirements": reqs, "full_spec": spec_text, "count": len(reqs)}
+
     requirements = []
 
     # Pattern to match requirements like:

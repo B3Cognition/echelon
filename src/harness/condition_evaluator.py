@@ -43,6 +43,15 @@ class ConditionEvaluator:
                 return None  # conservative: unknown sub-condition → COMMANDER
             return any(sub)
 
+        # NOT <sub-condition> — three-valued negation. Used by the lexicon-gate
+        # self-loop guards (`NOT lexicon_pass`, `NOT tasks_lexicon_pass`). An
+        # unknown/absent inner field stays None (→ COMMANDER), preserving the
+        # unrecognised-condition contract.
+        m = re.fullmatch(r"NOT\s+(.+)", condition)
+        if m:
+            inner = self.evaluate(m.group(1).strip(), state, result)
+            return None if inner is None else (not inner)
+
         # verdict = X — checks result.verdict
         m = re.fullmatch(r"verdict\s*=\s*(\S+)", condition)
         if m:

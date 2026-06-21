@@ -416,7 +416,16 @@ phases:
     outputs:
       - spec.md
       - 00-overview.md
+      - lexicon_pass → state.json        # only when lexicon_gate.enabled; drives the re-dispatch below
     transitions:
+      # Lexicon gate (INERT unless lexicon_gate.enabled in echelon-config.yml).
+      # CARTOGRAPHER runs the in-dispatch repair loop (the "fix"); this is the
+      # COMMANDER-level re-dispatch on the controlled validator outcome (the
+      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # is disabled this condition is false and flow falls through unchanged.
+      - to: phase1-what
+        condition: "lexicon_gate.enabled AND NOT lexicon_pass AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase1-why2
         condition: always
 
@@ -694,11 +703,26 @@ phases:
       - critical-path.md
       - risk-matrix.md
       - dependencies.md
+      - tasks_lexicon_pass → state.json   # only when lexicon_gate.artifacts.tasks.enabled; drives the re-dispatch below
     timing_window_transition:        # closes phase3-solution, opens phase4-build
       close: phase3-solution
       open: phase4-build
       open_budget_seconds: 7200      # phase4-build budget (spans consensus + finalize)
     transitions:
+      # Tasks lexicon gate (INERT unless lexicon_gate.artifacts.tasks.enabled in echelon-config.yml).
+      # ORCHESTRATOR runs the in-dispatch repair loop (the "fix"); this is the
+      # COMMANDER-level re-dispatch on the controlled validator outcome (the
+      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # is disabled this condition is false and flow falls through unchanged.
+      - to: phase3-plan
+        # Mirrors the proven phase1-what guard shape: references only keys the
+        # COMMANDER state evaluator resolves (lexicon_gate.enabled + the persisted
+        # tasks_lexicon_pass). The deeper config path lexicon_gate.artifacts.tasks.enabled
+        # is intentionally NOT in the condition — it is unresolvable as state and made
+        # the guard indeterminate; gate enablement is enforced by ORCHESTRATOR only
+        # emitting tasks_lexicon_pass when artifacts.tasks.enabled (see phase3-plan.md).
+        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase3-consensus
         condition: always
 
