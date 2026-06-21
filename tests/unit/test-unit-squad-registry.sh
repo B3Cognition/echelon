@@ -59,7 +59,9 @@ else
 fi
 
 # 4. All new harness modules importable
-~/.echelon/venv/bin/python -c "
+# Use python3 on PATH (not ~/.echelon/venv, which does not exist in CI) — the
+# block inserts $ROOT/src on sys.path, so it imports from the source tree.
+python3 -c "
 import sys
 sys.path.insert(0, '$ROOT/src')
 from harness.squad_provider import SquadAgentResult, SquadCliProvider

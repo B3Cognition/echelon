@@ -140,6 +140,7 @@ section 4 "ALL_AGENTS → disk"
 # Map disk filenames to ALL_AGENTS codename form: foo-bar.md → FOO_BAR.
 DISK_AGENTS=$(
   find "$AGENTS_DIR" -type f -name '*.md' \
+    -not -path '*/appendices/*' -not -path '*/templates/*' \
     -exec basename {} .md \; \
   | tr '[:lower:]-' '[:upper:]_' \
   | sort -u
