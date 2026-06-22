@@ -49,6 +49,28 @@ LIMIT: L1
 Grammar control does not guarantee semantic correctness.
 """
 
+# A REQ that declares a dependency on other requirements via the DEPENDS field.
+SPEC_WITH_DEPENDS = """ARTIFACT: SPEC
+TITLE: Run catalog
+
+REQ: FR-001
+GIVEN: one or more run directories exist
+WHEN: the developer opens the catalog
+THEN: the catalog MUST list every discoverable run
+OUTPUT: a run catalog
+DEPENDS: none
+
+REQ: FR-003
+GIVEN: many historical runs exist
+WHEN: the developer filters the catalog by status
+THEN: the catalog MUST show only runs whose status matches the filter
+OUTPUT: a filtered run list
+DEPENDS: FR-001
+CONSTRAINT: filter response <= 1 second for 200 runs
+EXAMPLE: AC-003
+"""
+
+
 SPEC_WITH_TBR = """ARTIFACT: SPEC
 TITLE: Payments
 
@@ -95,6 +117,19 @@ def test_valid_article_parses():
 @pytest.mark.unit
 def test_spec_with_tbr_placeholder_parses():
     assert parse_pass(SPEC_WITH_TBR) is True
+
+
+@pytest.mark.unit
+def test_spec_with_depends_parses():
+    """A REQ may declare a DEPENDS field listing other requirement IDs it
+    depends on (or 'none'); the field is optional and parses cleanly."""
+    assert parse_pass(SPEC_WITH_DEPENDS) is True
+
+
+@pytest.mark.unit
+def test_req_without_depends_still_parses():
+    """DEPENDS is optional — a REQ omitting it is still valid (GOOD_SPEC)."""
+    assert parse_pass(GOOD_SPEC) is True
 
 
 @pytest.mark.unit

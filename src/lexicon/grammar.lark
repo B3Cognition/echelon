@@ -36,7 +36,7 @@ block: req
      | limit
      | placeholder
 
-req: "REQ:" ID _NL given when main_clause output? constraint? example*
+req: "REQ:" ID _NL given when main_clause output? depends? constraint? example*
 ac: "AC:" ID _NL given when then_obs constraint?
 error_block: "ERROR:" ID _NL when recover error_code
 rule: "RULE:" ID _NL if_clause then_rule else_clause? except_clause?
@@ -58,6 +58,7 @@ if_clause: "IF:" TEXT _NL
 else_clause: "ELSE:" TEXT _NL
 except_clause: "EXCEPT:" TEXT _NL
 output: "OUTPUT:" TEXT _NL
+depends: "DEPENDS:" TEXT _NL
 constraint: "CONSTRAINT:" TEXT _NL
 error_code: "ERROR_CODE:" TEXT _NL
 example: "EXAMPLE:" TEXT _NL
