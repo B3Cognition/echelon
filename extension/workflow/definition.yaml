@@ -495,7 +495,23 @@ phases:
       - gatekeeper_verdict: PASS | KILL | DEFER
       - kill-report.md    # if KILL
       - scope adjustments # if DEFER
+      - feasibility_structural_pass → state.json   # only when governance.enabled and the artifact has tier: structural; drives the re-dispatch below
     transitions:
+      # Feasibility structural gate (INERT unless governance.enabled in echelon-config.yml).
+      # GATEKEEPER runs the in-dispatch repair loop (the "fix"); this is the
+      # COMMANDER-level re-dispatch on the controlled validator outcome (the
+      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # is disabled this condition is false and flow falls through unchanged.
+      - to: phase2-decide
+        # Mirrors the proven phase1-what guard shape: references only keys the
+        # COMMANDER state evaluator resolves (governance.enabled + the persisted
+        # feasibility_structural_pass). The deeper config path
+        # governance.artifacts.feasibility.enabled is intentionally NOT in the
+        # condition — it is unresolvable as state and made the guard indeterminate;
+        # gate enablement is enforced by GATEKEEPER only emitting
+        # feasibility_structural_pass when artifacts.feasibility.enabled (see phase2-decide.md).
+        condition: "governance.enabled AND NOT feasibility_structural_pass AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase2-strategic-overview
         condition: "verdict = PASS"
       - to: done
@@ -538,7 +554,24 @@ phases:
       - strategic-overview.md
     outputs:
       - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
+      - intent_alignment_check_structural_pass → state.json   # only when governance.enabled and the artifact has tier: structural; drives the re-dispatch below
     transitions:
+      # Intent alignment check structural gate (INERT unless governance.enabled in echelon-config.yml).
+      # TRACKER runs the in-dispatch repair loop (the "fix"); this is the
+      # COMMANDER-level re-dispatch on the controlled validator outcome (the
+      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # is disabled this condition is false and flow falls through unchanged.
+      - to: phase2-tracker-alignment
+        # Mirrors the proven phase1-what guard shape: references only keys the
+        # COMMANDER state evaluator resolves (governance.enabled + the persisted
+        # intent_alignment_check_structural_pass). The deeper config path
+        # governance.artifacts.intent-alignment-check.enabled is intentionally NOT
+        # in the condition — it is unresolvable as state and made the guard
+        # indeterminate; gate enablement is enforced by TRACKER only emitting
+        # intent_alignment_check_structural_pass when the artifact is enabled
+        # (see phase2-tracker-alignment.md).
+        condition: "governance.enabled AND NOT intent_alignment_check_structural_pass AND iteration < max_iterations"
+        action: increment_iteration
       - to: phase3-specialists    # specialists run BEFORE speckit-echelon-architect (ARCHITECT) so their findings feed the design
         condition: "alignment = ALIGNED OR alignment = DRIFT"
       - to: escalate

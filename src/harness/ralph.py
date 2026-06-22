@@ -936,6 +936,24 @@ class RalphController:
                     "final_verify": current_verify,
                 }
 
+            # A post-fix re-verify whose only failure is the intentionally
+            # deferred banzai fulfillment refresh is benign: all real checks
+            # passed and only the full verify-spec refresh is deferred until
+            # task completion (it is always the sole failure — see
+            # _refresh_fulfillment_report, which only runs once verify passes).
+            # Exit the inner loop here, mirroring the entry guard, so the outer
+            # loop checkpoints this slice and advances to the next task instead
+            # of dispatching fixers against an unfixable deferral until
+            # max_inner (the milestone-boundary defer-loop).
+            if _is_fulfillment_refresh_deferred(current_verify):
+                return {
+                    "converged": False,
+                    "blocked": False,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
         # Inner loop exhausted
         return {
             "converged": False,

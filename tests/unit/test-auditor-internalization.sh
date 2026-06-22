@@ -12,13 +12,18 @@
 set -euo pipefail
 
 TARGET_MD="$(dirname "$0")/../../extension/agents/learning/internalizer.md"
+# Storage format YAML keys were extracted into the appendix file
+APPENDIX_MD="$(dirname "$0")/../../extension/agents/learning/appendices/internalizer-output-formats.md"
 PASS=0
 FAIL=0
+
+# Target file for current assertion (default: TARGET_MD)
+_ASSERT_FILE="$TARGET_MD"
 
 assert_contains() {
   local label="$1"
   local pattern="$2"
-  if grep -qiE "$pattern" "$TARGET_MD"; then
+  if grep -qiE "$pattern" "$_ASSERT_FILE"; then
     echo "  PASS: $label"
     PASS=$((PASS + 1))
   else
@@ -66,11 +71,14 @@ assert_contains "Trend stable definition" \
 assert_contains "Insufficient data handling" \
   "insufficient_data|insufficient.data"
 
-# Check storage format
+# Check storage format — YAML examples were extracted into the appendix;
+# agent-scores.yaml reference stays in internalizer.md, the YAML key examples
+# are in internalizer-output-formats.md.
 echo ""
 echo "--- Storage Format ---"
 assert_contains "agent-scores.yaml storage" \
   "agent-scores\.yaml"
+_ASSERT_FILE="$APPENDIX_MD"
 assert_contains "internalization sub-object" \
   "internalization:"
 assert_contains "category_scores block" \
@@ -79,6 +87,7 @@ assert_contains "metric_values block" \
   "metric_values:"
 assert_contains "History array" \
   "history:"
+_ASSERT_FILE="$TARGET_MD"
 
 # Check null handling rules
 echo ""

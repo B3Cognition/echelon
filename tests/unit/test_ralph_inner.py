@@ -22,8 +22,9 @@ from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
-from harness.ralph import RalphController
+from harness.ralph import RalphController, _is_fulfillment_refresh_deferred
 from harness.state import StateStore
+from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
 class MockProvider(SandboxProvider):
@@ -164,3 +165,74 @@ class TestBanzaiModeSuppression:
         result = ctrl.run_loop(max_outer=1, max_inner=4)
         # Banzai should NOT block on same_failure_repeat
         assert result.status != "blocked"
+
+
+@pytest.mark.unit
+class TestInnerLoopDeferredFulfillment:
+    """A post-fix deferred banzai fulfillment refresh must end the inner loop.
+
+    Regression (milestone-boundary defer-loop): a real failure
+    (`task-progress-mismatch`) pulls the build into the inner fix loop; the fix
+    succeeds and the re-verify returns only the benign
+    `fulfillment-refresh-deferred` signal. The loop must EXIT (so the outer loop
+    checkpoints the slice and advances to the next task) instead of dispatching
+    fixers against an unfixable deferral until max_inner. In banzai mode the
+    same-failure escalation is suppressed, so without an explicit exit the loop
+    runs every inner iteration each outer cycle and never advances.
+    """
+
+    def test_post_fix_deferred_exits_inner_loop(self, tmp_path: Path) -> None:
+        ctrl = _make_controller(tmp_path, [], mode="banzai")
+
+        entry = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "task-progress-mismatch",
+                    "state task_results done but tasks.md has pending",
+                )
+            ],
+        )
+        deferred = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-refresh-deferred",
+                    "deferred until task completion",
+                )
+            ],
+        )
+
+        # Fix succeeds; the post-fix re-verify resolves to the deferred signal.
+        ctrl._exec_feedback = MagicMock(
+            return_value={"exit_code": 0, "passed": True, "tokens": 0, "duration_s": 0.0}
+        )
+        ctrl._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        ctrl._refresh_fulfillment_report = MagicMock(return_value=deferred)
+        ctrl._apply_fulfillment_gate = MagicMock(side_effect=lambda vr, wt: vr)
+
+        state = ctrl._state_store.read()
+        handle = ctrl._provider.create(None)
+        result = ctrl._run_inner_loop(
+            handle=handle,
+            verify_result=entry,
+            outer_iter=0,
+            max_inner=5,
+            tokens_used=0,
+            token_budget=None,
+            state=state,
+            build_command="build",
+            strategy_context="",
+            worktree_path="/tmp/wt",
+            build_prompt="build the next task",
+        )
+
+        # Exits after exactly ONE fix, not max_inner=5 (the defer-loop).
+        assert result["inner_count"] == 1
+        assert result["converged"] is False
+        assert result["blocked"] is False
+        # Only one fixer was dispatched against the deferral.
+        assert ctrl._exec_feedback.call_count == 1
+        assert _is_fulfillment_refresh_deferred(result["final_verify"])

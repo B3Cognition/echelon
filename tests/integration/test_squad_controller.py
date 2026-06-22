@@ -1055,6 +1055,51 @@ class TestConstitutionPhase:
         )
 
 
+class TestGovernanceConfigMerge:
+    def test_governance_block_merged_into_eval_state(self, tmp_path):
+        ctrl, _ = _controller(tmp_path)
+        cfg = ctrl._governance_config()
+        assert cfg.get("governance", {}).get("enabled") is True
+
+
+class TestStructuralGuardDeterminism:
+    """Regression: phase2-decide with feasibility_structural_pass=False must
+    re-dispatch deterministically via ConditionEvaluator — never punt to COMMANDER.
+
+    The condition is:
+      governance.enabled AND NOT feasibility_structural_pass AND iteration < max_iterations
+    All three operands are resolvable state keys once the governance config is
+    merged into eval_state (via _governance_config). The test patches
+    _judgment_dispatch to RAISE, proving no COMMANDER punt occurs.
+    """
+
+    @staticmethod
+    def _result(updates):
+        from harness.squad_provider import SquadAgentResult
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    def test_feasibility_fail_redispatches_without_commander(self, tmp_path):
+        from unittest.mock import patch
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        store.save(st)
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("guard punted to COMMANDER")):
+            nxt = ctrl._evaluate_transitions(
+                node, self._result({"feasibility_structural_pass": False})
+            )
+        assert nxt == "phase2-decide"
+
+
 class TestLexiconGateGuardDeterminism:
     """The lexicon-gate self-loop guards (phase3-plan tasks gate) must route
     deterministically via ConditionEvaluator — never punt to COMMANDER.

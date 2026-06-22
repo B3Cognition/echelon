@@ -172,6 +172,7 @@ class SquadController:
         self._squad_dir = squad_dir or state_store.squad_dir
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
+        self._gov_config_cache: Optional[dict] = None
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -692,15 +693,68 @@ class SquadController:
         self._gate_config_cache = cfg
         return cfg
 
+    def _governance_config(self) -> dict:
+        """Load the `governance` block so governance.* resolves in transition conditions.
+
+        Mirrors _lexicon_gate_config: merges the governance block into eval_state
+        so conditions like `governance.enabled` evaluate deterministically instead
+        of returning None and punting the routing decision to COMMANDER.
+        Returns {} when the file is absent or unparseable.
+
+        Also injects default `True` for the structural-gate pass flags
+        (feasibility_structural_pass, intent_alignment_check_structural_pass).
+        This is FAIL-OPEN by design — deliberate trade-off recorded here:
+
+        (a) Fail-open is consistent with `governance.on_exhausted: warn`: when
+            the gate exhausts its repair iterations the run proceeds with a
+            warning rather than blocking.  Defaulting absent flags to True
+            extends that same "warn and continue" philosophy to the case where
+            the agent simply did not emit the flag at all.
+
+        (b) The alternative — absent flag → COMMANDER judgment dispatch — would
+            make phase2-decide and phase2-tracker-alignment non-deterministic.
+            The lexicon gate (phase1-what, phase3-plan) lives with that
+            indeterminacy because CARTOGRAPHER/ORCHESTRATOR always emit
+            lexicon_pass; for the structural gates the flag is conditional on
+            the repair loop running, so a missing flag is the common case (gate
+            disabled or agent pre-empted).  Defaulting to True avoids that
+            COMMANDER punt entirely.
+
+        (c) A real gate failure (agent emits flag=False) is still honoured: the
+            re-dispatch condition `governance.enabled AND NOT <flag>` evaluates
+            to True, triggering a re-dispatch.  result.state_updates merges at
+            higher precedence than these defaults in eval_state (see
+            _evaluate_transitions), so an explicit False always wins.
+        """
+        if self._gov_config_cache is not None:
+            return self._gov_config_cache
+        cfg: dict = {}
+        try:
+            import yaml
+            data = yaml.safe_load((self._ext_dir / "echelon-config.yml").read_text()) or {}
+            block = data.get("governance")
+            if isinstance(block, dict):
+                cfg = {"governance": block}
+        except Exception:
+            cfg = {}
+        # Structural gate pass flags default to True (= "not triggered" / "already
+        # passed"). GATEKEEPER and TRACKER override via state_updates when the gate
+        # is active. Without these defaults, absent flags produce NOT None = None,
+        # which triggers an unwanted COMMANDER judgment dispatch.
+        cfg.setdefault("feasibility_structural_pass", True)
+        cfg.setdefault("intent_alignment_check_structural_pass", True)
+        self._gov_config_cache = cfg
+        return cfg
+
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
         state = self._state_store.load()
-        # Merge order (lowest→highest precedence): lexicon_gate config, then
-        # state, then result.state_updates — so freshly-written values
+        # Merge order (lowest→highest precedence): lexicon_gate config, governance
+        # config, then state, then result.state_updates — so freshly-written values
         # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace
-        # keys (lexicon_gate.*) the self-loop guards reference still resolve.
-        eval_state = {**self._lexicon_gate_config(), **state, **(result.state_updates or {})}
+        # keys (lexicon_gate.*, governance.*) the self-loop guards reference resolve.
+        eval_state = {**self._lexicon_gate_config(), **self._governance_config(), **state, **(result.state_updates or {})}
 
         # ── WHY fail tracking + consecutive-fail safety net ──────────────────
         if node.id in WHY_PHASES:
