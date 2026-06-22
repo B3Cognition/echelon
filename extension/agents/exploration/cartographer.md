@@ -163,6 +163,9 @@ $LEXICON validate "{spec_dir}/spec.md" --type {artifact_type} \
    | `missing-output`  | add an `OUTPUT:` line with the observable result                            |
    | `missing-example` | add an `EXAMPLE: <AC-ID>` line to the REQ and author the AC block it names   |
    | `unresolved-example` | point the `EXAMPLE` ref at an AC id that actually exists                  |
+   | `dep-missing`     | point the `DEPENDS` ref at a REQ id defined in this spec, or remove it      |
+   | `dep-self`        | remove the requirement's own id from its `DEPENDS` line                     |
+   | `dep-cycle`       | break the dependency cycle — drop the back-edge `DEPENDS` ref               |
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
