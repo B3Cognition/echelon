@@ -21,6 +21,7 @@ Rules:
 - `req` is one or more `FR-*` IDs separated by commas, or `INFRA` for infrastructure.
 - `depends` is `none` or comma-separated `T-###` IDs.
 - Acceptance criteria checkboxes are nested under the task and MUST NOT be used as task counters.
+- **Test:** is a one-line description of how the task is verified (required when the tasks gate is enabled).
 
 ---
 
@@ -35,6 +36,8 @@ Rules:
 
   **Description:**
   {Specific work to complete.}
+
+  **Test:** {How this task is verified.}
 
   **Acceptance Criteria:**
   - [ ] {Criterion}
@@ -55,6 +58,8 @@ Rules:
 
   **Description:**
   {Specific work to complete.}
+
+  **Test:** {How this task is verified.}
 
   **Acceptance Criteria:**
   - [ ] FR-001 acceptance scenarios pass

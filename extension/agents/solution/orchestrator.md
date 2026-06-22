@@ -356,19 +356,18 @@ If the output is `TASKS_GATE=off` (or the file/key is absent), this entire secti
 author `tasks.md` per the standard planning protocol above. Only when it reads `TASKS_GATE=on`
 do you enter Tasks Gate mode using the `spec_ref` / `max_repair` values printed above.
 
-If `TASKS_GATE=on`, author `tasks.md` in the TASKS controlled grammar (`ARTIFACT: TASKS`,
-one `TASK` block per task with `PHASE/COMPLEXITY/PARALLEL/REQ/DEPENDS/ACCEPTANCE/TEST`),
-then run the self-validation repair loop:
+If `TASKS_GATE=on`, author `tasks.md` in the **canonical row format** per `extension/templates/tasks-template.md` — one `- [ ] T-### [P] complexity= phase= req= depends=` row per task, each followed by nested `**Title:** / **Description:** / **Test:** / **Acceptance Criteria:**`. Then run the self-validation repair loop:
 
 ```bash
 LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
 $LEXICON validate "{spec_dir}/tasks.md" --type tasks --spec-ref "{spec_dir}/spec.md" --glossary "{spec_dir}/glossary.md" --json
 ```
 
-Parse the JSON; if `ok` is false, apply the localized fix per finding code (`req-uncovered` →
-add a TASK for the REQ; `task-orphan-req` → fix `REQ=`; `task-not-atomic` → split; `banned-word`
-→ make measurable; `dep-cycle`/`dep-missing` → fix `DEPENDS`; `task-no-test` → add `TEST`;
-`incomplete-slot` → fill). Re-run, up to `max_repair_attempts`. Emit in `echelon_result.state_updates`:
+Parse the JSON; if `ok` is false, apply the localized fix per finding code (`parse-error` →
+ensure each task starts with a canonical row; `task-no-test` → add a `**Test:**` line;
+`req-uncovered` → add a task for the req; `task-orphan-req` → fix `req=`; `task-not-atomic` →
+split; `banned-word`/`placeholder` → make measurable; `dep-cycle`/`dep-missing` → fix `depends=`).
+Re-run, up to `max_repair_attempts`. Emit in `echelon_result.state_updates`:
 
 ```yaml
 echelon_result:
