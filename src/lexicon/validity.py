@@ -28,6 +28,7 @@ from .examples import (
     missing_example_findings,
     unsupported_claim_findings,
 )
+from .crossdoc import spec_depends_findings
 from .linter import Finding, banned_word_findings
 from .observability import missing_output_findings, observability
 from .parser import artifact_type as _detect_type
@@ -87,6 +88,7 @@ def validate(
         findings.extend(missing_output_findings(text))
     if kind in ("SPEC", "STORY"):
         findings.extend(missing_example_findings(text))  # every REQ must link an AC
+        findings.extend(spec_depends_findings(text))  # DEPENDS referential integrity
     if kind == "ARTICLE":
         findings.extend(unsupported_claim_findings(text))
 

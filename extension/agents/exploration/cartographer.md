@@ -106,6 +106,7 @@ GIVEN: <initial state>
 WHEN: <trigger>
 THEN: <subject> MUST <action> <object>      # EXACTLY ONE uppercase modal: MUST / MUST NOT / SHALL / SHOULD / MAY
 OUTPUT: <observable result>                  # REQUIRED on every REQ
+DEPENDS: <comma-separated REQ IDs this requirement builds on, or 'none'>  # optional
 CONSTRAINT: <metric comparator value unit>   # optional
 EXAMPLE: <AC-ID>                             # REQUIRED: >=1 ref to an AC block that exercises this REQ
 
@@ -124,6 +125,17 @@ Every multi-word domain identifier (snake_case or CamelCase) MUST come from the 
 glossary. Plain English words are fine. Banned vague words (easy, simple, intuitive, robust,
 seamless, efficient, optimized, appropriate, various, some, fast, slow, user-friendly,
 high-quality, as needed) are forbidden — replace with a measurable CONSTRAINT.
+
+**`DEPENDS:` makes inter-requirement relationships explicit.** When a requirement builds on,
+extends, or is constrained by other requirements, list their REQ IDs (e.g. `DEPENDS: FR-001, FR-002`);
+when it stands alone, write `DEPENDS: none`. This turns the spec from a flat list of isolated
+behaviours into a connected model — downstream DECOMPOSE/planning derive the requirement
+dependency graph from these links instead of re-inferring it, and the traceability/depth signal
+rises because requirements reference one another. Reference only REQ IDs defined in this spec; do
+not invent IDs or create cycles.
+
+ALWAYS populate `DEPENDS:` on every REQ — real REQ IDs when the requirement relates to others, or `none` when it is genuinely standalone.
+NEVER leave a requirement's relationships implicit by omitting `DEPENDS:` when it plainly builds on another requirement.
 
 ### Self-Validation Repair Loop (the "fix")
 
@@ -151,6 +163,9 @@ $LEXICON validate "{spec_dir}/spec.md" --type {artifact_type} \
    | `missing-output`  | add an `OUTPUT:` line with the observable result                            |
    | `missing-example` | add an `EXAMPLE: <AC-ID>` line to the REQ and author the AC block it names   |
    | `unresolved-example` | point the `EXAMPLE` ref at an AC id that actually exists                  |
+   | `dep-missing`     | point the `DEPENDS` ref at a REQ id defined in this spec, or remove it      |
+   | `dep-self`        | remove the requirement's own id from its `DEPENDS` line                     |
+   | `dep-cycle`       | break the dependency cycle — drop the back-edge `DEPENDS` ref               |
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.

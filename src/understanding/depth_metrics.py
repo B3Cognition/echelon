@@ -120,6 +120,16 @@ class DepthAnalyzer:
         self_refs = sum(1 for req in requirements if self.REQ_ID_PATTERN.search(req))
         cross_refs = max(0, cross_refs - self_refs)
 
+        # Explicit lexicon `DEPENDS:` links are genuine inter-requirement
+        # cross-references. The markdown requirement extractor flattens REQ
+        # blocks to GIVEN/WHEN/THEN prose and drops the DEPENDS line, so read
+        # those links from the full spec text directly. `DEPENDS: none` declares
+        # no dependency and contributes nothing.
+        for line in full_text.splitlines():
+            m = re.match(r"\s*DEPENDS:\s*(.+)", line)
+            if m and m.group(1).strip().lower() != "none":
+                cross_refs += len(self.REQ_ID_PATTERN.findall(m.group(1)))
+
         cri = 1.0 - math.exp(-cross_refs / max(n, 1))
 
         # Composite: weighted average
