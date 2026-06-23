@@ -2,6 +2,8 @@
 
 **Last full review snapshot:** `docs/findings/2026-06-23-echelon-grounded-source-review.md`
 **Last full review HEAD:** `eeb490899655c0796ec9d9c187eb52fe1195427f`
+**Last delta review snapshot:** `docs/findings/2026-06-23-egr-delta-review-after-egr-008.md`
+**Last delta review HEAD:** `665c7acbd3a6a2fae60a617e39c4a1aa7abfd808`
 **Last updated:** 2026-06-23
 
 ## Operating Model
@@ -67,7 +69,9 @@ the same time as the code lands.
 | EGR-006 | P2 | fixed | Review loops exist, but generic draft/critique/repair/re-check is not a reusable primitive. | `src/harness/repair_loop.py`, `tests/unit/test_repair_loop.py`, `src/harness/ralph.py`, `src/harness/review_loop.py`, `src/harness/squad.py` | Fixed: introduced a deterministic, bounded repair-loop primitive with structured event logging, repeat-signature blocking, and caller-supplied critique/repair/re-check functions. |
 | EGR-007 | P2 | fixed | Internalization is split between real codegen memory and prompt-level learning. | `src/codegen/memory/kb_schema_validator.py`, `tests/unit/test_kb_schema_validator.py`, `knowledge-base/kb-schema.md`, `src/codegen/memory/*`, `extension/agents/learning/*` | Fixed: introduced a deterministic knowledge-base validator for schema versions, append-only markers, provenance, pending-operation checksums, and project scoping for durable pattern/pitfall learnings. |
 | EGR-008 | P2 | fixed | Role surface area is high relative to machine-checkable contracts. | `src/harness/role_contracts.py`, `src/harness/phase_graph.py`, `extension/agents/**/*.md`, `extension/workflow/definition.yaml`, `tests/unit/test_role_contracts.py`, `tests/kernel/test_phase_graph.py` | Fixed: routed roles now have a deterministic contract validator for required `echelon_result` fields and declared outputs; shipped routed role templates include explicit empty `state_updates` where applicable. |
-| EGR-009 | P3 | open | RCA pipeline is not implemented as a first-class capability. | No dedicated incident/RCA pipeline found under `src/` or `extension/workflow/`. | Defer until core harness safety gates are stronger. |
+| EGR-009 | P3 | open | RCA pipeline is not implemented as a first-class capability. | No dedicated incident/RCA pipeline found under `src/` or `extension/workflow/`. | Implement as a separate pipeline after EGR-010; include incident intake, evidence collection, timeline reconstruction, hypothesis testing, corrective/preventive actions, and internalization update artifacts. |
+| EGR-010 | P1 | open | GitOps lacks a deterministic pre-push secret scan gate. | `src/harness/gitops.py` stages/commits/pushes branches; `tests/integration/test_gitops_safety.py` covers default-branch rejection but no secret scanning; no `gitleaks`, `detect-secrets`, or equivalent gate found in GitOps path. | Add a deterministic staged/changed-file secret scanner and block `GitOpsManager.commit()` or push preparation on high-confidence findings. |
+| EGR-011 | P2 | open | Per-phase `state_updates` allowlists are not enforced. | `src/harness/echelon_result_schema.py` validates shape/reserved keys only; `src/harness/role_contracts.py` requires `state_updates` presence but not allowed keys; expected keys remain mostly prose in `extension/workflow/phases/*.md`. | Extend role/phase contract validation with machine-readable allowed `state_updates` keys per phase or routed role. |
 
 ## Implementation Plan
 
@@ -85,13 +89,13 @@ the same time as the code lands.
 |---|---|---|---|---|
 | P1 | Add Phase A artifact validators. | Makes spec readiness deterministic. | `src/harness/squad.py`, `src/echelon/cli.py`, `extension/workflow/phases/*.md` | Fewer false-ready and prompt-only gate outcomes. |
 | P1 | Add sandbox suggestion report. | Lets users approve environment setup based on evidence. | `src/harness/init.py`, `src/harness/verify_detection.py`, `src/harness/app_runtime_detection.py` | Safer setup and clearer harness onboarding. |
-| P1 | Add pre-push secret scan gate. | Reduces chance of leaking secrets through GitOps. | `src/harness/gitops.py`, `src/harness/config.py` | Safer PR automation. |
+| P1 | Add pre-push secret scan gate (`EGR-010`). | Reduces chance of leaking secrets through GitOps. | `src/harness/gitops.py`, `src/harness/config.py`, new `src/harness/secret_scan.py` | Safer PR automation. |
 
 ### Medium-Term Architecture Improvements
 
 | Priority | Recommendation | Why it matters | Suggested files/modules to change | Expected impact |
 |---|---|---|---|---|
-| P2 | Define per-phase allowed `state_updates` keys. | Prevents role drift and accidental state mutation. | `extension/workflow/phases/*.md`, `extension/workflow/definition.yaml`, validator module | Better traceability and fewer hidden contracts. |
+| P2 | Define per-phase allowed `state_updates` keys (`EGR-011`). | Prevents role drift and accidental state mutation. | `extension/workflow/phases/*.md`, `extension/workflow/definition.yaml`, `src/harness/role_contracts.py` | Better traceability and fewer hidden contracts. |
 | P2 | Build reusable Ralph-style repair primitive. | Reuses deterministic validation failures for bounded repair. | `src/harness/squad.py`, `src/harness/ralph.py`, new tests | Cleaner retry/revision behavior before state mutation. |
 | P2 | Validate and version learning writes. | Prevents polluted memory and stale internalization. | `src/codegen/memory/*`, `extension/scripts/bash/kb-*`, `knowledge-base/kb-schema.md` | More trustworthy internalization. |
 
@@ -151,3 +155,4 @@ for every agent dispatch before applying `state_updates`.
 | 2026-06-23 | `working tree on codex/egr-006-repair-loop` | EGR-006 introduced `harness.repair_loop`, a deterministic reusable Draft output -> Critique -> Repair -> Re-check -> Accept / Block / Exhaust primitive. It records structured loop events for later audit/internalization, enforces `max_repairs`, tracks token counts reported by callbacks, and blocks repeated critique signatures before unbounded repair cycles. Verification: `pytest tests/unit/test_repair_loop.py -q` passed with 4 tests; `pytest tests/kernel -q` passed with 534 tests. |
 | 2026-06-23 | `working tree on codex/egr-007-memory-validation` | EGR-007 introduced `codegen.memory.kb_schema_validator`, a deterministic validator for durable knowledge-base documents and pending write operations. It checks documented schema versions, append-only markers, provenance, internalization-log gate metadata, pending-operation checksum/provenance requirements, and project scoping for local pattern/pitfall learnings. Verification: `pytest tests/unit/test_kb_schema_validator.py -q` passed with 5 tests; `pytest tests/kernel -q` passed with 534 tests. |
 | 2026-06-23 | `working tree on codex/egr-008-role-contracts` | EGR-008 introduced `harness.role_contracts`, a deterministic routed-role validator requiring final `echelon_result` templates to declare `verdict`, `output_files`, `state_updates`, and `journal_entries`, and requiring routed workflow entries to declare outputs. `PhaseGraph` now preserves phase outputs, build workflow nodes declare their expected artifacts, and routed role prompt templates include explicit `state_updates: {}` when no state mutation is expected. Verification: `pytest tests/unit/test_role_contracts.py tests/kernel/test_phase_graph.py -q` passed with 18 tests; `pytest tests/kernel -q` passed with 535 tests. |
+| 2026-06-23 | `665c7acbd3a6a2fae60a617e39c4a1aa7abfd808` | Delta review after EGR-008 completed. EGR-001 through EGR-008 are fixed with code/test/changelog/register evidence. The full review snapshot remains valid; no architecture-wide refresh is needed yet. Promoted two remaining gaps into explicit findings: EGR-010 pre-push secret scan gate and EGR-011 per-phase `state_updates` allowlists. Recommended next implementation: EGR-010 before RCA/EGR-009. |
