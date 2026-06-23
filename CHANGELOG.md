@@ -43,6 +43,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - This intentionally lands as a small substrate first; Ralph/review-loop controller rewiring can now use a tested primitive instead of introducing a risky large-controller refactor.
   - Focused tests added in `tests/unit/test_repair_loop.py`.
   - Verification: `pytest tests/unit/test_repair_loop.py -q` (`4 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-007 deterministic knowledge-base memory validation** — added `src/codegen/memory/kb_schema_validator.py` to validate durable knowledge-base and pending-operation records before future internalization writers apply them.
+  - Covers documented schema versions, append-only markers, required provenance, internalization-log gate metadata, pending-operation checksum/provenance requirements, and project scoping for durable pattern/pitfall learnings.
+  - `knowledge-base/kb-schema.md` now points to the Python validator as the deterministic enforcement point for durable memory writes.
+  - Focused tests added in `tests/unit/test_kb_schema_validator.py`.
+  - Verification: `pytest tests/unit/test_kb_schema_validator.py -q` (`5 passed`); `pytest tests/kernel -q` (`534 passed`).
 
 ## [2.1.0] - 2026-05-17
 
