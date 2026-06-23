@@ -5,6 +5,7 @@ families (browser/http/exec) and the ephemeral-sandbox lifecycle wrap it (Task 5
 in the design's execution-environment section)."""
 from __future__ import annotations
 
+import socket
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -55,3 +56,33 @@ def run_runnable_gate(
         surface_score=surface_score,
         failures=failures,
     )
+
+
+def _free_port() -> int:
+    """Return an OS-assigned free TCP port (closed immediately; caller binds)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _browser_probe(workspace: str, contract: RunnableContract, port: int | None) -> ProbeOutcome:
+    """SPA: build, serve dist on `port`, drive a headless browser, read the DOM.
+    A curl body check is insufficient (client-side render). Teardown always runs."""
+    raise NotImplementedError("wired during execution against the running worktree")
+
+
+def _http_probe(workspace: str, contract: RunnableContract, port: int | None) -> ProbeOutcome:
+    """service: build, start on `port`, assert liveness + surfaces over HTTP."""
+    raise NotImplementedError("wired during execution against the running worktree")
+
+
+def _exec_probe(workspace: str, contract: RunnableContract, port: int | None) -> ProbeOutcome:
+    """cli/library: build, run `--help`/import smoke; no server."""
+    raise NotImplementedError("wired during execution against the running worktree")
+
+
+def make_probe(kind: str):
+    return {"spa": _browser_probe, "service": _http_probe,
+            "cli": _exec_probe, "library": _exec_probe}[kind]

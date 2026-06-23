@@ -1,6 +1,7 @@
+import socket
 import pytest
 from codegen.schema.runnable_contract import parse_runnable_contract
-from codegen.runner.runnable_gate import run_runnable_gate, ProbeOutcome
+from codegen.runner.runnable_gate import run_runnable_gate, ProbeOutcome, _free_port, make_probe
 
 
 def _contract(kind="spa"):
@@ -36,3 +37,18 @@ def test_stub_fails_l1_even_though_live():
     r = run_runnable_gate(_contract(), "/tmp/ws", probe_fn=probe)
     assert r.passed is False
     assert any("FR-001" in f and "primary" in f.lower() for f in r.failures)
+
+
+@pytest.mark.unit
+def test_free_port_is_bindable_and_unique():
+    p1, p2 = _free_port(), _free_port()
+    assert isinstance(p1, int) and 1024 < p1 < 65536
+    s = socket.socket(); s.bind(("127.0.0.1", p1)); s.close()   # bindable
+    assert p1 != p2
+
+
+@pytest.mark.unit
+def test_make_probe_selects_family_by_kind():
+    assert make_probe("spa").__name__ == "_browser_probe"
+    assert make_probe("service").__name__ == "_http_probe"
+    assert make_probe("cli").__name__ == "_exec_probe"
