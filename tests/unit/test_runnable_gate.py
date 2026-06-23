@@ -1,3 +1,4 @@
+import pathlib
 import socket
 import pytest
 from codegen.schema.runnable_contract import parse_runnable_contract
@@ -54,7 +55,6 @@ def test_make_probe_selects_family_by_kind():
     assert make_probe("cli").__name__ == "_exec_probe"
 
 
-import pathlib
 
 @pytest.mark.unit
 def test_runnable_phase_spec_exists_and_blocks_deliver():
