@@ -52,3 +52,17 @@ def test_make_probe_selects_family_by_kind():
     assert make_probe("spa").__name__ == "_browser_probe"
     assert make_probe("service").__name__ == "_http_probe"
     assert make_probe("cli").__name__ == "_exec_probe"
+
+
+import pathlib
+
+@pytest.mark.unit
+def test_runnable_phase_spec_exists_and_blocks_deliver():
+    runnable = pathlib.Path("extension/workflow/phases/codegen-6c-runnable.md")
+    deliver = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md")
+    assert runnable.exists()
+    rtext = runnable.read_text()
+    assert "run_runnable_gate" in rtext
+    assert "runnable_gate" in rtext and "reopen" in rtext.lower()
+    # DELIVER must refuse unless runnable_gate == pass
+    assert 'runnable_gate' in deliver.read_text()

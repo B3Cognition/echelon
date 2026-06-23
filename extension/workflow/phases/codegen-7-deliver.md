@@ -8,6 +8,11 @@
 
 SOAR selects DELIVER only when: all Tier 1 tests pass, Ψ ≥ 0.70, zero CQ-ISC violations.
 
+**RUNNABLE precondition (hard):** DELIVER MUST refuse to package unless
+`codegen-state.json` has `runnable_gate == "pass"`. If it is absent or `"fail"`,
+HALT and route back to RUNNABLE — a non-bootable / hollow app is never shippable,
+regardless of Ψ or unit-test status.
+
 1. Write `./codegen-report.md` — human-readable summary with requirement citations per delivered feature.
 2. Export EPMEM:
    ```bash
