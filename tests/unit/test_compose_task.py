@@ -1,7 +1,7 @@
 import pytest
 from codegen.decompose.task_queue import CodeTask, TaskQueue, TaskStatus
 from codegen.decompose.compose_task import (
-    build_compose_task, inject_compose_task, COMPOSE_TASK_ID,
+    build_compose_task, inject_compose_task, COMPOSE_TASK_ID, dependency_safe_order,
 )
 
 
@@ -28,6 +28,33 @@ def test_compose_runs_last_only_after_features_done():
     q.get("T-001").status = TaskStatus.DONE
     q.get("T-002").status = TaskStatus.DONE
     assert q.next_ready().task_id == COMPOSE_TASK_ID     # now COMPOSE is ready, last
+
+
+@pytest.mark.unit
+def test_dependency_safe_order_puts_compose_last():
+    """After inject_compose_task, dependency_safe_order must return COMPOSE_TASK_ID last,
+    with all feature tasks preceding it."""
+    q = TaskQueue([_feature(1), _feature(2)])
+    inject_compose_task(q, language="typescript")
+    order = dependency_safe_order(q)
+    assert order[-1] == COMPOSE_TASK_ID
+    assert "T-001" in order
+    assert "T-002" in order
+    assert order.index("T-001") < order.index(COMPOSE_TASK_ID)
+    assert order.index("T-002") < order.index(COMPOSE_TASK_ID)
+
+
+@pytest.mark.unit
+def test_dependency_safe_order_respects_feature_deps():
+    """dependency_safe_order must respect depends_on among feature tasks too:
+    if T-002 depends on T-001, T-001 must appear before T-002."""
+    q = TaskQueue([
+        _feature(1),
+        CodeTask(task_id="T-002", description="feature 2 depends on 1", scope="c2",
+                 language="typescript", module_boundary="m2", depends_on=["T-001"]),
+    ])
+    order = dependency_safe_order(q)
+    assert order.index("T-001") < order.index("T-002")
 
 
 @pytest.mark.unit

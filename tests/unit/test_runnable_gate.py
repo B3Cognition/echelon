@@ -57,6 +57,28 @@ def test_make_probe_selects_family_by_kind():
 
 
 @pytest.mark.unit
+def test_probe_exception_fails_closed():
+    """Any exception from probe_fn must return a fail-closed result — never re-raise."""
+    def bad_probe(ws, c, port):
+        raise NotImplementedError("nope")
+    r = run_runnable_gate(_contract(), "/tmp/ws", probe_fn=bad_probe)
+    assert r.passed is False
+    assert r.level == "L1"
+    assert r.surface_score == 0.0
+    assert any("fail-closed" in f and "NotImplementedError" in f for f in r.failures)
+
+
+@pytest.mark.unit
+def test_probe_runtime_error_fails_closed():
+    """RuntimeError from probe_fn must also produce a fail-closed failure, not crash."""
+    def runtime_probe(ws, c, port):
+        raise RuntimeError("boom")
+    r = run_runnable_gate(_contract(), "/tmp/ws", probe_fn=runtime_probe)
+    assert r.passed is False
+    assert any("boom" in f for f in r.failures)
+
+
+@pytest.mark.unit
 def test_runnable_phase_spec_exists_and_blocks_deliver():
     runnable = pathlib.Path("extension/workflow/phases/codegen-6c-runnable.md")
     deliver = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md")

@@ -33,7 +33,15 @@ def run_runnable_gate(
     probe_fn: Callable[[str, RunnableContract, int | None], ProbeOutcome],
     port: int | None = None,
 ) -> RunnableGateResult:
-    outcome = probe_fn(workspace, contract, port)
+    try:
+        outcome = probe_fn(workspace, contract, port)
+    except Exception as exc:
+        return RunnableGateResult(
+            passed=False,
+            level="L1",
+            surface_score=0.0,
+            failures=[f"probe error (fail-closed): {type(exc).__name__}: {exc}"],
+        )
     failures: list[str] = []
 
     if not outcome.live:

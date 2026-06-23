@@ -37,7 +37,7 @@ This guarantees composition is a tracked deliverable, never the agent's option.
 python3 - <<'PY'
 import json
 from codegen.decompose.task_queue import TaskQueue, CodeTask, TaskStatus
-from codegen.decompose.compose_task import inject_compose_task
+from codegen.decompose.compose_task import inject_compose_task, dependency_safe_order
 q = TaskQueue()
 data = json.load(open("./codegen-staging/task-queue.json"))
 for t in data["tasks"]:
@@ -50,8 +50,11 @@ compose = inject_compose_task(q, language=language)
 json.dump({"tasks": [t.to_wme_dict() for t in q.all_tasks()]},
           open("./codegen-staging/task-queue.json", "w"), indent=2)
 print(f"injected {compose.task_id} depends_on={compose.depends_on}")
+print("pending_order:", ",".join(dependency_safe_order(q)))
 PY
 ```
+
+After running the snippet above, `task_queue.pending` MUST be written to `codegen-state.json` using the dependency-safe order printed above (the `pending_order:` line) so that COMPOSE (`T-999`) is always dispatched last. The IMPLEMENT loop reads `task_queue.pending[0]` — if this list is not in dependency-safe order, COMPOSE may be popped before its feature dependencies are done.
 
 ALWAYS inject exactly one COMPOSE task (`T-999`) depending on all feature tasks.
 NEVER hand-author composition as an optional feature task or omit it.
