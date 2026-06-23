@@ -28,3 +28,11 @@ def test_compose_runs_last_only_after_features_done():
     q.get("T-001").status = TaskStatus.DONE
     q.get("T-002").status = TaskStatus.DONE
     assert q.next_ready().task_id == COMPOSE_TASK_ID     # now COMPOSE is ready, last
+
+
+@pytest.mark.unit
+def test_decompose_phase_invokes_compose_injection():
+    import pathlib
+    spec = pathlib.Path("extension/workflow/phases/codegen-2-decompose.md").read_text()
+    assert "inject_compose_task" in spec
+    assert "T-999" in spec or "COMPOSE_TASK_ID" in spec
