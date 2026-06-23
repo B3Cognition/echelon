@@ -162,6 +162,7 @@ echelon_result:
   output_files:
     - ${STAGING_DIR}/user-intent.md
     - ${STAGING_DIR}/stakeholder-model.md
+  state_updates: {}
   journal_entries:
     - type: prediction
       phase: <current phase>

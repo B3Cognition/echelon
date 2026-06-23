@@ -311,6 +311,7 @@ echelon_result:
   verdict: APPROVED
   output_files:
     - {spec_dir}/code-review-report.md
+  state_updates: {}
   journal_entries:
     - type: review_finding
       phase: build

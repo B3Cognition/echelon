@@ -1043,6 +1043,8 @@ phases:
       - test-strategy.md (relevant section)
       - data-model.md (if present)
       - contracts/ (if present)
+    outputs:
+      - implementation/<file>
     transitions:
       - to: build-3-spec-guard
         condition: verdict in [DONE, DONE_WITH_CONCERNS]
@@ -1064,6 +1066,9 @@ phases:
       - files changed by speckit-echelon-implementer (IMPLEMENTER)
       - task definition (acceptance criteria, FR references)
       - spec.md (full, for cross-reference)
+    outputs:
+      - spec-compliance-report.md
+      - traceability-matrix.md
     transitions:
       - to: build-4-code-review
         condition: verdict = PASS
@@ -1085,6 +1090,8 @@ phases:
       - constitution.md
       - research.md (relevant ADRs)
       - existing codebase patterns (prior completed tasks)
+    outputs:
+      - code-review-report.md
     transitions:
       - to: build-5-test-guard
         condition: verdict = APPROVED
@@ -1109,6 +1116,8 @@ phases:
       - task acceptance criteria
       - test-strategy.md (relevant section)
       - coverage-map.md
+    outputs:
+      - test-quality-report.md
     transitions:
       - to: build-6-progress
         condition: verdict in [PASS, WARN]
@@ -1137,6 +1146,9 @@ phases:
       - knowledge-base/calibration-profile.yaml
       - knowledge-base/estimates-log.yaml
       - progress-report.md (current)
+    outputs:
+      - progress-report.md
+      - process-metrics.md
     transitions:
       - to: build-7-integration
         condition: phase_group_complete
@@ -1161,6 +1173,8 @@ phases:
       - contracts/
       - data-model.md (if present)
       - prior integration-report.md (if any)
+    outputs:
+      - integration-report.md
     transitions:
       - to: build-2-implement
         condition: verdict = PASS AND more_phase_groups

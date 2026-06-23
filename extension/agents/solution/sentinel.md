@@ -264,6 +264,7 @@ echelon_result:
     - {spec_dir}/test-strategy.md
     - {spec_dir}/test-architecture.md
     - {spec_dir}/coverage-map.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase3-sentinel

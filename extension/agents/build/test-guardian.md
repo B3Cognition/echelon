@@ -225,6 +225,7 @@ echelon_result:
   verdict: SUFFICIENT
   output_files:
     - {spec_dir}/test-quality-report.md
+  state_updates: {}
   journal_entries:
     - type: quality_check
       phase: build

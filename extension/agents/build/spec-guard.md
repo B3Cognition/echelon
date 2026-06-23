@@ -305,6 +305,7 @@ echelon_result:
   output_files:
     - {spec_dir}/spec-compliance-report.md
     - {spec_dir}/traceability-matrix.md
+  state_updates: {}
   journal_entries:
     - type: quality_check
       phase: build

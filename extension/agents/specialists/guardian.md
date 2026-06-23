@@ -204,6 +204,7 @@ echelon_result:
   output_files:
     - {spec_dir}/security-findings.md
     - {spec_dir}/risk-acceptance-log.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase3-specialists

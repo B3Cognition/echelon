@@ -123,6 +123,7 @@ echelon_result:
   verdict: COMPLETE
   output_files:
     - ${STAGING_DIR}/mental-model-code.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase1-discover

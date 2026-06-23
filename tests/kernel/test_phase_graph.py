@@ -92,6 +92,11 @@ class TestPhaseGraph:
         node = self.graph.get("phase1-discover")
         assert len(node.pre_dispatch) > 0
 
+    def test_phase1_discover_preserves_declared_outputs(self):
+        node = self.graph.get("phase1-discover")
+        assert "glossary.md" in node.outputs
+        assert "mental-model.md" in node.outputs
+
     def test_transitions_present(self):
         node = self.graph.get("phase1-discover")
         assert len(node.transitions) > 0

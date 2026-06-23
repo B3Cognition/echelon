@@ -635,6 +635,7 @@ echelon_result:
   output_files:
     - {spec_dir}/spec.md
     - {spec_dir}/00-overview.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase1-what

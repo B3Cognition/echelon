@@ -48,6 +48,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `knowledge-base/kb-schema.md` now points to the Python validator as the deterministic enforcement point for durable memory writes.
   - Focused tests added in `tests/unit/test_kb_schema_validator.py`.
   - Verification: `pytest tests/unit/test_kb_schema_validator.py -q` (`5 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-008 routed role contract validation** — added `src/harness/role_contracts.py` to validate routed squad roles against machine-checkable `echelon_result` and output declarations.
+  - `PhaseGraph` now preserves phase `outputs` from `extension/workflow/definition.yaml` so deterministic checks can inspect declared artifacts.
+  - Routed agent prompts now include explicit `state_updates: {}` in their final output templates when no state mutation is expected.
+  - Build-phase workflow nodes now declare outputs for implementation, spec-guard, code-review, test-guardian, progress, and integration roles.
+  - Focused tests added in `tests/unit/test_role_contracts.py` with coverage for missing result fields, missing declared outputs, and the shipped routed-role surface.
+  - Verification: `pytest tests/unit/test_role_contracts.py tests/kernel/test_phase_graph.py -q` (`18 passed`); `pytest tests/kernel -q` (`535 passed`).
 
 ## [2.1.0] - 2026-05-17
 

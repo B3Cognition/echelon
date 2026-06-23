@@ -308,6 +308,7 @@ echelon_result:
   verdict: <PASS | KILL | DEFER>
   output_files:
     - {spec_dir}/kill-report.md
+  state_updates: {}
   journal_entries:
     - type: assessment
       phase: <phase2-decide | phase3-consensus>
