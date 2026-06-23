@@ -36,6 +36,11 @@ from harness.fingerprint import fingerprint_repo, detect_playwright
 from harness.gitops import GitOpsManager
 from harness.image_resolver import resolve_image, ImageResolutionError
 from harness.paths import runs_dir, strategies_dir as _strategies_dir_fn, mirror_path as _mirror_path_fn
+from harness.sandbox_suggestion import (
+    SandboxSuggestionReport,
+    detect_sandbox_suggestion,
+    render_sandbox_suggestion_markdown,
+)
 from harness.verify_detection import VerifyDetectionResult, detect_verify_command
 
 logger = logging.getLogger(__name__)
@@ -149,6 +154,27 @@ def _apply_verify_command_detection(
         result=detect_verify_command(repo_path),
     )
 
+
+def _write_sandbox_suggestion_report(
+    config_file: Path,
+    report: SandboxSuggestionReport,
+) -> SandboxSuggestionReport:
+    """Merge the sandbox suggestion report into echelon-config.yml."""
+    if yaml is None:
+        return report
+
+    existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    harness = existing.setdefault("harness", {})
+    harness["sandbox_suggestion"] = report.to_dict()
+    config_file.write_text(
+        yaml.dump(existing, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
+    config_file.with_name("sandbox-suggestion.md").write_text(
+        render_sandbox_suggestion_markdown(report) + "\n",
+        encoding="utf-8",
+    )
+    return report
 
 
 def _resolve_container_cli(base: Optional[Path] = None) -> str:
@@ -410,6 +436,13 @@ def init_harness(
         confidence="none",
         reason="fingerprint worktree unavailable",
     )
+    sandbox_suggestion = SandboxSuggestionReport(
+        confidence="low",
+        confidence_score=0.0,
+        suggested_strategy="Fingerprint worktree unavailable.",
+        human_approval_point="Review sandbox settings manually before execution.",
+        fallback_path="Add explicit harness settings to echelon-config.yml.",
+    )
 
     try:
         # Step 8: Language/framework fingerprint
@@ -425,6 +458,16 @@ def init_harness(
             logger.info("Detected harness.app runtime: %s", app_detection.profile)
         else:
             logger.info("No harness.app runtime detected: %s", app_detection.reason)
+        sandbox_suggestion = detect_sandbox_suggestion(
+            Path(worktree_path),
+            verify_detection=verify_detection,
+            app_detection=app_detection,
+        )
+        logger.info(
+            "Sandbox suggestion: %s (confidence %.2f)",
+            sandbox_suggestion.confidence,
+            sandbox_suggestion.confidence_score,
+        )
 
         # Step 9: Image resolution
         try:
@@ -532,6 +575,7 @@ def init_harness(
 
     verify_detection = _write_verify_command_detection(config_file, verify_detection)
     app_detection = _write_app_runtime_detection(config_file, app_detection)
+    _write_sandbox_suggestion_report(config_file, sandbox_suggestion)
     logger.info("Harness config written to %s (harness: section)", config_file)
 
     # Create runs/ and strategies dir so codegen preflight finds them without noise

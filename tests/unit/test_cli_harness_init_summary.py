@@ -35,6 +35,27 @@ class TestHarnessInitDetectionFields:
         assert ("Verify", "npm test (auto-detected)") in fields
         assert ("App runtime", "frontend via command at http://localhost:3000 (auto-detected)") in fields
 
+    def test_reports_sandbox_suggestion_approval_point(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "harness:\n"
+            "  sandbox_suggestion:\n"
+            "    confidence: high\n"
+            "    confidence_score: 0.95\n"
+            "    suggested_strategy: Use the Docker-backed harness sandbox.\n"
+            "    human_approval_point: Before dependency install or app execution, approve the sandbox plan.\n",
+            encoding="utf-8",
+        )
+
+        fields = _harness_init_detection_fields(config_file)
+
+        assert (
+            "Sandbox",
+            "high (0.95) - Use the Docker-backed harness sandbox. Approval: Before dependency install or app execution, approve the sandbox plan.",
+        ) in fields
+        assert ("Sandbox report", str(config_file.with_name("sandbox-suggestion.md"))) in fields
+
     def test_reports_detection_reasons_when_harness_declines(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         config_file.parent.mkdir(parents=True)

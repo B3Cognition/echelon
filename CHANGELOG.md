@@ -20,6 +20,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `phase4-document` blocks the squad run with `phase_a_readiness_failed` instead of finalizing incomplete Phase A output.
   - Focused tests added in `tests/unit/test_phase_a_readiness.py`, `tests/unit/test_cli_next_step_escalation.py`, `tests/unit/test_cli_continue.py`, and `tests/integration/test_squad_controller.py`.
   - Verification: `pytest tests/unit/test_phase_a_readiness.py tests/unit/test_cli_next_step_escalation.py tests/unit/test_run_readiness.py tests/unit/test_cli_continue.py tests/integration/test_squad_controller.py -q` (`83 passed`); `pytest tests/kernel -q` (`532 passed`). Broader `pytest tests/unit tests/kernel tests/integration/test_squad_controller.py -q` collection is blocked in this environment by missing existing dependencies `freezegun` and `lark`.
+- **EGR-004 sandbox suggestion report** — added a deterministic `harness.sandbox_suggestion` report before risky dependency install or app execution decisions.
+  - The report records repository evidence, confidence label and score, suggested strategy and commands, risks, an explicit human approval point, and a fallback path for manual config.
+  - `echelon harness init` now persists the structured report under `harness.sandbox_suggestion`, writes `sandbox-suggestion.md`, and surfaces its confidence and approval point in the init summary.
+  - Focused tests added in `tests/unit/test_sandbox_suggestion.py` and `tests/unit/test_cli_harness_init_summary.py`.
+  - Verification: `pytest tests/unit/test_sandbox_suggestion.py tests/unit/test_cli_harness_init_summary.py tests/unit/test_harness_init_verify.py tests/unit/test_harness_init_app_runtime.py tests/unit/test_init.py -q` (`20 passed`); `pytest tests/kernel -q` (`534 passed`).
 - **EGR-005 typed blocked decisions** — blocked squad runs now persist machine-readable `blocked_decision` data alongside the existing human-readable escalation question.
   - Captures answer type (`free_text` or `choice`), normalized options, recommended/default answer when present, supported risk levels, blocked phase/reason, and stable blocked-at metadata.
   - `echelon resume` now records `resume_metadata`, marks the blocked decision resolved, preserves existing choice-option routing, and supports free-text blocked decisions without requiring executable options.

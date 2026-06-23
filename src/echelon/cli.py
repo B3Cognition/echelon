@@ -530,6 +530,20 @@ def _harness_init_detection_fields(config_file: Path) -> list[tuple[str, str]]:
         detail = f"{status}: {app_reason}" if app_reason else status
         fields.append(("App runtime", f"not configured - {detail}"))
 
+    sandbox_raw = harness_raw.get("sandbox_suggestion")
+    if isinstance(sandbox_raw, dict) and sandbox_raw:
+        confidence = sandbox_raw.get("confidence", "unknown")
+        score = sandbox_raw.get("confidence_score", 0.0)
+        strategy = sandbox_raw.get("suggested_strategy", "review sandbox suggestion")
+        approval = sandbox_raw.get("human_approval_point", "review before execution")
+        fields.append(
+            (
+                "Sandbox",
+                f"{confidence} ({float(score):.2f}) - {strategy} Approval: {approval}",
+            )
+        )
+        fields.append(("Sandbox report", str(config_file.with_name("sandbox-suggestion.md"))))
+
     return fields
 
 
