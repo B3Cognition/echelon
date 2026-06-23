@@ -16,7 +16,7 @@ mvn test 2>&1 | tee ./codegen-staging/test-results.log                          
 
 Inject `test-result` WMEs into SOAR.
 
-- All pass: `tier1_gate: "pass"` → ADVANCE to DELIVER
+- All pass: `tier1_gate: "pass"` → ADVANCE to SECURITY (then RUNNABLE, then DELIVER)
 - Any fail: RETRY (back to IMPLEMENT) or ESCALATE
 
 ```bash

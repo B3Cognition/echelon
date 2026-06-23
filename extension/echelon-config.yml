@@ -408,6 +408,15 @@ build:
     browser: chromium
 
 # =============================================================================
+# RUNNABLE GATE — codegen Phase 6c: composed-whole liveness + surface gate
+# =============================================================================
+
+runnable:
+  max_attempts: 3        # COMPOSE reopen→rebuild→re-verify cap on L1 failure
+  on_exhausted: block    # block | warn — block: a non-bootable app is not shippable
+  l2_hard: false         # when true, L2 surface-presence also hard-gates (ramp)
+
+# =============================================================================
 # SPECIALISTS — More active, always security
 # =============================================================================
 
