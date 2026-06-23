@@ -54,6 +54,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Build-phase workflow nodes now declare outputs for implementation, spec-guard, code-review, test-guardian, progress, and integration roles.
   - Focused tests added in `tests/unit/test_role_contracts.py` with coverage for missing result fields, missing declared outputs, and the shipped routed-role surface.
   - Verification: `pytest tests/unit/test_role_contracts.py tests/kernel/test_phase_graph.py -q` (`18 passed`); `pytest tests/kernel -q` (`535 passed`).
+- **EGR-010 deterministic GitOps secret scan gate** — added `src/harness/secret_scan.py` to detect high-confidence secret patterns before GitOps commits.
+  - `GitOpsManager.commit()` now stages changes, scans the staged file set, and blocks the commit with a sanitized error summary when findings are present.
+  - The scanner covers GitHub tokens, GitLab personal access tokens, AWS access key IDs, Slack tokens, and private-key headers while skipping binary files and never storing matched secret text in findings.
+  - Focused tests added in `tests/unit/test_secret_scan.py`; `tests/integration/test_gitops_safety.py` now covers secret-scan commit blocking.
+  - Verification: `pytest tests/unit/test_secret_scan.py tests/integration/test_gitops_safety.py::TestSecretScanGate -q` (`5 passed`); `pytest tests/integration/test_gitops_safety.py tests/integration/test_gitops_commit_push.py tests/unit/test_secret_scan.py -q` (`11 passed`); `pytest tests/kernel -q` (`535 passed`).
 
 ## [2.1.0] - 2026-05-17
 
