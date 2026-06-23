@@ -4,6 +4,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Documented the EGR completion gate: every implemented EGR now requires a
+  matching `[Unreleased]` changelog entry, register update, and verification
+  notes before the work is considered complete.
+
 ## [2.1.0] - 2026-05-17
 
 ### Added

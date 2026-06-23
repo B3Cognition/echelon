@@ -29,13 +29,31 @@ When the repo changes:
    memory, or CLI boundaries changed substantially.
 4. For each affected finding, update `Evidence`, `Status`, `Next action`, and
    `Review notes`.
-5. Advance `Last delta review HEAD` after the delta review is complete.
+5. Confirm any implemented EGR has a corresponding `CHANGELOG.md` entry under
+   `[Unreleased]`.
+6. Advance `Last delta review HEAD` after the delta review is complete.
 
 Suggested command:
 
 ```bash
 git diff eeb490899655c0796ec9d9c187eb52fe1195427f..HEAD -- src extension docs tests
 ```
+
+### EGR Completion Gate
+
+An EGR implementation is not complete until the same change set includes:
+
+- Source and test changes for the finding.
+- A `CHANGELOG.md` `[Unreleased]` entry that names the EGR ID and explains the
+  user-visible or operator-visible impact.
+- This register updated with the finding status, evidence, and review note.
+- Verification commands and outcomes captured in the implementation thread or PR
+  description.
+
+This is deliberately part of the EGR contract rather than an optional release
+cleanup step: EGR work usually changes safety, harness behavior, or operating
+assumptions, so downstream operators need the change surfaced in the changelog at
+the same time as the code lands.
 
 ## Current Findings
 
@@ -107,6 +125,8 @@ for every agent dispatch before applying `state_updates`.
   debug path when available.
 - Tests cover valid output, malformed output, bad types, reserved keys, and
   blocking behavior before `SquadStateStore.advance`.
+- `CHANGELOG.md` `[Unreleased]` mentions `EGR-001` and summarizes the validation
+  behavior change.
 
 **Likely implementation sequence:**
 
@@ -123,4 +143,3 @@ for every agent dispatch before applying `state_updates`.
 | Date | Reviewed HEAD | Notes |
 |---|---|---|
 | 2026-06-23 | `eeb490899655c0796ec9d9c187eb52fe1195427f` | Initial grounded review register created from repository evidence. |
-
