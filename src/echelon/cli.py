@@ -2835,6 +2835,10 @@ def _cmd_resume(
 ) -> None:
     """Provide user answers to an escalation-blocked squad run and continue it."""
     from harness.config import get_full_resolved_config, load_config
+    from harness.blocked_decision import (
+        ensure_blocked_decision,
+        mark_blocked_decision_resolved,
+    )
     from harness.phase_graph import PhaseGraph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
@@ -2875,6 +2879,7 @@ def _cmd_resume(
             file=sys.stderr,
         )
         sys.exit(1)
+    ensure_blocked_decision(state)
 
     _banner("RESUMING SQUAD RUN", [
         ("Run ID", state.get("run_id", "?")),
@@ -2906,21 +2911,17 @@ def _cmd_resume(
         ext_dir / "extension.yml",
     )
     raw_options = state.get("escalation_options")
-    if not isinstance(raw_options, list) or not raw_options:
-        print(
-            "✗ Cannot resume: blocked run is missing executable escalation_options.\n"
-            "  Re-run the producing phase after updating COMMANDER prompts, or rewind to a safe phase.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    selected_option = _resolve_escalation_option(answer, raw_options)
-    if selected_option is None:
-        print(
-            "✗ Your answer does not match any executable escalation option.\n"
-            "  Answer with A/B/C, the option id, or the option label shown in the escalation.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    has_structured_options = isinstance(raw_options, list) and bool(raw_options)
+    selected_option = None
+    if has_structured_options:
+        selected_option = _resolve_escalation_option(answer, raw_options)
+        if selected_option is None:
+            print(
+                "✗ Your answer does not match any executable escalation option.\n"
+                "  Answer with A/B/C, the option id, or the option label shown in the escalation.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     if selected_option:
         next_phase = str(selected_option.get("next_phase") or "").strip()
         if next_phase:
@@ -2936,6 +2937,14 @@ def _cmd_resume(
         option_id = str(selected_option.get("id") or selected_option.get("label") or "").strip()
         if option_id:
             state["escalation_selected_option"] = option_id
+
+    resumed_phase = str(state.get("phase", "")).strip()
+    mark_blocked_decision_resolved(
+        state,
+        answer=answer,
+        selected_option=selected_option,
+        resumed_phase=resumed_phase,
+    )
 
     # Clear the blocked state.
     state["escalation_question"] = None

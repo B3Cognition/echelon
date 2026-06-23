@@ -20,6 +20,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `phase4-document` blocks the squad run with `phase_a_readiness_failed` instead of finalizing incomplete Phase A output.
   - Focused tests added in `tests/unit/test_phase_a_readiness.py`, `tests/unit/test_cli_next_step_escalation.py`, `tests/unit/test_cli_continue.py`, and `tests/integration/test_squad_controller.py`.
   - Verification: `pytest tests/unit/test_phase_a_readiness.py tests/unit/test_cli_next_step_escalation.py tests/unit/test_run_readiness.py tests/unit/test_cli_continue.py tests/integration/test_squad_controller.py -q` (`83 passed`); `pytest tests/kernel -q` (`532 passed`). Broader `pytest tests/unit tests/kernel tests/integration/test_squad_controller.py -q` collection is blocked in this environment by missing existing dependencies `freezegun` and `lark`.
+- **EGR-005 typed blocked decisions** — blocked squad runs now persist machine-readable `blocked_decision` data alongside the existing human-readable escalation question.
+  - Captures answer type (`free_text` or `choice`), normalized options, recommended/default answer when present, supported risk levels, blocked phase/reason, and stable blocked-at metadata.
+  - `echelon resume` now records `resume_metadata`, marks the blocked decision resolved, preserves existing choice-option routing, and supports free-text blocked decisions without requiring executable options.
+  - File-based harness escalations now include JSON `Decision Metadata` and `Resume Metadata` sections while preserving the Markdown answer flow.
+  - Focused tests added in `tests/unit/test_blocked_decision.py`, `tests/unit/test_escalation.py`, `tests/unit/test_cli_resume_escalation_options.py`, and `tests/kernel/test_squad_state.py`.
+  - Verification: `pytest tests/unit/test_blocked_decision.py tests/unit/test_escalation.py tests/unit/test_cli_resume_escalation_options.py tests/unit/test_cli_continue.py tests/unit/test_cli_next_step_escalation.py tests/kernel/test_squad_state.py tests/integration/test_squad_controller.py -q` (`145 passed`); `pytest tests/kernel -q` (`534 passed`).
 
 ## [2.1.0] - 2026-05-17
 

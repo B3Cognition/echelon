@@ -145,6 +145,60 @@ class TestSquadStateStore:
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "understanding unavailable"
 
+    def test_save_persists_typed_blocked_decision_for_escalation(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-why1")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "consecutive_why_fails",
+                "escalation_question": "What constraint should CARTOGRAPHER apply?",
+            }
+        )
+
+        store.save(state)
+
+        reloaded = SquadStateStore(tmp_path / "squad/run-test").load()
+        assert reloaded["blocked_decision"]["answer_type"] == "free_text"
+        assert reloaded["blocked_decision"]["question"] == (
+            "What constraint should CARTOGRAPHER apply?"
+        )
+        assert reloaded["blocked_decision"]["blocked_phase"] == "phase1-why1"
+        assert reloaded["blocked_decision"]["blocked_reason"] == "consecutive_why_fails"
+
+    def test_save_persists_choice_blocked_decision_for_escalation_options(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "checkpoint-assess")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "human_gate",
+                "escalation_question": "A: return\nB: proceed",
+                "escalation_options": [
+                    {
+                        "id": "return_to_what",
+                        "label": "Return to WHAT",
+                        "next_phase": "phase1-what",
+                        "recommended": True,
+                    },
+                    {
+                        "id": "proceed",
+                        "label": "Proceed",
+                        "next_phase": "phase2-decide",
+                    },
+                ],
+            }
+        )
+
+        store.save(state)
+
+        decision = SquadStateStore(tmp_path / "squad/run-test").load()["blocked_decision"]
+        assert decision["answer_type"] == "choice"
+        assert decision["recommended_answer"] == "return_to_what"
+        assert decision["options"][0]["id"] == "return_to_what"
+
 
 def test_store_creates_squad_and_staging_dirs(tmp_path):
     from harness.squad_state import SquadStateStore

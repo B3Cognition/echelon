@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from harness.blocked_decision import ensure_blocked_decision
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
@@ -64,6 +65,7 @@ class SquadStateStore:
             except json.JSONDecodeError:
                 pass
 
+        ensure_blocked_decision(state)
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         content = json.dumps(state, indent=2)
         fd, tmp = tempfile.mkstemp(

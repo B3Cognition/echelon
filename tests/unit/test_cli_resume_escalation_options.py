@@ -116,6 +116,12 @@ def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatc
     assert state["phase"] == "phase1-what"
     assert state["escalation_resolved"] is True
     assert state["escalation_selected_option"] == "route_back_to_what"
+    assert state["resume_metadata"]["answer_type"] == "choice"
+    assert state["resume_metadata"]["selected_option_id"] == "route_back_to_what"
+    assert state["resume_metadata"]["blocked_phase"] == "checkpoint-assess"
+    assert state["resume_metadata"]["resumed_phase"] == "phase1-what"
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["blocked_decision"]["resolved_by"] == "user"
     assert state["escalation_question"] is None
 
 
@@ -186,23 +192,70 @@ def test_resume_rejects_unmatched_answer_when_structured_options_exist(
     assert "does not match any executable escalation option" in captured.err
 
 
-def test_resume_rejects_legacy_text_only_escalation(
+def test_resume_accepts_free_text_decision_without_options(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from echelon.cli import _cmd_resume
 
     run_dir = _write_blocked_run(tmp_path, options=[])
     _patch_resume_dependencies(monkeypatch)
 
-    with pytest.raises(SystemExit) as exc:
-        _cmd_resume(["A"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+    _cmd_resume(
+        ["Use a narrower audience and keep missions under 10 minutes."],
+        project_root=tmp_path,
+        ext_dir=Path.cwd() / "extension",
+    )
 
-    assert exc.value.code == 1
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "blocked"
+    assert state["status"] == "running"
     assert state["phase"] == "checkpoint-assess"
-    assert state["escalation_question"] == "A: return to WHAT\nB: proceed"
-    captured = capsys.readouterr()
-    assert "missing executable escalation_options" in captured.err
+    assert state["escalation_question"] is None
+    assert state["blocked_decision"]["answer_type"] == "free_text"
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["resume_metadata"]["answer_type"] == "free_text"
+    assert state["resume_metadata"]["answer_text"] == (
+        "Use a narrower audience and keep missions under 10 minutes."
+    )
+
+
+def test_resume_uses_existing_blocked_decision_after_process_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(
+        tmp_path,
+        [
+            {
+                "id": "proceed_anyway",
+                "label": "Proceed to DECIDE",
+                "next_phase": "phase2-decide",
+            }
+        ],
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["blocked_decision"] = {
+        "schema_version": 1,
+        "status": "pending",
+        "answer_type": "choice",
+        "question": state["escalation_question"],
+        "blocked_reason": state["blocked_reason"],
+        "blocked_phase": state["phase"],
+        "blocked_at": "2026-06-23T10:00:00+00:00",
+        "options": state["escalation_options"],
+        "recommended_answer": "proceed_anyway",
+        "default_answer": "proceed_anyway",
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _patch_resume_dependencies(monkeypatch)
+
+    _cmd_resume(["proceed_anyway"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed["phase"] == "phase2-decide"
+    assert resumed["blocked_decision"]["blocked_at"] == "2026-06-23T10:00:00+00:00"
+    assert resumed["blocked_decision"]["status"] == "resolved"
+    assert resumed["resume_metadata"]["selected_option_id"] == "proceed_anyway"

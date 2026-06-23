@@ -10,6 +10,7 @@ Per T030 task specification:
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,13 @@ from harness.escalation import (
     InvalidCategoryError,
     VALID_CATEGORIES,
 )
+
+
+def _json_section(content: str, heading: str) -> dict:
+    start = content.index(f"## {heading}")
+    fence_start = content.index("```json", start) + len("```json")
+    fence_end = content.index("```", fence_start)
+    return json.loads(content[fence_start:fence_end].strip())
 
 
 @pytest.fixture
@@ -77,6 +85,26 @@ class TestEscalationFileCreation:
         assert "## Recommended Answer" in content
         assert "## Last Verify Result" in content
         assert "/speckit-harness-resume" in content
+
+    def test_file_contains_machine_readable_decision_metadata(
+        self, handler: EscalationHandler
+    ) -> None:
+        filepath = handler.escalate(
+            spec_id="012",
+            strategy_id="aggressive",
+            category="infra_failure",
+            context="Docker daemon not responding",
+            question="Should we retry or abort?",
+            options_considered=["Retry after 30s", "Abort and notify"],
+            recommended_answer="Retry after 30s",
+        )
+
+        metadata = _json_section(Path(filepath).read_text(encoding="utf-8"), "Decision Metadata")
+        assert metadata["schema_version"] == 1
+        assert metadata["answer_type"] == "free_text"
+        assert metadata["question"] == "Should we retry or abort?"
+        assert metadata["options_considered"] == ["Retry after 30s", "Abort and notify"]
+        assert metadata["recommended_answer"] == "Retry after 30s"
 
     def test_banner_printed_to_stderr(
         self, handler: EscalationHandler, capsys: pytest.CaptureFixture
@@ -214,3 +242,19 @@ class TestResume:
         answer = handler.check_resume(filepath)
         assert answer is not None
         assert "Switch to mock provider" in answer
+
+    def test_resume_appends_machine_readable_resume_metadata(
+        self, handler: EscalationHandler
+    ) -> None:
+        filepath = handler.escalate(
+            spec_id="012",
+            strategy_id="default",
+            category="same_failure_repeat",
+            context="test",
+        )
+        handler.resume(filepath, "Switch to mock provider")
+
+        metadata = _json_section(Path(filepath).read_text(encoding="utf-8"), "Resume Metadata")
+        assert metadata["schema_version"] == 1
+        assert metadata["answer_type"] == "free_text"
+        assert metadata["answer"] == "Switch to mock provider"
