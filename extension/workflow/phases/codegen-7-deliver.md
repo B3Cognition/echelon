@@ -14,6 +14,19 @@ HALT and route back to RUNNABLE — a non-bootable / hollow app is never shippab
 regardless of Ψ or unit-test status.
 
 1. Write `./codegen-report.md` — human-readable summary with requirement citations per delivered feature.
+1b. **Write `./codegen-verification.md` — the honest verification-boundary manifest, and print its terminal summary.** Every gate is a proxy; this states what each did NOT bind so the green checks are not mistaken for a working system. Lead the human with the gaps, not the verdict:
+   ```bash
+   python3 - <<'PY'
+   import json
+   from codegen.delivery.verification_manifest import build_manifest, render_markdown, terminal_summary
+   state = json.load(open("codegen-state.json"))
+   m = build_manifest(state)
+   open("codegen-verification.md", "w").write(render_markdown(m))
+   print(terminal_summary(m))
+   PY
+   ```
+   ALWAYS emit `codegen-verification.md` and surface its "NOT verified" set at DELIVER.
+   NEVER report the build as "complete" or "verified" — DELIVER produces a *claim*; only a human observing the running artifact converts it to a fact.
 2. Export EPMEM:
    ```bash
    codegen gate --phase DELIVER --language <language> --files <files> --state-file codegen-state.json
@@ -46,14 +59,20 @@ write_state "done" "build_done" $TOTAL_TASKS null '"PASS"'
 
 ## Terminal Summary
 
+Print the verification terminal summary (step 1b) FIRST — the unverified
+boundaries lead, before the green banner — so the reader sees the gaps before the
+checkmarks. The banner below reports *claims*, not a verdict of correctness.
+
 ```
 ╔══════════════════════════════════════════════════════╗
-║         CODEGEN — Pipeline Summary                   ║
+║         CODEGEN — Pipeline Summary (claims)          ║
 ╠══════════════════════════════════════════════════════╣
 ║ Pipeline ID : <pipeline_id>                          ║
 ║ Wing        : <wing>                                 ║
 ║ Feature     : <feature_path>                         ║
-║ Final phase : <DELIVER|BLOCKED|ESCALATED>            ║
+║ Outcome     : <DELIVERED|BLOCKED|ESCALATED>          ║
+║ Verified by human: NO — required before trusting     ║
+║ Boundaries not gated: see codegen-verification.md    ║
 ╠══════════════════════════════════════════════════════╣
 ║ Requirements: <N> retrieved from MemPalace           ║
 ║ Ψ score     : <score> (threshold 0.70)               ║
