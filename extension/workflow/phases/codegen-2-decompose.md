@@ -44,9 +44,10 @@ for t in data["tasks"]:
     q.add(CodeTask(task_id=t["task-id"], description=t["description"], scope=t["scope"],
                    language=t["language"], module_boundary=t["module-boundary"],
                    depends_on=[d for d in t["depends-on"].split(",") if d]))
-language = q.all_tasks[0].language if q.all_tasks else "typescript"
+_tasks = q.all_tasks()
+language = _tasks[0].language if _tasks else "typescript"
 compose = inject_compose_task(q, language=language)
-json.dump({"tasks": [t.to_wme_dict() for t in q.all_tasks]},
+json.dump({"tasks": [t.to_wme_dict() for t in q.all_tasks()]},
           open("./codegen-staging/task-queue.json", "w"), indent=2)
 print(f"injected {compose.task_id} depends_on={compose.depends_on}")
 PY
