@@ -38,6 +38,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - File-based harness escalations now include JSON `Decision Metadata` and `Resume Metadata` sections while preserving the Markdown answer flow.
   - Focused tests added in `tests/unit/test_blocked_decision.py`, `tests/unit/test_escalation.py`, `tests/unit/test_cli_resume_escalation_options.py`, and `tests/kernel/test_squad_state.py`.
   - Verification: `pytest tests/unit/test_blocked_decision.py tests/unit/test_escalation.py tests/unit/test_cli_resume_escalation_options.py tests/unit/test_cli_continue.py tests/unit/test_cli_next_step_escalation.py tests/kernel/test_squad_state.py tests/integration/test_squad_controller.py -q` (`145 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-006 reusable repair-loop primitive** — added `src/harness/repair_loop.py` as a deterministic Draft output -> Critique -> Repair -> Re-check -> Accept / Block / Exhaust substrate for harness feedback loops.
+  - The primitive is LLM-agnostic: callers provide critique, repair, and re-check functions while the harness bounds iterations, records structured events, tracks token counts, and blocks repeated critique signatures before infinite loops.
+  - This intentionally lands as a small substrate first; Ralph/review-loop controller rewiring can now use a tested primitive instead of introducing a risky large-controller refactor.
+  - Focused tests added in `tests/unit/test_repair_loop.py`.
+  - Verification: `pytest tests/unit/test_repair_loop.py -q` (`4 passed`); `pytest tests/kernel -q` (`534 passed`).
 
 ## [2.1.0] - 2026-05-17
 
