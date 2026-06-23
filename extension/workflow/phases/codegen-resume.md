@@ -46,6 +46,11 @@ Tier 1 gate : <tier1_gate>
 
 Always jump to `current_phase`. Do NOT re-mine specs — MemPalace already has them.
 
+Resumable phase names (as stored in `codegen-state.json` `.current_phase`):
+`re`, `decompose`, `implement`, `gate`, `test`, `security`, `runnable`, `deliver`.
+If `current_phase == "runnable"`, resume at Phase 6c (RUNNABLE) — re-run the
+runnable gate from scratch; do NOT skip it on resume.
+
 ---
 
 ## Error Handling

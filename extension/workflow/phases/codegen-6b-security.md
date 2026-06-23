@@ -36,7 +36,7 @@ Permitted: `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, `Unlicens
 
 **Gate outcome:**
 
-- All checks pass → `security_gate: "pass"` → ADVANCE to DELIVER
+- All checks pass → `security_gate: "pass"` → ADVANCE to RUNNABLE
 - Any vulnerability found → `security_gate: "fail"` → record in `codegen-state.json`, print the finding, HALT. Always escalate security vulnerabilities or license violations to human. Do not auto-fix them.
 - Any non-permissive license found → `security_gate: "license_fail"` → same: HALT and escalate. Document exception in `{spec_dir}/license-exceptions.md` if approved.
 

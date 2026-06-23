@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.codegen
-description: "SOAR-powered build pipeline for echelon — Phase A validation, MemPalace mining, strategy registration, then RE → DECOMPOSE → IMPLEMENT → GATE → TEST → DELIVER"
+description: "SOAR-powered build pipeline for echelon — Phase A validation, MemPalace mining, strategy registration, then RE → DECOMPOSE → IMPLEMENT → GATE → TEST → SECURITY → RUNNABLE → DELIVER"
 tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---
 
@@ -90,6 +90,7 @@ Otherwise execute in order:
 7. `workflow/phases/codegen-5-impasse.md` — Phase 5: Conflict Impasse (fires on impasse only, not sequentially)
 8. `workflow/phases/codegen-6-test.md` — Phase 6: TEST Tier 1 gate
 9. `workflow/phases/codegen-6b-security.md` — Phase 6b: SECURITY scan + license gate
-10. `workflow/phases/codegen-7-deliver.md` — Phase 7: DELIVER + terminal summary + harness integration
+10. `workflow/phases/codegen-6c-runnable.md` — Phase 6c: RUNNABLE — composed-whole gate (boots + primary surface; blocks DELIVER)
+11. `workflow/phases/codegen-7-deliver.md` — Phase 7: DELIVER + terminal summary + harness integration
 
 On any error condition: consult `workflow/phases/codegen-resume.md` §Error Handling.

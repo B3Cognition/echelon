@@ -6,7 +6,7 @@
 
 **Print:** `[CODEGEN] Phase RUNNABLE — Verifying the composed app boots and its primary surface renders...`
 
-Runs AFTER TEST, BEFORE SECURITY/DELIVER. Skill-layer phase (NOT the Ψ `codegen gate`).
+Runs AFTER SECURITY, BEFORE DELIVER. Skill-layer phase (NOT the Ψ `codegen gate`).
 Execute in an ephemeral workspace with an OS-assigned port and a teardown trap that
 fires on pass/fail/timeout (no leaked servers or browsers).
 
@@ -29,7 +29,7 @@ PY
 ```
 
 3. **L1 = liveness AND primary_surface.** Outcome:
-   - `runnable_gate: pass` → ADVANCE to SECURITY/DELIVER.
+   - `runnable_gate: pass` → ADVANCE to DELIVER.
    - `runnable_gate: fail` → **reopen the COMPOSE task** (`T-999` → status `PENDING`) with the
      failure as the re-dispatch reason, route back to IMPLEMENT. Cap at `runnable.max_attempts`
      (default 3); on exhaustion ESCALATE per `runnable.on_exhausted` (default `block`).
