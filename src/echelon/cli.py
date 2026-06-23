@@ -23,6 +23,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from harness.phase_a_readiness import validate_phase_a_readiness
+
 try:
     from codegen.memory.collision import check_wing_collision
 except ImportError:
@@ -1533,6 +1535,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     # the build-harness target, not the source of truth for an in-progress squad.
     specs_root = project_root / "specs"
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    published_spec_dir: Path | None = None
     if result_status == "done":
         published_spec_dir = _published_continue_spec_dir(project_root, current_state)
         if published_spec_dir and (published_spec_dir / "tasks.md").exists():
@@ -1692,6 +1695,24 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             "tasks.md absent — ORCHESTRATOR (phase3-plan) has not run\n"
             "     → echelon continue"
         )
+
+    readiness_state = dict(run_state or current_state)
+    readiness_state["status"] = result_status
+    if run_state.get("blocked_reason"):
+        readiness_state["blocked_reason"] = run_state.get("blocked_reason")
+    readiness = validate_phase_a_readiness(
+        readiness_state,
+        _phase_a_readiness_candidate_dirs(
+            project_root,
+            readiness_state,
+            run_dir,
+            active_spec_dir=active_spec_dir,
+            published_spec_dir=published_spec_dir,
+        ),
+    )
+    for blocker in readiness.blockers:
+        if blocker not in blockers:
+            blockers.append(blocker)
 
     # 5. Blocked run — surface escalation context and improvement recommendations
     if result_status == "blocked":
@@ -2292,6 +2313,47 @@ def _published_continue_spec_dir(project_root: Path, current_state: dict) -> Pat
     return None
 
 
+def _phase_a_readiness_candidate_dirs(
+    project_root: Path,
+    current_state: dict,
+    run_dir: Path | None,
+    active_spec_dir: Path | None = None,
+    published_spec_dir: Path | None = None,
+) -> list[Path]:
+    """Return deterministic spec-dir candidates for Phase A build inputs."""
+    candidates: list[Path] = []
+
+    def add(candidate: Path | None) -> None:
+        if candidate is None:
+            return
+        path = candidate if candidate.is_absolute() else project_root / candidate
+        if path not in candidates:
+            candidates.append(path)
+
+    add(active_spec_dir)
+    add(published_spec_dir)
+
+    spec_id = str(current_state.get("spec_id") or "").strip()
+    if spec_id:
+        add(project_root / "specs" / spec_id)
+        if run_dir is not None:
+            add(run_dir / "specs" / spec_id)
+
+    for key in ("published_spec_dir", "spec_dir"):
+        ref = str(current_state.get(key) or "").strip()
+        if not ref:
+            continue
+        add(Path(ref))
+
+    staging_ref = str(current_state.get("staging_dir") or "").strip()
+    if staging_ref:
+        add(Path(staging_ref))
+    elif run_dir is not None:
+        add(run_dir / "staging")
+
+    return candidates
+
+
 def _next_continue_phase(project_root: Path) -> Optional[str]:
     """Return the phase ID to continue from, or None when build is ready.
 
@@ -2384,6 +2446,25 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if active_spec_dir is None:
         return "phase1-what"
 
+    readiness = validate_phase_a_readiness(
+        current_state,
+        _phase_a_readiness_candidate_dirs(
+            project_root,
+            current_state,
+            run_dir,
+            active_spec_dir=active_spec_dir,
+            published_spec_dir=_published_continue_spec_dir(project_root, current_state),
+        ),
+    )
+    if not readiness.ready:
+        if "spec.md" in readiness.missing:
+            return "phase1-what"
+        if any(name in readiness.missing for name in ("plan.md", "research.md", "data-model.md")):
+            return "phase3-how"
+        if "tasks.md" in readiness.missing:
+            return "phase3-plan"
+        return "phase1-what"
+
     return None  # build is ready
 
 
@@ -2403,15 +2484,16 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     run_dir = _find_current_run_dir(project_root)
     spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
     published_spec_dir = _published_continue_spec_dir(project_root, current_state)
-    if published_spec_dir and all(
-        (published_spec_dir / name).exists()
-        for name in ("plan.md", "research.md", "data-model.md", "tasks.md")
-    ):
-        return True
-    if spec_dir is None:
-        return False
-
-    return all((spec_dir / name).exists() for name in ("plan.md", "research.md", "data-model.md", "tasks.md"))
+    return validate_phase_a_readiness(
+        current_state,
+        _phase_a_readiness_candidate_dirs(
+            project_root,
+            current_state,
+            run_dir,
+            active_spec_dir=spec_dir,
+            published_spec_dir=published_spec_dir,
+        ),
+    ).ready
 
 
 def _cmd_status(project_root: Path) -> None:

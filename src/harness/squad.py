@@ -12,6 +12,7 @@ from typing import Optional
 
 from harness.condition_evaluator import ConditionEvaluator
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
@@ -474,6 +475,15 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
 
             next_phase = self._evaluate_transitions(node, result)
+            if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+                readiness = validate_phase_a_readiness(
+                    self._state_store.load(),
+                    self._phase_a_readiness_candidate_dirs(),
+                )
+                if not readiness.ready:
+                    self._block_after_phase_a_readiness_failure(readiness)
+                    return SquadResult.from_state(self._state_store.load())
+
             self._state_store.advance(phase, next_phase, result)
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
@@ -528,6 +538,51 @@ class SquadController:
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
+
+    def _phase_a_readiness_candidate_dirs(self) -> list[Path]:
+        state = self._state_store.load()
+        candidates: list[Path] = []
+
+        def add(candidate: Path | None) -> None:
+            if candidate is None:
+                return
+            path = candidate if candidate.is_absolute() else self._project_root / candidate
+            if path not in candidates:
+                candidates.append(path)
+
+        spec_id = str(state.get("spec_id") or "").strip()
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        published_ref = str(state.get("published_spec_dir") or "").strip()
+        staging_ref = str(state.get("staging_dir") or "").strip()
+
+        if spec_dir_ref:
+            add(Path(spec_dir_ref))
+        if published_ref:
+            add(Path(published_ref))
+        if spec_id:
+            add(self._project_root / "specs" / spec_id)
+            add(self._squad_dir / "specs" / spec_id)
+        if staging_ref:
+            add(Path(staging_ref))
+        else:
+            add(self._squad_dir / "staging")
+
+        return candidates
+
+    def _block_after_phase_a_readiness_failure(
+        self, readiness: PhaseAReadinessResult
+    ) -> None:
+        state = self._state_store.load()
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        state["blocked_reason"] = "phase_a_readiness_failed"
+        state["phase_a_readiness_blockers"] = readiness.blockers
+        self._state_store.save(state)
+        print(
+            "[squad] ✗ phase4-document blocked: Phase A readiness failed "
+            "(build-input artifacts incomplete)",
+            flush=True,
+        )
 
     def _blocked_executor_reason(
         self, result: SquadAgentResult

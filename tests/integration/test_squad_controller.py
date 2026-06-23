@@ -161,6 +161,48 @@ class TestAgentResultIntegrity:
         assert state["blocked_reason"] == "missing_echelon_result"
         assert "phase1-what" not in state.get("completed_phases", [])
 
+    def test_phase4_document_blocks_when_phase_a_build_inputs_are_missing(
+        self, tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["blocked_reason"] == "phase_a_readiness_failed"
+        assert "spec.md absent" in "\n".join(state["phase_a_readiness_blockers"])
+
+    def test_phase4_document_completes_when_phase_a_build_inputs_exist(
+        self, tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+
 
 class TestCartographerResumeGuard:
     def test_phase1_what_prompt_blocks_duplicate_specify_on_resume(self, tmp_path):
@@ -677,6 +719,10 @@ class TestConsensusAcceptWithRiskRouting:
         state.update({"iteration": 9, "spec_dir": "specs/071-rule-studio"})
         store.save(state)
         _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "specs" / "071-rule-studio"
+        spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
         with patch.object(store, "advance", wraps=store.advance) as spy:
             result = ctrl.run("msg", "banzai")

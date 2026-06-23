@@ -50,7 +50,7 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     spec_dir = run_dir / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
@@ -81,7 +81,7 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
         "| Structure | 0.677 | 0.75 | FAIL | not borderline |\n",
         encoding="utf-8",
     )
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None

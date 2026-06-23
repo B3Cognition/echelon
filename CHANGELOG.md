@@ -15,6 +15,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `src/harness/squad_state.py` now defensively validates again in `SquadStateStore.advance()` so malformed results cannot complete phases or mutate state.
   - Focused tests added in `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_provider.py`, and `tests/kernel/test_squad_state.py`.
   - Verification: `pytest tests/kernel -q` (`532 passed in 1.59s`).
+- **EGR-002 deterministic Phase A readiness validation** — added shared Phase A build-input validation so blocked runs and specs missing `spec.md`, `plan.md`, `research.md`, `data-model.md`, or `tasks.md` cannot be reported as ready to build.
+  - `echelon status` / next-step guidance and `echelon continue` now use the same artifact readiness predicate.
+  - `phase4-document` blocks the squad run with `phase_a_readiness_failed` instead of finalizing incomplete Phase A output.
+  - Focused tests added in `tests/unit/test_phase_a_readiness.py`, `tests/unit/test_cli_next_step_escalation.py`, `tests/unit/test_cli_continue.py`, and `tests/integration/test_squad_controller.py`.
+  - Verification: `pytest tests/unit/test_phase_a_readiness.py tests/unit/test_cli_next_step_escalation.py tests/unit/test_run_readiness.py tests/unit/test_cli_continue.py tests/integration/test_squad_controller.py -q` (`83 passed`); `pytest tests/kernel -q` (`532 passed`). Broader `pytest tests/unit tests/kernel tests/integration/test_squad_controller.py -q` collection is blocked in this environment by missing existing dependencies `freezegun` and `lark`.
 
 ## [2.1.0] - 2026-05-17
 
