@@ -6,7 +6,11 @@ EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
-from harness.squad_provider import SquadAgentResult, _extract_echelon_result
+from harness.squad_provider import (
+    SquadAgentResult,
+    _extract_echelon_result,
+    _validate_or_block_echelon_result,
+)
 
 
 class TestSquadAgentResult:
@@ -199,3 +203,30 @@ journal_entries:
 </echelon_result>
 """
         assert _extract_echelon_result(raw) is None
+
+
+class TestValidateOrBlockEchelonResult:
+    def test_invalid_parsed_result_becomes_blocked_result(self):
+        result = _validate_or_block_echelon_result(
+            ["not", "an", "object"],
+            raw="echelon_result:\n  - bad",
+            exit_code=0,
+            duration_ms=10,
+        )
+
+        assert result["verdict"] == "BLOCKED"
+        assert "must be an object" in result["state_updates"]["blocked_reason"]
+
+    def test_validation_block_includes_debug_path_when_enabled(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("ECHELON_DEBUG_RAW_DIR", str(tmp_path))
+
+        result = _validate_or_block_echelon_result(
+            {"verdict": "MAYBE", "state_updates": {}},
+            raw="echelon_result:\n  verdict: MAYBE\n  state_updates: {}",
+            exit_code=0,
+            duration_ms=10,
+        )
+
+        debug_path = Path(result["state_updates"]["echelon_result_debug_path"])
+        assert debug_path.exists()
+        assert debug_path.read_text() == "echelon_result:\n  verdict: MAYBE\n  state_updates: {}"

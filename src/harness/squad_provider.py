@@ -12,6 +12,10 @@ from typing import Optional
 
 import yaml
 
+from harness.echelon_result_schema import (
+    EchelonResultValidationError,
+    validate_echelon_result,
+)
 from harness.llm_provider import AICodingCliProvider
 from harness.skill_loader import StreamEventPrinter
 
@@ -27,11 +31,15 @@ class SquadAgentResult:
 
     @property
     def verdict(self) -> Optional[str]:
-        return (self.echelon_result or {}).get("verdict")
+        payload = self.echelon_result if isinstance(self.echelon_result, dict) else {}
+        verdict = payload.get("verdict")
+        return verdict if isinstance(verdict, str) else None
 
     @property
     def state_updates(self) -> dict:
-        return (self.echelon_result or {}).get("state_updates", {})
+        payload = self.echelon_result if isinstance(self.echelon_result, dict) else {}
+        updates = payload.get("state_updates", {})
+        return updates if isinstance(updates, dict) else {}
 
     @property
     def blocked(self) -> bool:
@@ -116,6 +124,56 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
     return None
 
 
+def _validation_block_result(reason: str, debug_path: Optional[str] = None) -> dict:
+    state_updates = {"blocked_reason": f"echelon_result validation failed: {reason}"}
+    if debug_path:
+        state_updates["echelon_result_debug_path"] = debug_path
+    return {
+        "verdict": "BLOCKED",
+        "state_updates": state_updates,
+        "journal_entries": [],
+    }
+
+
+def _write_debug_capture(
+    raw: str,
+    result: object,
+    exit_code: Optional[int],
+    duration_ms: int,
+) -> Optional[str]:
+    debug_dir = os.environ.get("ECHELON_DEBUG_RAW_DIR", "")
+    if not debug_dir:
+        return None
+    try:
+        debug_root = Path(debug_dir)
+        debug_root.mkdir(parents=True, exist_ok=True)
+        tag = f"{os.getpid()}-{duration_ms}"
+        raw_path = debug_root / f"raw-{tag}.txt"
+        result_path = debug_root / f"result-{tag}.txt"
+        raw_path.write_text(raw, errors="replace")
+        result_path.write_text(
+            f"echelon_result={result!r}\nexit_code={exit_code}\n"
+        )
+        return str(raw_path)
+    except Exception:
+        return None
+
+
+def _validate_or_block_echelon_result(
+    echelon_result: object,
+    raw: str,
+    exit_code: Optional[int],
+    duration_ms: int,
+) -> Optional[dict]:
+    if echelon_result is None:
+        return None
+    try:
+        return validate_echelon_result(echelon_result)
+    except EchelonResultValidationError as exc:
+        debug_path = _write_debug_capture(raw, echelon_result, exit_code, duration_ms)
+        return _validation_block_result(str(exc), debug_path)
+
+
 class SquadCliProvider(AICodingCliProvider):
     """Extends AICodingCliProvider with exec_agent() for squad phase dispatch.
 
@@ -144,23 +202,18 @@ class SquadCliProvider(AICodingCliProvider):
         duration_ms = int((time.monotonic() - start) * 1000)
         timed_out = exit_code is None
         echelon_result = _extract_echelon_result(raw)
+        echelon_result = _validate_or_block_echelon_result(
+            echelon_result,
+            raw,
+            exit_code,
+            duration_ms,
+        )
 
         # Debug capture: write raw + parse result to /tmp/echelon-raw-<pid>.txt
         # when the parse returns None or missing state_updates so we can inspect
         # what the harness actually received vs what the terminal shows.
-        import os as _os
-        _debug_dir = _os.environ.get("ECHELON_DEBUG_RAW_DIR", "")
-        if _debug_dir and (echelon_result is None or not (echelon_result or {}).get("state_updates")):
-            try:
-                import pathlib as _pl
-                _pl.Path(_debug_dir).mkdir(parents=True, exist_ok=True)
-                _tag = f"{_os.getpid()}-{duration_ms}"
-                _pl.Path(f"{_debug_dir}/raw-{_tag}.txt").write_text(raw, errors="replace")
-                _pl.Path(f"{_debug_dir}/result-{_tag}.txt").write_text(
-                    f"echelon_result={echelon_result!r}\nexit_code={exit_code}\n"
-                )
-            except Exception:
-                pass
+        if echelon_result is None or not (echelon_result or {}).get("state_updates"):
+            _write_debug_capture(raw, echelon_result, exit_code, duration_ms)
 
         return SquadAgentResult(
             exit_code=exit_code if exit_code is not None else -1,

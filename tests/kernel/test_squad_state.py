@@ -91,6 +91,32 @@ class TestSquadStateStore:
                       _result("DONE", {"coverage_pct": 72}))
         assert store.load()["coverage_pct"] == 72
 
+    def test_advance_blocks_invalid_result_without_mutating_state(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "coverage_pct": 72,
+                    "last_dispatch": {"phase_id": "fake"},
+                },
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+
+        store.advance("init", "phase1-discover", result)
+
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["phase"] == "init"
+        assert state["completed_phases"] == []
+        assert "coverage_pct" not in state
+        assert "echelon_result validation failed" in state["blocked_reason"]
+
     def test_cancel_flag(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")

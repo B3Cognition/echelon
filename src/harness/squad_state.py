@@ -9,6 +9,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from harness.echelon_result_schema import (
+    EchelonResultValidationError,
+    validate_echelon_result,
+)
+
 logger = logging.getLogger(__name__)
 
 AUTONOMY_MODES = {"guided", "semi", "banzai"}
@@ -151,6 +156,19 @@ class SquadStateStore:
         self, from_phase: str, to_phase: str, result: "SquadAgentResult"
     ) -> None:
         state = self.load()
+        try:
+            result.echelon_result = validate_echelon_result(result.echelon_result)
+        except EchelonResultValidationError as exc:
+            logger.warning(
+                "Invalid echelon_result blocked before state advance: %s "
+                "(run_id=%s)",
+                exc,
+                state.get("run_id", "?"),
+            )
+            self._transition_status(state, "blocked")
+            state["blocked_reason"] = f"echelon_result validation failed: {exc}"
+            self.save(state)
+            return
         logger.debug(
             "squad advance %s → %s verdict=%s run_id=%s",
             from_phase,

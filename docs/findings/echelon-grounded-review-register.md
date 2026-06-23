@@ -59,7 +59,7 @@ the same time as the code lands.
 
 | ID | Priority | Status | Finding | Evidence | Next action |
 |---|---|---|---|---|---|
-| EGR-001 | P0 | open | Missing deterministic `echelon_result` schema validation before state updates. | `src/harness/squad_provider.py`, `src/harness/squad_state.py`, `src/harness/squad.py`, `tests/kernel/test_squad_provider.py`, `tests/kernel/test_squad_state.py` | Implement schema validator and enforce it before applying `state_updates`. |
+| EGR-001 | P0 | fixed | Missing deterministic `echelon_result` schema validation before state updates. | `src/harness/echelon_result_schema.py`, `src/harness/squad_provider.py`, `src/harness/squad_state.py`, `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_provider.py`, `tests/kernel/test_squad_state.py` | Fixed: parsed agent results are validated before state mutation; invalid results block with a clear reason. |
 | EGR-002 | P1 | open | Phase A readiness and quality gates are partly deterministic and partly LLM-routed. | `extension/workflow/definition.yaml`, `src/harness/squad.py`, `src/echelon/cli.py` | Add deterministic Phase A artifact/readiness validators. |
 | EGR-003 | P1 | open | Host-side LLM tool boundaries are mostly prompt-governed. | `extension/agents/**/*.md`, `src/harness/llm_provider.py`, `src/harness/skill_loader.py` | Define enforceable tool/file/network permission boundaries. |
 | EGR-004 | P1 | open | Sandboxing exists, but sandbox recommendation should be explicit. | `src/harness/docker_provider.py`, `src/harness/init.py`, `src/harness/verify_detection.py`, `src/harness/app_runtime_detection.py` | Add sandbox suggestion report with evidence, confidence, risks, and approval point. |
@@ -143,3 +143,4 @@ for every agent dispatch before applying `state_updates`.
 | Date | Reviewed HEAD | Notes |
 |---|---|---|
 | 2026-06-23 | `eeb490899655c0796ec9d9c187eb52fe1195427f` | Initial grounded review register created from repository evidence. |
+| 2026-06-23 | pending EGR-001 commit | EGR-001 implemented with deterministic `echelon_result` validation in provider and state advance paths. Verification: `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_provider.py tests/kernel/test_squad_state.py -q` passed with 78 tests; pytest cache warnings were caused by restricted worktree cache writes. |

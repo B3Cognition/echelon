@@ -9,6 +9,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Documented the EGR completion gate: every implemented EGR now requires a
   matching `[Unreleased]` changelog entry, register update, and verification
   notes before the work is considered complete.
+- **EGR-001 deterministic `echelon_result` validation** — added `src/harness/echelon_result_schema.py` to validate agent result payloads before harness state mutation.
+  - Covers required string `verdict`, supported verdict values, `state_updates` object shape, `journal_entries` list shape, and reserved harness-owned state keys including `last_dispatch`.
+  - `src/harness/squad_provider.py` now converts invalid parsed agent results into blocked results before executors can consume `state_updates`; when `ECHELON_DEBUG_RAW_DIR` is set, the blocked result includes a raw-output debug path.
+  - `src/harness/squad_state.py` now defensively validates again in `SquadStateStore.advance()` so malformed results cannot complete phases or mutate state.
+  - Focused tests added in `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_provider.py`, and `tests/kernel/test_squad_state.py`.
+  - Verification: `pytest tests/kernel -q` (`532 passed in 1.59s`).
 
 ## [2.1.0] - 2026-05-17
 
