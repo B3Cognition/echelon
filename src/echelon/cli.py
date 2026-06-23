@@ -3111,6 +3111,11 @@ from harness.skill_loader import (
     build_skill_prompt as _build_skill_prompt_impl,
     StreamEventPrinter as _StreamEventPrinter,
 )
+from harness.llm_tool_policy import (
+    LlmToolPolicy,
+    build_llm_cli_command,
+    build_opencode_skill_command,
+)
 
 
 def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
@@ -3121,6 +3126,12 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     return _build_skill_prompt_impl(skill_path, arguments)
 
 
+def _load_cli_tool_policy(project_dir: Path) -> LlmToolPolicy:
+    from harness.config import load_config
+
+    return load_config(project_dir, squad_only=True).llm.tool_policy
+
+
 def _print_event(event: dict, _printer: list = []) -> None:
     # Lazy-init one printer per process; list used as mutable default container.
     if not _printer:
@@ -3128,16 +3139,23 @@ def _print_event(event: dict, _printer: list = []) -> None:
     _printer[0](event)
 
 
-def _run_claude_streaming(bin_: str, prompt: str, project_dir: Path, extra_args: list[str] | None = None) -> None:
+def _run_claude_streaming(
+    bin_: str,
+    prompt: str,
+    project_dir: Path,
+    extra_args: list[str] | None = None,
+    tool_policy: LlmToolPolicy | None = None,
+) -> None:
     """Invoke claude -p with stream-json output and print live progress to stdout."""
     import json as _json
 
-    cmd = [
-        bin_, "-p",
-        "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "--verbose",
-    ] + (extra_args or [])
+    cmd = build_llm_cli_command(
+        "claude",
+        bin_,
+        prompt,
+        tool_policy or LlmToolPolicy(),
+        stream_json=True,
+    ) + (extra_args or [])
 
     proc = subprocess.Popen(
         cmd,
@@ -3394,6 +3412,11 @@ def main() -> None:
 
     project_dir = Path.cwd()
     cli = os.environ.get("ECHELON_LLM", "claude")
+    try:
+        tool_policy = _load_cli_tool_policy(project_dir)
+    except Exception as exc:
+        print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     skill_path = _find_skill(skill_base, project_dir, cli)
     if skill_path is None:
@@ -3402,17 +3425,15 @@ def main() -> None:
 
     bin_ = shutil.which(cli) or cli
     if cli == "opencode":
-        # Use native --command mode; opencode resolves the skill file itself.
-        cmd = [bin_, "run", "--dangerously-skip-permissions",
-               "--command", f"speckit.{skill_base}", arguments]
+        cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
-    elif cli == "copilot":
+    elif cli in {"copilot", "codex"}:
         prompt = _build_prompt(skill_path, arguments)
-        cmd = [bin_, "-p", prompt, "--dangerously-skip-permissions", "--allow-all-tools"]
+        cmd = build_llm_cli_command(cli, bin_, prompt, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
     else:
         # claude: use stream-json for live tool-call progress in the terminal
         prompt = _build_prompt(skill_path, arguments)
-        _run_claude_streaming(bin_, prompt, project_dir)
+        _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
         return  # _run_claude_streaming calls sys.exit
     sys.exit(result.returncode)

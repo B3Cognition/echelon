@@ -8,16 +8,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, LlmConfig, ReviewLoopConfig
+from harness.llm_tool_policy import LlmToolPolicy
 from harness.review_loop import ReviewComment, ReviewLoopController
 
 
-def _config(cli: str = "claude") -> HarnessConfig:
+def _config(cli: str = "claude", tool_policy: LlmToolPolicy | None = None) -> HarnessConfig:
     return HarnessConfig(
         target_repo=".",
         target_default_branch="main",
         provider="docker",
         pr_host="github",
-        llm=LlmConfig(cli=cli),
+        llm=LlmConfig(cli=cli, tool_policy=tool_policy or LlmToolPolicy()),
         review_loop=ReviewLoopConfig(enabled=True),
     )
 
@@ -74,7 +75,7 @@ class TestReviewLoopInvocation:
         assert f"review 005 pr_url=https://github.com/org/repo/pull/1 spec_dir={spec_dir}" in prompt
         assert f"worktree={worktree}" in prompt
 
-    def test_codex_review_backend_uses_codex_exec(self, tmp_path: Path) -> None:
+    def test_codex_review_backend_uses_codex_exec_without_dangerous_bypass_by_default(self, tmp_path: Path) -> None:
         completed = MagicMock()
         completed.returncode = 0
 
@@ -84,6 +85,35 @@ class TestReviewLoopInvocation:
             controller = ReviewLoopController(
                 gitops=MagicMock(),
                 config=_config(cli="codex"),
+                spec_id="005",
+                strategy_id="default",
+                base_dir=str(tmp_path),
+                build_id="build-1",
+            )
+            controller._invoke_review_skill(
+                "https://github.com/org/repo/pull/1",
+                [],
+            )
+
+        cmd = run.call_args.args[0]
+        assert cmd[:2] == ["codex", "exec"]
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
+        assert "Effective Host Tool Policy" in cmd[-1]
+
+    def test_codex_review_backend_uses_dangerous_bypass_when_approved(self, tmp_path: Path) -> None:
+        completed = MagicMock()
+        completed.returncode = 0
+        policy = LlmToolPolicy(
+            allow_unsafe_host_execution=True,
+            approval_reason="Operator approved disposable worktree after sandbox review.",
+        )
+
+        with patch("harness.review_loop.shutil.which", return_value="codex"), patch(
+            "harness.review_loop.subprocess.run", return_value=completed
+        ) as run:
+            controller = ReviewLoopController(
+                gitops=MagicMock(),
+                config=_config(cli="codex", tool_policy=policy),
                 spec_id="005",
                 strategy_id="default",
                 base_dir=str(tmp_path),

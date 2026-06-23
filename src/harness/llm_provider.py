@@ -10,6 +10,7 @@ import time
 from typing import Mapping
 
 from harness.config import HarnessConfig
+from harness.llm_tool_policy import build_llm_cli_command
 from harness.skill_loader import StreamEventPrinter
 
 
@@ -39,27 +40,14 @@ class AICodingCliProvider:
         return self._cli
 
     def _build_cmd(self, prompt: str) -> list:
-        if self._cli == "opencode":
-            return [self._bin, "run", "--dangerously-skip-permissions", prompt]
-        if self._cli == "codex":
-            return [
-                self._bin,
-                "exec",
-                "--dangerously-bypass-approvals-and-sandbox",
-                prompt,
-            ]
-        if self._cli == "claude":
-            return [
-                self._bin, "-p", prompt,
-                "--dangerously-skip-permissions",
-                "--disallowedTools", "TaskCreate,TaskUpdate",
-                "--output-format", "stream-json",
-                "--verbose",
-            ]
-        cmd = [self._bin, "-p", prompt, "--dangerously-skip-permissions"]
-        if self._cli == "copilot":
-            cmd += ["--allow-all-tools"]
-        return cmd
+        return build_llm_cli_command(
+            self._cli,
+            self._bin,
+            prompt,
+            self._config.llm.tool_policy,
+            stream_json=self._cli == "claude",
+            disallow_claude_task_tools=self._cli == "claude",
+        )
 
     def exec_prompt(
         self,

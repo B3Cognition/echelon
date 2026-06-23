@@ -1166,6 +1166,13 @@ harness:
   #   cli: claude
   #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
   #   timeout_ms: 1200000              # 20 minutes
+  #   tool_policy:
+  #     file_boundary: workspace
+  #     network_boundary: harness_allowlist
+  #     allow_unsafe_host_execution: false
+  #     # Required when allow_unsafe_host_execution is true. This re-enables
+  #     # CLI permission-bypass flags such as --dangerously-skip-permissions.
+  #     approval_reason: null
 
   # --- Resource Limits ---
 

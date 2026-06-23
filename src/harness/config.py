@@ -24,6 +24,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from harness.llm_tool_policy import (
+    LlmToolPolicy,
+    ToolPolicyViolation,
+    validate_llm_tool_policy,
+)
+
 try:
     import yaml
 except ImportError:
@@ -153,11 +159,12 @@ class AppRuntimeConfig:
 
 @dataclass
 class LlmConfig:
-    """Configuration for the LLM CLI provider (claude -p or copilot -p subprocess)."""
+    """Configuration for host-side LLM CLI subprocesses."""
     enabled: bool = False              # true when llm section is present in config
-    cli: str = "claude"               # "claude", "copilot", or "opencode"
+    cli: str = "claude"               # "claude", "copilot", "opencode", or "codex"
     config_dir: Optional[str] = None   # passed as CLAUDE_CONFIG_DIR env var (claude only)
     timeout_ms: int = 10_800_000       # 3 hours per autonomous build invocation
+    tool_policy: LlmToolPolicy = field(default_factory=LlmToolPolicy)
 
 
 @dataclass
@@ -452,12 +459,32 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
     raw = data.get("llm", {})
     if not isinstance(raw, dict):
         raw = {}
+    tool_policy = _parse_llm_tool_policy(raw)
     return LlmConfig(
         enabled="llm" in data,
         cli=_validate_llm_cli(str(raw.get("cli", "claude"))),
         config_dir=str(raw["config_dir"]) if raw.get("config_dir") else None,
         timeout_ms=int(raw.get("timeout_ms", 10_800_000)),
+        tool_policy=tool_policy,
     )
+
+
+def _parse_llm_tool_policy(raw_llm: Dict[str, Any]) -> LlmToolPolicy:
+    raw = raw_llm.get("tool_policy", {})
+    if not isinstance(raw, dict):
+        raw = {}
+    approval_reason = raw.get("approval_reason")
+    policy = LlmToolPolicy(
+        file_boundary=str(raw.get("file_boundary", "workspace")),
+        network_boundary=str(raw.get("network_boundary", "harness_allowlist")),
+        allow_unsafe_host_execution=bool(raw.get("allow_unsafe_host_execution", False)),
+        approval_reason=str(approval_reason) if approval_reason else None,
+    )
+    try:
+        validate_llm_tool_policy(policy)
+    except ToolPolicyViolation as exc:
+        raise ValidationError(str(exc), field_path="llm.tool_policy.approval_reason") from exc
+    return policy
 
 
 def _parse_fulfillment(data: Dict[str, Any]) -> FulfillmentConfig:
