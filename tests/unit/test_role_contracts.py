@@ -107,6 +107,32 @@ echelon_result:
     assert any("declared outputs" in issue.message for issue in report.issues)
 
 
+def test_role_contract_validation_reports_missing_state_update_allowlist(
+    tmp_path: Path,
+) -> None:
+    definition, extension_yml = _write_fixture_extension(
+        tmp_path,
+        """
+echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - {spec_dir}/artifact.md
+  state_updates: {}
+  journal_entries: []
+""",
+        outputs=["artifact.md"],
+    )
+
+    report = validate_role_contracts(
+        definition_path=definition,
+        extension_yml_path=extension_yml,
+        extension_root=tmp_path,
+    )
+
+    assert not report.ok
+    assert any("state_updates allowlist" in issue.message for issue in report.issues)
+
+
 def test_real_routed_roles_have_machine_readable_contracts() -> None:
     report = validate_role_contracts(
         definition_path=DEFINITION,

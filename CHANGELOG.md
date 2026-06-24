@@ -59,6 +59,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - The scanner covers GitHub tokens, GitLab personal access tokens, AWS access key IDs, Slack tokens, and private-key headers while skipping binary files and never storing matched secret text in findings.
   - Focused tests added in `tests/unit/test_secret_scan.py`; `tests/integration/test_gitops_safety.py` now covers secret-scan commit blocking.
   - Verification: `pytest tests/unit/test_secret_scan.py tests/integration/test_gitops_safety.py::TestSecretScanGate -q` (`5 passed`); `pytest tests/integration/test_gitops_safety.py tests/integration/test_gitops_commit_push.py tests/unit/test_secret_scan.py -q` (`11 passed`); `pytest tests/kernel -q` (`535 passed`).
+- **EGR-011 per-phase `state_updates` allowlists** — added machine-checkable allowlists to routed workflow phases and enforced them before state mutation.
+  - `validate_echelon_result()` now accepts an optional `allowed_state_update_keys` set and rejects unexpected top-level `state_updates` keys while preserving reserved-key checks.
+  - `SquadStateStore.advance()` now revalidates agent results with the current phase allowlist before mutating `state.json`.
+  - Staged and conditional executor paths now validate intermediate agent results before applying executor-side direct state writes.
+  - `PhaseGraph` preserves `allowed_state_updates` from `extension/workflow/definition.yaml`, and `role_contracts` now fails routed roles that omit a state-update allowlist.
+  - Focused tests added in `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_state.py`, `tests/kernel/test_phase_graph.py`, `tests/kernel/test_squad_executors_journal.py`, and `tests/unit/test_role_contracts.py`.
+  - Verification: `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py -q` (`82 passed`); `pytest tests/kernel/test_squad_executors_journal.py -q` (`39 passed`); `pytest tests/kernel -q` (`540 passed`).
 
 ## [2.1.0] - 2026-05-17
 

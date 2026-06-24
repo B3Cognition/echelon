@@ -484,7 +484,12 @@ class SquadController:
                     self._block_after_phase_a_readiness_failure(readiness)
                     return SquadResult.from_state(self._state_store.load())
 
-            self._state_store.advance(phase, next_phase, result)
+            self._state_store.advance(
+                phase,
+                next_phase,
+                result,
+                allowed_state_update_keys=node.allowed_state_updates,
+            )
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
             # The condition `iteration < max_iterations` in definition.yaml must work regardless

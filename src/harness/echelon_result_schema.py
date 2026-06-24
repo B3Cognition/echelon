@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, Iterable
 
 
 class EchelonResultValidationError(ValueError):
@@ -59,7 +59,11 @@ RESERVED_STATE_UPDATE_KEYS = frozenset({
 })
 
 
-def validate_echelon_result(payload: Any) -> dict:
+def validate_echelon_result(
+    payload: Any,
+    *,
+    allowed_state_update_keys: Iterable[str] | None = None,
+) -> dict:
     """Return a normalized copy of a safe echelon_result payload.
 
     The validator intentionally checks only the harness-critical contract:
@@ -94,6 +98,12 @@ def validate_echelon_result(payload: Any) -> dict:
             "echelon_result.state_updates must be an object"
         )
 
+    allowed_keys = (
+        frozenset(allowed_state_update_keys)
+        if allowed_state_update_keys is not None
+        else None
+    )
+
     for key in state_updates:
         if not isinstance(key, str):
             raise EchelonResultValidationError(
@@ -102,6 +112,12 @@ def validate_echelon_result(payload: Any) -> dict:
         if key in RESERVED_STATE_UPDATE_KEYS:
             raise EchelonResultValidationError(
                 f"echelon_result.state_updates cannot set reserved key {key!r}"
+            )
+        if allowed_keys is not None and key not in allowed_keys:
+            allowed = ", ".join(sorted(allowed_keys)) or "(none)"
+            raise EchelonResultValidationError(
+                "echelon_result.state_updates key "
+                f"{key!r} is not allowed for this phase; allowed keys: {allowed}"
             )
 
     if "journal_entries" in result and not isinstance(result["journal_entries"], list):

@@ -76,3 +76,23 @@ def test_reserved_harness_state_key_is_rejected():
             "verdict": "DONE",
             "state_updates": {"last_dispatch": {"phase_id": "fake"}},
         })
+
+
+def test_state_update_key_outside_allowlist_is_rejected():
+    with pytest.raises(EchelonResultValidationError, match="not allowed"):
+        validate_echelon_result(
+            {
+                "verdict": "DONE",
+                "state_updates": {"unexpected": True},
+            },
+            allowed_state_update_keys={"coverage_pct"},
+        )
+
+
+def test_empty_state_updates_are_allowed_by_empty_allowlist():
+    result = validate_echelon_result(
+        {"verdict": "DONE", "state_updates": {}},
+        allowed_state_update_keys=set(),
+    )
+
+    assert result["state_updates"] == {}

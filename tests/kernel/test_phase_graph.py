@@ -158,3 +158,34 @@ def test_phase1_constitution_context_pack_has_staging_artifacts():
     assert "boundaries" in pack
     assert "assumptions" in pack
     assert "user-intent" in pack
+
+
+def test_phase_graph_preserves_allowed_state_updates(tmp_path: Path):
+    definition = tmp_path / "definition.yaml"
+    extension_yml = tmp_path / "extension.yml"
+
+    definition.write_text(
+        """
+phases:
+  - id: phase1-discover
+    type: agent
+    agent: speckit-echelon-scout
+    outputs:
+      - spec.md
+    allowed_state_updates:
+      - quality_scores
+      - golddigger_requests
+    transitions:
+      - to: done
+        condition: always
+""",
+        encoding="utf-8",
+    )
+    extension_yml.write_text("provides: {commands: []}\n", encoding="utf-8")
+
+    graph = PhaseGraph(definition, extension_yml)
+
+    assert graph.get("phase1-discover").allowed_state_updates == [
+        "quality_scores",
+        "golddigger_requests",
+    ]

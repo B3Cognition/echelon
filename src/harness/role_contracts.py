@@ -100,11 +100,30 @@ def validate_role_contracts(
     issues: list[RoleContractIssue] = []
 
     seen: set[tuple[str, str]] = set()
-    for phase_id, agent, outputs in _routed_agents(graph):
+    for phase_id, agent, outputs, allowed_state_updates in _routed_agents(graph):
         if not outputs:
             issues.append(
                 RoleContractIssue(
                     "routed role has no declared outputs",
+                    phase_id=phase_id,
+                    agent=agent,
+                )
+            )
+        if allowed_state_updates is None:
+            issues.append(
+                RoleContractIssue(
+                    "routed role has no declared state_updates allowlist",
+                    phase_id=phase_id,
+                    agent=agent,
+                )
+            )
+        elif (
+            not isinstance(allowed_state_updates, list)
+            or any(not isinstance(key, str) for key in allowed_state_updates)
+        ):
+            issues.append(
+                RoleContractIssue(
+                    "routed role state_updates allowlist must be a list of strings",
                     phase_id=phase_id,
                     agent=agent,
                 )
@@ -149,19 +168,33 @@ def validate_role_contracts(
     return RoleContractReport(issues=issues)
 
 
-def _routed_agents(graph: PhaseGraph) -> list[tuple[str, str, list]]:
-    routed: list[tuple[str, str, list]] = []
+def _routed_agents(graph: PhaseGraph) -> list[tuple[str, str, list, list | None]]:
+    routed: list[tuple[str, str, list, list | None]] = []
     for phase_id in graph.all_phase_ids():
         node = graph.get(phase_id)
         if node.agent:
-            routed.append((phase_id, node.agent, node.outputs))
+            routed.append(
+                (phase_id, node.agent, node.outputs, node.allowed_state_updates)
+            )
         for entry in node.agents:
             if isinstance(entry, dict):
                 agent = entry.get("id")
                 if isinstance(agent, str) and agent.strip():
-                    routed.append((phase_id, agent, entry.get("outputs", [])))
+                    routed.append(
+                        (
+                            phase_id,
+                            agent,
+                            entry.get("outputs", []),
+                            entry.get(
+                                "allowed_state_updates",
+                                node.allowed_state_updates,
+                            ),
+                        )
+                    )
             elif isinstance(entry, str) and entry.strip():
-                routed.append((phase_id, entry, []))
+                routed.append(
+                    (phase_id, entry, [], node.allowed_state_updates)
+                )
     return routed
 
 

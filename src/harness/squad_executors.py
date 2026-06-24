@@ -228,6 +228,49 @@ class PhaseExecutor(ABC):
         from harness.paths import runs_dir as _runs_dir
         self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
+    def _validate_result_state_updates(
+        self,
+        node: "PhaseNode",
+        result: "SquadAgentResult",
+    ) -> "SquadAgentResult":
+        """Validate result state updates before executor-side direct state writes."""
+        if result.echelon_result is None:
+            return result
+
+        from harness.echelon_result_schema import (
+            EchelonResultValidationError,
+            validate_echelon_result,
+        )
+        from harness.squad_provider import SquadAgentResult
+
+        try:
+            result.echelon_result = validate_echelon_result(
+                result.echelon_result,
+                allowed_state_update_keys=getattr(
+                    node,
+                    "allowed_state_updates",
+                    None,
+                ),
+            )
+            return result
+        except EchelonResultValidationError as exc:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": (
+                            f"echelon_result validation failed: {exc}"
+                        ),
+                    },
+                    "journal_entries": [],
+                },
+                raw_output=result.raw_output,
+                duration_ms=result.duration_ms,
+                timed_out=result.timed_out,
+                cost_usd=result.cost_usd,
+            )
+
     @abstractmethod
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
@@ -726,7 +769,10 @@ class StagedParallelExecutor(PhaseExecutor):
 
             for future in as_completed(futures):
                 label = futures[future]
-                stage1_results[label] = future.result()
+                result = self._validate_result_state_updates(node, future.result())
+                if result.blocked:
+                    return result
+                stage1_results[label] = result
 
         # Write stage-1 verdicts, journal entries, and cost to state (serial — after join)
         for label, result in stage1_results.items():
@@ -762,6 +808,9 @@ class StagedParallelExecutor(PhaseExecutor):
                 extra_files=[impl_report_path] if impl_report_path else [],
             )
             stage2_result = self._provider.exec_agent(str(self._project_root), prompt)
+            stage2_result = self._validate_result_state_updates(node, stage2_result)
+            if stage2_result.blocked:
+                return stage2_result
             self._write_journal_entries(stage2_result, node.id)
             state_store.increment_cost(stage2_result.cost_usd)
             state = state_store.load()
@@ -809,6 +858,9 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                     result = self._provider.exec_agent(
                         str(self._project_root), path.read_text()
                     )
+                    result = self._validate_result_state_updates(node, result)
+                    if result.blocked:
+                        return result
                     self._write_journal_entries(result, node.id)
                     state = state_store.load()
                     for k, v in result.state_updates.items():

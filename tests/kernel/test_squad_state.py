@@ -117,6 +117,24 @@ class TestSquadStateStore:
         assert "coverage_pct" not in state
         assert "echelon_result validation failed" in state["blocked_reason"]
 
+    def test_advance_blocks_state_update_outside_allowlist(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+
+        store.advance(
+            "init",
+            "phase1-discover",
+            _result("DONE", {"unexpected": True}),
+            allowed_state_update_keys={"coverage_pct"},
+        )
+
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["phase"] == "init"
+        assert state["completed_phases"] == []
+        assert "unexpected" not in state
+        assert "not allowed" in state["blocked_reason"]
+
     def test_cancel_flag(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")

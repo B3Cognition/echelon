@@ -9,6 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -632,6 +633,47 @@ def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
     assert "RIGHT STAGING REPORT" in prompt
     assert "WRONG SPEC 016" not in prompt
     assert "WRONG TASKS 063" not in prompt
+
+
+def test_staged_parallel_blocks_state_update_outside_allowlist(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, squad_dir)
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        agents=[
+            {
+                "id": "speckit-echelon-sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "BLOCKED"
+    assert "not allowed" in result.state_updates["blocked_reason"]
+    assert "unexpected" not in state_store.load()
 
 
 def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):

@@ -7,7 +7,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
 
 from harness.blocked_decision import ensure_blocked_decision
 from harness.echelon_result_schema import (
@@ -155,11 +155,19 @@ class SquadStateStore:
         return self.load().get("phase", "init")
 
     def advance(
-        self, from_phase: str, to_phase: str, result: "SquadAgentResult"
+        self,
+        from_phase: str,
+        to_phase: str,
+        result: "SquadAgentResult",
+        *,
+        allowed_state_update_keys: Iterable[str] | None = None,
     ) -> None:
         state = self.load()
         try:
-            result.echelon_result = validate_echelon_result(result.echelon_result)
+            result.echelon_result = validate_echelon_result(
+                result.echelon_result,
+                allowed_state_update_keys=allowed_state_update_keys,
+            )
         except EchelonResultValidationError as exc:
             logger.warning(
                 "Invalid echelon_result blocked before state advance: %s "
