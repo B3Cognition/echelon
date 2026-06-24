@@ -837,8 +837,22 @@ phases:
         condition: "why3-verdict = PASS AND assess2-verdict = PASS"
       - to: checkpoint-plan
         condition: "gate_decision = accept_with_risk OR phase_recommendation = advance_past_consensus_to_delivery"
+      # Ownership-based re-dispatch (phase3-consensus.md §Consensus Gate Check).
+      # A WHY3 FAIL is a SPEC-quality failure (Structure gate / glossary /
+      # atomicity / ambiguity) owned by CARTOGRAPHER — route to WHAT, not HOW.
+      # ARCHITECT cannot amend spec.md, so routing a WHY3 FAIL to phase3-how
+      # reproduces the identical FAIL every cycle until force-kill (the
+      # 002-echelon-control-fe non-convergence loop). Mirrors the proven
+      # phase1-why2 → phase1-what spec-quality re-dispatch (same agent, SAGE).
+      # Evaluated before the ASSESS2 branch so a combined failure repairs the
+      # upstream (spec) constraint first, then re-flows.
+      - to: phase1-what
+        condition: "why3-verdict = FAIL"
+        action: increment_iteration
+        guard: "iteration < max_iterations"
+      # An ASSESS2 REJECTED is a FEASIBILITY failure owned by ARCHITECT → HOW.
       - to: phase3-how
-        condition: "why3-verdict = FAIL OR assess2-verdict = REJECTED"
+        condition: "assess2-verdict = REJECTED"
         action: increment_iteration
         guard: "iteration < max_iterations"
       - to: checkpoint-plan
