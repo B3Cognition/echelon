@@ -93,6 +93,43 @@ def _canonical_echelon_result_contract(ext_dir: Path) -> str:
     )
 
 
+def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
+    """Render the deterministic state-update allowlist for an agent prompt."""
+    lines = [
+        "\n\n---",
+        "## Allowed state_updates for this dispatch",
+        "The harness validates `echelon_result.state_updates` before mutating state.",
+        "Return only the keys listed here; use `state_updates: {}` when no state",
+        "changes are needed. Any other top-level key blocks the run.",
+        "",
+    ]
+    if allowed_state_updates is None:
+        lines.extend(
+            [
+                "Allowed keys: not declared for this phase.",
+                "Prefer:",
+                "```yaml",
+                "state_updates: {}",
+                "```",
+            ]
+        )
+    else:
+        keys = [str(key) for key in allowed_state_updates]
+        if keys:
+            lines.append("Allowed keys:")
+            lines.extend(f"- `{key}`" for key in keys)
+        else:
+            lines.extend(
+                [
+                    "Allowed keys: none.",
+                    "```yaml",
+                    "state_updates: {}",
+                    "```",
+                ]
+            )
+    return "\n".join(lines)
+
+
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
@@ -423,7 +460,12 @@ class PhaseExecutor(ABC):
 
         # Append harness routing contract so agents know exactly what
         # state_updates fields the harness needs for transition evaluation.
-        prompt = prompt + _routing_contract(node) + _canonical_echelon_result_contract(self._ext_dir)
+        prompt = (
+            prompt
+            + _routing_contract(node)
+            + _allowed_state_updates_contract(node.allowed_state_updates)
+            + _canonical_echelon_result_contract(self._ext_dir)
+        )
 
         return _shared_agent_contract() + prompt
 
@@ -444,7 +486,12 @@ class PhaseExecutor(ABC):
             if rel:
                 pre_path = self._ext_dir / rel
                 if pre_path.exists():
-                    prompt = self._assemble_pre_dispatch_prompt(pre_path, entry, state_store.load())
+                    prompt = self._assemble_pre_dispatch_prompt(
+                        pre_path,
+                        entry,
+                        state_store.load(),
+                        node.allowed_state_updates,
+                    )
                     result = self._provider.exec_agent(
                         str(self._project_root), prompt
                     )
@@ -463,6 +510,7 @@ class PhaseExecutor(ABC):
         agent_path: Path,
         entry: dict,
         state: dict,
+        allowed_state_updates: object = None,
     ) -> str:
         """Build a real prompt for pre-dispatch agents.
 
@@ -495,6 +543,7 @@ class PhaseExecutor(ABC):
                 + f"Run **Mode {entry.get('mode', 1)} (Survey)** for target path `{self._project_root}`. "
                 + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
                 + "</instructions>\n"
+                + _allowed_state_updates_contract(allowed_state_updates)
                 + _canonical_echelon_result_contract(self._ext_dir)
             )
 
@@ -506,6 +555,7 @@ class PhaseExecutor(ABC):
             + f"SQUAD_DIR={squad_dir_str}\n"
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
@@ -681,6 +731,7 @@ class StagedParallelExecutor(PhaseExecutor):
         agent_entry: dict,
         state: dict,
         extra_files: Optional[list] = None,
+        allowed_state_updates: object = None,
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -746,7 +797,12 @@ class StagedParallelExecutor(PhaseExecutor):
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
-        return _shared_agent_contract() + prompt + _canonical_echelon_result_contract(self._ext_dir)
+        return (
+            _shared_agent_contract()
+            + prompt
+            + _allowed_state_updates_contract(allowed_state_updates)
+            + _canonical_echelon_result_contract(self._ext_dir)
+        )
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
@@ -768,7 +824,11 @@ class StagedParallelExecutor(PhaseExecutor):
                     or agent_entry.get("id")
                     or agent_entry.get("agent", "")
                 )
-                prompt = self._build_agent_prompt(agent_entry, state)
+                prompt = self._build_agent_prompt(
+                    agent_entry,
+                    state,
+                    allowed_state_updates=getattr(node, "allowed_state_updates", None),
+                )
                 futures[pool.submit(
                     self._provider.exec_agent, str(self._project_root), prompt
                 )] = mode_label
@@ -812,6 +872,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 agent_entry,
                 state,
                 extra_files=[impl_report_path] if impl_report_path else [],
+                allowed_state_updates=getattr(node, "allowed_state_updates", None),
             )
             stage2_result = self._provider.exec_agent(str(self._project_root), prompt)
             stage2_result = self._validate_result_state_updates(node, stage2_result)
@@ -861,8 +922,14 @@ class ConditionalSequentialExecutor(PhaseExecutor):
             if rel:
                 path = self._ext_dir / rel
                 if path.exists():
+                    prompt = (
+                        _shared_agent_contract()
+                        + path.read_text()
+                        + _allowed_state_updates_contract(node.allowed_state_updates)
+                        + _canonical_echelon_result_contract(self._ext_dir)
+                    )
                     result = self._provider.exec_agent(
-                        str(self._project_root), path.read_text()
+                        str(self._project_root), prompt
                     )
                     result = self._validate_result_state_updates(node, result)
                     if result.blocked:

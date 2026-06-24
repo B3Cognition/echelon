@@ -17,7 +17,12 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph
-from harness.squad_executors import AgentExecutor, StagedParallelExecutor
+from harness.squad_executors import (
+    AgentExecutor,
+    ConditionalSequentialExecutor,
+    StagedParallelExecutor,
+    _allowed_state_updates_contract,
+)
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
@@ -425,6 +430,14 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
     assert "overall:" in contract
 
 
+def test_allowed_state_updates_contract_renders_empty_allowlist():
+    contract = _allowed_state_updates_contract([])
+
+    assert "## Allowed state_updates for this dispatch" in contract
+    assert "Allowed keys: none." in contract
+    assert "state_updates: {}" in contract
+
+
 def test_journal_written_to_squad_dir(tmp_path):
     """Journal entries go to squad_dir/reasoning-journal.jsonl, not .specify/squad."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -517,6 +530,59 @@ def test_assemble_prompt_uses_echelon_result_template(tmp_path):
 
     assert "CANONICAL_TEMPLATE_MARKER" in prompt
     assert prompt.rstrip().endswith("journal_entries: []")
+
+
+def test_assemble_prompt_includes_allowed_state_updates(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(
+        id="phase1-test",
+        type="agent",
+        allowed_state_updates=["spec_id", "spec_dir"],
+    )
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `spec_id`" in prompt
+    assert "- `spec_dir`" in prompt
+    assert "Any other top-level key blocks the run." in prompt
+
+
+def test_assemble_prompt_includes_empty_allowed_state_updates(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(id="phase1-test", type="agent", allowed_state_updates=[])
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "Allowed keys: none." in prompt
+    assert "state_updates: {}" in prompt
+
+
+def test_pre_dispatch_prompt_includes_parent_allowed_state_updates(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    agent_path = tmp_path / "golddigger.md"
+    agent_path.write_text("# GOLDDIGGER\n")
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_pre_dispatch_prompt(
+        agent_path,
+        {"id": "golddigger_mode1", "mode": 1},
+        state,
+        ["golddigger_status"],
+    )
+
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `golddigger_status`" in prompt
 
 
 def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
@@ -680,6 +746,74 @@ def test_staged_prompt_uses_echelon_result_template(tmp_path):
 
     assert "STAGED_TEMPLATE_MARKER" in prompt
     assert prompt.rstrip().endswith("journal_entries: []")
+
+
+def test_staged_prompt_includes_allowed_state_updates(tmp_path):
+    """Staged consensus agents see the parent phase state-update allowlist."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "why3.md").write_text("# WHY3\nRole-specific instructions.")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._build_agent_prompt(
+        {"id": "WHY3", "mode": "WHY3"},
+        state,
+        allowed_state_updates=["quality_scores"],
+    )
+
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `quality_scores`" in prompt
+
+
+def test_conditional_sequential_prompt_includes_allowed_state_updates(tmp_path):
+    """Conditional sequential dispatches no longer send raw agent text only."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# Guardian\nRole-specific instructions.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase-test")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"risk_status": "reviewed"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = ConditionalSequentialExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = SimpleNamespace(
+        id="phase-test",
+        agents=[{"id": "speckit-echelon-guardian", "condition": "always"}],
+        allowed_state_updates=["risk_status"],
+    )
+
+    result = executor.execute(node, state_store)
+    prompt = provider.exec_agent.call_args.args[1]
+
+    assert result.verdict == "DONE"
+    assert "## Shared Agent Contract" in prompt
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `risk_status`" in prompt
 
 
 def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):

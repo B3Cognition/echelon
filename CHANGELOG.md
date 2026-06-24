@@ -84,6 +84,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Invalid judgment keys now block the run before state mutation; banzai escalation cleanup preserves intentional null-as-delete behavior only after allowlist validation.
   - Focused tests added in `tests/integration/test_squad_controller.py`.
   - Verification: `pytest tests/integration/test_squad_controller.py -q` (`64 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_squad_executors_journal.py tests/integration/test_squad_controller.py -q` (`167 passed`).
+- **EGR-014 allowed `state_updates` prompt disclosure** — agent prompts now include the full allowed state-update key list enforced by the harness.
+  - Normal agent, pre-dispatch, staged consensus, and conditional sequential prompts all render an explicit "Allowed state_updates for this dispatch" block before the canonical `echelon_result` template.
+  - Empty allowlists are shown as `state_updates: {}`, and prompts warn that unexpected top-level update keys block the run.
+  - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`47 passed`); `pytest tests/kernel -q` (`548 passed`); `pytest` (`2318 passed, 22 skipped`).
 
 ## [2.1.0] - 2026-05-17
 
