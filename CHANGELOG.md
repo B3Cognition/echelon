@@ -79,6 +79,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Valid pre-dispatch updates that are declared in the parent phase allowlist continue to apply normally.
   - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
   - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`41 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py tests/kernel/test_squad_executors_journal.py -q` (`123 passed`); `pytest tests/kernel -q` (`542 passed`).
+- **EGR-013 deterministic COMMANDER judgment update validation** — COMMANDER judgment `state_updates` now pass through a narrow judgment-specific allowlist before mutation.
+  - Routing judgments may still return `next_phase`/`phase`, and documented control updates such as `iteration`, escalation metadata, and fallback recovery keys remain allowed.
+  - Invalid judgment keys now block the run before state mutation; banzai escalation cleanup preserves intentional null-as-delete behavior only after allowlist validation.
+  - Focused tests added in `tests/integration/test_squad_controller.py`.
+  - Verification: `pytest tests/integration/test_squad_controller.py -q` (`64 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_squad_executors_journal.py tests/integration/test_squad_controller.py -q` (`167 passed`).
 
 ## [2.1.0] - 2026-05-17
 

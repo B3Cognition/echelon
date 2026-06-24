@@ -510,6 +510,7 @@ class TestSquadControllerBasics:
                             "spec_id": "001-test",
                             "spec_dir": "specs/001-test",
                             "spec_status": "drafted",
+                            "lexicon_pass": True,
                         },
                     },
                     raw_output="", duration_ms=0, timed_out=False,
@@ -1144,6 +1145,152 @@ class TestConstitutionPhase:
             "exec_agent was not called — phase1-constitution is still a harness no-op. "
             "It must be type=agent so CHIEF gets dispatched."
         )
+
+
+class TestCommanderJudgmentStateUpdates:
+    @staticmethod
+    def _ambiguous_node() -> PhaseNode:
+        return PhaseNode(
+            id="phase1-discover",
+            type="agent",
+            transitions=[
+                {
+                    "to": "phase1-why1",
+                    "condition": "quality_gates.pass",
+                }
+            ],
+        )
+
+    @staticmethod
+    def _phase_result() -> SquadAgentResult:
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    def test_invalid_judgment_state_update_blocks_before_mutation(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "phase1-why1",
+                    "unauthorized_key": "must-not-persist",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+
+        next_phase = ctrl._evaluate_transitions(
+            self._ambiguous_node(),
+            self._phase_result(),
+        )
+        state = store.load()
+
+        assert next_phase == "terminal-blocked"
+        assert state["status"] == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert "unauthorized_key" not in state
+        assert "unauthorized_key" in state["blocked_reason"]
+        assert "judgment state_updates validation failed" in state["blocked_reason"]
+
+    def test_valid_judgment_iteration_update_still_persists(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "phase1-why1",
+                    "iteration": 2,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+
+        next_phase = ctrl._evaluate_transitions(
+            self._ambiguous_node(),
+            self._phase_result(),
+        )
+
+        assert next_phase == "phase1-why1"
+        assert store.load()["iteration"] == 2
+
+    def test_banzai_escalation_cleanup_deletes_only_allowed_null_keys(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        state = store.load()
+        state["status"] = "running"
+        state["escalation_question"] = "Q1?"
+        state["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert "escalation_question" not in state
+        assert "blocked_reason" not in state
+        assert state["escalation_resolved"] is True
+        assert state["escalation_resolver"] == "COMMANDER-banzai"
+
+    def test_banzai_escalation_invalid_cleanup_key_blocks(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "blocked_reason": None,
+                    "last_dispatch": {"phase_id": "forged"},
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        state = store.load()
+        state["status"] = "running"
+        state["escalation_question"] = "Q1?"
+        state["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert state["status"] == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["escalation_question"] == "Q1?"
+        assert state["last_dispatch"] is None
+        assert "last_dispatch" in state["blocked_reason"]
 
 
 class TestGovernanceConfigMerge:

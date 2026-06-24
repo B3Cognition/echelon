@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Optional
 
 from harness.condition_evaluator import ConditionEvaluator
+from harness.echelon_result_schema import (
+    EchelonResultValidationError,
+    validate_echelon_result,
+)
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
 from harness.squad_executors import (
@@ -45,6 +49,27 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+JUDGMENT_STATE_UPDATE_KEYS = frozenset(
+    {
+        "next_phase",
+        "phase",
+        "iteration",
+        "status",
+        "blocked_reason",
+        "escalation_question",
+        "escalation_options",
+        "escalation_resolved",
+        "escalation_resolver",
+        "escalation_risk_level",
+        "escalation_recommended_answer",
+        "escalation_default_answer",
+        "risk_level",
+        "fallback_mode",
+        "execution_mode",
+        "dependency_fallbacks",
+        "shadow_output_recovered",
+    }
+)
 
 
 def _state_autonomy_mode(state: dict, fallback: str) -> str:
@@ -522,6 +547,8 @@ class SquadController:
                     s["blocked_reason"] = None
                     self._state_store.save(s)
                     self._judgment_dispatch_escalation(q, phase)
+                    if self._state_store.load().get("status") == "blocked":
+                        return SquadResult.from_state(self._state_store.load())
                     # Unconditionally mark escalation resolved — do not rely on COMMANDER
                     # to include it in state_updates. If it forgets, the check at line 354
                     # re-fires on every iteration, which spins forever on WHY phases.
@@ -625,6 +652,67 @@ class SquadController:
             "(phase not marked complete)",
             flush=True,
         )
+
+    def _block_after_judgment_validation_failure(
+        self,
+        phase: str,
+        reason: str,
+    ) -> None:
+        state = self._state_store.load()
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        state["blocked_reason"] = (
+            f"judgment state_updates validation failed: {reason}"
+        )
+        self._state_store.save(state)
+        print(
+            f"[squad] ✗ {phase} blocked: judgment state_updates validation failed: {reason}",
+            flush=True,
+        )
+
+    def _ensure_judgment_state_updates_allowed(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+    ) -> bool:
+        try:
+            result.echelon_result = validate_echelon_result(
+                result.echelon_result,
+                allowed_state_update_keys=JUDGMENT_STATE_UPDATE_KEYS,
+            )
+            return True
+        except EchelonResultValidationError as exc:
+            self._block_after_judgment_validation_failure(phase, str(exc))
+            return False
+
+    def _apply_judgment_state_updates(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+        *,
+        exclude_keys: set[str] | None = None,
+        delete_null: bool = False,
+    ) -> bool:
+        if not self._ensure_judgment_state_updates_allowed(result, phase):
+            return False
+
+        excluded = exclude_keys or set()
+        updates = {
+            key: value
+            for key, value in result.state_updates.items()
+            if key not in excluded
+        }
+        if not updates:
+            return True
+
+        state = self._state_store.load()
+        for key, value in updates.items():
+            if delete_null and value is None:
+                state.pop(key, None)
+            else:
+                state[key] = value
+        self._state_store.save(state)
+        return True
 
     def _guard_constitution_provenance(self, phase: str) -> str:
         """Route normal spec/build phases through CHIEF until constitution is proven.
@@ -880,6 +968,8 @@ class SquadController:
                     node,
                     result,
                 )
+                if not self._ensure_judgment_state_updates_allowed(judgment, node.id):
+                    return PHASE_TERMINAL_BLOCKED
                 # Accept either "next_phase" or "phase" as the routing key.
                 next_phase = (
                     judgment.state_updates.get("next_phase")
@@ -907,9 +997,12 @@ class SquadController:
                     if k not in routing_keys
                 }
                 if extra:
-                    s = self._state_store.load()
-                    s.update(extra)
-                    self._state_store.save(s)
+                    if not self._apply_judgment_state_updates(
+                        judgment,
+                        node.id,
+                        exclude_keys=routing_keys,
+                    ):
+                        return PHASE_TERMINAL_BLOCKED
                 # If this judgment blocked the run (e.g. COMMANDER set
                 # status=blocked after reading SAGE artifacts), stop evaluating
                 # further transitions — continuing would let a second COMMANDER
@@ -1000,16 +1093,13 @@ class SquadController:
             )
 
         result = self._provider.exec_agent(str(self._project_root), context)
+        if not self._apply_judgment_state_updates(
+            result,
+            blocked_phase,
+            delete_null=True,
+        ):
+            return result
         self._write_journal_entries(result, blocked_phase)
-
-        if result.state_updates:
-            s = self._state_store.load()
-            for k, v in result.state_updates.items():
-                if v is None:
-                    s.pop(k, None)   # null → remove key entirely
-                else:
-                    s[k] = v
-            self._state_store.save(s)
 
         return result
 
