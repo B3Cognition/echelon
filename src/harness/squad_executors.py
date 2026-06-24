@@ -429,7 +429,7 @@ class PhaseExecutor(ABC):
 
     def _run_pre_dispatch(
         self, node: "PhaseNode", state: dict, state_store: "SquadStateStore"
-    ) -> None:
+    ) -> Optional["SquadAgentResult"]:
         """Execute conditional pre_dispatch entries before the main agent."""
         from harness.condition_evaluator import ConditionEvaluator
         ev = ConditionEvaluator()
@@ -448,11 +448,15 @@ class PhaseExecutor(ABC):
                     result = self._provider.exec_agent(
                         str(self._project_root), prompt
                     )
+                    result = self._validate_result_state_updates(node, result)
+                    if result.blocked:
+                        return result
                     self._write_journal_entries(result, node.id)
                     for k, v in result.state_updates.items():
                         s = state_store.load()
                         s[k] = v
                         state_store.save(s)
+        return None
 
     def _assemble_pre_dispatch_prompt(
         self,
@@ -600,7 +604,9 @@ class AgentExecutor(PhaseExecutor):
         from harness.squad_provider import SquadAgentResult
 
         state = state_store.load()
-        self._run_pre_dispatch(node, state, state_store)
+        pre_dispatch_result = self._run_pre_dispatch(node, state, state_store)
+        if pre_dispatch_result is not None and pre_dispatch_result.blocked:
+            return pre_dispatch_result
         state = state_store.load()  # re-load after pre_dispatch
         prompt = self._assemble_prompt(node, state)
         result = self._provider.exec_agent(str(self._project_root), prompt)

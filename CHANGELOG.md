@@ -66,6 +66,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `PhaseGraph` preserves `allowed_state_updates` from `extension/workflow/definition.yaml`, and `role_contracts` now fails routed roles that omit a state-update allowlist.
   - Focused tests added in `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_state.py`, `tests/kernel/test_phase_graph.py`, `tests/kernel/test_squad_executors_journal.py`, and `tests/unit/test_role_contracts.py`.
   - Verification: `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py -q` (`82 passed`); `pytest tests/kernel/test_squad_executors_journal.py -q` (`39 passed`); `pytest tests/kernel -q` (`540 passed`).
+- **EGR-012 pre-dispatch state-update validation** — pre-dispatch agents now use the same per-phase `state_updates` allowlist validation as staged and conditional executor paths before any direct state write.
+  - Invalid pre-dispatch results now return a blocked executor result before journal or state mutation, preventing unauthorized keys from entering `state.json`.
+  - Valid pre-dispatch updates that are declared in the parent phase allowlist continue to apply normally.
+  - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`41 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py tests/kernel/test_squad_executors_journal.py -q` (`123 passed`); `pytest tests/kernel -q` (`542 passed`).
 
 ## [2.1.0] - 2026-05-17
 

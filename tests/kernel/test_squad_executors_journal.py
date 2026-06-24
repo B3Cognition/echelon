@@ -519,6 +519,104 @@ def test_assemble_prompt_uses_echelon_result_template(tmp_path):
     assert prompt.rstrip().endswith("journal_entries: []")
 
 
+def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
+    """Pre-dispatch agents must obey the phase state_update allowlist."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [{"type": "insight"}],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["allowed_key"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    state = state_store.load()
+    assert result is not None
+    assert result.verdict == "BLOCKED"
+    assert (
+        "state_updates key 'unexpected' is not allowed"
+        in result.state_updates["blocked_reason"]
+    )
+    assert "unexpected" not in state
+    assert not state.get("blocked_reason")
+    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+
+
+def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
+    """Allowed pre-dispatch updates still flow into state."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"allowed_key": True},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["allowed_key"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    assert state_store.load()["allowed_key"] is True
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
