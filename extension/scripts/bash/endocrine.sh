@@ -325,7 +325,7 @@ ALL_AGENTS=(
 
 ensure_state_file() {
   mkdir -p "$SQUAD_DIR"
-  if [[ ! -f "$STATE_FILE" ]]; then
+  if [[ ! -s "$STATE_FILE" ]]; then
     echo '{}' > "$STATE_FILE"
   fi
 }

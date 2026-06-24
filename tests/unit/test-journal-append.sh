@@ -48,7 +48,7 @@ bash "$SCRIPT" --entry "$VALID_ENTRY" --journal-path "$JOURNAL" 2>/dev/null
 RC=$?
 set -e
 assert_eq "APP-01 exit code" "0" "$RC"
-LINE_COUNT=$(wc -l < "$JOURNAL")
+LINE_COUNT=$(wc -l < "$JOURNAL" | tr -d '[:space:]')
 assert_eq "APP-01 line count" "1" "$LINE_COUNT"
 # Verify no schema_warning line
 set +e
@@ -68,7 +68,7 @@ bash "$SCRIPT" --entry "$INVALID_ENTRY" --journal-path "$JOURNAL" 2>/dev/null
 RC=$?
 set -e
 assert_eq "APP-02 exit code" "0" "$RC"
-LINE_COUNT=$(wc -l < "$JOURNAL")
+LINE_COUNT=$(wc -l < "$JOURNAL" | tr -d '[:space:]')
 assert_eq "APP-02 line count" "2" "$LINE_COUNT"
 # First line is the original entry
 FIRST_TYPE=$(head -1 "$JOURNAL" | jq -r '.type')
@@ -144,7 +144,7 @@ else
   echo "  FAIL: APP-05 journal file not created"
   FAIL=$((FAIL + 1))
 fi
-LINE_COUNT=$(wc -l < "$JOURNAL")
+LINE_COUNT=$(wc -l < "$JOURNAL" | tr -d '[:space:]')
 assert_eq "APP-05 entry appended" "1" "$LINE_COUNT"
 
 echo ""
@@ -157,7 +157,7 @@ RC=$?
 set -e
 assert_eq "APP-06 exit code" "0" "$RC"
 # Verify entry still appended
-LINE_COUNT=$(wc -l < "$JOURNAL")
+LINE_COUNT=$(wc -l < "$JOURNAL" | tr -d '[:space:]')
 if [ "$LINE_COUNT" -ge 1 ]; then
   echo "  PASS: APP-06 entry appended despite missing ref"
   PASS=$((PASS + 1))

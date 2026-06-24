@@ -73,6 +73,7 @@ class TestOracleTemplates:
         assert (
             "  output_files:\n"
             "    - {spec_dir}/domain-patterns.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

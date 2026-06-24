@@ -83,6 +83,7 @@ class TestGuardianTemplates:
             "  output_files:\n"
             "    - {spec_dir}/security-findings.md\n"
             "    - {spec_dir}/risk-acceptance-log.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

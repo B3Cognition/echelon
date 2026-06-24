@@ -895,6 +895,9 @@ phases:
 
     allowed_state_updates:
       - quality_scores
+      - gate_decision
+      - convergence_forced
+      - phase_recommendation
       - feasibility_structural_pass
       - feasibility_structural_attempts
       - tasks_lexicon_pass

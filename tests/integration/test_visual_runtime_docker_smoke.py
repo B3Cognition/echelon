@@ -17,21 +17,27 @@ PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.42.0-jammy"
 
 
 def _docker_available() -> bool:
-    return subprocess.run(
-        ["docker", "info"],
-        capture_output=True,
-        timeout=10,
-        check=False,
-    ).returncode == 0
+    try:
+        return subprocess.run(
+            ["docker", "info"],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        ).returncode == 0
+    except FileNotFoundError:
+        return False
 
 
 def _image_available(image: str) -> bool:
-    return subprocess.run(
-        ["docker", "image", "inspect", image],
-        capture_output=True,
-        timeout=10,
-        check=False,
-    ).returncode == 0
+    try:
+        return subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True,
+            timeout=10,
+            check=False,
+        ).returncode == 0
+    except FileNotFoundError:
+        return False
 
 
 @pytest.mark.integration

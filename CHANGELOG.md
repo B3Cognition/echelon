@@ -4,6 +4,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Stabilized full-suite verification by making the shell runner use `bash`
+  without mutating tracked test file modes, reusing the installed Echelon venv
+  for shell Python detection, initializing empty endocrine state files, skipping
+  Docker visual smoke checks when Docker is unavailable, and aligning phase 3
+  consensus state-update allowlists with accepted-risk routing.
+
 ### Added
 
 - Documented the EGR completion gate: every implemented EGR now requires a

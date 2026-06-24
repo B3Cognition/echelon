@@ -70,6 +70,7 @@ class TestSentinelTemplates:
             "    - {spec_dir}/test-strategy.md\n"
             "    - {spec_dir}/test-architecture.md\n"
             "    - {spec_dir}/coverage-map.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

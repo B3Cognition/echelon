@@ -68,6 +68,7 @@ class TestInvestigatorTemplates:
         assert (
             "  output_files:\n"
             "    - {spec_dir}/research.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

@@ -84,6 +84,7 @@ class TestGatekeeperTemplates:
         assert (
             "  output_files:\n"
             "    - {spec_dir}/kill-report.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

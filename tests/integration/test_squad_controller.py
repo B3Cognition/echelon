@@ -480,12 +480,57 @@ class TestSquadControllerBasics:
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )
-            # Third call+: WHY1 re-dispatch passes (quality_scores present)
+            if call_count["n"] == 3:
+                # Third call: WHY1 re-dispatch passes (quality_scores present)
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"quality_scores": [{"pass": True}]},
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 4:
+                # CHIEF/constitution uses a different phase contract.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"constitution_status": "exists"},
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 5:
+                # CARTOGRAPHER/WHAT writes spec metadata, not quality scores.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {
+                            "spec_id": "001-test",
+                            "spec_dir": "specs/001-test",
+                            "spec_status": "drafted",
+                        },
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 6:
+                # WHY2 quality gate passes.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"quality_scores": [{"pass": True}]},
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            # End the flow at phase2-decide so this test remains focused on
+            # banzai escalation recovery rather than full Phase A artifact output.
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
-                    "verdict": "DONE",
-                    "state_updates": {"quality_scores": [{"pass": True}]},
+                    "verdict": "KILL",
+                    "state_updates": {},
                 },
                 raw_output="", duration_ms=0, timed_out=False,
             )
