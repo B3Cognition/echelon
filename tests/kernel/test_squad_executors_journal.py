@@ -638,6 +638,47 @@ def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
     assert not (squad_dir / "reasoning-journal.jsonl").exists()
 
 
+def test_agent_execute_blocks_unallowed_state_updates_before_journal_write(tmp_path):
+    """Normal agent dispatch must validate allowlists before journal mutation."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize(
+        run_id="r",
+        mode="greenfield",
+        user_message="msg",
+        token_budget=0,
+        entry_phase="phase-test",
+    )
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [{"type": "insight"}],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    ex._provider = provider
+    node = PhaseNode(id="phase-test", type="agent", allowed_state_updates=[])
+
+    result = ex.execute(node, state_store)
+
+    assert result.blocked is True
+    assert (
+        "state_updates key 'unexpected' is not allowed"
+        in result.state_updates["blocked_reason"]
+    )
+    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+
+
 def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
     """Allowed pre-dispatch updates still flow into state."""
     from harness.phase_graph import PhaseNode

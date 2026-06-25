@@ -27,6 +27,14 @@ def test_valid_result_is_normalized_without_mutating_input():
     assert normalized is not payload
 
 
+def test_build_routing_verdicts_are_supported():
+    for verdict in ("CHANGES_REQUESTED", "NEEDS_CONTEXT"):
+        normalized = validate_echelon_result(
+            {"verdict": verdict, "state_updates": {}}
+        )
+        assert normalized["verdict"] == verdict
+
+
 def test_bad_top_level_type_is_rejected():
     with pytest.raises(EchelonResultValidationError, match="must be an object"):
         validate_echelon_result(["not", "an", "object"])

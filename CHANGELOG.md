@@ -89,6 +89,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Empty allowlists are shown as `state_updates: {}`, and prompts warn that unexpected top-level update keys block the run.
   - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
   - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`47 passed`); `pytest tests/kernel -q` (`548 passed`); `pytest` (`2318 passed, 22 skipped`).
+- **EGR-015 normal agent pre-journal validation** — normal `AgentExecutor` dispatches now validate `echelon_result.state_updates` against the phase allowlist before journal writes, cost accounting, or shadow-output recovery.
+  - Invalid normal-agent update keys now block before mutating either `state.json` or `reasoning-journal.jsonl`, matching the pre-dispatch, staged, and conditional executor ordering.
+  - Build-routing verdicts `CHANGES_REQUESTED` and `NEEDS_CONTEXT`, plus build progress routing keys, are now explicit deterministic contracts instead of tolerated late-routing assumptions.
+  - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`48 passed`); `pytest tests/integration/test_squad_controller.py::TestBuildPhaseRouting -q` (`13 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_executors_journal.py tests/kernel/test_phase_graph.py -q` (`76 passed`); `pytest tests/kernel -q` (`550 passed`); `pytest` (`2320 passed, 22 skipped`); `bash tests/run-all.sh` (`678 passed` on retry after a transient prompt-budget shell-test failure passed directly).
 
 ## [2.1.0] - 2026-05-17
 

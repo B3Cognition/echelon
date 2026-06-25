@@ -660,6 +660,9 @@ class AgentExecutor(PhaseExecutor):
         state = state_store.load()  # re-load after pre_dispatch
         prompt = self._assemble_prompt(node, state)
         result = self._provider.exec_agent(str(self._project_root), prompt)
+        result = self._validate_result_state_updates(node, result)
+        if result.blocked:
+            return result
         self._write_journal_entries(result, node.id)
         state_store.increment_cost(result.cost_usd)
         if result.echelon_result is not None:

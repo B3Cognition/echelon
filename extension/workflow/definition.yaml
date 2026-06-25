@@ -1236,6 +1236,10 @@ phases:
       - process-metrics.md
     allowed_state_updates:
       - build
+      - phase_group_complete
+      - more_tasks_in_phase_group
+      - all_tasks_complete
+      - no_more_phase_checkpoints
       - shadow_output_recovered
     transitions:
       - to: build-7-integration
