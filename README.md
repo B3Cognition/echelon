@@ -75,8 +75,8 @@ Both `echelon init` and `echelon harness init` are pure Python — no AI session
 echelon run "Build a photo album app with sharing and tagging"
 echelon status                             # re-orient: run state, artifacts, cost, next step
 echelon artifacts 001                      # generate specs/001-*/ARTIFACTS.md
-echelon continue                           # advance to next pending phase automatically
-echelon resume "your clarification"        # unblock a paused run
+echelon continue                           # run the next no-input recovery/phase action
+echelon resume "your clarification"        # answer a human-input block, then continue
 echelon rewind <phase-id>                  # recover a safe Phase 3 checkpoint, then continue
 
 # Phase B — build, verify in Docker, open PR
@@ -510,8 +510,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon cicd` | — | Retired; re-run `echelon harness init` to auto-detect high-confidence `verify_command` |
 | `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
-| `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
-| `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
+| `echelon continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
+| `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
 | `echelon rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
 | `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
 | `echelon land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |

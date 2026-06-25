@@ -440,7 +440,13 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
 
             if self._cancelled:
-                return SquadResult.interrupted()
+                state = self._state_store.load()
+                state["status"] = "interrupted"
+                state["phase"] = phase
+                state["interrupted_phase"] = phase
+                state["blocked_reason"] = None
+                self._state_store.save(state)
+                return SquadResult.from_state(self._state_store.load())
 
             if self._budget_exhausted():
                 self._state_store.set_blocked("token_budget_exhausted")

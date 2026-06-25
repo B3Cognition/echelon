@@ -307,6 +307,10 @@ class TestSquadControllerBasics:
         ctrl._cancelled = True   # simulate SIGINT received mid-run
         result = ctrl.run("msg", "banzai")
         assert result.status == "interrupted"
+        state = store.load()
+        assert state["status"] == "interrupted"
+        assert state["phase"] == "init"
+        assert state["interrupted_phase"] == "init"
 
     def test_stale_cancel_requested_cleared_on_resume(self, tmp_path):
         """cancel_requested left in state.json by a previous Ctrl+C does not
@@ -569,6 +573,47 @@ class TestSquadControllerBasics:
         assert result.status == "blocked"
         # escalation_question must be in state for echelon resume to pick up
         assert store.load().get("escalation_question")
+
+    def test_fresh_checkpoint_question_ignores_stale_escalation_resolved(self, tmp_path):
+        """A prior resume must not suppress a later checkpoint human-gate question."""
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "status": "blocked",
+                    "blocked_reason": "checkpoint-assess human gate",
+                    "escalation_question": "Approve the Phase 1 gate?",
+                    "escalation_options": [
+                        {
+                            "id": "proceed_to_decide",
+                            "label": "Approve gate",
+                            "next_phase": "phase2-decide",
+                        }
+                    ],
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider, mode="semi")
+        store.initialize("r", "semi", "msg", 0, "checkpoint-assess", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state["escalation_resolved"] = True
+        store.save(state)
+
+        result = ctrl.run("msg", "semi")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert provider.exec_agent.call_count == 1
+        assert state["blocked_reason"] == "checkpoint-assess human gate"
+        assert state["escalation_question"] == "Approve the Phase 1 gate?"
+        assert state["escalation_resolved"] is False
+        assert state.get("blocked_reason") != "phase_dispatch_limit"
 
     def test_banzai_escalation_dispatches_commander_not_stops(self, tmp_path):
         """Banzai mode: blocked+escalation_question → COMMANDER called, run continues."""

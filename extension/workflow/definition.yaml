@@ -918,14 +918,12 @@ phases:
       # Evaluated before the ASSESS2 branch so a combined failure repairs the
       # upstream (spec) constraint first, then re-flows.
       - to: phase1-what
-        condition: "why3-verdict = FAIL"
+        condition: "why3-verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration
-        guard: "iteration < max_iterations"
       # An ASSESS2 REJECTED is a FEASIBILITY failure owned by ARCHITECT → HOW.
       - to: phase3-how
-        condition: "assess2-verdict = REJECTED"
+        condition: "assess2-verdict = REJECTED AND iteration < max_iterations"
         action: increment_iteration
-        guard: "iteration < max_iterations"
       - to: checkpoint-plan
         condition: "iteration >= max_iterations"
         action: force_convergence_warning

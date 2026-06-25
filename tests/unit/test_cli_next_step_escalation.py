@@ -203,6 +203,96 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     assert "echelon rewind phase3-sentinel" in captured.out
 
 
+def test_blocked_incomplete_discover_prioritizes_retry_over_constitution(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) == "phase1-discover"
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "RUN BLOCKED" in captured.out
+    assert "missing_echelon_result" in captured.out
+    assert "phase1-discover" in captured.out
+    assert "phase1-constitution has not completed" not in captured.out
+
+
+def test_blocked_timeout_next_step_uses_continue_not_resume(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "agent_timeout",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "RUN BLOCKED" in captured.out
+    assert "agent_timeout" in captured.out
+    assert "echelon continue" in captured.out
+    assert 'echelon resume "<your answer>"' not in captured.out
+
+
+def test_interrupted_next_step_retries_interrupted_phase(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "interrupted",
+                "phase": "phase1-discover",
+                "interrupted_phase": "phase1-discover",
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) == "phase1-discover"
+
+    _print_next_steps(tmp_path, "interrupted")
+
+    captured = capsys.readouterr()
+    assert "RUN INTERRUPTED" in captured.out
+    assert "phase1-discover" in captured.out
+    assert "echelon continue" in captured.out
+    assert "phase1-constitution has not completed" not in captured.out
+
+
 def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
     tmp_path: Path,
     capsys,

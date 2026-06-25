@@ -259,3 +259,43 @@ def test_resume_uses_existing_blocked_decision_after_process_restart(
     assert resumed["blocked_decision"]["blocked_at"] == "2026-06-23T10:00:00+00:00"
     assert resumed["blocked_decision"]["status"] == "resolved"
     assert resumed["resume_metadata"]["selected_option_id"] == "proceed_anyway"
+
+
+def test_resume_terminal_block_delegates_to_continue(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["phase"] = "terminal-blocked"
+    state["blocked_decision"] = {
+        "schema_version": 1,
+        "status": "pending",
+        "answer_type": "free_text",
+        "question": state["escalation_question"],
+        "blocked_reason": state["blocked_reason"],
+        "blocked_phase": state["phase"],
+        "blocked_at": "2026-06-23T10:00:00+00:00",
+        "options": [],
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _patch_resume_dependencies(monkeypatch)
+
+    calls: list[tuple[list[str], Path, Path]] = []
+
+    def fake_continue(args, project_root, ext_dir):
+        calls.append((args, project_root, ext_dir))
+
+    monkeypatch.setattr("echelon.cli._cmd_continue", fake_continue)
+
+    _cmd_resume(["retry with narrower scope"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed["status"] == "running"
+    assert resumed["phase"] == "terminal-blocked"
+    assert resumed["blocked_reason"] is None
+    assert resumed["blocked_decision"]["status"] == "resolved"
+    assert calls == [([], tmp_path, Path.cwd() / "extension")]

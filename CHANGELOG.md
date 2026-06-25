@@ -6,6 +6,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Clarified and enforced squad recovery command contracts. `echelon continue`
+  is now the no-input recovery executor, `echelon resume` only answers human
+  gates before delegating back to continuation, and blocked runs without human
+  questions no longer point to unusable resume commands.
+  - Recoverable dispatch failures including `missing_echelon_result`,
+    `missing_phase_outputs`, `agent_timeout`, `agent_blocked`, and
+    `agent_exit_code_*` now prioritize the failed incomplete
+    `last_dispatch.phase_id`.
+  - Safe Phase 3 failures point to `echelon rewind`; incomplete Phase 1
+    dispatches retry the failed phase and clear stale block metadata before
+    re-running.
+  - Interrupted squad runs now persist `status=interrupted` and the interrupted
+    phase so `echelon continue` retries the interrupted phase instead of
+    inferring a later phase from artifacts.
+- Fixed checkpoint human-gate recovery after `echelon resume`: stale
+  `escalation_resolved: true` state no longer suppresses a later fresh
+  `escalation_question`, so real checkpoint questions are preserved instead of
+  being overwritten by the generic `phase_dispatch_limit` block.
+- Fixed consensus ownership routing bounds after PR #18: WHY3 spec-quality
+  failures now route back to WHAT only while `iteration < max_iterations`, and
+  ASSESS2 feasibility failures route back to HOW only while below the same cap,
+  preserving the executable force-convergence fallback at the iteration limit.
 - Stabilized full-suite verification by making the shell runner use `bash`
   without mutating tracked test file modes, reusing the installed Echelon venv
   for shell Python detection, initializing empty endocrine state files, skipping

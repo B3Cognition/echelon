@@ -66,6 +66,8 @@ class SquadStateStore:
                 pass
 
         ensure_blocked_decision(state)
+        if state.get("status") == "blocked" and state.get("escalation_question"):
+            state["escalation_resolved"] = False
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         content = json.dumps(state, indent=2)
         fd, tmp = tempfile.mkstemp(

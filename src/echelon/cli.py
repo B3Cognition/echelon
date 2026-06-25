@@ -16,6 +16,7 @@ Auto-detected from ECHELON_LLM (default: claude).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import os
 import shutil
@@ -71,16 +72,16 @@ Commands:
   status                                    Show current run state, staging artifacts, open
                                             issues, cost, and next action — orient after a
                                             break without reading files manually.
-  continue [--mode semi|banzai|guided]      Advance the last run to its next required phase.
-                                            Reads the task and mode from prior state — no
-                                            prompt needed. Handles: resume if running,
-                                            escalation guidance if blocked, or determines
-                                            the correct next phase if done.
+  continue [--mode semi|banzai|guided]      Run the next no-input recovery action for the
+                                            last run. Retries running/interrupted runs,
+                                            retries recoverable failed dispatches, or
+                                            advances completed-but-incomplete Phase A work.
+                                            If human input is needed, prints `resume`.
   rewind  <phase-id>                        Rewind the active squad run to a safe checkpoint
                                             phase and prepare it for `echelon continue`.
-  resume  "<answers>"                       Answer escalation questions from a blocked run
-                                            and continue it. Use when the run printed
-                                            "blocked — human input required".
+  resume  "<answers>"                       Answer escalation questions from a blocked run.
+                                            Use only when the run asked for human input;
+                                            after recording the answer, Echelon continues.
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
   verify-spec <spec_id> [strict=true] [--reconcile] [--dry-run]
                                             Audit implementation against spec
@@ -1210,13 +1211,154 @@ _REWIND_CLEANUP_OUTPUTS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
-    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+@dataclass(frozen=True)
+class _RunRecoveryAction:
+    kind: str
+    reason: str = ""
+    phase: str = ""
+    command: str = ""
+    note: str = ""
+
+
+def _is_retryable_dispatch_block_reason(reason: str) -> bool:
+    reason = reason.strip()
+    return (
+        reason in {
+            "missing_phase_outputs",
+            "missing_echelon_result",
+            "agent_timeout",
+            "agent_blocked",
+        }
+        or reason.startswith("agent_exit_code_")
+    )
+
+
+def _last_incomplete_dispatch_phase(run_state: dict) -> str | None:
     last_dispatch = run_state.get("last_dispatch") or {}
     phase_id = str(last_dispatch.get("phase_id") or "").strip()
-    if blocked_reason in {"missing_phase_outputs", "missing_echelon_result"} and phase_id in _SAFE_REWIND_PHASES:
+    if not phase_id or phase_id == "terminal-blocked":
+        return None
+
+    completed = run_state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
+    if phase_id in completed_phases:
+        return None
+
+    return phase_id
+
+
+def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
+    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+    phase_id = _last_incomplete_dispatch_phase(run_state)
+    if _is_retryable_dispatch_block_reason(blocked_reason) and phase_id in _SAFE_REWIND_PHASES:
         return f"echelon rewind {phase_id}"
     return None
+
+
+def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
+    """Return the incomplete phase that caused a deterministic dispatch block."""
+
+    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+    if not _is_retryable_dispatch_block_reason(blocked_reason):
+        return None
+    if run_state.get("escalation_question"):
+        return None
+
+    phase_id = _last_incomplete_dispatch_phase(run_state)
+    if not phase_id:
+        return None
+
+    return phase_id
+
+
+def _interrupted_retry_phase(run_state: dict) -> str | None:
+    phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
+    if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
+        return phase_id
+    return _last_incomplete_dispatch_phase(run_state)
+
+
+def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
+    status = str(run_state.get("status") or "").strip()
+    reason = str(run_state.get("blocked_reason") or "").strip()
+
+    if status in {"running", "in_progress"}:
+        return _RunRecoveryAction("continue_running")
+
+    if status == "interrupted":
+        retry_phase = _interrupted_retry_phase(run_state)
+        if retry_phase:
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason="interrupted",
+                phase=retry_phase,
+                command="echelon continue",
+                note="will retry the interrupted phase",
+            )
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason="interrupted",
+            command="echelon run --next-phase <phase-id>",
+            note="interrupted run does not record a retryable phase",
+        )
+
+    if status != "blocked":
+        return _RunRecoveryAction("advance")
+
+    if run_state.get("escalation_question"):
+        return _RunRecoveryAction(
+            "human_resume",
+            reason=reason or "human answer required",
+            command='echelon resume "<your answer>"',
+            note=str(run_state.get("escalation_question") or "").strip(),
+        )
+
+    rewind = _blocked_non_escalation_recovery_command(run_state)
+    if rewind:
+        phase = str((run_state.get("last_dispatch") or {}).get("phase_id") or "").strip()
+        return _RunRecoveryAction(
+            "safe_rewind",
+            reason=reason,
+            phase=phase,
+            command=rewind,
+            note="safe checkpoint cleanup is required before retry",
+        )
+
+    retry_phase = _blocked_failed_dispatch_phase(run_state)
+    if retry_phase:
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=retry_phase,
+            command="echelon continue",
+            note="will retry the failed phase; it was not marked complete",
+        )
+
+    if reason == "token_budget_exhausted":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="increase analysis.token_budget_k, then echelon continue",
+            note="the run cannot continue until the configured budget is higher",
+        )
+
+    if "invalid next_phase" in reason:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="echelon run --next-phase <phase-id>",
+            note="choose a valid phase from echelon status output",
+        )
+
+    if not reason:
+        return _RunRecoveryAction("advance")
+
+    return _RunRecoveryAction(
+        "manual_recovery",
+        reason=reason,
+        command="fix the blocker, then echelon continue",
+        note="no human question, safe rewind target, or retryable dispatch was recorded",
+    )
 
 
 def _rewind_constitution_is_real(project_root: Path) -> bool:
@@ -1516,6 +1658,53 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         except Exception:
             current_state = {}
 
+    if result_status in {"blocked", "interrupted"}:
+        action = _classify_run_recovery(current_state)
+        if action.kind == "human_resume":
+            fields = [
+                ("reason", action.reason),
+                ("question", action.note),
+                ("next", action.command),
+            ]
+            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
+            return
+        if action.kind == "safe_rewind":
+            fields = [
+                ("reason", action.reason),
+                ("phase", action.phase or "?"),
+                ("next", action.command),
+                ("then", "echelon continue"),
+            ]
+            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
+            return
+        if action.kind == "retry_phase":
+            fields = [
+                ("reason", action.reason),
+                ("phase", action.phase),
+                ("next", action.command),
+                ("note", action.note),
+            ]
+            _banner(
+                "NEXT STEP",
+                fields,
+                subtitle="RUN INTERRUPTED" if result_status == "interrupted" else "RUN BLOCKED",
+            )
+            return
+        if action.kind == "manual_recovery":
+            fields = [
+                ("reason", action.reason),
+                ("next", action.command),
+                ("note", action.note),
+            ]
+            _banner(
+                "NEXT STEP",
+                fields,
+                subtitle="RUN INTERRUPTED — manual recovery required"
+                if result_status == "interrupted"
+                else "RUN BLOCKED — manual recovery required",
+            )
+            return
+
     # 1. Constitution — phase provenance first, artifact integrity second
     completed = current_state.get("completed_phases")
     completed_phases = completed if isinstance(completed, list) else []
@@ -1579,27 +1768,6 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             pass
     if not newest_spec_id:
         newest_spec_id = str(run_state.get("spec_id") or "").strip()
-
-    if result_status == "blocked" and run_state.get("escalation_question"):
-        fields = [
-            ("reason", str(run_state.get("blocked_reason") or "human answer required").strip()),
-            ("question", str(run_state.get("escalation_question") or "").strip()),
-            ("next", 'echelon resume "<your answer>"'),
-        ]
-        _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
-        return
-
-    if result_status == "blocked":
-        recovery = _blocked_non_escalation_recovery_command(run_state)
-        if recovery:
-            fields = [
-                ("reason", str(run_state.get("blocked_reason") or "blocked").strip()),
-                ("phase", str((run_state.get("last_dispatch") or {}).get("phase_id") or run_state.get("phase") or "?").strip()),
-                ("next", recovery),
-                ("then", "echelon continue"),
-            ]
-            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
-            return
 
     if quality_gates_file is None and run_state:
         staging_dir = Path(run_state.get("staging_dir") or str(run_dir / "staging"))
@@ -2400,6 +2568,14 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if current_state.get("status") == "done" and _phase_a_ready_to_build(project_root, current_state):
         return None
 
+    action = _classify_run_recovery(current_state)
+    if action.kind == "retry_phase":
+        return action.phase
+    if action.kind in {"human_resume", "safe_rewind"}:
+        return None
+    if action.kind == "manual_recovery" and current_state.get("status") == "interrupted":
+        return None
+
     # 0. Constitution phase provenance first, artifact integrity second.
     completed = current_state.get("completed_phases")
     completed_phases = completed if isinstance(completed, list) else []
@@ -2651,6 +2827,7 @@ def _cmd_continue(
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
 
     phase_labels = {
+        "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
         "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
         "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
@@ -2658,31 +2835,8 @@ def _cmd_continue(
         "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
     }
 
-    # terminal-blocked: the consecutive-fail guard fired. echelon resume recorded the
-    # user's answer but left phase=terminal-blocked (a TERMINAL_PHASE). The controller
-    # would exit immediately from that phase, so we repair state here — advance the
-    # phase to the next runnable one — before resuming in the SAME squad dir.
-    if cur_phase == "terminal-blocked":
-        recovery = _blocked_non_escalation_recovery_command(state)
-        if status == "blocked" and recovery:
-            _banner(
-                "CHECKPOINT",
-                [
-                    ("blocked by", str(state.get("blocked_reason") or "blocked").strip()),
-                    ("recover with", recovery),
-                    ("then", "echelon continue"),
-                ],
-                subtitle="Run paused. Deterministic recovery required.",
-            )
-            return
-        next_phase = _next_continue_phase(project_root)
-        if next_phase is None:
-            print(
-                "Build is ready — nothing left to do in Phase A.\n\n"
-                "  echelon harness run <spec-id>",
-                flush=True,
-            )
-            return
+    def start_phase(next_phase: str, *, verb: str, clear_recovery: bool = False) -> None:
+        nonlocal state
         state, _ = _ensure_active_continue_spec_context(
             project_root,
             squad_dir,
@@ -2691,45 +2845,77 @@ def _cmd_continue(
         )
         state["phase"] = next_phase
         state["status"] = "running"
+        if clear_recovery:
+            state["blocked_reason"] = None
+            state["escalation_question"] = None
+            state["escalation_options"] = None
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
         label = phase_labels.get(next_phase, next_phase)
         print(
-            f"[squad] Continuing from {next_phase} — {label}\n"
+            f"[squad] {verb} {next_phase} — {label}\n"
             f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
             f"[squad] Mode:  {mode}",
             flush=True,
         )
         _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+
+    action = _classify_run_recovery(state)
+    if action.kind == "safe_rewind":
+        _banner(
+            "CHECKPOINT",
+            [
+                ("blocked by", action.reason),
+                ("recover with", action.command),
+                ("then", "echelon continue"),
+            ],
+            subtitle="Run paused. Deterministic recovery required.",
+        )
+        return
+    if action.kind == "retry_phase":
+        start_phase(action.phase, verb="Retrying incomplete phase", clear_recovery=True)
+        return
+    if action.kind == "human_resume":
+        _banner(
+            "CHECKPOINT",
+            [
+                ("decision needed", action.note or "(no escalation question recorded)"),
+                ("resume with", action.command),
+            ],
+            subtitle="Run paused. Human decision required.",
+        )
+        return
+    if action.kind == "manual_recovery":
+        _banner(
+            "CHECKPOINT",
+            [
+                ("blocked by", action.reason),
+                ("next", action.command),
+                ("note", action.note),
+            ],
+            subtitle="Run paused. Manual recovery required.",
+        )
+        return
+
+    # terminal-blocked: the consecutive-fail guard fired. echelon resume recorded the
+    # user's answer but left phase=terminal-blocked (a TERMINAL_PHASE). The controller
+    # would exit immediately from that phase, so we repair state here — advance the
+    # phase to the next runnable one — before resuming in the SAME squad dir.
+    if cur_phase == "terminal-blocked":
+        next_phase = _next_continue_phase(project_root)
+        if next_phase is None:
+            print(
+                "Build is ready — nothing left to do in Phase A.\n\n"
+                "  echelon harness run <spec-id>",
+                flush=True,
+            )
+            return
+        start_phase(next_phase, verb="Continuing from")
         return
 
     if status in ("running", "in_progress"):
         # Live run — let echelon run pick it up (same message → same dir → resume)
         print(f"[squad] Resuming active run in {squad_dir.name}…", flush=True)
         _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if status == "blocked":
-        q = (state.get("escalation_question") or "").strip()
-        recovery = _blocked_non_escalation_recovery_command(state)
-        if not q and recovery:
-            _banner(
-                "CHECKPOINT",
-                [
-                    ("blocked by", str(state.get("blocked_reason") or "blocked").strip()),
-                    ("recover with", recovery),
-                    ("then", "echelon continue"),
-                ],
-                subtitle="Run paused. Deterministic recovery required.",
-            )
-            return
-        _banner(
-            "CHECKPOINT",
-            [
-                ("decision needed", q or "(no escalation question recorded)"),
-                ("resume with",     'echelon resume "<your answer>"'),
-            ],
-            subtitle="Run paused. Human decision required.",
-        )
         return
 
     # Determine the next phase automatically
@@ -2742,23 +2928,7 @@ def _cmd_continue(
         )
         return
 
-    label = phase_labels.get(next_phase, next_phase)
-    print(
-        f"[squad] Continuing from {next_phase} — {label}\n"
-        f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
-        f"[squad] Mode:  {mode}",
-        flush=True,
-    )
-    state, _ = _ensure_active_continue_spec_context(
-        project_root,
-        squad_dir,
-        state,
-        sync_missing=True,
-    )
-    state["phase"] = next_phase
-    state["status"] = "running"
-    (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
-    _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+    start_phase(next_phase, verb="Continuing from")
 
 
 def _cmd_rewind(
@@ -2975,11 +3145,11 @@ def _cmd_resume(
         _banner("SQUAD RESUMED", [
             ("answer", (answer[:60] + "…") if len(answer) > 60 else answer),
             ("status", "unblocked — answer recorded"),
-            ("next", "echelon continue"),
-            ("note", "CARTOGRAPHER will apply your fix, then WHY2 re-validates"),
+            ("next", "continuing"),
+            ("note", "delegating to echelon continue"),
             ("artifacts", str(squad_dir)),
         ])
-        _print_next_steps(project_root, "done")
+        _cmd_continue([], project_root=project_root, ext_dir=ext_dir)
         return
 
     # Re-run from the current phase (same mode, same task).
