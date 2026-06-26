@@ -48,6 +48,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Focused regression coverage asserts that review re-entry still injects
     `review-fix-*.md` content into the next Phase 1 build prompt and that the
     coordinator invokes `RepairLoop` for the bounded cycle.
+- **EGR-025 workflow condition-field validation** — workflow validation now
+  rejects transition conditions that reference unresolvable fields, while
+  allowing explicit result fields, known config/derived predicates, declared
+  current/prior phase `allowed_state_updates`, transition `state_update` keys,
+  and declared output fields.
 
 ### Changed
 

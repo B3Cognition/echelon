@@ -19,6 +19,40 @@ SUPPORTED_TRANSITION_KEYS = frozenset({
 })
 
 
+KNOWN_CONDITION_FIELDS = frozenset({
+    # Result payload fields.
+    "verdict",
+    # CLI/run configuration fields injected into condition evaluation state.
+    "autonomy",
+    "guardian_mode",
+    "human_approved",
+    "mode",
+    # Loop counters and limits managed by the harness/commander.
+    "assess_defer_loop_limit",
+    "defer_count",
+    "fix_cycle",
+    "iteration",
+    "max_iterations",
+    "retry_count",
+    # Derived evaluator predicates.
+    "CRITICAL_issues",
+    "convergence_detected",
+    "no_CRITICAL_issues",
+    "quality_gates.fail",
+    "quality_gates.pass",
+    # Nested config-derived gates merged into evaluation state.
+    "governance.enabled",
+    "lexicon_gate.enabled",
+    # Build-task-loop progress predicates.
+    "all_phase_groups_complete",
+    "all_tasks_complete",
+    "more_phase_groups",
+    "more_tasks_in_phase_group",
+    "no_more_phase_checkpoints",
+    "phase_group_complete",
+})
+
+
 @dataclass(frozen=True)
 class WorkflowValidationIssue:
     """A machine-checkable workflow definition problem."""
@@ -102,6 +136,7 @@ def validate_workflow_definition(
         ])
 
     phase_ids = set(graph.all_phase_ids())
+    known_condition_fields = set(KNOWN_CONDITION_FIELDS)
     seen: set[str] = set()
 
     for phase_index, phase in enumerate(phases):
@@ -134,6 +169,7 @@ def validate_workflow_definition(
                 )
             )
         seen.add(phase_id)
+        known_condition_fields.update(_phase_condition_fields(phase))
 
         transitions = phase.get("transitions", [])
         if transitions is None:
@@ -155,6 +191,7 @@ def validate_workflow_definition(
                     phase_id=phase_id,
                     transition_index=index,
                     known_phase_ids=phase_ids,
+                    known_condition_fields=known_condition_fields,
                     path=path,
                 )
             )
@@ -176,6 +213,7 @@ def _validate_transition(
     phase_id: str,
     transition_index: int,
     known_phase_ids: set[str],
+    known_condition_fields: set[str],
     path: str,
 ) -> list[WorkflowValidationIssue]:
     issues: list[WorkflowValidationIssue] = []
@@ -230,6 +268,17 @@ def _validate_transition(
                 path=path,
             )
         )
+    else:
+        for field in sorted(_condition_fields(str(transition.get("condition")).strip())):
+            if field not in known_condition_fields:
+                issues.append(
+                    WorkflowValidationIssue(
+                        f"unresolvable condition field {field!r}",
+                        phase_id=phase_id,
+                        transition_index=transition_index,
+                        path=path,
+                    )
+                )
 
     action = transition.get("action")
     if action is not None and not isinstance(action, str):
@@ -254,6 +303,77 @@ def _validate_transition(
         )
 
     return issues
+
+
+def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
+    fields = set(str(key) for key in phase.get("allowed_state_updates") or [])
+    fields.update(_output_fields(phase.get("outputs") or []))
+    fields.update(_nested_agent_output_fields(phase))
+    transitions = phase.get("transitions") or []
+    if isinstance(transitions, list):
+        for transition in transitions:
+            if isinstance(transition, dict) and isinstance(transition.get("state_update"), dict):
+                fields.update(str(key) for key in transition["state_update"])
+    return fields
+
+
+def _nested_agent_output_fields(phase: dict[str, Any]) -> set[str]:
+    fields: set[str] = set()
+    for agent in phase.get("agents") or []:
+        if isinstance(agent, dict):
+            fields.update(_output_fields(agent.get("outputs") or []))
+    return fields
+
+
+def _output_fields(outputs: list[Any]) -> set[str]:
+    fields: set[str] = set()
+    for output in outputs:
+        if isinstance(output, dict):
+            fields.update(str(key) for key in output)
+    return fields
+
+
+def _condition_fields(condition: str) -> set[str]:
+    if condition == "always":
+        return set()
+
+    for operator in ("AND", "OR"):
+        if re.search(rf"\b{operator}\b", condition):
+            fields: set[str] = set()
+            for part in re.split(rf"\b{operator}\b", condition):
+                fields.update(_condition_fields(part.strip()))
+            return fields
+
+    not_match = re.fullmatch(r"NOT\s+(.+)", condition)
+    if not_match:
+        return _condition_fields(not_match.group(1).strip())
+
+    match = re.fullmatch(r"verdict\s*=\s*\S+", condition)
+    if match:
+        return {"verdict"}
+
+    match = re.fullmatch(r"([\w.\-]+)\s+in\s+\[([^\]]*)\]", condition)
+    if match:
+        return {match.group(1)}
+
+    match = re.fullmatch(r"([\w.\-]+)\s*(>=|<=|>|<)\s*([\w.\-]+)", condition)
+    if match:
+        fields = {match.group(1)}
+        right = match.group(3)
+        try:
+            float(right)
+        except ValueError:
+            fields.add(right)
+        return fields
+
+    match = re.fullmatch(r"([\w.\-]+)\s*=\s*.+", condition)
+    if match:
+        return {match.group(1)}
+
+    if re.fullmatch(r"[\w.\-]+", condition):
+        return {condition}
+
+    return set()
 
 
 def _validate_condition(condition: str) -> str | None:
