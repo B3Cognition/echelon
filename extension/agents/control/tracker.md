@@ -158,7 +158,7 @@ NEVER rewrite passing sections while repairing a failing one.
 ## Output Block
 
 echelon_result:
-  verdict: <ALIGNED | DRIFTING | ESCALATE>
+  verdict: <ALIGNED | DRIFT | STOP_AND_ASK>
   output_files:
     - ${STAGING_DIR}/user-intent.md
     - ${STAGING_DIR}/stakeholder-model.md

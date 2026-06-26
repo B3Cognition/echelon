@@ -11,7 +11,7 @@ Use this template for `intent-alignment-check.md`.
 
 ## Alignment Verdict
 
-- Verdict: ALIGNED/DRIFTING/ESCALATE
+- Verdict: ALIGNED/DRIFT/STOP_AND_ASK
 - Summary:
 
 | User Intent | Gatekeeper Scope / Decision | Aligned? | Divergence |

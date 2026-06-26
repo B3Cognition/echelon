@@ -125,7 +125,8 @@ def test_done_run_without_spec_md_is_not_ready_to_build(
 
     captured = capsys.readouterr()
     assert "READY TO BUILD" not in captured.out
-    assert "BUILD BLOCKED" in captured.out
+    assert "PHASE A INCOMPLETE" in captured.out
+    assert "BUILD BLOCKED" not in captured.out
     assert "spec.md absent" in captured.out
 
 

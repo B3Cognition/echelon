@@ -621,9 +621,9 @@ phases:
         condition: "governance.enabled AND NOT intent_alignment_check_structural_pass AND iteration < max_iterations"
         action: increment_iteration
       - to: phase3-specialists    # specialists run BEFORE speckit-echelon-architect (ARCHITECT) so their findings feed the design
-        condition: "alignment = ALIGNED OR alignment = DRIFT"
+        condition: "verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
       - to: escalate
-        condition: "alignment = STOP_AND_ASK"
+        condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
 
   # --------------------------------------------------------------------------
   - id: phase3-how

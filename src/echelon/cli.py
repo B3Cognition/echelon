@@ -1963,8 +1963,12 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
         if ready_items:
             fields.append(("already done", ", ".join(ready_items)))
-        subtitle = ("BUILD BLOCKED — fix blockers before running" if blockers
-                    else "RUN BLOCKED — resolve the block before building")
+        if result_status == "blocked":
+            subtitle = "RUN BLOCKED — resolve before building"
+        elif blockers:
+            subtitle = "PHASE A INCOMPLETE — continue authoring before build"
+        else:
+            subtitle = "RUN BLOCKED — resolve the block before building"
 
     _banner("NEXT STEP", fields, subtitle=subtitle)
 

@@ -29,6 +29,16 @@ If speckit-echelon-tracker (TRACKER) reports MISALIGNED:
 - In `guided` or `semi` mode: pause for human confirmation
 - In `banzai` mode: log the divergence, proceed with speckit-echelon-gatekeeper (GATEKEEPER)'s scope
 
+### Routing Verdict Contract — MANDATORY
+
+TRACKER must emit one of these canonical `echelon_result.verdict` values:
+
+- `ALIGNED` — scope still matches user intent; continue.
+- `DRIFT` — scope drift was detected and recorded, but progress may continue under the current mode.
+- `STOP_AND_ASK` — user input is required before continuing.
+
+The workflow still accepts legacy `DRIFTING` and `ESCALATE` verdicts for compatibility, but new outputs must use the canonical values above.
+
 ### Output Filename — MANDATORY
 
 Always name the output file exactly `intent-alignment-check.md`. **NEVER** produce `alignment-report.md`, `alignment.md`, `tracker-alignment.md`, or any other variant — downstream phases (and any future automated checks) look up this file by exact name.

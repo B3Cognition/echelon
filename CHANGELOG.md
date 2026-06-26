@@ -33,6 +33,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   for shell Python detection, initializing empty endocrine state files, skipping
   Docker visual smoke checks when Docker is unavailable, and aligning phase 3
   consensus state-update allowlists with accepted-risk routing.
+- Fixed Phase 2 tracker routing so `ALIGNED` / `DRIFT` verdicts advance to
+  `phase3-specialists` and `STOP_AND_ASK` escalates instead of falling through
+  to `DONE` with misleading incomplete-build guidance.
+  - The workflow still accepts legacy `DRIFTING` / `ESCALATE` tracker verdicts
+    for compatibility, while the tracker prompt and intent-alignment template
+    now document the canonical verdict contract.
+  - Next-step guidance for missing Phase A authoring artifacts now reports
+    `PHASE A INCOMPLETE` rather than `BUILD BLOCKED`.
 
 ### Added
 
