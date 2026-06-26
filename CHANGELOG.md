@@ -71,7 +71,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/unit/test_no_new_deps_pytest.py`, then moved the extension registry
   sync contract from `tests/test-unit-registry-sync.sh` into pytest via
   `tests/contract/registry_sync.py` and
-  `tests/unit/test_registry_sync_pytest.py`; updated `tests/README.md` to make
+  `tests/unit/test_registry_sync_pytest.py`, then moved the language-rule file
+  contract from `tests/unit/test-language-rules-exist.sh` into pytest via
+  `tests/contract/language_rules.py` and
+  `tests/unit/test_language_rules_pytest.py`; updated `tests/README.md` to make
   pytest the primary local test path while retaining legacy shell guidance.
 
 ### Added
