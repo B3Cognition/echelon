@@ -158,6 +158,47 @@ run_pytest_suite() {
   printf "  ${BOLD}%s: %d passed, %d failed${RESET}\n" "$suite_name" "$suite_pass" "$suite_fail"
 }
 
+run_pytest_target() {
+  local suite_name="$1"
+  shift
+
+  printf "\n${BOLD}========== %s ==========${RESET}\n" "$suite_name"
+
+  if [[ -z "$PYTHON" ]]; then
+    printf "${YELLOW}SKIP: No Python interpreter with pytest found${RESET}\n"
+    TOTAL_SKIP=$((TOTAL_SKIP + 1))
+    SUITE_RESULTS+=("$suite_name|0|0|1|SKIPPED (no pytest)")
+    return
+  fi
+
+  local output exit_code=0
+  output=$(cd "$ROOT" && "$PYTHON" -m pytest "$@" -q --tb=short 2>&1) || exit_code=$?
+
+  local suite_pass=0 suite_fail=0
+  suite_pass=$(echo "$output" | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' || echo 0)
+  suite_fail=$(echo "$output" | grep -oE '[0-9]+ failed' | grep -oE '[0-9]+' || echo 0)
+  suite_pass=${suite_pass:-0}
+  suite_fail=${suite_fail:-0}
+
+  TOTAL_PASS=$((TOTAL_PASS + suite_pass))
+  TOTAL_FAIL=$((TOTAL_FAIL + suite_fail))
+
+  local summary_line
+  summary_line=$(echo "$output" | grep -E '^(FAILED|ERROR|[0-9]+ (passed|failed))' || true)
+  [[ -n "$summary_line" ]] && printf "  %s\n" "$summary_line"
+
+  local suite_status="PASS"
+  if [[ "$exit_code" -ne 0 ]]; then
+    suite_status="FAIL"
+    printf "%s\n" "$output" | tail -20 | while IFS= read -r line; do
+      printf "    %s\n" "$line"
+    done
+  fi
+
+  SUITE_RESULTS+=("$suite_name|$suite_pass|$suite_fail|0|$suite_status")
+  printf "  ${BOLD}%s: %d passed, %d failed${RESET}\n" "$suite_name" "$suite_pass" "$suite_fail"
+}
+
 run_bench_suite() {
   local suite_name="$1"
   local suite_dir="$2"
@@ -247,9 +288,12 @@ run_suite "Integration Tests" "$SCRIPT_DIR/integration"
 run_suite "Integration/RE Tests" "$SCRIPT_DIR/integration/re"
 run_suite "E2E Tests" "$SCRIPT_DIR/e2e"
 
-# Root-level standalone bash tests
-run_single_test "Commander Loading" "$SCRIPT_DIR/test-unit-commander-loading.sh"
-run_single_test "Registry Sync" "$SCRIPT_DIR/test-unit-registry-sync.sh"
+# Migrated deterministic contract tests
+run_pytest_target "EGR-022 Static Contracts" \
+  "$SCRIPT_DIR/unit/test_no_new_deps_pytest.py" \
+  "$SCRIPT_DIR/unit/test_registry_sync_pytest.py" \
+  "$SCRIPT_DIR/unit/test_language_rules_pytest.py" \
+  "$SCRIPT_DIR/unit/test_static_contracts_pytest.py"
 
 # Pytest suites
 run_pytest_suite "Kernel Tests" "$SCRIPT_DIR/kernel"

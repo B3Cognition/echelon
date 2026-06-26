@@ -20,10 +20,15 @@ This directory contains all Tier 1 test assets for the cognitive squad.
 
 - Run all pytest tests: `pytest`
 - Run unit pytest tests: `pytest tests/unit tests/kernel`
-- Run remaining legacy shell unit tests: `for t in tests/unit/*.sh; do bash "$t"; done`
+- Run remaining shell unit tests: `for t in tests/unit/*.sh; do bash "$t"; done`
 - Run one legacy shell test: `bash tests/unit/test-preflight-speckit.sh`
 - Run integration tests: `for t in tests/integration/*.sh; do bash "$t"; done`
 - Run benchmarks: `for t in tests/benchmarks/*.sh; do bash "$t"; done`
+
+Deterministic repository and prompt contracts should be pytest tests under
+`tests/unit/` with reusable helpers under `tests/contract/`. Shell unit tests
+remain for shell helpers, filesystem/process behavior, lock/corruption checks,
+and compatibility checks where the shell itself is the behavior under test.
 
 JUnit-style output files should be written under `tests/reports/`.
 

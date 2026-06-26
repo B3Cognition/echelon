@@ -74,8 +74,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/unit/test_registry_sync_pytest.py`, then moved the language-rule file
   contract from `tests/unit/test-language-rules-exist.sh` into pytest via
   `tests/contract/language_rules.py` and
-  `tests/unit/test_language_rules_pytest.py`; updated `tests/README.md` to make
-  pytest the primary local test path while retaining legacy shell guidance.
+  `tests/unit/test_language_rules_pytest.py`, then moved static prompt,
+  knowledge-base, and schema contract checks into
+  `tests/contract/static_contracts.py` and
+  `tests/unit/test_static_contracts_pytest.py`; updated `tests/README.md` to
+  make pytest the primary local test path, and updated `tests/run-all.sh` to run
+  the migrated contracts through pytest while retaining shell coverage only
+  where shell/runtime behavior is the subject.
 
 ### Added
 

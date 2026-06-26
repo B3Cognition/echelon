@@ -1,0 +1,77 @@
+from pathlib import Path
+
+from tests.contract.static_contracts import (
+    validate_auditor_calibration_dashboard_contract,
+    validate_auditor_internalization_contract,
+    validate_auditor_internalizer_split_contract,
+    validate_code_reviewer_confidence_filter_contract,
+    validate_commander_loading_contract,
+    validate_commander_routing_mandate_contract,
+    validate_commander_token_tracking_contract,
+    validate_guardian_always_on_contract,
+    validate_implementer_eval_protocol_contract,
+    validate_sage_contradiction_types_contract,
+    validate_sage_decisions_schema_contract,
+    validate_sentinel_flakiness_contract,
+    validate_state_schema_build_qa_split_contract,
+    validate_veteran_project_scoping_contract,
+)
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_commander_loading_contract() -> None:
+    assert validate_commander_loading_contract(ROOT) == []
+
+
+def test_commander_routing_mandate_contract() -> None:
+    assert validate_commander_routing_mandate_contract(ROOT) == []
+
+
+def test_guardian_always_on_contract() -> None:
+    assert validate_guardian_always_on_contract(ROOT) == []
+
+
+def test_code_reviewer_confidence_filter_contract() -> None:
+    assert validate_code_reviewer_confidence_filter_contract(ROOT) == []
+
+
+def test_commander_token_tracking_contract() -> None:
+    assert validate_commander_token_tracking_contract(ROOT) == []
+
+
+def test_implementer_eval_protocol_contract() -> None:
+    assert validate_implementer_eval_protocol_contract(ROOT) == []
+
+
+def test_sentinel_flakiness_contract() -> None:
+    assert validate_sentinel_flakiness_contract(ROOT) == []
+
+
+def test_sage_contradiction_types_contract() -> None:
+    assert validate_sage_contradiction_types_contract(ROOT) == []
+
+
+def test_sage_decisions_schema_contract() -> None:
+    assert validate_sage_decisions_schema_contract(ROOT) == []
+
+
+def test_veteran_project_scoping_contract() -> None:
+    assert validate_veteran_project_scoping_contract(ROOT) == []
+
+
+def test_auditor_internalizer_split_contract() -> None:
+    assert validate_auditor_internalizer_split_contract(ROOT) == []
+
+
+def test_auditor_internalization_contract() -> None:
+    assert validate_auditor_internalization_contract(ROOT) == []
+
+
+def test_auditor_calibration_dashboard_contract() -> None:
+    assert validate_auditor_calibration_dashboard_contract(ROOT) == []
+
+
+def test_state_schema_build_qa_split_contract() -> None:
+    assert validate_state_schema_build_qa_split_contract(ROOT) == []
