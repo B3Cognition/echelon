@@ -49,6 +49,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     `review-fix-*.md` content into the next Phase 1 build prompt and that the
     coordinator invokes `RepairLoop` for the bounded cycle.
 
+### Changed
+
+- **EGR-022 shell-to-pytest migration step** — moved the no-new-dependencies
+  repository-policy contract from `tests/unit/test-no-new-deps.sh` into pytest
+  via `tests/contract/no_new_deps.py` and
+  `tests/unit/test_no_new_deps_pytest.py`; updated `tests/README.md` to make
+  pytest the primary local test path while retaining legacy shell guidance.
+
 ### Added
 
 - Documented the EGR completion gate: every implemented EGR now requires a
