@@ -2681,6 +2681,9 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             if "borderline" not in note or "not borderline" in note:
                 return "phase1-what"  # hard gate fail → CARTOGRAPHER amendment
 
+    if _needs_phase3_specialists_recovery(active_spec_dir, completed_phases):
+        return "phase3-specialists"
+
     # 2. HOW artifacts missing
     if active_spec_dir is not None:
         if not all((active_spec_dir / f).exists() for f in ("plan.md", "research.md", "data-model.md")):
@@ -2716,6 +2719,23 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     return None  # build is ready
+
+
+def _needs_phase3_specialists_recovery(
+    active_spec_dir: Path | None,
+    completed_phases: list,
+) -> bool:
+    """Detect old bad state that skipped specialists after tracker alignment."""
+
+    if active_spec_dir is None:
+        return False
+    if "phase2-tracker-alignment" not in completed_phases:
+        return False
+    if "phase3-specialists" in completed_phases:
+        return False
+    if not (active_spec_dir / "intent-alignment-check.md").exists():
+        return False
+    return (active_spec_dir / "spec.md").exists()
 
 
 def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:

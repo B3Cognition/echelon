@@ -211,6 +211,87 @@ def test_continue_does_not_guess_latest_spec_when_multiple_specs_exist(
     assert calls == [["build the dashboard", "--mode", "semi"]]
 
 
+def test_continue_repairs_tracker_done_before_missing_how_artifacts(
+    tmp_path: Path,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "user_message": "build the dashboard",
+            "autonomy_mode": "semi",
+            "spec_id": "001-demo",
+            "completed_phases": [
+                "phase1-constitution",
+                "phase2-decide",
+                "phase2-tracker-alignment",
+            ],
+        },
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "intent-alignment-check.md").write_text(
+        "# Intent Alignment\n\n- Verdict: ALIGNED\n",
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) == "phase3-specialists"
+
+
+def test_cmd_continue_resumes_tracker_repair_at_specialists(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "user_message": "build the dashboard",
+            "autonomy_mode": "semi",
+            "spec_id": "001-demo",
+            "completed_phases": [
+                "phase1-constitution",
+                "phase2-decide",
+                "phase2-tracker-alignment",
+            ],
+        },
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "intent-alignment-check.md").write_text(
+        "# Intent Alignment\n\n- Verdict: ALIGNED\n",
+        encoding="utf-8",
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase3-specialists"
+    assert calls == [["build the dashboard", "--mode", "semi"]]
+
+
 def test_continue_blocked_non_escalation_run_points_to_rewind(
     tmp_path: Path,
     capsys,

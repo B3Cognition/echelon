@@ -58,6 +58,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   verdicts, related agent prompts, and related templates; the tracker prompt's
   stale `DRIFTING` / `ESCALATE` repair instruction was migrated to canonical
   `DRIFT` / `STOP_AND_ASK`.
+- **EGR-027 continue recovery hardening** — `echelon continue` now detects
+  already-affected runs where tracker alignment completed but
+  `phase3-specialists` was skipped, and resumes at `phase3-specialists` before
+  treating missing HOW artifacts as the next repair target.
 
 ### Changed
 
