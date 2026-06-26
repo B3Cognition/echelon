@@ -1,15 +1,15 @@
 # Echelon Grounded Review Register
 
-**Last full review snapshot:** `docs/findings/2026-06-23-echelon-grounded-source-review.md`
-**Last full review HEAD:** `eeb490899655c0796ec9d9c187eb52fe1195427f`
+**Last full review snapshot:** `docs/findings/2026-06-26-echelon-grounded-source-review-refresh.md`
+**Last full review HEAD:** `f73d950700efe02c9ed1caae0bd359bb9d9a802f`
 **Last delta review snapshot:** `docs/findings/2026-06-24-egr-delta-review-after-egr-011.md`
 **Last delta review HEAD:** `34b4857d5f9aa1cb74c30cddae169e77b7552009`
-**Last updated:** 2026-06-24
+**Last updated:** 2026-06-26
 
 ## Operating Model
 
 This register is the living tracking surface for grounded review findings. Keep
-the dated snapshot immutable enough to preserve context, and update this file
+dated snapshots immutable enough to preserve context, and update this file
 whenever repository contributions change the evidence, priority, owner, or
 status of a finding.
 
@@ -27,8 +27,8 @@ When the repo changes:
 
 1. Compare the new head against `Last full review HEAD`.
 2. Review only changed files first.
-3. Re-open the full source review only if workflow, harness, state, sandbox,
-   memory, or CLI boundaries changed substantially.
+3. Re-open the full source review if workflow, harness, state, sandbox, memory,
+   or CLI boundaries changed substantially.
 4. For each affected finding, update `Evidence`, `Status`, `Next action`, and
    `Review notes`.
 5. Confirm any implemented EGR has a corresponding `CHANGELOG.md` entry under
@@ -38,7 +38,7 @@ When the repo changes:
 Suggested command:
 
 ```bash
-git diff eeb490899655c0796ec9d9c187eb52fe1195427f..HEAD -- src extension docs tests
+git diff f73d950700efe02c9ed1caae0bd359bb9d9a802f..HEAD -- src extension docs tests
 ```
 
 ### EGR Completion Gate
@@ -62,108 +62,60 @@ the same time as the code lands.
 | ID | Priority | Status | Finding | Evidence | Next action |
 |---|---|---|---|---|---|
 | EGR-001 | P0 | fixed | Missing deterministic `echelon_result` schema validation before state updates. | `src/harness/echelon_result_schema.py`, `src/harness/squad_provider.py`, `src/harness/squad_state.py`, `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_provider.py`, `tests/kernel/test_squad_state.py` | Fixed: parsed agent results are validated before state mutation; invalid results block with a clear reason. |
-| EGR-002 | P1 | fixed | Phase A readiness and quality gates are partly deterministic and partly LLM-routed. | `src/harness/phase_a_readiness.py`, `src/harness/squad.py`, `src/echelon/cli.py`, `tests/unit/test_phase_a_readiness.py`, `tests/unit/test_cli_next_step_escalation.py`, `tests/unit/test_cli_continue.py`, `tests/integration/test_squad_controller.py` | Fixed: shared Phase A readiness validation now blocks missing build-input artifacts and blocked/interrupted run states before build-ready guidance or finalization. |
-| EGR-003 | P1 | fixed | Host-side LLM tool boundaries are mostly prompt-governed. | `src/harness/llm_tool_policy.py`, `src/harness/config.py`, `src/harness/llm_provider.py`, `src/harness/review_loop.py`, `src/echelon/cli.py`, `extension/config-template.yml`, `tests/unit/test_llm_tool_policy.py`, `tests/unit/test_cli_llm_tool_policy.py`, `tests/unit/test_llm_provider.py`, `tests/unit/test_review_loop.py`, `tests/unit/test_config.py` | Fixed: host-side LLM runs now share deterministic policy command construction, prompt-based dispatches receive the effective policy preamble, and unsafe CLI permission-bypass flags fail closed unless explicit approval metadata is present. |
-| EGR-004 | P1 | fixed | Sandboxing exists, but sandbox recommendation should be explicit. | `src/harness/sandbox_suggestion.py`, `src/harness/init.py`, `src/echelon/cli.py`, `src/harness/verify_detection.py`, `src/harness/app_runtime_detection.py`, `tests/unit/test_sandbox_suggestion.py`, `tests/unit/test_cli_harness_init_summary.py` | Fixed: `echelon harness init` writes and summarizes an evidence-backed sandbox suggestion report with confidence, commands/strategy, risks, approval point, and fallback path. |
-| EGR-005 | P1 | fixed | Human-in-the-loop blocking is real but decision capture can improve. | `src/harness/blocked_decision.py`, `src/harness/squad_state.py`, `src/harness/escalation.py`, `src/echelon/cli.py`, `tests/unit/test_blocked_decision.py`, `tests/unit/test_escalation.py`, `tests/unit/test_cli_resume_escalation_options.py`, `tests/kernel/test_squad_state.py` | Fixed: blocked squad runs persist typed decision data and resume metadata; file-based escalations include JSON decision/resume metadata while preserving Markdown UX. |
-| EGR-006 | P2 | fixed | Review loops exist, but generic draft/critique/repair/re-check is not a reusable primitive. | `src/harness/repair_loop.py`, `tests/unit/test_repair_loop.py`, `src/harness/ralph.py`, `src/harness/review_loop.py`, `src/harness/squad.py` | Fixed: introduced a deterministic, bounded repair-loop primitive with structured event logging, repeat-signature blocking, and caller-supplied critique/repair/re-check functions. |
-| EGR-007 | P2 | fixed | Internalization is split between real codegen memory and prompt-level learning. | `src/codegen/memory/kb_schema_validator.py`, `tests/unit/test_kb_schema_validator.py`, `knowledge-base/kb-schema.md`, `src/codegen/memory/*`, `extension/agents/learning/*` | Fixed: introduced a deterministic knowledge-base validator for schema versions, append-only markers, provenance, pending-operation checksums, and project scoping for durable pattern/pitfall learnings. |
-| EGR-008 | P2 | fixed | Role surface area is high relative to machine-checkable contracts. | `src/harness/role_contracts.py`, `src/harness/phase_graph.py`, `extension/agents/**/*.md`, `extension/workflow/definition.yaml`, `tests/unit/test_role_contracts.py`, `tests/kernel/test_phase_graph.py` | Fixed: routed roles now have a deterministic contract validator for required `echelon_result` fields and declared outputs; shipped routed role templates include explicit empty `state_updates` where applicable. |
-| EGR-009 | P3 | accepted-risk | RCA pipeline is not implemented as a first-class capability. | No dedicated incident/RCA pipeline found under `src/` or `extension/workflow/`; user confirmed a separate RCA pipeline already exists and should be integrated later from its actual sources. | Parked pending grounded integration of the separate RCA pipeline; do not implement from the original review alone. |
-| EGR-010 | P1 | fixed | GitOps lacks a deterministic pre-push secret scan gate. | `src/harness/secret_scan.py`, `src/harness/gitops.py`, `tests/unit/test_secret_scan.py`, `tests/integration/test_gitops_safety.py`, `tests/integration/test_gitops_commit_push.py` | Fixed: `GitOpsManager.commit()` now scans staged files before committing and blocks high-confidence findings with a sanitized summary. |
-| EGR-011 | P2 | fixed | Per-phase `state_updates` allowlists are not enforced. | `extension/workflow/definition.yaml`, `src/harness/echelon_result_schema.py`, `src/harness/phase_graph.py`, `src/harness/role_contracts.py`, `src/harness/squad.py`, `src/harness/squad_executors.py`, `src/harness/squad_state.py`, `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_state.py`, `tests/kernel/test_phase_graph.py`, `tests/kernel/test_squad_executors_journal.py`, `tests/unit/test_role_contracts.py` | Fixed: routed phases declare machine-readable `allowed_state_updates`, static role-contract validation requires them, and state advance plus executor-side direct writes block unexpected keys before state mutation. |
-| EGR-012 | P1 | fixed | Pre-dispatch agent `state_updates` bypass per-phase allowlists. | `src/harness/squad_executors.py::_run_pre_dispatch()` now validates pre-dispatch results through `_validate_result_state_updates()` before journal/state writes; `tests/kernel/test_squad_executors_journal.py` covers invalid-key blocking before mutation and allowed-key application. | Fixed: pre-dispatch agents use the parent phase `allowed_state_updates` allowlist and blocked validation results return before direct state mutation. |
-| EGR-013 | P1 | fixed | COMMANDER judgment state updates bypass allowlists. | `src/harness/squad.py::JUDGMENT_STATE_UPDATE_KEYS`, `src/harness/squad.py::_apply_judgment_state_updates()`, `tests/integration/test_squad_controller.py::TestCommanderJudgmentStateUpdates` | Fixed: COMMANDER judgment updates now use a narrow deterministic allowlist before state mutation; invalid keys block, and banzai null-as-delete cleanup is preserved only for approved keys. |
-| EGR-014 | P2 | fixed | Allowed `state_updates` are enforced but not fully injected into agent prompts. | `src/harness/squad_executors.py::_allowed_state_updates_contract()`, `src/harness/squad_executors.py::_assemble_prompt()`, `src/harness/squad_executors.py::_assemble_pre_dispatch_prompt()`, `src/harness/squad_executors.py::StagedParallelExecutor._build_agent_prompt()`, `tests/kernel/test_squad_executors_journal.py` | Fixed: normal, pre-dispatch, staged, and conditional prompts render explicit allowed state-update keys, including `{}` for empty allowlists, before the canonical result template. |
-| EGR-015 | P1 | fixed | Normal agent dispatch can write journal entries before allowlist validation blocks invalid `state_updates`. | `src/harness/squad_executors.py::AgentExecutor.execute()` now validates results before journal write/cost/recovery handling; `src/harness/echelon_result_schema.py` declares build-routing verdicts; `extension/workflow/definition.yaml` declares build progress routing keys; `tests/kernel/test_squad_executors_journal.py::test_agent_execute_blocks_unallowed_state_updates_before_journal_write` covers invalid-key blocking before journal mutation. | Fixed: normal agent dispatch now shares the same pre-mutation validation ordering as pre-dispatch, staged, and conditional executor paths, and previously implicit build routing contracts are machine-readable. |
+| EGR-002 | P1 | fixed | Phase A readiness and quality gates were partly deterministic and partly LLM-routed. | `src/harness/phase_a_readiness.py`, `src/harness/squad.py`, `src/echelon/cli.py`, `tests/unit/test_phase_a_readiness.py`, `tests/unit/test_cli_next_step_escalation.py`, `tests/unit/test_cli_continue.py`, `tests/integration/test_squad_controller.py` | Fixed: shared Phase A readiness validation blocks incomplete or blocked/interrupted Phase A states before build-ready guidance or finalization. |
+| EGR-003 | P1 | fixed | Host-side LLM tool boundaries were mostly prompt-governed. | `src/harness/llm_tool_policy.py`, `src/harness/config.py`, `src/harness/llm_provider.py`, `src/harness/review_loop.py`, `src/echelon/cli.py`, `extension/config-template.yml`, `tests/unit/test_llm_tool_policy.py`, `tests/unit/test_cli_llm_tool_policy.py`, `tests/unit/test_llm_provider.py`, `tests/unit/test_review_loop.py`, `tests/unit/test_config.py` | Fixed: unsafe host CLI permission-bypass flags fail closed unless explicitly configured with approval metadata. |
+| EGR-004 | P1 | fixed | Sandboxing existed, but sandbox recommendation needed to be explicit. | `src/harness/sandbox_suggestion.py`, `src/harness/init.py`, `src/echelon/cli.py`, `src/harness/verify_detection.py`, `src/harness/app_runtime_detection.py`, `tests/unit/test_sandbox_suggestion.py`, `tests/unit/test_cli_harness_init_summary.py` | Fixed: `echelon harness init` writes and summarizes an evidence-backed sandbox suggestion report. |
+| EGR-005 | P1 | fixed | Human-in-the-loop blocking was real but decision capture needed structure. | `src/harness/blocked_decision.py`, `src/harness/squad_state.py`, `src/harness/escalation.py`, `src/echelon/cli.py`, `tests/unit/test_blocked_decision.py`, `tests/unit/test_escalation.py`, `tests/unit/test_cli_resume_escalation_options.py`, `tests/kernel/test_squad_state.py` | Fixed: blocked squad runs persist typed decisions and resume metadata. |
+| EGR-006 | P2 | fixed | Review loops existed, but generic draft/critique/repair/re-check was not reusable. | `src/harness/repair_loop.py`, `tests/unit/test_repair_loop.py`, `src/harness/ralph.py`, `src/harness/review_loop.py`, `src/harness/squad.py` | Fixed as a primitive: `RepairLoop` exists; follow-on EGR-019 tracks adoption in existing loops. |
+| EGR-007 | P2 | fixed | Internalization was split between real codegen memory and prompt-level learning. | `src/codegen/memory/kb_schema_validator.py`, `tests/unit/test_kb_schema_validator.py`, `knowledge-base/kb-schema.md`, `src/codegen/memory/*`, `extension/agents/learning/*` | Fixed: deterministic KB validation exists for durable pattern/pitfall learning writes. |
+| EGR-008 | P2 | fixed | Role surface area was high relative to machine-checkable contracts. | `src/harness/role_contracts.py`, `src/harness/phase_graph.py`, `extension/agents/**/*.md`, `extension/workflow/definition.yaml`, `tests/unit/test_role_contracts.py`, `tests/kernel/test_phase_graph.py` | Fixed: routed roles have contract validation for required `echelon_result` fields, outputs, and allowlists. |
+| EGR-009 | P3 | accepted-risk | RCA pipeline is not implemented as a first-class capability in this source tree. | No dedicated incident/RCA pipeline found under `src/` or `extension/workflow/`; user confirmed a separate RCA pipeline already exists and should be integrated later from its actual sources. | Parked pending grounded integration of the separate RCA pipeline; do not implement from the original review alone. |
+| EGR-010 | P1 | fixed | GitOps lacked a deterministic pre-push/pre-commit secret scan gate. | `src/harness/secret_scan.py`, `src/harness/gitops.py`, `tests/unit/test_secret_scan.py`, `tests/integration/test_gitops_safety.py`, `tests/integration/test_gitops_commit_push.py` | Fixed: `GitOpsManager.commit()` scans staged files before committing and blocks high-confidence findings. |
+| EGR-011 | P2 | fixed | Per-phase `state_updates` allowlists were not enforced. | `extension/workflow/definition.yaml`, `src/harness/echelon_result_schema.py`, `src/harness/phase_graph.py`, `src/harness/role_contracts.py`, `src/harness/squad.py`, `src/harness/squad_executors.py`, `src/harness/squad_state.py`, tests under `tests/kernel/` and `tests/unit/` | Fixed: phases declare `allowed_state_updates`, static validation requires them, and runtime writes enforce them. |
+| EGR-012 | P1 | fixed | Pre-dispatch agent `state_updates` bypassed per-phase allowlists. | `src/harness/squad_executors.py::_run_pre_dispatch()`, `tests/kernel/test_squad_executors_journal.py` | Fixed: pre-dispatch agents validate through the parent phase allowlist before state mutation. |
+| EGR-013 | P1 | fixed | COMMANDER judgment state updates bypassed allowlists. | `src/harness/squad.py::JUDGMENT_STATE_UPDATE_KEYS`, `src/harness/squad.py::_apply_judgment_state_updates()`, `tests/integration/test_squad_controller.py::TestCommanderJudgmentStateUpdates` | Fixed: COMMANDER judgment writes use a narrow deterministic allowlist. |
+| EGR-014 | P2 | fixed | Allowed `state_updates` were enforced but not fully injected into agent prompts. | `src/harness/squad_executors.py::_allowed_state_updates_contract()`, prompt assembly tests in `tests/kernel/test_squad_executors_journal.py` | Fixed: normal, pre-dispatch, staged, and conditional prompts disclose allowed state-update keys. |
+| EGR-015 | P1 | fixed | Normal agent dispatch wrote journal entries before allowlist validation could block invalid state updates. | `src/harness/squad_executors.py::AgentExecutor.execute()`, `src/harness/echelon_result_schema.py`, `extension/workflow/definition.yaml`, `tests/kernel/test_squad_executors_journal.py` | Fixed: normal agent dispatch validates before journal, cost, recovery, or state handling. |
+| EGR-016 | P1 | fixed | Whole-workflow contract validation was incomplete. | `src/harness/workflow_validator.py`, `scripts/bash/dry-run.sh`, `tests/kernel/test_workflow_validator.py`, `tests/kernel/test_phase_graph.py` | Fixed: executable workflow transitions now have deterministic validation for shape, supported keys, target phases, condition syntax, actions, and `state_update` blocks; dry-run runs the validator when the Python harness source is available. |
+| EGR-017 | P1 | open | Safety documentation drift: README still describes unconditional Claude permission bypass. | `README.md` describes `claude -p <prompt> --dangerously-skip-permissions`; actual policy in `src/harness/llm_tool_policy.py` only adds bypass flags when explicitly approved. | Update README and any related help text to match EGR-003's fail-closed tool-policy contract. |
+| EGR-018 | P1 | open | Python journal writers do not enforce the canonical journal-entry schema. | `extension/scripts/bash/validate-journal-entry.sh` and `extension/workflow/journal-entry-types.yaml` exist; `src/harness/squad.py::_write_journal_entries()` and `src/harness/squad_executors.py::_write_journal_entries()` append dict entries without schema validation. | Add a Python journal-entry validator at the actual write boundary. |
+| EGR-019 | P2 | open | The reusable repair-loop primitive is not yet adopted by existing Ralph/review/squad loops. | `src/harness/repair_loop.py` exists; `src/harness/ralph.py` and `src/harness/review_loop.py` still own bespoke loop logic. | Pilot `RepairLoop` in one existing loop and preserve existing termination semantics. |
+| EGR-020 | P2 | open | Active role catalog and public architecture narrative need reconciliation. | README describes a 41-agent architecture; the source tree has 68 agent markdown files under `extension/agents/`. | Document which roles are active-routed, auxiliary, RE-only, build-only, deprecated, or spec-kit-only. |
+| EGR-021 | P2 | open | Extension/deployed-copy drift is still a common operator footgun. | CLI and README note that terminal runs read installed extension content under `.specify/extensions/echelon`, while developers edit this checkout. | Add a deterministic drift check to `dry-run`, `status`, or `run` preflight. |
+| EGR-022 | P2 | open | Core shell contract tests remain outside pytest collection. | `tests/run-all.sh`, `tests/unit/*.sh`, `tests/integration/*.sh`, and `tests/README.md` show legacy shell tests alongside pytest. | Move core deterministic contract checks to Python where feasible; keep true shell integration tests as shell. |
 
-## Implementation Plan
-
-### Immediate Fixes
-
-| Priority | Recommendation | Why it matters | Suggested files/modules to change | Expected impact |
-|---|---|---|---|---|
-| P0 | Add deterministic `echelon_result` validator. | Prevents malformed LLM output from mutating state or routing. | `src/harness/echelon_result_schema.py`, `src/harness/squad_provider.py`, `src/harness/squad.py`, `tests/kernel/test_squad_provider.py` | Stronger central contract for every agent dispatch. |
-| P1 | Promote blocked/incomplete Phase A outputs to blockers, not warnings. | Avoids telling operators to build incomplete specs. | `src/echelon/cli.py`, `src/harness/squad.py`, `tests/` | Better trust in CLI status and next-step guidance. |
-| P1 | Make blocked-run questions structured. | Improves resume safety and auditability. | `src/harness/escalation.py`, `src/harness/squad.py`, `src/echelon/cli.py` | Cleaner human-in-the-loop UX and recoverability. |
-
-### Short-Term Improvements
+## Next EGR Backlog
 
 | Priority | Recommendation | Why it matters | Suggested files/modules to change | Expected impact |
 |---|---|---|---|---|
-| P1 | Add Phase A artifact validators. | Makes spec readiness deterministic. | `src/harness/squad.py`, `src/echelon/cli.py`, `extension/workflow/phases/*.md` | Fewer false-ready and prompt-only gate outcomes. |
-| P1 | Add sandbox suggestion report. | Lets users approve environment setup based on evidence. | `src/harness/init.py`, `src/harness/verify_detection.py`, `src/harness/app_runtime_detection.py` | Safer setup and clearer harness onboarding. |
-| P1 | Add pre-push secret scan gate (`EGR-010`). | Reduces chance of leaking secrets through GitOps. | `src/harness/gitops.py`, `src/harness/config.py`, new `src/harness/secret_scan.py` | Safer PR automation. |
-
-### Medium-Term Architecture Improvements
-
-| Priority | Recommendation | Why it matters | Suggested files/modules to change | Expected impact |
-|---|---|---|---|---|
-| P2 | Define per-phase allowed `state_updates` keys (`EGR-011`). | Prevents role drift and accidental state mutation. | `extension/workflow/phases/*.md`, `extension/workflow/definition.yaml`, `src/harness/role_contracts.py` | Better traceability and fewer hidden contracts. |
-| P2 | Build reusable Ralph-style repair primitive. | Reuses deterministic validation failures for bounded repair. | `src/harness/squad.py`, `src/harness/ralph.py`, new tests | Cleaner retry/revision behavior before state mutation. |
-| P2 | Validate and version learning writes. | Prevents polluted memory and stale internalization. | `src/codegen/memory/*`, `extension/scripts/bash/kb-*`, `knowledge-base/kb-schema.md` | More trustworthy internalization. |
-
-### Longer-Term Ideas
-
-| Priority | Recommendation | Why it matters | Suggested files/modules to change | Expected impact |
-|---|---|---|---|---|
-| P3 | Integrate the existing RCA pipeline once its source is available. | Avoids inventing a parallel RCA capability from stale review context. | Future workflow section, RCA pipeline integration adapter, source-grounded docs/tests | Incident intake to corrective/preventive action flow without duplicating the separate RCA implementation. |
-| P3 | Model Team Topologies operating modes. | Helps tune agent/team interaction patterns. | `extension/workflow/definition.yaml`, docs, phase specs | Lower cognitive load and clearer role ownership. |
-| P3 | Add observability export. | Improves cost, latency, retry, and quality analysis. | `src/harness/state.py`, `src/harness/coordinator.py`, logs/traces module | Better audit trail and production diagnostics. |
-
-## EGR-001 Work Item
-
-**Goal:** Add a deterministic `echelon_result` schema validator and enforce it
-for every agent dispatch before applying `state_updates`.
-
-**Proposed branch/thread:** `codex/echelon-result-validator`
-
-**Acceptance criteria:**
-
-- Malformed parsed YAML blocks do not produce state updates.
-- Missing or non-string `verdict` is rejected.
-- Unsupported `verdict` values are rejected or explicitly classified.
-- Missing `state_updates` defaults only when the verdict allows it, otherwise it
-  is rejected.
-- Non-object `state_updates` is rejected.
-- Non-list `journal_entries` is rejected.
-- Reserved harness-owned keys, including `last_dispatch`, cannot be set by an
-  agent result.
-- Validation failure produces a blocked result with a clear reason and raw-output
-  debug path when available.
-- Tests cover valid output, malformed output, bad types, reserved keys, and
-  blocking behavior before `SquadStateStore.advance`.
-- `CHANGELOG.md` `[Unreleased]` mentions `EGR-001` and summarizes the validation
-  behavior change.
-
-**Likely implementation sequence:**
-
-1. Add `src/harness/echelon_result_schema.py` with a pure validation function.
-2. Add unit tests for the validator.
-3. Call the validator from the result extraction path or immediately before
-   state advance.
-4. Ensure validation errors block the run rather than silently dropping updates.
-5. Add regression tests around `SquadAgentResult.state_updates` and
-   `SquadStateStore.advance`.
+| P1 | EGR-017: Fix LLM tool-policy documentation drift. | README currently contradicts the implemented unsafe-permissions contract. | `README.md`, maybe `extension/config-template.yml` examples if needed | Operators know exactly where and how unsafe host execution is configured. |
+| P1 | EGR-018: Enforce journal-entry schema in Python writers. | Reasoning journal entries feed audit and internalization; malformed entries should not be silently persisted. | `src/harness/journal_entry_validator.py`, `src/harness/squad.py`, `src/harness/squad_executors.py`, `extension/workflow/journal-entry-types.yaml`, tests | More trustworthy audit trail and learning data. |
+| P2 | EGR-019: Pilot `RepairLoop` adoption. | Reduces bespoke retry behavior and standardizes repair-loop logging. | `src/harness/review_loop.py` or a focused Phase A artifact repair gate, `src/harness/repair_loop.py`, tests | Cleaner bounded repair behavior with reusable audit events. |
+| P2 | EGR-020: Reconcile role catalog. | Reduces contributor/operator cognitive load. | `README.md`, `extension/extension.yml`, `extension/workflow/definition.yaml`, docs | Clear active-role inventory. |
+| P2 | EGR-021: Add extension drift check. | Prevents confusion when repo edits are not installed into the active extension copy. | `scripts/bash/dry-run.sh`, `src/echelon/cli.py`, `README.md` | Fewer “fixed in checkout, stale in run” failures. |
+| P2 | EGR-022: Continue shell-to-Python test migration. | Pytest collection is easier to run consistently in CI and local workflows. | `tests/unit/*.sh`, `tests/integration/*.sh`, `tests/kernel/` | Better portability and fewer separate test paths. |
+| P3 | EGR-009: Integrate external RCA pipeline from source. | Adds incident/RCA capability without inventing duplicate behavior. | Future RCA integration adapter, workflow namespace, docs/tests after source is available | Source-grounded RCA flow tied into Echelon. |
 
 ## Review Notes
 
 | Date | Reviewed HEAD | Notes |
 |---|---|---|
 | 2026-06-23 | `eeb490899655c0796ec9d9c187eb52fe1195427f` | Initial grounded review register created from repository evidence. |
-| 2026-06-23 | `176da20ace1d485545724467e3c757a7259e760f` | EGR-001 implemented with deterministic `echelon_result` validation in provider and state advance paths. Verification: `pytest tests/kernel -q` passed with 532 tests; pytest cache warnings were caused by restricted worktree cache writes. |
-| 2026-06-23 | `working tree on codex/egr-002-phase-a-readiness` | EGR-002 implemented with shared deterministic Phase A readiness validation in CLI next-step/continue paths and the squad `phase4-document` finalization gate. Verification: `pytest tests/unit/test_phase_a_readiness.py tests/unit/test_cli_next_step_escalation.py tests/unit/test_run_readiness.py tests/unit/test_cli_continue.py tests/integration/test_squad_controller.py -q` passed with 83 tests; `pytest tests/kernel -q` passed with 532 tests. Broader `pytest tests/unit tests/kernel tests/integration/test_squad_controller.py -q` collection is blocked in this environment by missing existing dependencies `freezegun` and `lark`. |
-| 2026-06-23 | `working tree on codex/egr-005-blocked-decisions` | EGR-005 implemented typed `blocked_decision` persistence, free-text/choice resume metadata, process-restart recoverability coverage, and JSON metadata for file-based escalations. Verification: `pytest tests/unit/test_blocked_decision.py tests/unit/test_escalation.py tests/unit/test_cli_resume_escalation_options.py tests/unit/test_cli_continue.py tests/unit/test_cli_next_step_escalation.py tests/kernel/test_squad_state.py tests/integration/test_squad_controller.py -q` passed with 145 tests; `pytest tests/kernel -q` passed with 534 tests. |
-| 2026-06-23 | `working tree on codex/egr-004-sandbox-suggestion` | EGR-004 implemented a deterministic sandbox suggestion report composed from existing verify/app runtime detectors plus repository markers including Docker, devcontainer, package/lockfiles, Python/Java/Go/Rust markers, Makefile, CI workflows, and README setup instructions. The report is persisted under `harness.sandbox_suggestion`, written to `sandbox-suggestion.md`, and surfaced in the harness init summary before dependency install or app execution decisions. Verification: `pytest tests/unit/test_sandbox_suggestion.py tests/unit/test_cli_harness_init_summary.py tests/unit/test_harness_init_verify.py tests/unit/test_harness_init_app_runtime.py tests/unit/test_init.py -q` passed with 20 tests; `pytest tests/kernel -q` passed with 534 tests. |
-| 2026-06-23 | `working tree on codex/egr-003-tool-boundaries` | EGR-003 implemented a small deterministic host-side LLM tool policy with config defaults, prompt preamble injection for prompt-based dispatches, shared AI CLI command construction, native opencode command preservation, and fail-closed validation for unsafe host execution bypass without `approval_reason`. Known remaining scope: this gates known host CLI bypass flags; deeper file, network, and individual tool-call enforcement remains runtime-specific to the selected AI CLI. Verification: `pytest tests/unit/test_cli_llm_tool_policy.py tests/unit/test_llm_tool_policy.py tests/unit/test_llm_provider.py tests/unit/test_review_loop.py tests/unit/test_config.py -q` passed with 61 tests; `pytest tests/kernel -q` passed with 534 tests. |
-| 2026-06-23 | `working tree on codex/egr-006-repair-loop` | EGR-006 introduced `harness.repair_loop`, a deterministic reusable Draft output -> Critique -> Repair -> Re-check -> Accept / Block / Exhaust primitive. It records structured loop events for later audit/internalization, enforces `max_repairs`, tracks token counts reported by callbacks, and blocks repeated critique signatures before unbounded repair cycles. Verification: `pytest tests/unit/test_repair_loop.py -q` passed with 4 tests; `pytest tests/kernel -q` passed with 534 tests. |
-| 2026-06-23 | `working tree on codex/egr-007-memory-validation` | EGR-007 introduced `codegen.memory.kb_schema_validator`, a deterministic validator for durable knowledge-base documents and pending write operations. It checks documented schema versions, append-only markers, provenance, internalization-log gate metadata, pending-operation checksum/provenance requirements, and project scoping for local pattern/pitfall learnings. Verification: `pytest tests/unit/test_kb_schema_validator.py -q` passed with 5 tests; `pytest tests/kernel -q` passed with 534 tests. |
-| 2026-06-23 | `working tree on codex/egr-008-role-contracts` | EGR-008 introduced `harness.role_contracts`, a deterministic routed-role validator requiring final `echelon_result` templates to declare `verdict`, `output_files`, `state_updates`, and `journal_entries`, and requiring routed workflow entries to declare outputs. `PhaseGraph` now preserves phase outputs, build workflow nodes declare their expected artifacts, and routed role prompt templates include explicit `state_updates: {}` when no state mutation is expected. Verification: `pytest tests/unit/test_role_contracts.py tests/kernel/test_phase_graph.py -q` passed with 18 tests; `pytest tests/kernel -q` passed with 535 tests. |
-| 2026-06-23 | `665c7acbd3a6a2fae60a617e39c4a1aa7abfd808` | Delta review after EGR-008 completed. EGR-001 through EGR-008 are fixed with code/test/changelog/register evidence. The full review snapshot remains valid; no architecture-wide refresh is needed yet. Promoted two remaining gaps into explicit findings: EGR-010 pre-push secret scan gate and EGR-011 per-phase `state_updates` allowlists. Recommended next implementation: EGR-010 before RCA/EGR-009. |
-| 2026-06-23 | `working tree on codex/egr-010-secret-scan` | EGR-010 implemented a deterministic staged-file secret scan gate in GitOps. `GitOpsManager.commit()` scans after staging and before commit creation, blocks high-confidence GitHub/GitLab/AWS/Slack/private-key findings, skips binary files, and reports only sanitized path/rule/position summaries. Verification: `pytest tests/unit/test_secret_scan.py tests/integration/test_gitops_safety.py::TestSecretScanGate -q` passed with 5 tests; `pytest tests/integration/test_gitops_safety.py tests/integration/test_gitops_commit_push.py tests/unit/test_secret_scan.py -q` passed with 11 tests; `pytest tests/kernel -q` passed with 535 tests. |
-| 2026-06-24 | `working tree on codex/egr-011-state-update-allowlists` | EGR-011 implemented machine-readable per-phase `allowed_state_updates` declarations in `definition.yaml`, preserved them in `PhaseGraph`, required them in `role_contracts`, and enforced them in `SquadStateStore.advance()` plus staged/conditional executor-side direct writes before `state.json` mutation. Verification: `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py -q` passed with 82 tests; `pytest tests/kernel/test_squad_executors_journal.py -q` passed with 39 tests; `pytest tests/kernel -q` passed with 540 tests. |
-| 2026-06-24 | `34b4857d5f9aa1cb74c30cddae169e77b7552009` | Delta review after EGR-011 completed. EGR-009 is parked as accepted risk pending the external RCA pipeline source. Added EGR-012, EGR-013, and EGR-014 as follow-on findings for remaining state-update bypass/prompt-contract gaps. Recommended next implementation: EGR-012. |
-| 2026-06-24 | `working tree on codex/egr-012-pre-dispatch-allowlist` | EGR-012 implemented pre-dispatch `echelon_result` validation before journal/state writes. Invalid pre-dispatch `state_updates` now return a blocked executor result before mutation; allowed parent-phase keys still apply. Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` passed with 41 tests; `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py tests/kernel/test_squad_executors_journal.py -q` passed with 123 tests; `pytest tests/kernel -q` passed with 542 tests. |
-| 2026-06-24 | `working tree on codex/egr-013-judgment-allowlist` | EGR-013 implemented deterministic COMMANDER judgment state-update validation with a narrow allowlist and shared apply helper. Invalid judgment keys now block before mutation, valid routing/iteration updates still apply, and banzai escalation cleanup preserves null-as-delete only after validation. Verification: `pytest tests/integration/test_squad_controller.py -q` passed with 64 tests; `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_squad_executors_journal.py tests/integration/test_squad_controller.py -q` passed with 167 tests. |
-| 2026-06-24 | `working tree on codex/egr-014-allowed-updates-prompts` | EGR-014 added explicit allowed-state-updates prompt disclosure for normal agent prompts, pre-dispatch prompts, staged consensus prompts, and conditional sequential prompts. Empty allowlists render `state_updates: {}` so agents can see that no state mutation is allowed. Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` passed with 47 tests; `pytest tests/kernel -q` passed with 548 tests; `pytest` passed with 2318 tests and 22 skipped. |
-| 2026-06-25 | `working tree on codex/egr-015-agent-executor-validation` | Delta review after EGR-014 found normal `AgentExecutor` validation happened after journal writes. EGR-015 moved result validation before journal/cost/recovery handling so invalid `state_updates` cannot mutate either state or reasoning journal. Early validation also exposed implicit build routing contracts, so `CHANGES_REQUESTED`/`NEEDS_CONTEXT` and build progress routing keys are now explicit. Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` passed with 48 tests; `pytest tests/integration/test_squad_controller.py::TestBuildPhaseRouting -q` passed with 13 tests; `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_executors_journal.py tests/kernel/test_phase_graph.py -q` passed with 76 tests; `pytest tests/kernel -q` passed with 550 tests; `pytest` passed with 2320 tests and 22 skipped; `bash tests/run-all.sh` passed on retry with 678 tests after one transient `test-prompt-budget.sh` failure that passed when rerun directly. |
+| 2026-06-23 | `176da20ace1d485545724467e3c757a7259e760f` | EGR-001 implemented with deterministic `echelon_result` validation in provider and state advance paths. Verification: `pytest tests/kernel -q` passed with 532 tests. |
+| 2026-06-23 | `working tree on codex/egr-002-phase-a-readiness` | EGR-002 implemented shared deterministic Phase A readiness validation in CLI next-step/continue paths and the squad `phase4-document` finalization gate. |
+| 2026-06-23 | `working tree on codex/egr-005-blocked-decisions` | EGR-005 implemented typed blocked decisions and resume metadata. |
+| 2026-06-23 | `working tree on codex/egr-004-sandbox-suggestion` | EGR-004 implemented deterministic sandbox suggestion reports. |
+| 2026-06-23 | `working tree on codex/egr-003-tool-boundaries` | EGR-003 implemented deterministic host-side LLM tool policy and fail-closed unsafe bypass. |
+| 2026-06-23 | `working tree on codex/egr-006-repair-loop` | EGR-006 introduced `harness.repair_loop`. |
+| 2026-06-23 | `working tree on codex/egr-007-memory-validation` | EGR-007 introduced deterministic KB schema validation. |
+| 2026-06-23 | `working tree on codex/egr-008-role-contracts` | EGR-008 introduced deterministic routed-role contract validation. |
+| 2026-06-23 | `665c7acbd3a6a2fae60a617e39c4a1aa7abfd808` | Delta review after EGR-008 completed; EGR-010 and EGR-011 were promoted. |
+| 2026-06-23 | `working tree on codex/egr-010-secret-scan` | EGR-010 implemented deterministic staged-file secret scanning in GitOps. |
+| 2026-06-24 | `working tree on codex/egr-011-state-update-allowlists` | EGR-011 implemented per-phase `allowed_state_updates` declarations and enforcement. |
+| 2026-06-24 | `34b4857d5f9aa1cb74c30cddae169e77b7552009` | Delta review after EGR-011 completed; EGR-012, EGR-013, and EGR-014 were promoted. |
+| 2026-06-24 | `working tree on codex/egr-012-pre-dispatch-allowlist` | EGR-012 implemented pre-dispatch allowlist validation. |
+| 2026-06-24 | `working tree on codex/egr-013-judgment-allowlist` | EGR-013 implemented COMMANDER judgment update validation. |
+| 2026-06-24 | `working tree on codex/egr-014-allowed-updates-prompts` | EGR-014 disclosed allowed state-update keys in dispatch prompts. Verification included full `pytest` with 2318 passed and 22 skipped. |
+| 2026-06-25 | `working tree on codex/egr-015-agent-executor-validation` | EGR-015 moved normal agent result validation before journal writes. Verification included full `pytest` with 2320 passed and 22 skipped plus `bash tests/run-all.sh` passing on retry. |
+| 2026-06-26 | `f73d950700efe02c9ed1caae0bd359bb9d9a802f` | Full refreshed source review completed after recovery/consensus hardening. EGR-001 through EGR-015 remain fixed, EGR-009 remains accepted-risk, and EGR-016 through EGR-022 define the refreshed next backlog. Most recent full suite before this review: `pytest` passed with 2366 passed and 22 skipped. |
+| 2026-06-26 | `working tree on main` | EGR-016 implemented deterministic workflow-definition validation and dry-run preflight wiring. Verification: `pytest tests/kernel/test_workflow_validator.py tests/kernel/test_phase_graph.py -q` passed with 35 tests; direct validator reported `workflow definition valid`; `bash -n scripts/bash/dry-run.sh` passed. |

@@ -116,6 +116,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Build-routing verdicts `CHANGES_REQUESTED` and `NEEDS_CONTEXT`, plus build progress routing keys, are now explicit deterministic contracts instead of tolerated late-routing assumptions.
   - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
   - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`48 passed`); `pytest tests/integration/test_squad_controller.py::TestBuildPhaseRouting -q` (`13 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_executors_journal.py tests/kernel/test_phase_graph.py -q` (`76 passed`); `pytest tests/kernel -q` (`550 passed`); `pytest` (`2320 passed, 22 skipped`); `bash tests/run-all.sh` (`678 passed` on retry after a transient prompt-budget shell-test failure passed directly).
+- **EGR-016 workflow-definition validation** — added deterministic validation for the executable `workflow/definition.yaml` phase graph before runtime dispatch.
+  - `src/harness/workflow_validator.py` now rejects non-object transitions, unsupported transition keys such as `guard`, missing or unknown transition targets, unsupported condition syntax, non-string actions, and non-object `state_update` blocks.
+  - `scripts/bash/dry-run.sh` now runs the workflow contract validator as a structural preflight when the Python harness source is available.
+  - Focused tests added in `tests/kernel/test_workflow_validator.py`.
+  - Verification: `pytest tests/kernel/test_workflow_validator.py tests/kernel/test_phase_graph.py -q` (`35 passed`); direct workflow validation reported `workflow definition valid`; `bash -n scripts/bash/dry-run.sh` passed.
 
 ## [2.1.0] - 2026-05-17
 
