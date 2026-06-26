@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import sys
+import shutil
+import textwrap
 from typing import IO, Any
 
-CARD_INNER = 52  # characters between ╭ and ╮
+CARD_INNER = 52  # minimum characters between ╭ and ╮
 
 
 def banner(
@@ -26,14 +28,26 @@ def banner(
         print(text, flush=flush, file=_file)
 
     prefix = f"─ ✈ echelon · {title} "
-    fill = "─" * max(0, CARD_INNER - len(prefix))
+    subtitle_width = max((len(f"  {line}") for line in subtitle.splitlines()), default=0)
+    terminal_size = shutil.get_terminal_size((80, 20))
+    terminal_columns = getattr(terminal_size, "columns", terminal_size[0])
+    terminal_inner = max(CARD_INNER, terminal_columns - 2)
+    inner = min(max(CARD_INNER, len(prefix), subtitle_width), terminal_inner)
+    fill = "─" * max(0, inner - len(prefix))
     _p(f"\n╭{prefix}{fill}╮")
     if subtitle:
-        body = f"  {subtitle}"
-        if len(body) > CARD_INNER:
-            body = body[: CARD_INNER - 1] + "…"
-        _p(f"│{body.ljust(CARD_INNER)}│")
-    _p(f"╰{'─' * CARD_INNER}╯\n")
+        wrap_width = max(1, inner - 2)
+        for subtitle_line in subtitle.splitlines():
+            wrapped_lines = textwrap.wrap(
+                subtitle_line,
+                width=wrap_width,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""]
+            for wrapped in wrapped_lines:
+                body = f"  {wrapped}"
+                _p(f"│{body.ljust(inner)}│")
+    _p(f"╰{'─' * inner}╯\n")
 
     def _is_section(val: str) -> bool:
         return "\n" in val or val.strip().startswith("echelon ") or len(val.split()) > 8
