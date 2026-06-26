@@ -2555,6 +2555,31 @@ def _published_continue_spec_dir(project_root: Path, current_state: dict) -> Pat
     return None
 
 
+def _build_target_continue_spec_dir(project_root: Path, current_state: dict) -> Path | None:
+    """Return the project-visible spec dir that harness/build commands resolve."""
+    from harness.spec_frontmatter import find_spec_dir
+
+    published_ref = str(current_state.get("published_spec_dir") or "").strip()
+    if published_ref:
+        candidate = Path(published_ref)
+        return candidate if candidate.is_absolute() else project_root / candidate
+
+    spec_id = str(current_state.get("spec_id") or "").strip()
+    if not spec_id:
+        spec_ref = str(current_state.get("spec_dir") or "").strip()
+        spec_id = _spec_id_from_ref(spec_ref) or ""
+    if not spec_id:
+        return _single_project_spec_dir(project_root)
+
+    existing = find_spec_dir(spec_id, project_root)
+    if existing is not None:
+        return existing
+    exact = project_root / "specs" / spec_id
+    if exact.exists():
+        return exact
+    return None
+
+
 def _phase_a_readiness_candidate_dirs(
     project_root: Path,
     current_state: dict,
@@ -2621,6 +2646,8 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             ):
                 if _phase_a_ready_to_build(project_root, current_state):
                     return None
+                if current_state.get("status") == "done":
+                    return "phase4-document"
                 return recommended
         except Exception:
             current_state = {}
@@ -2699,6 +2726,9 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if active_spec_dir is None:
         return "phase1-what"
 
+    if current_state.get("status") == "done" and not _phase_a_ready_to_build(project_root, current_state):
+        return "phase4-document"
+
     readiness = validate_phase_a_readiness(
         current_state,
         _phase_a_readiness_candidate_dirs(
@@ -2751,18 +2781,12 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     if _constitution_template_markers(const_path.read_text(errors="replace")):
         return False
 
-    run_dir = _find_current_run_dir(project_root)
-    spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
-    published_spec_dir = _published_continue_spec_dir(project_root, current_state)
+    published_spec_dir = _build_target_continue_spec_dir(project_root, current_state)
+    if published_spec_dir is None:
+        return False
     return validate_phase_a_readiness(
         current_state,
-        _phase_a_readiness_candidate_dirs(
-            project_root,
-            current_state,
-            run_dir,
-            active_spec_dir=spec_dir,
-            published_spec_dir=published_spec_dir,
-        ),
+        [published_spec_dir],
     ).ready
 
 

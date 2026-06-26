@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import re
 import signal
+import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from echelon.artifact_index import write_artifact_index
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -17,6 +19,7 @@ from harness.echelon_result_schema import (
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
+from harness.spec_frontmatter import find_spec_dir
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
@@ -507,10 +510,7 @@ class SquadController:
 
             next_phase = self._evaluate_transitions(node, result)
             if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
-                readiness = validate_phase_a_readiness(
-                    self._state_store.load(),
-                    self._phase_a_readiness_candidate_dirs(),
-                )
+                readiness = self._publish_phase_a_artifacts_for_build()
                 if not readiness.ready:
                     self._block_after_phase_a_readiness_failure(readiness)
                     return SquadResult.from_state(self._state_store.load())
@@ -606,6 +606,84 @@ class SquadController:
             add(self._squad_dir / "staging")
 
         return candidates
+
+    def _publish_phase_a_artifacts_for_build(self) -> PhaseAReadinessResult:
+        state = self._state_store.load()
+        active_spec_dir = self._active_phase_a_spec_dir(state)
+        if active_spec_dir is None or not active_spec_dir.exists():
+            return validate_phase_a_readiness(
+                state,
+                self._phase_a_readiness_candidate_dirs(),
+            )
+
+        published_spec_dir = self._published_phase_a_spec_dir(state, active_spec_dir)
+        try:
+            if active_spec_dir.resolve() != published_spec_dir.resolve():
+                self._copy_spec_tree(active_spec_dir, published_spec_dir)
+            else:
+                published_spec_dir.mkdir(parents=True, exist_ok=True)
+            write_artifact_index(published_spec_dir)
+        except OSError as exc:
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=[f"failed to publish Phase A artifacts: {exc}"],
+                missing={},
+                ready_spec_dir=None,
+            )
+
+        updated = self._state_store.load()
+        updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
+        self._state_store.save(updated)
+        return validate_phase_a_readiness(updated, [published_spec_dir])
+
+    def _active_phase_a_spec_dir(self, state: dict) -> Path | None:
+        spec_ref = str(state.get("spec_dir") or "").strip()
+        if spec_ref:
+            candidate = Path(spec_ref)
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            return candidate
+
+        spec_id = str(state.get("spec_id") or "").strip()
+        if spec_id:
+            run_local = self._squad_dir / "specs" / spec_id
+            if run_local.exists():
+                return run_local
+        return None
+
+    def _published_phase_a_spec_dir(self, state: dict, active_spec_dir: Path) -> Path:
+        published_ref = str(state.get("published_spec_dir") or "").strip()
+        if published_ref:
+            candidate = Path(published_ref)
+            return candidate if candidate.is_absolute() else self._project_root / candidate
+
+        spec_id = str(state.get("spec_id") or "").strip()
+        if spec_id:
+            existing = find_spec_dir(spec_id, self._project_root)
+            if existing is not None:
+                return existing
+            return self._project_root / "specs" / spec_id
+
+        return self._project_root / "specs" / active_spec_dir.name
+
+    def _copy_spec_tree(self, source: Path, destination: Path) -> None:
+        destination.mkdir(parents=True, exist_ok=True)
+        for child in source.iterdir():
+            target = destination / child.name
+            if child.is_dir():
+                if target.exists() and not target.is_dir():
+                    target.unlink()
+                shutil.copytree(child, target, dirs_exist_ok=True)
+            elif child.is_file():
+                if target.exists() and target.is_dir():
+                    shutil.rmtree(target)
+                shutil.copy2(child, target)
+
+    def _repo_relative_or_absolute(self, path: Path) -> str:
+        try:
+            return str(path.relative_to(self._project_root))
+        except ValueError:
+            return str(path)
 
     def _block_after_phase_a_readiness_failure(
         self, readiness: PhaseAReadinessResult

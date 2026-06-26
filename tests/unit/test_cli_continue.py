@@ -38,22 +38,49 @@ def test_continue_routes_to_constitution_without_phase_provenance(tmp_path: Path
 
 def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path) -> None:
     _write_real_constitution(tmp_path)
-    run_dir = _write_run_state(
+    _write_run_state(
         tmp_path,
         {
             "status": "done",
             "phase": "DONE",
             "spec_id": "001-demo",
+            "published_spec_dir": "specs/001-demo",
             "completed_phases": ["phase1-constitution"],
         },
     )
-    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
+
+
+def test_continue_reopens_done_run_to_publish_complete_run_local_artifacts(
+    tmp_path: Path,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "spec_id": "001",
+            "spec_dir": "runs/spec-test/specs/001",
+            "completed_phases": ["phase1-constitution"],
+        },
+    )
+    active_spec_dir = run_dir / "specs" / "001"
+    active_spec_dir.mkdir(parents=True)
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    published_spec_dir = tmp_path / "specs" / "001-themed-ascii-animation"
+    published_spec_dir.mkdir(parents=True)
+    (published_spec_dir / "spec.md").write_text("# stale published spec\n", encoding="utf-8")
+
+    assert _next_continue_phase(tmp_path) == "phase4-document"
 
 
 def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
@@ -83,6 +110,10 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
     )
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    published_spec_dir = tmp_path / "specs" / "071-rule-studio-narrative"
+    published_spec_dir.mkdir(parents=True)
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        (published_spec_dir / name).write_text(f"# published {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
 

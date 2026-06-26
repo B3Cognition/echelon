@@ -66,10 +66,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   agent/phase prompts now use the executable `specialists.guardian_mode` config
   key consistently, with static pytest coverage preventing regression. Workflow
   conditions keep the derived predicate form `guardian_mode = ...`.
-- Added EGR-029 to track Phase 4 publishing/readiness drift: repaired runs can
-  finish with complete run-local Phase A artifacts while the project-visible
-  `specs/<id>-<slug>` directory remains stale, so build-ready guidance can point
-  at incomplete harness inputs.
+- **EGR-029 Phase A artifact publishing** — `phase4-document` now publishes
+  run-local Phase A artifacts into the project-visible `specs/<id>-<slug>`
+  directory, writes `ARTIFACTS.md`, records `published_spec_dir`, and validates
+  that published build target before build-ready guidance. `echelon continue`
+  routes old done-but-unpublished runs back through Phase 4 instead of claiming
+  build-ready from run-local artifacts alone.
 
 ### Changed
 

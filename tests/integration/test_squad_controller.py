@@ -202,6 +202,51 @@ class TestAgentResultIntegrity:
         result = ctrl.run("msg", "banzai")
 
         assert result.status == "done"
+        published_dir = tmp_path / "specs" / "001-demo"
+        assert (published_dir / "spec.md").exists()
+        assert (published_dir / "plan.md").exists()
+        assert (published_dir / "tasks.md").exists()
+        assert (published_dir / "ARTIFACTS.md").exists()
+        state = store.load()
+        assert state["published_spec_dir"] == "specs/001-demo"
+
+    def test_phase4_document_publishes_complete_artifacts_to_existing_slugged_spec(
+        self, tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        active_spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001"
+        active_spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (active_spec_dir / name).write_text(f"# active {name}\n", encoding="utf-8")
+        (active_spec_dir / "contracts").mkdir()
+        (active_spec_dir / "contracts" / "api.md").write_text("# Contract\n", encoding="utf-8")
+
+        published_dir = tmp_path / "specs" / "001-themed-ascii-animation"
+        published_dir.mkdir(parents=True)
+        (published_dir / "spec.md").write_text("# stale spec\n", encoding="utf-8")
+        (published_dir / "manual-note.md").write_text("# Keep me\n", encoding="utf-8")
+
+        state = store.load()
+        state["spec_id"] = "001"
+        state["spec_dir"] = "runs/run-test/specs/001"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "done"
+        assert (published_dir / "spec.md").read_text(encoding="utf-8") == "# active spec.md\n"
+        assert (published_dir / "plan.md").exists()
+        assert (published_dir / "research.md").exists()
+        assert (published_dir / "data-model.md").exists()
+        assert (published_dir / "tasks.md").exists()
+        assert (published_dir / "contracts" / "api.md").exists()
+        assert (published_dir / "manual-note.md").exists()
+        assert (published_dir / "ARTIFACTS.md").exists()
+        assert state["published_spec_dir"] == "specs/001-themed-ascii-animation"
 
 
 class TestCartographerResumeGuard:
