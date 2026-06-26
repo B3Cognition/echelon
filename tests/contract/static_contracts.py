@@ -97,19 +97,60 @@ def validate_guardian_always_on_contract(root: Path) -> list[str]:
     phase = root / "extension/workflow/phases/phase3-specialists.md"
     return _run_checks(
         [
-            PatternCheck("commander references guardian mode", commander, r"guardian.mode"),
+            PatternCheck("commander references guardian mode", commander, r"specialists\.guardian_mode"),
             PatternCheck("phase defines always_on", phase, r"always_on"),
             PatternCheck("phase defines on_demand", phase, r"on_demand"),
             PatternCheck("phase has security dispatch section", phase, r"SECURITY Dispatch"),
             PatternCheck("phase references security checklist", phase, r"Minimum Security Checklist"),
-            PatternCheck("phase references guardian.mode", phase, r"guardian\.mode"),
+            PatternCheck("phase references specialists.guardian_mode", phase, r"specialists\.guardian_mode"),
             PatternCheck("guardian references always_on", guardian, r"always_on"),
             PatternCheck("guardian has security checklist", guardian, r"Minimum Security Checklist"),
-            PatternCheck("guardian references guardian.mode", guardian, r"guardian\.mode"),
+            PatternCheck("guardian references specialists.guardian_mode", guardian, r"specialists\.guardian_mode"),
             PatternCheck("guardian handles non-security domains", guardian, r"non-security domain"),
             PatternCheck("phase references GUARDIAN", phase, r"GUARDIAN"),
         ]
     )
+
+
+def validate_guardian_mode_config_naming_contract(root: Path) -> list[str]:
+    public_sources = [
+        root / "README.md",
+        root / "extension/workflow/phases/phase3-specialists.md",
+        root / "extension/agents/specialists/guardian.md",
+        root / "extension/agents/control/commander.md",
+    ]
+    failures = _run_checks(
+        [
+            *[
+                PatternCheck(
+                    f"{path.name} uses canonical specialists.guardian_mode",
+                    path,
+                    r"specialists\.guardian_mode",
+                )
+                for path in public_sources
+            ],
+            *[
+                PatternCheck(
+                    f"{path.name} avoids deprecated guardian.mode",
+                    path,
+                    r"guardian\.mode",
+                    should_match=False,
+                )
+                for path in public_sources
+            ],
+            PatternCheck(
+                "config template keeps nested guardian_mode",
+                root / "extension/config-template.yml",
+                r"specialists:[\s\S]*guardian_mode:\s*always_on",
+            ),
+            PatternCheck(
+                "extension config keeps nested guardian_mode",
+                root / "extension/echelon-config.yml",
+                r"specialists:[\s\S]*guardian_mode:\s*always_on",
+            ),
+        ]
+    )
+    return failures
 
 
 def validate_code_reviewer_confidence_filter_contract(root: Path) -> list[str]:

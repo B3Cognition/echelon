@@ -19,7 +19,7 @@ After ASSESS passes, determine which specialists are needed:
 |-----------|-------------|--------------|
 | **TEST speckit-echelon-architect (ARCHITECT)** | ALWAYS (mandatory) | Required |
 | **SCIENTIST** (speckit-echelon-investigator (INVESTIGATOR)) | `unknowns.md` has unresolved items OR `calibration-profile.yaml` shows confidence < 0.5 for relevant domain | High |
-| **SECURITY** (speckit-echelon-guardian (GUARDIAN)) | ALWAYS when `guardian.mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
+| **SECURITY** (speckit-echelon-guardian (GUARDIAN)) | ALWAYS when `specialists.guardian_mode: always_on` (default); otherwise domain involves auth, payments, PII, regulatory compliance | Required (always_on) / High (on_demand) |
 | **DOMAIN EXPERT** | Domain-specific knowledge needed (detected from DISCOVER) | Medium |
 | **PERFORMANCE** | High-load, real-time, scalability requirements in spec | Medium |
 | **UX / A11Y** | Frontend, user-facing features, accessibility | Medium |
@@ -31,7 +31,7 @@ After ASSESS passes, determine which specialists are needed:
 
 Maximum `max_active_specialists` (default 3) can be active simultaneously. If more are needed, prioritize by domain signal strength. Defer lower-priority specialists (their insights can be incorporated in future runs).
 
-**Exception:** TEST speckit-echelon-architect (ARCHITECT) and speckit-echelon-guardian (GUARDIAN) (when `guardian.mode: always_on`) always run as mandatory agents and do not count toward the cap.
+**Exception:** TEST speckit-echelon-architect (ARCHITECT) and speckit-echelon-guardian (GUARDIAN) (when `specialists.guardian_mode: always_on`) always run as mandatory agents and do not count toward the cap.
 
 ### Dispatch Specialists
 
@@ -68,7 +68,7 @@ Use the Agent tool:
 
 #### SECURITY Dispatch (speckit-echelon-guardian (GUARDIAN) codename) — always-on by default
 
-**Dispatch mode** is controlled by `echelon-config.yml` → `guardian.mode` (default: `always_on`).
+**Dispatch mode** is controlled by `echelon-config.yml` → `specialists.guardian_mode` (default: `always_on`).
 
 - **`always_on`**: Dispatch speckit-echelon-guardian (GUARDIAN) on every run. If the domain is NOT security-sensitive, speckit-echelon-guardian (GUARDIAN) runs only the **Minimum Security Checklist** (5-item lightweight check). If security-sensitive, speckit-echelon-guardian (GUARDIAN) runs the full STRIDE + OWASP + compliance analysis.
 - **`on_demand`**: Dispatch only when domain involves auth, payments, PII, regulatory compliance (legacy behavior).
@@ -94,11 +94,11 @@ Use the Agent tool:
 
   <instructions>
   You are GUARDIAN. Read agents/specialists/guardian.md for your complete protocol.
-  Guardian mode is `{guardian.mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Guardian mode is `{specialists.guardian_mode}`. If always_on and domain is non-security: run the Minimum Security Checklist only. If domain is security-relevant OR mode is on_demand with security domain: perform full STRIDE threat modeling, OWASP Top 10, compliance analysis. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
-- **description:** "speckit-echelon-guardian (GUARDIAN): security analysis (mode: {guardian.mode})"
+- **description:** "speckit-echelon-guardian (GUARDIAN): security analysis (mode: {specialists.guardian_mode})"
 
 #### DOMAIN EXPERT Dispatch (if summoned)
 

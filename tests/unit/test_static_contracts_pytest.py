@@ -5,6 +5,7 @@ from tests.contract.static_contracts import (
     validate_auditor_internalization_contract,
     validate_auditor_internalizer_split_contract,
     validate_code_reviewer_confidence_filter_contract,
+    validate_guardian_mode_config_naming_contract,
     validate_commander_loading_contract,
     validate_commander_routing_mandate_contract,
     validate_commander_token_tracking_contract,
@@ -31,6 +32,10 @@ def test_commander_routing_mandate_contract() -> None:
 
 def test_guardian_always_on_contract() -> None:
     assert validate_guardian_always_on_contract(ROOT) == []
+
+
+def test_guardian_mode_config_naming_contract() -> None:
+    assert validate_guardian_mode_config_naming_contract(ROOT) == []
 
 
 def test_code_reviewer_confidence_filter_contract() -> None:

@@ -62,6 +62,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   already-affected runs where tracker alignment completed but
   `phase3-specialists` was skipped, and resumes at `phase3-specialists` before
   treating missing HOW artifacts as the next repair target.
+- **EGR-028 GUARDIAN config naming reconciliation** — public docs and
+  agent/phase prompts now use the executable `specialists.guardian_mode` config
+  key consistently, with static pytest coverage preventing regression. Workflow
+  conditions keep the derived predicate form `guardian_mode = ...`.
 
 ### Changed
 

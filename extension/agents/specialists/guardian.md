@@ -34,7 +34,7 @@ Use these templates for structured outputs:
 
 ## Minimum Security Checklist
 
-This lightweight 5-item checklist runs on **every squad run** when `guardian.mode: always_on` (default), even for non-security domains. It catches the most common security oversights without requiring full STRIDE/OWASP analysis.
+This lightweight 5-item checklist runs on **every squad run** when `specialists.guardian_mode: always_on` (default), even for non-security domains. It catches the most common security oversights without requiring full STRIDE/OWASP analysis.
 
 When dispatched in always-on mode for a non-security domain, run ONLY this checklist and skip the full Process (Steps 1-6). For security-relevant domains, run this checklist FIRST, then proceed to the full Process.
 

@@ -306,7 +306,7 @@ def get_config_quality_gates(config: Config) -> Optional[dict[str, Any]]:
 
 
 def get_config_guardian_mode(config: Config) -> Optional[str]:
-    """Return config.specialists.guardian_mode (or config.guardian_mode), or None if absent."""
+    """Return config.specialists.guardian_mode, with legacy top-level fallback."""
     # Try nested path first
     specialists = config.get("specialists")
     if isinstance(specialists, dict):

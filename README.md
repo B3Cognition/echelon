@@ -717,7 +717,7 @@ cp config-template.yml echelon-config.yml
 | `quality_gates.overall` | Minimum spec quality | `0.70` |
 | `quality_gates.depth` | Minimum depth score | `0.30` (Understanding v3.6+) |
 | `convergence.quality_delta_threshold` | Stop when improvement below | `0.02` |
-| `guardian.mode` | GUARDIAN dispatch mode | `always_on` (default) |
+| `specialists.guardian_mode` | GUARDIAN dispatch mode | `always_on` (default) |
 | `endocrine.enabled` | Hormone-modulated motivation | `false` (default) |
 | `deploy.enabled` | Enable local blue/green CD after merge | `true` (default); set `false` to skip deploy infra |
 
