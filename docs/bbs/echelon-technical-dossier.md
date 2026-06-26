@@ -875,7 +875,7 @@ Good conventions visible here:
 
 ## 16. Potential Demo Flow
 
-Demo goal: show how Echelon turns an engineering request into controlled artifacts and a build loop without trying to demo the whole 41-agent system.
+Demo goal: show how Echelon turns an engineering request into controlled artifacts and a build loop without trying to demo every registered agent role.
 
 Suggested 5-10 minute flow:
 

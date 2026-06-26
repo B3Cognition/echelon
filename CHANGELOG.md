@@ -142,6 +142,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Added canonical registry entries for `phase_complete`, `constitution_created`, and `constitution_placeholder_fix`.
   - Focused tests added in `tests/unit/test_journal_prompt_validator.py`; `tests/kernel/test_prompt_references.py` now scans the shipped prompt surface.
   - Verification: `pytest tests/unit/test_journal_prompt_validator.py tests/kernel/test_prompt_references.py -q` (`46 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`574 passed`).
+- **EGR-020 role catalog reconciliation** — reconciled the public architecture narrative with the current agent registry and workflow graph.
+  - `README.md` now describes 53 registered agent roles and 45 active-routed manifest roles instead of the stale 41-agent claim.
+  - Added `docs/agent-role-catalog.md` with grounded counts for registered roles, active-routed roles, manifest-only roles, workflow-only aliases, support prompt files, and layer totals.
+  - Updated the technical dossier demo language so it no longer repeats the stale 41-agent narrative.
+  - Added `tests/kernel/test_agent_role_catalog_docs.py` to derive counts from `extension/extension.yml`, `extension/workflow/definition.yaml`, and `extension/agents/`.
+  - Verification: `pytest tests/kernel/test_agent_role_catalog_docs.py tests/unit/test_readme_tool_policy_docs.py -q` (`2 passed`); `bash tests/test-unit-registry-sync.sh` passed; `pytest tests/kernel -q` (`575 passed`); `pytest -q` (`2411 passed, 22 skipped`).
 - **EGR-021 installed extension drift detection** — added a deterministic warning when terminal CLI commands see stale installed extension content.
   - `src/harness/extension_drift.py` fingerprints shipped extension files while ignoring project-local `echelon-config.yml` and `local-config.yml`.
   - Drift detection now requires a trusted source path: `ECHELON_EXTENSION_SOURCE`, an installed `.echelon-source.json` marker, or a verified editable checkout. Packaged installs without a known source stay silent instead of guessing a machine-local checkout.
