@@ -190,6 +190,9 @@ echelon_result:
       phase: build
       agent: speckit-echelon-change-controller (CHANGE CONTROLLER)
       data:
+        change_description: "<requested change summary>"
+        verdict: <APPROVED | REJECTED | NEEDS_REPLAN>
+        reentry_target: "<phase or task target>"
         change_id: <CR-NNN>
         blast_radius: <summary>
         affected_components: []

@@ -106,10 +106,15 @@ echelon_result:
     updated_at: "{ISO-8601}"
   output_files: []
   journal_entries:
-    - type: reality-check
+    - type: decision
       agent: speckit-echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
-      content: "GROUND dispatched manually. Focus: {$ARGUMENTS or 'full sweep'}. Check reality-check.md for findings."
+      data:
+        artifact: "reality-check.md"
+        section: "Manual specialist dispatch"
+        reasoning: "User explicitly requested GROUND reality checking."
+        rationale: "Dispatch REALIST for focus: {$ARGUMENTS or 'full sweep'}."
+        content: "GROUND dispatched manually. Focus: {$ARGUMENTS or 'full sweep'}. Check reality-check.md for findings."
 ```
 
 ---

@@ -136,6 +136,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - The canonical `echelon_result` template now shows schema-complete `journal_entries.data` for the registered `insight` type instead of the old sparse `type: <entry_type>` example.
   - Focused tests added/updated in `tests/unit/test_journal_entry_validator.py` and `tests/kernel/test_squad_executors_journal.py`.
   - Verification: `pytest tests/unit/test_journal_entry_validator.py tests/kernel/test_squad_executors_journal.py tests/integration/test_journal_append_helper.py -q` (`60 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`573 passed`).
+- **EGR-024 static journal prompt validation** — added deterministic validation for concrete `echelon_result.journal_entries` examples embedded in agent, command, phase, and template prompts.
+  - `src/harness/journal_prompt_validator.py` scans YAML-shaped prompt examples and blocks concrete unregistered journal types or registered examples missing required `data` fields.
+  - Prompt examples were migrated to schema-complete `data` payloads; RE completion examples now use the registered `phase_complete` type.
+  - Added canonical registry entries for `phase_complete`, `constitution_created`, and `constitution_placeholder_fix`.
+  - Focused tests added in `tests/unit/test_journal_prompt_validator.py`; `tests/kernel/test_prompt_references.py` now scans the shipped prompt surface.
+  - Verification: `pytest tests/unit/test_journal_prompt_validator.py tests/kernel/test_prompt_references.py -q` (`46 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`574 passed`).
 
 ## [2.1.0] - 2026-05-17
 

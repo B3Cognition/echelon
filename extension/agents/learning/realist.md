@@ -169,6 +169,9 @@ echelon_result:
       phase: finalize
       agent: speckit-echelon-realist (REALIST)
       data:
+        verdict: "<GROUNDED | RISKY | UNGROUNDED>"
+        rationale: "<summary of grounded reality-check reasoning>"
+        scope_notes: "<what was checked and what remains uncertain>"
         historical_comparables: []
         bias_detected: false
         confidence: 0.0

@@ -131,9 +131,10 @@ echelon_result:
     - type: constitution_placeholder_fix
       phase: phase1-what
       agent: speckit-echelon-commander (COMMANDER)
-      method: sed_fallback
-      version: 1.0.0
-      date: "{YYYY-MM-DD}"
+      data:
+        method: sed_fallback
+        version: 1.0.0
+        date: "{YYYY-MM-DD}"
 ```
 
 Always resolve constitution placeholders before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.

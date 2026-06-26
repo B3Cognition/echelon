@@ -29,6 +29,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-planning-1-plan
-      summary: "Generated plans for {N} domains"
+      data:
+        summary: "Generated plans for {N} domains"
   blocked_reason: null
 ```

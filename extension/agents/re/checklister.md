@@ -229,6 +229,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-6-checklist
-      summary: "Generated checklists for {N} domains"
+      data:
+        summary: "Generated checklists for {N} domains"
   blocked_reason: null
 ```

@@ -38,6 +38,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-7-constitute
-      summary: "Strategic artifacts generated. {N} [REQUIRES INPUT] markers need human decisions."
+      data:
+        summary: "Strategic artifacts generated. {N} [REQUIRES INPUT] markers need human decisions."
   blocked_reason: null
 ```

@@ -232,6 +232,10 @@ echelon_result:
       phase: <current phase>
       agent: speckit-echelon-checkpoint (CHECKPOINT)
       data:
+        artifact: "<artifact or phase checkpoint>"
+        section: "Internalization gate"
+        reasoning: "<why this gate result was selected>"
+        rationale: "<checkpoint rationale>"
         check_type: "internalization_gate"
         result: "<INTERNALIZED | PARTIAL | FAILED>"
         doubts_count: <N>

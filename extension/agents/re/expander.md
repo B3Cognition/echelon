@@ -104,6 +104,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-4-expand
-      summary: "Added {N} new domain(s), expanded {M} existing"
+      data:
+        summary: "Added {N} new domain(s), expanded {M} existing"
   blocked_reason: null
 ```

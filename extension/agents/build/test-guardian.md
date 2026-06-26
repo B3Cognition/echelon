@@ -227,10 +227,11 @@ echelon_result:
     - {spec_dir}/test-quality-report.md
   state_updates: {}
   journal_entries:
-    - type: quality_check
+    - type: test_quality_finding
       phase: build
       agent: speckit-echelon-test-guardian (TEST GUARDIAN)
       data:
         task_id: <task_id>
-        pass: true
+        verdict: <SUFFICIENT | INSUFFICIENT>
+        coverage_assessment: "<coverage summary>"
         coverage_gaps: []

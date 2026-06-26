@@ -202,6 +202,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-2-specify
-      summary: "Generated {N} domain specs"
+      data:
+        summary: "Generated {N} domain specs"
   blocked_reason: null
 ```

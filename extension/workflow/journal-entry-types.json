@@ -394,6 +394,28 @@
         "trigger_reason"
       ]
     },
+    "phase_complete": {
+      "description": "Phase or RE extraction step completed and produced its expected artifacts",
+      "agents": [
+        "speckit-echelon-commander",
+        "speckit-echelon-re-analyzer",
+        "speckit-echelon-re-specifier",
+        "speckit-echelon-re-verifier",
+        "speckit-echelon-re-expander",
+        "speckit-echelon-re-validator",
+        "speckit-echelon-re-checklister",
+        "speckit-echelon-re-constituter",
+        "speckit-echelon-re-planner",
+        "speckit-echelon-re-tasker"
+      ],
+      "required_data_fields": [
+        "summary"
+      ],
+      "optional_data_fields": [
+        "artifacts",
+        "domains"
+      ]
+    },
     "convergence_check": {
       "description": "Convergence detection result",
       "agents": [
@@ -518,6 +540,28 @@
       ],
       "required_data_fields": [
         "reason"
+      ]
+    },
+    "constitution_created": {
+      "description": "speckit-echelon-chief (CHIEF) created or amended the project constitution",
+      "agents": [
+        "speckit-echelon-chief"
+      ],
+      "required_data_fields": [
+        "mode",
+        "constitution_path",
+        "placeholder_fix_applied"
+      ]
+    },
+    "constitution_placeholder_fix": {
+      "description": "speckit-echelon-commander (COMMANDER) repaired constitution placeholder text during Phase 1 WHAT",
+      "agents": [
+        "speckit-echelon-commander"
+      ],
+      "required_data_fields": [
+        "method",
+        "version",
+        "date"
       ]
     },
     "calibration_update": {

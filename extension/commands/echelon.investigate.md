@@ -108,10 +108,15 @@ echelon_result:
     updated_at: "{ISO-8601}"
   output_files: []
   journal_entries:
-    - type: investigation
+    - type: decision
       agent: speckit-echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
-      content: "SCIENTIST dispatched for: {$ARGUMENTS}. See investigation/ for outputs."
+      data:
+        artifact: "investigation/"
+        section: "Manual specialist dispatch"
+        reasoning: "User explicitly requested SCIENTIST investigation for: {$ARGUMENTS}."
+        rationale: "Dispatch INVESTIGATOR and record outputs under investigation/."
+        content: "SCIENTIST dispatched for: {$ARGUMENTS}. See investigation/ for outputs."
 ```
 
 ---

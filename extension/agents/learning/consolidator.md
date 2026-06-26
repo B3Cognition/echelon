@@ -129,6 +129,8 @@ echelon_result:
       phase: finalize
       agent: speckit-echelon-consolidator (CONSOLIDATOR)
       data:
+        patterns_matched: []
+        pitfalls_flagged: []
         schema_name: ""
         pattern_type: ""
         confidence: 0.0
