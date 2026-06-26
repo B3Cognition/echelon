@@ -196,9 +196,11 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 1. Locates the skill file for the selected provider (Claude, Copilot, or Opencode)
 2. Strips the YAML frontmatter (which is meaningful only to spec-kit, not to the LLM)
 3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
-4. Invokes the LLM CLI subprocess (`claude -p <prompt> --dangerously-skip-permissions`, or the equivalent for Copilot/Opencode)
+4. Injects the effective host tool-policy preamble and invokes the LLM CLI subprocess (`claude -p <prompt>`, `codex exec <prompt>`, `copilot -p <prompt>`, or `opencode run <prompt>`)
 
 This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon-config.yml`) selects the provider.
+
+By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 
 The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
 

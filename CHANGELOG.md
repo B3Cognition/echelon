@@ -121,6 +121,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `scripts/bash/dry-run.sh` now runs the workflow contract validator as a structural preflight when the Python harness source is available.
   - Focused tests added in `tests/kernel/test_workflow_validator.py`.
   - Verification: `pytest tests/kernel/test_workflow_validator.py tests/kernel/test_phase_graph.py -q` (`35 passed`); direct workflow validation reported `workflow definition valid`; `bash -n scripts/bash/dry-run.sh` passed.
+- **EGR-017 tool-policy documentation drift** — updated `README.md` so terminal CLI documentation matches the fail-closed host LLM tool-policy contract.
+  - The README no longer describes Claude as always running with `--dangerously-skip-permissions`.
+  - It now documents that unsafe provider bypass flags are only added when `harness.llm.tool_policy.allow_unsafe_host_execution: true` is configured with an `approval_reason`.
+  - Focused regression test added in `tests/unit/test_readme_tool_policy_docs.py`.
 
 ## [2.1.0] - 2026-05-17
 
