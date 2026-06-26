@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import io
-import os
 
-from echelon.ui import banner
+from echelon.ui import CARD_INNER, banner
 
 
-def test_banner_expands_to_fit_operational_subtitle(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "shutil.get_terminal_size",
-        lambda fallback: os.terminal_size((100, 24)),
-    )
+def _box_lines(output: str) -> list[str]:
+    return [
+        line for line in output.splitlines()
+        if line.startswith(("╭", "│", "╰"))
+    ]
+
+
+def test_banner_wraps_operational_subtitle_at_fixed_width() -> None:
     buf = io.StringIO()
 
     banner(
@@ -21,15 +23,13 @@ def test_banner_expands_to_fit_operational_subtitle(monkeypatch) -> None:
     )
 
     output = buf.getvalue()
-    assert "Installed Echelon extension differs from this checkout" in output
     assert "…" not in output
+    assert "Installed Echelon extension differs from this" in output
+    assert "checkout" in output
+    assert all(len(line) == CARD_INNER + 2 for line in _box_lines(output))
 
 
-def test_banner_wraps_long_subtitle_without_ellipsis(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "shutil.get_terminal_size",
-        lambda fallback: os.terminal_size((60, 24)),
-    )
+def test_banner_wraps_long_subtitle_without_ellipsis() -> None:
     subtitle = (
         "Installed Echelon extension differs from the trusted source extension "
         "configured for this project"
@@ -40,5 +40,7 @@ def test_banner_wraps_long_subtitle_without_ellipsis(monkeypatch) -> None:
 
     output = buf.getvalue()
     assert "…" not in output
-    assert "Installed Echelon extension differs from the trusted" in output
-    assert "source extension configured for this project" in output
+    assert "Installed Echelon extension differs from the" in output
+    assert "trusted source extension configured for this" in output
+    assert "project" in output
+    assert all(len(line) == CARD_INNER + 2 for line in _box_lines(output))
