@@ -16,12 +16,15 @@ Auto-detected from ECHELON_LLM (default: claude).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from harness.phase_a_readiness import validate_phase_a_readiness
 
 try:
     from codegen.memory.collision import check_wing_collision
@@ -69,16 +72,16 @@ Commands:
   status                                    Show current run state, staging artifacts, open
                                             issues, cost, and next action — orient after a
                                             break without reading files manually.
-  continue [--mode semi|banzai|guided]      Advance the last run to its next required phase.
-                                            Reads the task and mode from prior state — no
-                                            prompt needed. Handles: resume if running,
-                                            escalation guidance if blocked, or determines
-                                            the correct next phase if done.
+  continue [--mode semi|banzai|guided]      Run the next no-input recovery action for the
+                                            last run. Retries running/interrupted runs,
+                                            retries recoverable failed dispatches, or
+                                            advances completed-but-incomplete Phase A work.
+                                            If human input is needed, prints `resume`.
   rewind  <phase-id>                        Rewind the active squad run to a safe checkpoint
                                             phase and prepare it for `echelon continue`.
-  resume  "<answers>"                       Answer escalation questions from a blocked run
-                                            and continue it. Use when the run printed
-                                            "blocked — human input required".
+  resume  "<answers>"                       Answer escalation questions from a blocked run.
+                                            Use only when the run asked for human input;
+                                            after recording the answer, Echelon continues.
   bugfix  <spec_id> <description>           Diagnose and plan a bugfix
   verify-spec <spec_id> [strict=true] [--reconcile] [--dry-run]
                                             Audit implementation against spec
@@ -527,6 +530,20 @@ def _harness_init_detection_fields(config_file: Path) -> list[tuple[str, str]]:
         status = str(app_detection or "none")
         detail = f"{status}: {app_reason}" if app_reason else status
         fields.append(("App runtime", f"not configured - {detail}"))
+
+    sandbox_raw = harness_raw.get("sandbox_suggestion")
+    if isinstance(sandbox_raw, dict) and sandbox_raw:
+        confidence = sandbox_raw.get("confidence", "unknown")
+        score = sandbox_raw.get("confidence_score", 0.0)
+        strategy = sandbox_raw.get("suggested_strategy", "review sandbox suggestion")
+        approval = sandbox_raw.get("human_approval_point", "review before execution")
+        fields.append(
+            (
+                "Sandbox",
+                f"{confidence} ({float(score):.2f}) - {strategy} Approval: {approval}",
+            )
+        )
+        fields.append(("Sandbox report", str(config_file.with_name("sandbox-suggestion.md"))))
 
     return fields
 
@@ -1194,13 +1211,154 @@ _REWIND_CLEANUP_OUTPUTS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
-    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+@dataclass(frozen=True)
+class _RunRecoveryAction:
+    kind: str
+    reason: str = ""
+    phase: str = ""
+    command: str = ""
+    note: str = ""
+
+
+def _is_retryable_dispatch_block_reason(reason: str) -> bool:
+    reason = reason.strip()
+    return (
+        reason in {
+            "missing_phase_outputs",
+            "missing_echelon_result",
+            "agent_timeout",
+            "agent_blocked",
+        }
+        or reason.startswith("agent_exit_code_")
+    )
+
+
+def _last_incomplete_dispatch_phase(run_state: dict) -> str | None:
     last_dispatch = run_state.get("last_dispatch") or {}
     phase_id = str(last_dispatch.get("phase_id") or "").strip()
-    if blocked_reason in {"missing_phase_outputs", "missing_echelon_result"} and phase_id in _SAFE_REWIND_PHASES:
+    if not phase_id or phase_id == "terminal-blocked":
+        return None
+
+    completed = run_state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
+    if phase_id in completed_phases:
+        return None
+
+    return phase_id
+
+
+def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
+    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+    phase_id = _last_incomplete_dispatch_phase(run_state)
+    if _is_retryable_dispatch_block_reason(blocked_reason) and phase_id in _SAFE_REWIND_PHASES:
         return f"echelon rewind {phase_id}"
     return None
+
+
+def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
+    """Return the incomplete phase that caused a deterministic dispatch block."""
+
+    blocked_reason = str(run_state.get("blocked_reason") or "").strip()
+    if not _is_retryable_dispatch_block_reason(blocked_reason):
+        return None
+    if run_state.get("escalation_question"):
+        return None
+
+    phase_id = _last_incomplete_dispatch_phase(run_state)
+    if not phase_id:
+        return None
+
+    return phase_id
+
+
+def _interrupted_retry_phase(run_state: dict) -> str | None:
+    phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
+    if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
+        return phase_id
+    return _last_incomplete_dispatch_phase(run_state)
+
+
+def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
+    status = str(run_state.get("status") or "").strip()
+    reason = str(run_state.get("blocked_reason") or "").strip()
+
+    if status in {"running", "in_progress"}:
+        return _RunRecoveryAction("continue_running")
+
+    if status == "interrupted":
+        retry_phase = _interrupted_retry_phase(run_state)
+        if retry_phase:
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason="interrupted",
+                phase=retry_phase,
+                command="echelon continue",
+                note="will retry the interrupted phase",
+            )
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason="interrupted",
+            command="echelon run --next-phase <phase-id>",
+            note="interrupted run does not record a retryable phase",
+        )
+
+    if status != "blocked":
+        return _RunRecoveryAction("advance")
+
+    if run_state.get("escalation_question"):
+        return _RunRecoveryAction(
+            "human_resume",
+            reason=reason or "human answer required",
+            command='echelon resume "<your answer>"',
+            note=str(run_state.get("escalation_question") or "").strip(),
+        )
+
+    rewind = _blocked_non_escalation_recovery_command(run_state)
+    if rewind:
+        phase = str((run_state.get("last_dispatch") or {}).get("phase_id") or "").strip()
+        return _RunRecoveryAction(
+            "safe_rewind",
+            reason=reason,
+            phase=phase,
+            command=rewind,
+            note="safe checkpoint cleanup is required before retry",
+        )
+
+    retry_phase = _blocked_failed_dispatch_phase(run_state)
+    if retry_phase:
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=retry_phase,
+            command="echelon continue",
+            note="will retry the failed phase; it was not marked complete",
+        )
+
+    if reason == "token_budget_exhausted":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="increase analysis.token_budget_k, then echelon continue",
+            note="the run cannot continue until the configured budget is higher",
+        )
+
+    if "invalid next_phase" in reason:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="echelon run --next-phase <phase-id>",
+            note="choose a valid phase from echelon status output",
+        )
+
+    if not reason:
+        return _RunRecoveryAction("advance")
+
+    return _RunRecoveryAction(
+        "manual_recovery",
+        reason=reason,
+        command="fix the blocker, then echelon continue",
+        note="no human question, safe rewind target, or retryable dispatch was recorded",
+    )
 
 
 def _rewind_constitution_is_real(project_root: Path) -> bool:
@@ -1500,6 +1658,53 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         except Exception:
             current_state = {}
 
+    if result_status in {"blocked", "interrupted"}:
+        action = _classify_run_recovery(current_state)
+        if action.kind == "human_resume":
+            fields = [
+                ("reason", action.reason),
+                ("question", action.note),
+                ("next", action.command),
+            ]
+            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
+            return
+        if action.kind == "safe_rewind":
+            fields = [
+                ("reason", action.reason),
+                ("phase", action.phase or "?"),
+                ("next", action.command),
+                ("then", "echelon continue"),
+            ]
+            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
+            return
+        if action.kind == "retry_phase":
+            fields = [
+                ("reason", action.reason),
+                ("phase", action.phase),
+                ("next", action.command),
+                ("note", action.note),
+            ]
+            _banner(
+                "NEXT STEP",
+                fields,
+                subtitle="RUN INTERRUPTED" if result_status == "interrupted" else "RUN BLOCKED",
+            )
+            return
+        if action.kind == "manual_recovery":
+            fields = [
+                ("reason", action.reason),
+                ("next", action.command),
+                ("note", action.note),
+            ]
+            _banner(
+                "NEXT STEP",
+                fields,
+                subtitle="RUN INTERRUPTED — manual recovery required"
+                if result_status == "interrupted"
+                else "RUN BLOCKED — manual recovery required",
+            )
+            return
+
     # 1. Constitution — phase provenance first, artifact integrity second
     completed = current_state.get("completed_phases")
     completed_phases = completed if isinstance(completed, list) else []
@@ -1533,6 +1738,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     # the build-harness target, not the source of truth for an in-progress squad.
     specs_root = project_root / "specs"
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    published_spec_dir: Path | None = None
     if result_status == "done":
         published_spec_dir = _published_continue_spec_dir(project_root, current_state)
         if published_spec_dir and (published_spec_dir / "tasks.md").exists():
@@ -1562,27 +1768,6 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             pass
     if not newest_spec_id:
         newest_spec_id = str(run_state.get("spec_id") or "").strip()
-
-    if result_status == "blocked" and run_state.get("escalation_question"):
-        fields = [
-            ("reason", str(run_state.get("blocked_reason") or "human answer required").strip()),
-            ("question", str(run_state.get("escalation_question") or "").strip()),
-            ("next", 'echelon resume "<your answer>"'),
-        ]
-        _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
-        return
-
-    if result_status == "blocked":
-        recovery = _blocked_non_escalation_recovery_command(run_state)
-        if recovery:
-            fields = [
-                ("reason", str(run_state.get("blocked_reason") or "blocked").strip()),
-                ("phase", str((run_state.get("last_dispatch") or {}).get("phase_id") or run_state.get("phase") or "?").strip()),
-                ("next", recovery),
-                ("then", "echelon continue"),
-            ]
-            _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
-            return
 
     if quality_gates_file is None and run_state:
         staging_dir = Path(run_state.get("staging_dir") or str(run_dir / "staging"))
@@ -1693,6 +1878,24 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             "     → echelon continue"
         )
 
+    readiness_state = dict(run_state or current_state)
+    readiness_state["status"] = result_status
+    if run_state.get("blocked_reason"):
+        readiness_state["blocked_reason"] = run_state.get("blocked_reason")
+    readiness = validate_phase_a_readiness(
+        readiness_state,
+        _phase_a_readiness_candidate_dirs(
+            project_root,
+            readiness_state,
+            run_dir,
+            active_spec_dir=active_spec_dir,
+            published_spec_dir=published_spec_dir,
+        ),
+    )
+    for blocker in readiness.blockers:
+        if blocker not in blockers:
+            blockers.append(blocker)
+
     # 5. Blocked run — surface escalation context and improvement recommendations
     if result_status == "blocked":
         blocked_reason = run_state.get("blocked_reason") or ""
@@ -1760,8 +1963,12 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
         if ready_items:
             fields.append(("already done", ", ".join(ready_items)))
-        subtitle = ("BUILD BLOCKED — fix blockers before running" if blockers
-                    else "RUN BLOCKED — resolve the block before building")
+        if result_status == "blocked":
+            subtitle = "RUN BLOCKED — resolve before building"
+        elif blockers:
+            subtitle = "PHASE A INCOMPLETE — continue authoring before build"
+        else:
+            subtitle = "RUN BLOCKED — resolve the block before building"
 
     _banner("NEXT STEP", fields, subtitle=subtitle)
 
@@ -2058,6 +2265,60 @@ def _select_squad_dir(
     return existing_dir, False
 
 
+def _inferred_source_extension_dir() -> Path:
+    """Possible dev-checkout extension path for source-aware drift checks."""
+    return Path(__file__).resolve().parents[2] / "extension"
+
+
+def _print_extension_drift_warning(project_root: Path, ext_dir: Path) -> None:
+    """Warn when installed extension differs from a trusted source extension."""
+    try:
+        from harness.extension_drift import (
+            assess_extension_drift,
+            resolve_extension_source_dir,
+        )
+
+        source_dir = resolve_extension_source_dir(
+            ext_dir,
+            inferred_source_dir=_inferred_source_extension_dir(),
+        )
+        if source_dir is None:
+            return
+        report = assess_extension_drift(source_dir, ext_dir)
+    except Exception:
+        return
+
+    if not report.drifted:
+        return
+
+    examples: list[str] = []
+    for label, paths in (
+        ("changed", report.changed_files),
+        ("missing", report.missing_files),
+        ("extra", report.extra_files),
+    ):
+        for rel_path in paths[:3]:
+            examples.append(f"{label}: {rel_path}")
+    examples = examples[:6]
+
+    _banner(
+        "EXTENSION DRIFT",
+        [
+            ("installed", _repo_relative_or_absolute(ext_dir, project_root)),
+            ("source", str(source_dir)),
+            (
+                "diff",
+                f"{len(report.changed_files)} changed, "
+                f"{len(report.missing_files)} missing, "
+                f"{len(report.extra_files)} extra",
+            ),
+            ("examples", "\n".join(examples) if examples else "(none)"),
+            ("update", f"specify extension update --dev {source_dir}"),
+        ],
+        subtitle="Installed Echelon extension differs from this checkout",
+    )
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -2069,6 +2330,8 @@ def _cmd_run(
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+    _print_extension_drift_warning(project_root, ext_dir)
 
     # Parse optional flags
     mode = "semi"
@@ -2292,6 +2555,47 @@ def _published_continue_spec_dir(project_root: Path, current_state: dict) -> Pat
     return None
 
 
+def _phase_a_readiness_candidate_dirs(
+    project_root: Path,
+    current_state: dict,
+    run_dir: Path | None,
+    active_spec_dir: Path | None = None,
+    published_spec_dir: Path | None = None,
+) -> list[Path]:
+    """Return deterministic spec-dir candidates for Phase A build inputs."""
+    candidates: list[Path] = []
+
+    def add(candidate: Path | None) -> None:
+        if candidate is None:
+            return
+        path = candidate if candidate.is_absolute() else project_root / candidate
+        if path not in candidates:
+            candidates.append(path)
+
+    add(active_spec_dir)
+    add(published_spec_dir)
+
+    spec_id = str(current_state.get("spec_id") or "").strip()
+    if spec_id:
+        add(project_root / "specs" / spec_id)
+        if run_dir is not None:
+            add(run_dir / "specs" / spec_id)
+
+    for key in ("published_spec_dir", "spec_dir"):
+        ref = str(current_state.get(key) or "").strip()
+        if not ref:
+            continue
+        add(Path(ref))
+
+    staging_ref = str(current_state.get("staging_dir") or "").strip()
+    if staging_ref:
+        add(Path(staging_ref))
+    elif run_dir is not None:
+        add(run_dir / "staging")
+
+    return candidates
+
+
 def _next_continue_phase(project_root: Path) -> Optional[str]:
     """Return the phase ID to continue from, or None when build is ready.
 
@@ -2322,6 +2626,14 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             current_state = {}
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
     if current_state.get("status") == "done" and _phase_a_ready_to_build(project_root, current_state):
+        return None
+
+    action = _classify_run_recovery(current_state)
+    if action.kind == "retry_phase":
+        return action.phase
+    if action.kind in {"human_resume", "safe_rewind"}:
+        return None
+    if action.kind == "manual_recovery" and current_state.get("status") == "interrupted":
         return None
 
     # 0. Constitution phase provenance first, artifact integrity second.
@@ -2384,6 +2696,25 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
     if active_spec_dir is None:
         return "phase1-what"
 
+    readiness = validate_phase_a_readiness(
+        current_state,
+        _phase_a_readiness_candidate_dirs(
+            project_root,
+            current_state,
+            run_dir,
+            active_spec_dir=active_spec_dir,
+            published_spec_dir=_published_continue_spec_dir(project_root, current_state),
+        ),
+    )
+    if not readiness.ready:
+        if "spec.md" in readiness.missing:
+            return "phase1-what"
+        if any(name in readiness.missing for name in ("plan.md", "research.md", "data-model.md")):
+            return "phase3-how"
+        if "tasks.md" in readiness.missing:
+            return "phase3-plan"
+        return "phase1-what"
+
     return None  # build is ready
 
 
@@ -2403,15 +2734,16 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     run_dir = _find_current_run_dir(project_root)
     spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
     published_spec_dir = _published_continue_spec_dir(project_root, current_state)
-    if published_spec_dir and all(
-        (published_spec_dir / name).exists()
-        for name in ("plan.md", "research.md", "data-model.md", "tasks.md")
-    ):
-        return True
-    if spec_dir is None:
-        return False
-
-    return all((spec_dir / name).exists() for name in ("plan.md", "research.md", "data-model.md", "tasks.md"))
+    return validate_phase_a_readiness(
+        current_state,
+        _phase_a_readiness_candidate_dirs(
+            project_root,
+            current_state,
+            run_dir,
+            active_spec_dir=spec_dir,
+            published_spec_dir=published_spec_dir,
+        ),
+    ).ready
 
 
 def _cmd_status(project_root: Path) -> None:
@@ -2426,6 +2758,10 @@ def _cmd_status(project_root: Path) -> None:
 
     print(flush=True)
     _banner("ECHELON STATUS", [("Project", str(project_root))])
+    _print_extension_drift_warning(
+        project_root,
+        project_root / ".specify" / "extensions" / "echelon",
+    )
 
     # ── Run state ───────────────────────────────────────────────────────────
     run_dir = _find_current_run_dir(project_root)
@@ -2520,6 +2856,8 @@ def _cmd_continue(
     """
     import json as _json
 
+    _print_extension_drift_warning(project_root, ext_dir)
+
     # Optionally accept --mode override
     mode_override = ""
     i = 0
@@ -2555,6 +2893,7 @@ def _cmd_continue(
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
 
     phase_labels = {
+        "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
         "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
         "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
@@ -2562,31 +2901,8 @@ def _cmd_continue(
         "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
     }
 
-    # terminal-blocked: the consecutive-fail guard fired. echelon resume recorded the
-    # user's answer but left phase=terminal-blocked (a TERMINAL_PHASE). The controller
-    # would exit immediately from that phase, so we repair state here — advance the
-    # phase to the next runnable one — before resuming in the SAME squad dir.
-    if cur_phase == "terminal-blocked":
-        recovery = _blocked_non_escalation_recovery_command(state)
-        if status == "blocked" and recovery:
-            _banner(
-                "CHECKPOINT",
-                [
-                    ("blocked by", str(state.get("blocked_reason") or "blocked").strip()),
-                    ("recover with", recovery),
-                    ("then", "echelon continue"),
-                ],
-                subtitle="Run paused. Deterministic recovery required.",
-            )
-            return
-        next_phase = _next_continue_phase(project_root)
-        if next_phase is None:
-            print(
-                "Build is ready — nothing left to do in Phase A.\n\n"
-                "  echelon harness run <spec-id>",
-                flush=True,
-            )
-            return
+    def start_phase(next_phase: str, *, verb: str, clear_recovery: bool = False) -> None:
+        nonlocal state
         state, _ = _ensure_active_continue_spec_context(
             project_root,
             squad_dir,
@@ -2595,45 +2911,77 @@ def _cmd_continue(
         )
         state["phase"] = next_phase
         state["status"] = "running"
+        if clear_recovery:
+            state["blocked_reason"] = None
+            state["escalation_question"] = None
+            state["escalation_options"] = None
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
         label = phase_labels.get(next_phase, next_phase)
         print(
-            f"[squad] Continuing from {next_phase} — {label}\n"
+            f"[squad] {verb} {next_phase} — {label}\n"
             f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
             f"[squad] Mode:  {mode}",
             flush=True,
         )
         _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+
+    action = _classify_run_recovery(state)
+    if action.kind == "safe_rewind":
+        _banner(
+            "CHECKPOINT",
+            [
+                ("blocked by", action.reason),
+                ("recover with", action.command),
+                ("then", "echelon continue"),
+            ],
+            subtitle="Run paused. Deterministic recovery required.",
+        )
+        return
+    if action.kind == "retry_phase":
+        start_phase(action.phase, verb="Retrying incomplete phase", clear_recovery=True)
+        return
+    if action.kind == "human_resume":
+        _banner(
+            "CHECKPOINT",
+            [
+                ("decision needed", action.note or "(no escalation question recorded)"),
+                ("resume with", action.command),
+            ],
+            subtitle="Run paused. Human decision required.",
+        )
+        return
+    if action.kind == "manual_recovery":
+        _banner(
+            "CHECKPOINT",
+            [
+                ("blocked by", action.reason),
+                ("next", action.command),
+                ("note", action.note),
+            ],
+            subtitle="Run paused. Manual recovery required.",
+        )
+        return
+
+    # terminal-blocked: the consecutive-fail guard fired. echelon resume recorded the
+    # user's answer but left phase=terminal-blocked (a TERMINAL_PHASE). The controller
+    # would exit immediately from that phase, so we repair state here — advance the
+    # phase to the next runnable one — before resuming in the SAME squad dir.
+    if cur_phase == "terminal-blocked":
+        next_phase = _next_continue_phase(project_root)
+        if next_phase is None:
+            print(
+                "Build is ready — nothing left to do in Phase A.\n\n"
+                "  echelon harness run <spec-id>",
+                flush=True,
+            )
+            return
+        start_phase(next_phase, verb="Continuing from")
         return
 
     if status in ("running", "in_progress"):
         # Live run — let echelon run pick it up (same message → same dir → resume)
         print(f"[squad] Resuming active run in {squad_dir.name}…", flush=True)
         _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if status == "blocked":
-        q = (state.get("escalation_question") or "").strip()
-        recovery = _blocked_non_escalation_recovery_command(state)
-        if not q and recovery:
-            _banner(
-                "CHECKPOINT",
-                [
-                    ("blocked by", str(state.get("blocked_reason") or "blocked").strip()),
-                    ("recover with", recovery),
-                    ("then", "echelon continue"),
-                ],
-                subtitle="Run paused. Deterministic recovery required.",
-            )
-            return
-        _banner(
-            "CHECKPOINT",
-            [
-                ("decision needed", q or "(no escalation question recorded)"),
-                ("resume with",     'echelon resume "<your answer>"'),
-            ],
-            subtitle="Run paused. Human decision required.",
-        )
         return
 
     # Determine the next phase automatically
@@ -2646,23 +2994,7 @@ def _cmd_continue(
         )
         return
 
-    label = phase_labels.get(next_phase, next_phase)
-    print(
-        f"[squad] Continuing from {next_phase} — {label}\n"
-        f"[squad] Task:  {(user_message[:80] + '…') if len(user_message) > 80 else user_message}\n"
-        f"[squad] Mode:  {mode}",
-        flush=True,
-    )
-    state, _ = _ensure_active_continue_spec_context(
-        project_root,
-        squad_dir,
-        state,
-        sync_missing=True,
-    )
-    state["phase"] = next_phase
-    state["status"] = "running"
-    (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
-    _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+    start_phase(next_phase, verb="Continuing from")
 
 
 def _cmd_rewind(
@@ -2753,10 +3085,16 @@ def _cmd_resume(
 ) -> None:
     """Provide user answers to an escalation-blocked squad run and continue it."""
     from harness.config import get_full_resolved_config, load_config
+    from harness.blocked_decision import (
+        ensure_blocked_decision,
+        mark_blocked_decision_resolved,
+    )
     from harness.phase_graph import PhaseGraph
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+    _print_extension_drift_warning(project_root, ext_dir)
 
     answer = " ".join(args).strip()
     if not answer:
@@ -2793,6 +3131,7 @@ def _cmd_resume(
             file=sys.stderr,
         )
         sys.exit(1)
+    ensure_blocked_decision(state)
 
     _banner("RESUMING SQUAD RUN", [
         ("Run ID", state.get("run_id", "?")),
@@ -2824,21 +3163,17 @@ def _cmd_resume(
         ext_dir / "extension.yml",
     )
     raw_options = state.get("escalation_options")
-    if not isinstance(raw_options, list) or not raw_options:
-        print(
-            "✗ Cannot resume: blocked run is missing executable escalation_options.\n"
-            "  Re-run the producing phase after updating COMMANDER prompts, or rewind to a safe phase.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    selected_option = _resolve_escalation_option(answer, raw_options)
-    if selected_option is None:
-        print(
-            "✗ Your answer does not match any executable escalation option.\n"
-            "  Answer with A/B/C, the option id, or the option label shown in the escalation.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    has_structured_options = isinstance(raw_options, list) and bool(raw_options)
+    selected_option = None
+    if has_structured_options:
+        selected_option = _resolve_escalation_option(answer, raw_options)
+        if selected_option is None:
+            print(
+                "✗ Your answer does not match any executable escalation option.\n"
+                "  Answer with A/B/C, the option id, or the option label shown in the escalation.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     if selected_option:
         next_phase = str(selected_option.get("next_phase") or "").strip()
         if next_phase:
@@ -2855,6 +3190,14 @@ def _cmd_resume(
         if option_id:
             state["escalation_selected_option"] = option_id
 
+    resumed_phase = str(state.get("phase", "")).strip()
+    mark_blocked_decision_resolved(
+        state,
+        answer=answer,
+        selected_option=selected_option,
+        resumed_phase=resumed_phase,
+    )
+
     # Clear the blocked state.
     state["escalation_question"] = None
     state["escalation_resolved"] = True
@@ -2870,11 +3213,11 @@ def _cmd_resume(
         _banner("SQUAD RESUMED", [
             ("answer", (answer[:60] + "…") if len(answer) > 60 else answer),
             ("status", "unblocked — answer recorded"),
-            ("next", "echelon continue"),
-            ("note", "CARTOGRAPHER will apply your fix, then WHY2 re-validates"),
+            ("next", "continuing"),
+            ("note", "delegating to echelon continue"),
             ("artifacts", str(squad_dir)),
         ])
-        _print_next_steps(project_root, "done")
+        _cmd_continue([], project_root=project_root, ext_dir=ext_dir)
         return
 
     # Re-run from the current phase (same mode, same task).
@@ -3006,6 +3349,11 @@ from harness.skill_loader import (
     build_skill_prompt as _build_skill_prompt_impl,
     StreamEventPrinter as _StreamEventPrinter,
 )
+from harness.llm_tool_policy import (
+    LlmToolPolicy,
+    build_llm_cli_command,
+    build_opencode_skill_command,
+)
 
 
 def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
@@ -3016,6 +3364,12 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     return _build_skill_prompt_impl(skill_path, arguments)
 
 
+def _load_cli_tool_policy(project_dir: Path) -> LlmToolPolicy:
+    from harness.config import load_config
+
+    return load_config(project_dir, squad_only=True).llm.tool_policy
+
+
 def _print_event(event: dict, _printer: list = []) -> None:
     # Lazy-init one printer per process; list used as mutable default container.
     if not _printer:
@@ -3023,16 +3377,23 @@ def _print_event(event: dict, _printer: list = []) -> None:
     _printer[0](event)
 
 
-def _run_claude_streaming(bin_: str, prompt: str, project_dir: Path, extra_args: list[str] | None = None) -> None:
+def _run_claude_streaming(
+    bin_: str,
+    prompt: str,
+    project_dir: Path,
+    extra_args: list[str] | None = None,
+    tool_policy: LlmToolPolicy | None = None,
+) -> None:
     """Invoke claude -p with stream-json output and print live progress to stdout."""
     import json as _json
 
-    cmd = [
-        bin_, "-p",
-        "--dangerously-skip-permissions",
-        "--output-format", "stream-json",
-        "--verbose",
-    ] + (extra_args or [])
+    cmd = build_llm_cli_command(
+        "claude",
+        bin_,
+        prompt,
+        tool_policy or LlmToolPolicy(),
+        stream_json=True,
+    ) + (extra_args or [])
 
     proc = subprocess.Popen(
         cmd,
@@ -3289,6 +3650,11 @@ def main() -> None:
 
     project_dir = Path.cwd()
     cli = os.environ.get("ECHELON_LLM", "claude")
+    try:
+        tool_policy = _load_cli_tool_policy(project_dir)
+    except Exception as exc:
+        print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     skill_path = _find_skill(skill_base, project_dir, cli)
     if skill_path is None:
@@ -3297,17 +3663,15 @@ def main() -> None:
 
     bin_ = shutil.which(cli) or cli
     if cli == "opencode":
-        # Use native --command mode; opencode resolves the skill file itself.
-        cmd = [bin_, "run", "--dangerously-skip-permissions",
-               "--command", f"speckit.{skill_base}", arguments]
+        cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
-    elif cli == "copilot":
+    elif cli in {"copilot", "codex"}:
         prompt = _build_prompt(skill_path, arguments)
-        cmd = [bin_, "-p", prompt, "--dangerously-skip-permissions", "--allow-all-tools"]
+        cmd = build_llm_cli_command(cli, bin_, prompt, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
     else:
         # claude: use stream-json for live tool-call progress in the terminal
         prompt = _build_prompt(skill_path, arguments)
-        _run_claude_streaming(bin_, prompt, project_dir)
+        _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
         return  # _run_claude_streaming calls sys.exit
     sys.exit(result.returncode)

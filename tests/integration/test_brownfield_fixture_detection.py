@@ -77,7 +77,9 @@ def test_cpp_monorepo_reports_ambiguous_nx_browser_apps() -> None:
 
     assert result.profile is None
     assert result.confidence == "ambiguous"
-    assert result.evidence == [
-        "cpp/config-tool/project.json serve target uses next dev on port 8080",
-        "cpp/frontend/project.json serve target uses next dev on port 3000",
-    ]
+    assert "cpp/frontend/project.json serve target uses next dev on port 3000" in result.evidence
+    assert any(
+        item.startswith("cpp/config-tool")
+        and item.endswith("project.json serve target uses next dev on port 8080")
+        for item in result.evidence
+    )

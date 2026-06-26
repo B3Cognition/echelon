@@ -4,6 +4,165 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Clarified and enforced squad recovery command contracts. `echelon continue`
+  is now the no-input recovery executor, `echelon resume` only answers human
+  gates before delegating back to continuation, and blocked runs without human
+  questions no longer point to unusable resume commands.
+  - Recoverable dispatch failures including `missing_echelon_result`,
+    `missing_phase_outputs`, `agent_timeout`, `agent_blocked`, and
+    `agent_exit_code_*` now prioritize the failed incomplete
+    `last_dispatch.phase_id`.
+  - Safe Phase 3 failures point to `echelon rewind`; incomplete Phase 1
+    dispatches retry the failed phase and clear stale block metadata before
+    re-running.
+  - Interrupted squad runs now persist `status=interrupted` and the interrupted
+    phase so `echelon continue` retries the interrupted phase instead of
+    inferring a later phase from artifacts.
+- Fixed checkpoint human-gate recovery after `echelon resume`: stale
+  `escalation_resolved: true` state no longer suppresses a later fresh
+  `escalation_question`, so real checkpoint questions are preserved instead of
+  being overwritten by the generic `phase_dispatch_limit` block.
+- Fixed consensus ownership routing bounds after PR #18: WHY3 spec-quality
+  failures now route back to WHAT only while `iteration < max_iterations`, and
+  ASSESS2 feasibility failures route back to HOW only while below the same cap,
+  preserving the executable force-convergence fallback at the iteration limit.
+- Stabilized full-suite verification by making the shell runner use `bash`
+  without mutating tracked test file modes, reusing the installed Echelon venv
+  for shell Python detection, initializing empty endocrine state files, skipping
+  Docker visual smoke checks when Docker is unavailable, and aligning phase 3
+  consensus state-update allowlists with accepted-risk routing.
+- Fixed Phase 2 tracker routing so `ALIGNED` / `DRIFT` verdicts advance to
+  `phase3-specialists` and `STOP_AND_ASK` escalates instead of falling through
+  to `DONE` with misleading incomplete-build guidance.
+  - The workflow still accepts legacy `DRIFTING` / `ESCALATE` tracker verdicts
+    for compatibility, while the tracker prompt and intent-alignment template
+    now document the canonical verdict contract.
+  - Next-step guidance for missing Phase A authoring artifacts now reports
+    `PHASE A INCOMPLETE` rather than `BUILD BLOCKED`.
+
+### Added
+
+- Documented the EGR completion gate: every implemented EGR now requires a
+  matching `[Unreleased]` changelog entry, register update, and verification
+  notes before the work is considered complete.
+- **EGR-001 deterministic `echelon_result` validation** — added `src/harness/echelon_result_schema.py` to validate agent result payloads before harness state mutation.
+  - Covers required string `verdict`, supported verdict values, `state_updates` object shape, `journal_entries` list shape, and reserved harness-owned state keys including `last_dispatch`.
+  - `src/harness/squad_provider.py` now converts invalid parsed agent results into blocked results before executors can consume `state_updates`; when `ECHELON_DEBUG_RAW_DIR` is set, the blocked result includes a raw-output debug path.
+  - `src/harness/squad_state.py` now defensively validates again in `SquadStateStore.advance()` so malformed results cannot complete phases or mutate state.
+  - Focused tests added in `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_provider.py`, and `tests/kernel/test_squad_state.py`.
+  - Verification: `pytest tests/kernel -q` (`532 passed in 1.59s`).
+- **EGR-002 deterministic Phase A readiness validation** — added shared Phase A build-input validation so blocked runs and specs missing `spec.md`, `plan.md`, `research.md`, `data-model.md`, or `tasks.md` cannot be reported as ready to build.
+  - `echelon status` / next-step guidance and `echelon continue` now use the same artifact readiness predicate.
+  - `phase4-document` blocks the squad run with `phase_a_readiness_failed` instead of finalizing incomplete Phase A output.
+  - Focused tests added in `tests/unit/test_phase_a_readiness.py`, `tests/unit/test_cli_next_step_escalation.py`, `tests/unit/test_cli_continue.py`, and `tests/integration/test_squad_controller.py`.
+  - Verification: `pytest tests/unit/test_phase_a_readiness.py tests/unit/test_cli_next_step_escalation.py tests/unit/test_run_readiness.py tests/unit/test_cli_continue.py tests/integration/test_squad_controller.py -q` (`83 passed`); `pytest tests/kernel -q` (`532 passed`). Broader `pytest tests/unit tests/kernel tests/integration/test_squad_controller.py -q` collection is blocked in this environment by missing existing dependencies `freezegun` and `lark`.
+- **EGR-003 deterministic host LLM tool policy** — added `harness.llm.tool_policy` defaults and shared host-side LLM command builders that inject the effective policy into prompt-based dispatches and only enable dangerous CLI permission-bypass flags after explicit approval metadata.
+  - Defaults use `file_boundary: workspace`, `network_boundary: harness_allowlist`, and `allow_unsafe_host_execution: false`.
+  - Unapproved unsafe host execution fails config validation; approved mode requires `approval_reason` and then re-enables the underlying AI CLI bypass flags.
+  - `AICodingCliProvider`, review-loop skill invocation, and direct `echelon build/review/change/codegen/...` skill dispatch now share deterministic policy command construction; native opencode `--command speckit...` dispatch is preserved while sharing the same unsafe-bypass gate.
+  - Remaining scope: this first pass deterministically gates known CLI bypass flags and prompt preamble disclosure; deeper file, network, and tool-call isolation still depends on each selected AI CLI runtime.
+  - Focused tests added in `tests/unit/test_llm_tool_policy.py`, `tests/unit/test_cli_llm_tool_policy.py`, `tests/unit/test_llm_provider.py`, `tests/unit/test_review_loop.py`, and `tests/unit/test_config.py`.
+  - Verification: `pytest tests/unit/test_cli_llm_tool_policy.py tests/unit/test_llm_tool_policy.py tests/unit/test_llm_provider.py tests/unit/test_review_loop.py tests/unit/test_config.py -q` (`61 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-004 sandbox suggestion report** — added a deterministic `harness.sandbox_suggestion` report before risky dependency install or app execution decisions.
+  - The report records repository evidence, confidence label and score, suggested strategy and commands, risks, an explicit human approval point, and a fallback path for manual config.
+  - `echelon harness init` now persists the structured report under `harness.sandbox_suggestion`, writes `sandbox-suggestion.md`, and surfaces its confidence and approval point in the init summary.
+  - Focused tests added in `tests/unit/test_sandbox_suggestion.py` and `tests/unit/test_cli_harness_init_summary.py`.
+  - Verification: `pytest tests/unit/test_sandbox_suggestion.py tests/unit/test_cli_harness_init_summary.py tests/unit/test_harness_init_verify.py tests/unit/test_harness_init_app_runtime.py tests/unit/test_init.py -q` (`20 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-005 typed blocked decisions** — blocked squad runs now persist machine-readable `blocked_decision` data alongside the existing human-readable escalation question.
+  - Captures answer type (`free_text` or `choice`), normalized options, recommended/default answer when present, supported risk levels, blocked phase/reason, and stable blocked-at metadata.
+  - `echelon resume` now records `resume_metadata`, marks the blocked decision resolved, preserves existing choice-option routing, and supports free-text blocked decisions without requiring executable options.
+  - File-based harness escalations now include JSON `Decision Metadata` and `Resume Metadata` sections while preserving the Markdown answer flow.
+  - Focused tests added in `tests/unit/test_blocked_decision.py`, `tests/unit/test_escalation.py`, `tests/unit/test_cli_resume_escalation_options.py`, and `tests/kernel/test_squad_state.py`.
+  - Verification: `pytest tests/unit/test_blocked_decision.py tests/unit/test_escalation.py tests/unit/test_cli_resume_escalation_options.py tests/unit/test_cli_continue.py tests/unit/test_cli_next_step_escalation.py tests/kernel/test_squad_state.py tests/integration/test_squad_controller.py -q` (`145 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-006 reusable repair-loop primitive** — added `src/harness/repair_loop.py` as a deterministic Draft output -> Critique -> Repair -> Re-check -> Accept / Block / Exhaust substrate for harness feedback loops.
+  - The primitive is LLM-agnostic: callers provide critique, repair, and re-check functions while the harness bounds iterations, records structured events, tracks token counts, and blocks repeated critique signatures before infinite loops.
+  - This intentionally lands as a small substrate first; Ralph/review-loop controller rewiring can now use a tested primitive instead of introducing a risky large-controller refactor.
+  - Focused tests added in `tests/unit/test_repair_loop.py`.
+  - Verification: `pytest tests/unit/test_repair_loop.py -q` (`4 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-007 deterministic knowledge-base memory validation** — added `src/codegen/memory/kb_schema_validator.py` to validate durable knowledge-base and pending-operation records before future internalization writers apply them.
+  - Covers documented schema versions, append-only markers, required provenance, internalization-log gate metadata, pending-operation checksum/provenance requirements, and project scoping for durable pattern/pitfall learnings.
+  - `knowledge-base/kb-schema.md` now points to the Python validator as the deterministic enforcement point for durable memory writes.
+  - Focused tests added in `tests/unit/test_kb_schema_validator.py`.
+  - Verification: `pytest tests/unit/test_kb_schema_validator.py -q` (`5 passed`); `pytest tests/kernel -q` (`534 passed`).
+- **EGR-008 routed role contract validation** — added `src/harness/role_contracts.py` to validate routed squad roles against machine-checkable `echelon_result` and output declarations.
+  - `PhaseGraph` now preserves phase `outputs` from `extension/workflow/definition.yaml` so deterministic checks can inspect declared artifacts.
+  - Routed agent prompts now include explicit `state_updates: {}` in their final output templates when no state mutation is expected.
+  - Build-phase workflow nodes now declare outputs for implementation, spec-guard, code-review, test-guardian, progress, and integration roles.
+  - Focused tests added in `tests/unit/test_role_contracts.py` with coverage for missing result fields, missing declared outputs, and the shipped routed-role surface.
+  - Verification: `pytest tests/unit/test_role_contracts.py tests/kernel/test_phase_graph.py -q` (`18 passed`); `pytest tests/kernel -q` (`535 passed`).
+- **EGR-010 deterministic GitOps secret scan gate** — added `src/harness/secret_scan.py` to detect high-confidence secret patterns before GitOps commits.
+  - `GitOpsManager.commit()` now stages changes, scans the staged file set, and blocks the commit with a sanitized error summary when findings are present.
+  - The scanner covers GitHub tokens, GitLab personal access tokens, AWS access key IDs, Slack tokens, and private-key headers while skipping binary files and never storing matched secret text in findings.
+  - Focused tests added in `tests/unit/test_secret_scan.py`; `tests/integration/test_gitops_safety.py` now covers secret-scan commit blocking.
+  - Verification: `pytest tests/unit/test_secret_scan.py tests/integration/test_gitops_safety.py::TestSecretScanGate -q` (`5 passed`); `pytest tests/integration/test_gitops_safety.py tests/integration/test_gitops_commit_push.py tests/unit/test_secret_scan.py -q` (`11 passed`); `pytest tests/kernel -q` (`535 passed`).
+- **EGR-011 per-phase `state_updates` allowlists** — added machine-checkable allowlists to routed workflow phases and enforced them before state mutation.
+  - `validate_echelon_result()` now accepts an optional `allowed_state_update_keys` set and rejects unexpected top-level `state_updates` keys while preserving reserved-key checks.
+  - `SquadStateStore.advance()` now revalidates agent results with the current phase allowlist before mutating `state.json`.
+  - Staged and conditional executor paths now validate intermediate agent results before applying executor-side direct state writes.
+  - `PhaseGraph` preserves `allowed_state_updates` from `extension/workflow/definition.yaml`, and `role_contracts` now fails routed roles that omit a state-update allowlist.
+  - Focused tests added in `tests/kernel/test_echelon_result_schema.py`, `tests/kernel/test_squad_state.py`, `tests/kernel/test_phase_graph.py`, `tests/kernel/test_squad_executors_journal.py`, and `tests/unit/test_role_contracts.py`.
+  - Verification: `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py -q` (`82 passed`); `pytest tests/kernel/test_squad_executors_journal.py -q` (`39 passed`); `pytest tests/kernel -q` (`540 passed`).
+- **EGR-012 pre-dispatch state-update validation** — pre-dispatch agents now use the same per-phase `state_updates` allowlist validation as staged and conditional executor paths before any direct state write.
+  - Invalid pre-dispatch results now return a blocked executor result before journal or state mutation, preventing unauthorized keys from entering `state.json`.
+  - Valid pre-dispatch updates that are declared in the parent phase allowlist continue to apply normally.
+  - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`41 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_phase_graph.py tests/unit/test_role_contracts.py tests/kernel/test_squad_executors_journal.py -q` (`123 passed`); `pytest tests/kernel -q` (`542 passed`).
+- **EGR-013 deterministic COMMANDER judgment update validation** — COMMANDER judgment `state_updates` now pass through a narrow judgment-specific allowlist before mutation.
+  - Routing judgments may still return `next_phase`/`phase`, and documented control updates such as `iteration`, escalation metadata, and fallback recovery keys remain allowed.
+  - Invalid judgment keys now block the run before state mutation; banzai escalation cleanup preserves intentional null-as-delete behavior only after allowlist validation.
+  - Focused tests added in `tests/integration/test_squad_controller.py`.
+  - Verification: `pytest tests/integration/test_squad_controller.py -q` (`64 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_state.py tests/kernel/test_squad_executors_journal.py tests/integration/test_squad_controller.py -q` (`167 passed`).
+- **EGR-014 allowed `state_updates` prompt disclosure** — agent prompts now include the full allowed state-update key list enforced by the harness.
+  - Normal agent, pre-dispatch, staged consensus, and conditional sequential prompts all render an explicit "Allowed state_updates for this dispatch" block before the canonical `echelon_result` template.
+  - Empty allowlists are shown as `state_updates: {}`, and prompts warn that unexpected top-level update keys block the run.
+  - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`47 passed`); `pytest tests/kernel -q` (`548 passed`); `pytest` (`2318 passed, 22 skipped`).
+- **EGR-015 normal agent pre-journal validation** — normal `AgentExecutor` dispatches now validate `echelon_result.state_updates` against the phase allowlist before journal writes, cost accounting, or shadow-output recovery.
+  - Invalid normal-agent update keys now block before mutating either `state.json` or `reasoning-journal.jsonl`, matching the pre-dispatch, staged, and conditional executor ordering.
+  - Build-routing verdicts `CHANGES_REQUESTED` and `NEEDS_CONTEXT`, plus build progress routing keys, are now explicit deterministic contracts instead of tolerated late-routing assumptions.
+  - Focused tests added in `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/kernel/test_squad_executors_journal.py -q` (`48 passed`); `pytest tests/integration/test_squad_controller.py::TestBuildPhaseRouting -q` (`13 passed`); `pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_squad_executors_journal.py tests/kernel/test_phase_graph.py -q` (`76 passed`); `pytest tests/kernel -q` (`550 passed`); `pytest` (`2320 passed, 22 skipped`); `bash tests/run-all.sh` (`678 passed` on retry after a transient prompt-budget shell-test failure passed directly).
+- **EGR-016 workflow-definition validation** — added deterministic validation for the executable `workflow/definition.yaml` phase graph before runtime dispatch.
+  - `src/harness/workflow_validator.py` now rejects non-object transitions, unsupported transition keys such as `guard`, missing or unknown transition targets, unsupported condition syntax, non-string actions, and non-object `state_update` blocks.
+  - `scripts/bash/dry-run.sh` now runs the workflow contract validator as a structural preflight when the Python harness source is available.
+  - Focused tests added in `tests/kernel/test_workflow_validator.py`.
+  - Verification: `pytest tests/kernel/test_workflow_validator.py tests/kernel/test_phase_graph.py -q` (`35 passed`); direct workflow validation reported `workflow definition valid`; `bash -n scripts/bash/dry-run.sh` passed.
+- **EGR-017 tool-policy documentation drift** — updated `README.md` so terminal CLI documentation matches the fail-closed host LLM tool-policy contract.
+  - The README no longer describes Claude as always running with `--dangerously-skip-permissions`.
+  - It now documents that unsafe provider bypass flags are only added when `harness.llm.tool_policy.allow_unsafe_host_execution: true` is configured with an `approval_reason`.
+  - Focused regression test added in `tests/unit/test_readme_tool_policy_docs.py`.
+- **EGR-018 Python journal-entry validation** — added a Python validator for reasoning-journal entries and wired both Python journal writers through it.
+  - `src/harness/journal_entry_validator.py` validates registered entry types against `extension/workflow/journal-entry-types.yaml`, preserves unknown types with warnings, and mirrors the existing DR-001 warn-then-allow behavior for registered entries missing required data fields.
+  - `src/harness/squad_executors.py` and `src/harness/squad.py` now append canonical `schema_warning` sibling entries when invalid registered journal entries are returned by agents or COMMANDER judgment dispatches.
+  - Focused tests added in `tests/unit/test_journal_entry_validator.py` and `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/unit/test_journal_entry_validator.py tests/kernel/test_squad_executors_journal.py tests/integration/test_journal_append_helper.py -q` (`58 passed`); `pytest tests/kernel -q` (`572 passed`).
+- **EGR-023 strict journal-entry runtime handling** — tightened Python journal writers so invalid registered entries are quarantined instead of persisted as first-class journal records.
+  - `prepare_journal_entries_for_append()` now supports an explicit `invalid_registered_policy="quarantine"` mode while preserving DR-001 warn-then-allow as the default helper behavior for shell compatibility.
+  - Squad and COMMANDER Python journal writers use quarantine mode: invalid registered entries are replaced by canonical `schema_warning` entries, while unknown future types remain preserved.
+  - The canonical `echelon_result` template now shows schema-complete `journal_entries.data` for the registered `insight` type instead of the old sparse `type: <entry_type>` example.
+  - Focused tests added/updated in `tests/unit/test_journal_entry_validator.py` and `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/unit/test_journal_entry_validator.py tests/kernel/test_squad_executors_journal.py tests/integration/test_journal_append_helper.py -q` (`60 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`573 passed`).
+- **EGR-024 static journal prompt validation** — added deterministic validation for concrete `echelon_result.journal_entries` examples embedded in agent, command, phase, and template prompts.
+  - `src/harness/journal_prompt_validator.py` scans YAML-shaped prompt examples and blocks concrete unregistered journal types or registered examples missing required `data` fields.
+  - Prompt examples were migrated to schema-complete `data` payloads; RE completion examples now use the registered `phase_complete` type.
+  - Added canonical registry entries for `phase_complete`, `constitution_created`, and `constitution_placeholder_fix`.
+  - Focused tests added in `tests/unit/test_journal_prompt_validator.py`; `tests/kernel/test_prompt_references.py` now scans the shipped prompt surface.
+  - Verification: `pytest tests/unit/test_journal_prompt_validator.py tests/kernel/test_prompt_references.py -q` (`46 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`574 passed`).
+- **EGR-020 role catalog reconciliation** — reconciled the public architecture narrative with the current agent registry and workflow graph.
+  - `README.md` now describes 53 registered agent roles and 45 active-routed manifest roles instead of the stale 41-agent claim.
+  - Added `docs/agent-role-catalog.md` with grounded counts for registered roles, active-routed roles, manifest-only roles, workflow-only aliases, support prompt files, and layer totals.
+  - Updated the technical dossier demo language so it no longer repeats the stale 41-agent narrative.
+  - Added `tests/kernel/test_agent_role_catalog_docs.py` to derive counts from `extension/extension.yml`, `extension/workflow/definition.yaml`, and `extension/agents/`.
+  - Verification: `pytest tests/kernel/test_agent_role_catalog_docs.py tests/unit/test_readme_tool_policy_docs.py -q` (`2 passed`); `bash tests/test-unit-registry-sync.sh` passed; `pytest tests/kernel -q` (`575 passed`); `pytest -q` (`2411 passed, 22 skipped`).
+- **EGR-021 installed extension drift detection** — added a deterministic warning when terminal CLI commands see stale installed extension content.
+  - `src/harness/extension_drift.py` fingerprints shipped extension files while ignoring project-local `echelon-config.yml` and `local-config.yml`.
+  - Drift detection now requires a trusted source path: `ECHELON_EXTENSION_SOURCE`, an installed `.echelon-source.json` marker, or a verified editable checkout. Packaged installs without a known source stay silent instead of guessing a machine-local checkout.
+  - `echelon status`, `echelon run`, `echelon continue`, and `echelon resume` now print an `EXTENSION DRIFT` banner with changed/missing/extra counts, sample paths, and the `specify extension update --dev ...` command when a trusted source is available.
+  - Focused tests added in `tests/unit/test_extension_drift.py`; `tests/unit/test_cli_status.py` covers the operator-facing warning.
+  - Verification: `pytest tests/unit/test_extension_drift.py tests/unit/test_cli_status.py tests/unit/test_readme_tool_policy_docs.py -q` (`19 passed`); `pytest tests/kernel -q` (`574 passed`); `pytest -q` (`2408 passed, 22 skipped`).
+
 ## [2.1.0] - 2026-05-17
 
 ### Added

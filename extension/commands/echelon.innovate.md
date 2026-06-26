@@ -106,10 +106,15 @@ echelon_result:
     updated_at: "{ISO-8601}"
   output_files: []
   journal_entries:
-    - type: note
+    - type: decision
       agent: speckit-echelon-commander (COMMANDER)
       timestamp: "{ISO-8601}"
-      content: "INNOVATE dispatched manually. Focus: {$ARGUMENTS or 'broad'}. Check alternatives.md for outputs."
+      data:
+        artifact: "alternatives.md"
+        section: "Manual specialist dispatch"
+        reasoning: "User explicitly requested INNOVATE divergent exploration."
+        rationale: "Dispatch MAVERICK for focus: {$ARGUMENTS or 'broad'}."
+        content: "INNOVATE dispatched manually. Focus: {$ARGUMENTS or 'broad'}. Check alternatives.md for outputs."
 ```
 
 ---

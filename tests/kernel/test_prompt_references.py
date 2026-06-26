@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+from harness.journal_prompt_validator import validate_prompt_journal_examples
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXTENSION_ROOT = REPO_ROOT / "extension"
@@ -78,6 +80,21 @@ def test_prompt_template_docs_and_appendix_references_exist():
                     )
 
     assert not missing, "\n".join(missing)
+
+
+def test_prompt_journal_entry_examples_match_canonical_schema():
+    prompt_files = []
+    for root in PROMPT_ROOTS:
+        prompt_files.extend(root.rglob("*.md"))
+    prompt_files.extend((EXTENSION_ROOT / "templates").rglob("*.yaml"))
+
+    findings = validate_prompt_journal_examples(prompt_files)
+
+    assert not findings, "\n".join(
+        f"{finding.path.relative_to(REPO_ROOT)}:{finding.line}: "
+        f"{finding.entry_type}: {finding.reason}: {finding.details}"
+        for finding in findings
+    )
 
 
 def test_build_finalize_uses_appendices_for_large_reference_sections():

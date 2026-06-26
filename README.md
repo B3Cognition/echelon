@@ -2,7 +2,9 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.0.0** — 41-agent, 7-layer architecture with MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.0.0** — 53 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+
+For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
 ## Quick Start
 
@@ -45,6 +47,17 @@ specify extension update --dev ~/echelon/extension
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
 
+Terminal `echelon status`, `echelon run`, `echelon continue`, and `echelon resume`
+warn when the installed project extension under `.specify/extensions/echelon`
+differs from a trusted source extension. In a dev checkout this is detected
+automatically; otherwise set `ECHELON_EXTENSION_SOURCE` to your Echelon repo or
+extension directory before running the command. When you see `EXTENSION DRIFT`,
+rerun:
+
+```bash
+specify extension update --dev ~/echelon/extension
+```
+
 ### Per-project setup (once per repo)
 
 ```bash
@@ -75,8 +88,8 @@ Both `echelon init` and `echelon harness init` are pure Python — no AI session
 echelon run "Build a photo album app with sharing and tagging"
 echelon status                             # re-orient: run state, artifacts, cost, next step
 echelon artifacts 001                      # generate specs/001-*/ARTIFACTS.md
-echelon continue                           # advance to next pending phase automatically
-echelon resume "your clarification"        # unblock a paused run
+echelon continue                           # run the next no-input recovery/phase action
+echelon resume "your clarification"        # answer a human-input block, then continue
 echelon rewind <phase-id>                  # recover a safe Phase 3 checkpoint, then continue
 
 # Phase B — build, verify in Docker, open PR
@@ -196,9 +209,11 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 1. Locates the skill file for the selected provider (Claude, Copilot, or Opencode)
 2. Strips the YAML frontmatter (which is meaningful only to spec-kit, not to the LLM)
 3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
-4. Invokes the LLM CLI subprocess (`claude -p <prompt> --dangerously-skip-permissions`, or the equivalent for Copilot/Opencode)
+4. Injects the effective host tool-policy preamble and invokes the LLM CLI subprocess (`claude -p <prompt>`, `codex exec <prompt>`, `copilot -p <prompt>`, or `opencode run <prompt>`)
 
 This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon-config.yml`) selects the provider.
+
+By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 
 The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
 
@@ -510,8 +525,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon cicd` | — | Retired; re-run `echelon harness init` to auto-detect high-confidence `verify_command` |
 | `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
-| `echelon continue` | — | Advance to the next pending phase automatically (no phase name needed) |
-| `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer to an escalation-blocked squad run and continue it |
+| `echelon continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
+| `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
 | `echelon rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
 | `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
 | `echelon land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |

@@ -16,6 +16,12 @@ if [ -x "$_repo_root/.venv/bin/python" ] && \
   PYTHON="$_repo_root/.venv/bin/python"
 fi
 
+# Reuse the installed Echelon CLI venv when this checkout has no local venv.
+if [ -z "$PYTHON" ] && [ -x "$HOME/.echelon/venv/bin/python" ] && \
+   "$HOME/.echelon/venv/bin/python" -c "import sys; sys.exit(0)" > /dev/null 2>&1; then
+  PYTHON="$HOME/.echelon/venv/bin/python"
+fi
+
 # Fall back to system Python
 if [ -z "$PYTHON" ]; then
   for _py_candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 python3.12 python3 python; do
@@ -28,7 +34,7 @@ if [ -z "$PYTHON" ]; then
 fi
 
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: No working Python interpreter found. Tried: .venv/bin/python, /opt/homebrew/bin/python3.12, python3.12, python3, python" >&2
+  echo "ERROR: No working Python interpreter found. Tried: .venv/bin/python, ~/.echelon/venv/bin/python, /opt/homebrew/bin/python3.12, python3.12, python3, python" >&2
   exit 1
 fi
 

@@ -50,7 +50,7 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     spec_dir = run_dir / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
@@ -81,7 +81,7 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
         "| Structure | 0.677 | 0.75 | FAIL | not borderline |\n",
         encoding="utf-8",
     )
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) is None
@@ -232,3 +232,151 @@ def test_continue_blocked_non_escalation_run_points_to_rewind(
     captured = capsys.readouterr()
     assert 'echelon rewind phase3-sentinel' in captured.out
     assert 'echelon resume "<your answer>"' not in captured.out
+
+
+def test_continue_retries_incomplete_phase_before_constitution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_echelon_result",
+            "last_dispatch": {"phase_id": "phase1-discover"},
+            "completed_phases": ["init"],
+            "user_message": "make terminal ascii art",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    assert _next_continue_phase(tmp_path) == "phase1-discover"
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-discover"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert state["escalation_question"] is None
+    assert calls == [["make terminal ascii art", "--mode", "semi"]]
+
+
+def test_continue_retries_timeout_without_resume_dead_end(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "agent_timeout",
+            "last_dispatch": {"phase_id": "phase1-discover"},
+            "completed_phases": ["init"],
+            "user_message": "make terminal ascii art",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-discover"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert 'echelon resume "<your answer>"' not in captured.out
+    assert calls == [["make terminal ascii art", "--mode", "semi"]]
+
+
+def test_continue_points_retryable_phase3_failure_to_rewind(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "agent_exit_code_1",
+            "last_dispatch": {"phase_id": "phase3-sentinel"},
+            "completed_phases": ["phase1-constitution", "phase3-how"],
+        },
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert "echelon rewind phase3-sentinel" in captured.out
+    assert 'echelon resume "<your answer>"' not in captured.out
+
+
+def test_continue_manual_block_does_not_claim_human_resume(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "completed_phases": ["phase1-constitution"],
+        },
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert "Manual recovery required" in captured.out
+    assert "fix the blocker, then echelon continue" in captured.out
+    assert 'echelon resume "<your answer>"' not in captured.out
+
+
+def test_continue_retries_interrupted_phase(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "interrupted",
+            "phase": "phase1-discover",
+            "interrupted_phase": "phase1-discover",
+            "completed_phases": ["init"],
+            "user_message": "make terminal ascii art",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-discover"
+    assert state["status"] == "running"
+    assert calls == [["make terminal ascii art", "--mode", "semi"]]

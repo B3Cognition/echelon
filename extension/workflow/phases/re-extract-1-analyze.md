@@ -49,6 +49,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-1-analyze
-      summary: "Analyzed {N} files across {M} repo(s)"
+      data:
+        summary: "Analyzed {N} files across {M} repo(s)"
   blocked_reason: null
 ```

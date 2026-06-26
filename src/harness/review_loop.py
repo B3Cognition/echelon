@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from harness.config import HarnessConfig
+from harness.llm_tool_policy import build_llm_cli_command
 from harness.paths import build_dir as _build_dir_fn
 from harness.loop_result import LoopResult
 
@@ -722,19 +723,12 @@ class ReviewLoopController:
         logger.info("Invoking echelon.review: spec=%s pr=%s", self._spec_id, pr_url)
 
         try:
-            if self._llm_cli == "opencode":
-                cmd = [self._llm_bin, "run", "--dangerously-skip-permissions", prompt]
-            elif self._llm_cli == "codex":
-                cmd = [
-                    self._llm_bin,
-                    "exec",
-                    "--dangerously-bypass-approvals-and-sandbox",
-                    prompt,
-                ]
-            else:
-                cmd = [self._llm_bin, "-p", prompt, "--dangerously-skip-permissions"]
-                if self._llm_cli == "copilot":
-                    cmd += ["--allow-all-tools"]
+            cmd = build_llm_cli_command(
+                self._llm_cli,
+                self._llm_bin,
+                prompt,
+                self._config.llm.tool_policy,
+            )
             result = subprocess.run(
                 cmd,
                 cwd=str(self._base_dir),

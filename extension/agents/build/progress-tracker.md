@@ -329,6 +329,7 @@ echelon_result:
   output_files:
     - {spec_dir}/progress-report.md
     - {spec_dir}/process-metrics.md
+  state_updates: {}
   journal_entries:
     - type: progress_update
       phase: build

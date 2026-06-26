@@ -386,6 +386,7 @@ echelon_result:
     - {spec_dir}/alternatives.md
     - {spec_dir}/risk-opportunities.md
     - {spec_dir}/challenge-assumptions.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase3-specialists

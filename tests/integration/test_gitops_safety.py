@@ -52,3 +52,48 @@ class TestNeverPushDefault:
 
         with pytest.raises(GitOpsError, match="default branch"):
             mgr.push(worktree_path, "main")
+
+
+class TestSecretScanGate:
+    """Tests for deterministic secret scanning before GitOps commits."""
+
+    def test_commit_with_high_confidence_secret_is_rejected(
+        self, tmp_path, bare_repo, harness_config
+    ):
+        mgr = GitOpsManager(harness_config, base_dir=str(tmp_path))
+        mgr.clone_mirror(str(bare_repo))
+        worktree_path = mgr.create_worktree("012-payment", "default", 1)
+
+        subprocess.run(
+            ["git", "-C", worktree_path, "config", "user.email", "test@test.com"],
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", worktree_path, "config", "user.name", "Test"],
+            capture_output=True,
+            check=True,
+        )
+
+        token = "ghp_" + ("A" * 36)
+        (Path(worktree_path) / "secrets.env").write_text(
+            f"GITHUB_TOKEN={token}\n",
+            encoding="utf-8",
+        )
+        before = subprocess.run(
+            ["git", "-C", worktree_path, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+        with pytest.raises(GitOpsError, match="secret scan"):
+            mgr.commit(worktree_path, "should be blocked")
+
+        after = subprocess.run(
+            ["git", "-C", worktree_path, "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        assert after == before

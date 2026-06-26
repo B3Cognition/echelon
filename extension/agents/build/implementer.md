@@ -377,6 +377,7 @@ echelon_result:
   verdict: DONE
   output_files:
     - {spec_dir}/implementation/<file>
+  state_updates: {}
   journal_entries:
     - type: implementation_complete
       phase: build

@@ -26,6 +26,7 @@ from typing import Dict, Optional
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
 from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
+from harness.secret_scan import scan_git_staged
 
 logger = logging.getLogger(__name__)
 
@@ -730,6 +731,13 @@ class GitOpsManager:
         """
         # Stage all changes
         _run_git(["add", "-A"], cwd=worktree_path)
+        secret_scan = scan_git_staged(worktree_path)
+        if not secret_scan.ok:
+            raise GitOpsError(
+                "GitOps secret scan blocked commit: "
+                f"{secret_scan.format_summary()}",
+                command="secret scan",
+            )
 
         # Build commit message
         if skip_ci and self._config.ci_skip_enabled:

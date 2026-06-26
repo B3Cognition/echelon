@@ -334,6 +334,7 @@ echelon_result:
     - {spec_dir}/adr/ADR-001.md
     - {spec_dir}/data-model.md
     - {spec_dir}/api-contracts.md
+  state_updates: {}
   journal_entries:
     - type: adr_self_check
       phase: phase3-how

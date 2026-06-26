@@ -161,6 +161,7 @@ echelon_result:
     - {spec_dir}/accessibility-requirements.md
     - {spec_dir}/user-flow.md
     - {spec_dir}/spec.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase3-specialists

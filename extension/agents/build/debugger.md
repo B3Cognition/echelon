@@ -141,6 +141,7 @@ echelon_result:
   verdict: RESOLVED
   output_files:
     - {spec_dir}/debug-report.md
+  state_updates: {}
   journal_entries:
     - type: debug_finding
       phase: build

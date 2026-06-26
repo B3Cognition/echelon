@@ -32,6 +32,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-planning-2-tasks
-      summary: "Generated tasks for {N} domains"
+      data:
+        summary: "Generated tasks for {N} domains"
   blocked_reason: null
 ```

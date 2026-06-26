@@ -18,6 +18,8 @@ class PhaseNode:
     agents: list = field(default_factory=list)
     context_pack: list = field(default_factory=list)
     pre_dispatch: list = field(default_factory=list)
+    outputs: list = field(default_factory=list)
+    allowed_state_updates: Optional[list] = None
     transitions: list = field(default_factory=list)
 
 
@@ -40,6 +42,12 @@ class PhaseGraph:
                 agents=p.get("agents", []),
                 context_pack=p.get("context_pack", []),
                 pre_dispatch=p.get("pre_dispatch", []),
+                outputs=p.get("outputs", []),
+                allowed_state_updates=(
+                    p.get("allowed_state_updates")
+                    if "allowed_state_updates" in p
+                    else None
+                ),
                 transitions=p.get("transitions", []),
             )
             self._phases[node.id] = node

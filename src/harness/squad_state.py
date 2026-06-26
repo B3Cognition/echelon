@@ -7,7 +7,13 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Iterable
+
+from harness.blocked_decision import ensure_blocked_decision
+from harness.echelon_result_schema import (
+    EchelonResultValidationError,
+    validate_echelon_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +65,9 @@ class SquadStateStore:
             except json.JSONDecodeError:
                 pass
 
+        ensure_blocked_decision(state)
+        if state.get("status") == "blocked" and state.get("escalation_question"):
+            state["escalation_resolved"] = False
         state["updated_at"] = datetime.now(timezone.utc).isoformat()
         content = json.dumps(state, indent=2)
         fd, tmp = tempfile.mkstemp(
@@ -148,9 +157,30 @@ class SquadStateStore:
         return self.load().get("phase", "init")
 
     def advance(
-        self, from_phase: str, to_phase: str, result: "SquadAgentResult"
+        self,
+        from_phase: str,
+        to_phase: str,
+        result: "SquadAgentResult",
+        *,
+        allowed_state_update_keys: Iterable[str] | None = None,
     ) -> None:
         state = self.load()
+        try:
+            result.echelon_result = validate_echelon_result(
+                result.echelon_result,
+                allowed_state_update_keys=allowed_state_update_keys,
+            )
+        except EchelonResultValidationError as exc:
+            logger.warning(
+                "Invalid echelon_result blocked before state advance: %s "
+                "(run_id=%s)",
+                exc,
+                state.get("run_id", "?"),
+            )
+            self._transition_status(state, "blocked")
+            state["blocked_reason"] = f"echelon_result validation failed: {exc}"
+            self.save(state)
+            return
         logger.debug(
             "squad advance %s → %s verdict=%s run_id=%s",
             from_phase,

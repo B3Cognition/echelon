@@ -181,6 +181,12 @@ types:
     agents: [speckit-echelon-commander]
     required_data_fields: [from_phase, to_phase, trigger_reason]
 
+  phase_complete:
+    description: "Phase or RE extraction step completed and produced its expected artifacts"
+    agents: [speckit-echelon-commander, speckit-echelon-re-analyzer, speckit-echelon-re-specifier, speckit-echelon-re-verifier, speckit-echelon-re-expander, speckit-echelon-re-validator, speckit-echelon-re-checklister, speckit-echelon-re-constituter, speckit-echelon-re-planner, speckit-echelon-re-tasker]
+    required_data_fields: [summary]
+    optional_data_fields: [artifacts, domains]
+
   convergence_check:
     description: "Convergence detection result"
     agents: [speckit-echelon-commander]
@@ -241,6 +247,16 @@ types:
     description: "speckit-echelon-tracker (TRACKER) requests a model update from speckit-echelon-mirror (MIRROR)"
     agents: [speckit-echelon-tracker]
     required_data_fields: [reason]
+
+  constitution_created:
+    description: "speckit-echelon-chief (CHIEF) created or amended the project constitution"
+    agents: [speckit-echelon-chief]
+    required_data_fields: [mode, constitution_path, placeholder_fix_applied]
+
+  constitution_placeholder_fix:
+    description: "speckit-echelon-commander (COMMANDER) repaired constitution placeholder text during Phase 1 WHAT"
+    agents: [speckit-echelon-commander]
+    required_data_fields: [method, version, date]
 
   # --- Learning ---
   calibration_update:
@@ -303,6 +319,7 @@ types:
     description: "Emitted by journal-append helper when the validator detects a schema violation (DR-001 warn-then-allow)"
     agents: [speckit-echelon-commander]
     required_data_fields: [violating_entry_id, violation_type, details]
+    optional_data_fields: [violating_entry_type]
     # violation_type enum: missing_required_field, type_not_registered
 
   # --- Unknown fallback ---

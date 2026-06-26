@@ -30,6 +30,7 @@ echelon_result:
   journal_entries:
     - type: phase_complete
       phase: re-extract-5-validate
-      summary: "Resolution: {resolution_pct}% (iteration {validate_iterations})"
+      data:
+        summary: "Resolution: {resolution_pct}% (iteration {validate_iterations})"
   blocked_reason: null
 ```

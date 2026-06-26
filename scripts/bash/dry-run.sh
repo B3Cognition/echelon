@@ -209,6 +209,51 @@ else
 fi
 
 # ═══════════════════════════════════════════
+header "4B. WORKFLOW CONTRACT"
+# ═══════════════════════════════════════════
+
+if python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+if (root / "extension" / "workflow" / "definition.yaml").exists():
+    repo_root = root
+    extension_root = root / "extension"
+elif (root / "workflow" / "definition.yaml").exists():
+    extension_root = root
+    repo_root = root.parent
+else:
+    print(f"workflow definition not found below {root}")
+    sys.exit(1)
+
+src = repo_root / "src"
+if src.exists():
+    sys.path.insert(0, str(src))
+sys.path.insert(0, str(repo_root))
+
+try:
+    from harness.workflow_validator import validate_workflow_definition
+except Exception as exc:
+    print(f"workflow validator unavailable: {exc}")
+    sys.exit(1)
+
+report = validate_workflow_definition(
+    definition_path=extension_root / "workflow" / "definition.yaml",
+    extension_yml_path=extension_root / "extension.yml",
+)
+if not report.ok:
+    print(report.format())
+    sys.exit(1)
+print(report.format())
+PY
+then
+  green "workflow definition contract is valid"
+else
+  red "workflow definition contract validation failed"
+fi
+
+# ═══════════════════════════════════════════
 header "5. CONFIG TEMPLATE"
 # ═══════════════════════════════════════════
 

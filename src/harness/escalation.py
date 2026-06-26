@@ -11,6 +11,7 @@ Per FR-LOOP-005: write escalation .md file, print terminal banner,
 from __future__ import annotations
 
 import logging
+import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -170,7 +171,11 @@ class EscalationHandler:
                 return None
 
         answer_start = idx + len(marker) if idx > 0 else len("## Answer")
-        answer = text[answer_start:].strip()
+        answer = text[answer_start:]
+        next_heading = answer.find("\n## ")
+        if next_heading != -1:
+            answer = answer[:next_heading]
+        answer = answer.strip()
         if not answer:
             return None
         return answer
@@ -186,10 +191,23 @@ class EscalationHandler:
         existing = path.read_text(encoding="utf-8")
 
         # Append answer section
+        answered_at = datetime.now(timezone.utc).isoformat()
+        metadata = {
+            "schema_version": 1,
+            "answer_type": "free_text",
+            "answer": answer,
+            "answered_at": answered_at,
+            "answered_by": "user",
+            "source": "speckit-harness-resume",
+        }
         resume_content = (
             f"\n\n## Answer\n\n"
             f"{answer}\n\n"
-            f"*Answered at: {datetime.now(timezone.utc).isoformat()}*\n"
+            f"*Answered at: {answered_at}*\n\n"
+            f"## Resume Metadata\n\n"
+            f"```json\n"
+            f"{json.dumps(metadata, indent=2)}\n"
+            f"```\n"
         )
         path.write_text(existing + resume_content, encoding="utf-8")
         logger.info("Resume answer recorded in: %s", escalation_file)
@@ -273,11 +291,32 @@ def _render_escalation_file(
         lines.append(recommended_answer)
         lines.append("")
 
+    metadata: Dict[str, Any] = {
+        "schema_version": 1,
+        "answer_type": "free_text",
+        "question": question,
+        "category": category,
+        "spec_id": spec_id,
+        "strategy_id": strategy_id,
+        "blocked_at": timestamp,
+    }
+    if options_considered:
+        metadata["options_considered"] = options_considered
+    if recommended_answer:
+        metadata["recommended_answer"] = recommended_answer
+        metadata["default_answer"] = recommended_answer
+
+    lines.append("## Decision Metadata")
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(metadata, indent=2))
+    lines.append("```")
+    lines.append("")
+
     if last_verify_result:
         lines.append("## Last Verify Result")
         lines.append("")
         lines.append("```json")
-        import json
         lines.append(json.dumps(last_verify_result, indent=2))
         lines.append("```")
         lines.append("")

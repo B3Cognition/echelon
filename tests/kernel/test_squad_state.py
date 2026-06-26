@@ -91,6 +91,50 @@ class TestSquadStateStore:
                       _result("DONE", {"coverage_pct": 72}))
         assert store.load()["coverage_pct"] == 72
 
+    def test_advance_blocks_invalid_result_without_mutating_state(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "coverage_pct": 72,
+                    "last_dispatch": {"phase_id": "fake"},
+                },
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+
+        store.advance("init", "phase1-discover", result)
+
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["phase"] == "init"
+        assert state["completed_phases"] == []
+        assert "coverage_pct" not in state
+        assert "echelon_result validation failed" in state["blocked_reason"]
+
+    def test_advance_blocks_state_update_outside_allowlist(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+
+        store.advance(
+            "init",
+            "phase1-discover",
+            _result("DONE", {"unexpected": True}),
+            allowed_state_update_keys={"coverage_pct"},
+        )
+
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["phase"] == "init"
+        assert state["completed_phases"] == []
+        assert "unexpected" not in state
+        assert "not allowed" in state["blocked_reason"]
+
     def test_cancel_flag(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
@@ -118,6 +162,60 @@ class TestSquadStateStore:
         state = store.load()
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "understanding unavailable"
+
+    def test_save_persists_typed_blocked_decision_for_escalation(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-why1")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "consecutive_why_fails",
+                "escalation_question": "What constraint should CARTOGRAPHER apply?",
+            }
+        )
+
+        store.save(state)
+
+        reloaded = SquadStateStore(tmp_path / "squad/run-test").load()
+        assert reloaded["blocked_decision"]["answer_type"] == "free_text"
+        assert reloaded["blocked_decision"]["question"] == (
+            "What constraint should CARTOGRAPHER apply?"
+        )
+        assert reloaded["blocked_decision"]["blocked_phase"] == "phase1-why1"
+        assert reloaded["blocked_decision"]["blocked_reason"] == "consecutive_why_fails"
+
+    def test_save_persists_choice_blocked_decision_for_escalation_options(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "checkpoint-assess")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "human_gate",
+                "escalation_question": "A: return\nB: proceed",
+                "escalation_options": [
+                    {
+                        "id": "return_to_what",
+                        "label": "Return to WHAT",
+                        "next_phase": "phase1-what",
+                        "recommended": True,
+                    },
+                    {
+                        "id": "proceed",
+                        "label": "Proceed",
+                        "next_phase": "phase2-decide",
+                    },
+                ],
+            }
+        )
+
+        store.save(state)
+
+        decision = SquadStateStore(tmp_path / "squad/run-test").load()["blocked_decision"]
+        assert decision["answer_type"] == "choice"
+        assert decision["recommended_answer"] == "return_to_what"
+        assert decision["options"][0]["id"] == "return_to_what"
 
 
 def test_store_creates_squad_and_staging_dirs(tmp_path):

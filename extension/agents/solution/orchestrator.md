@@ -331,6 +331,7 @@ echelon_result:
   output_files:
     - {spec_dir}/tasks.md
     - {spec_dir}/critical-path.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: <phase3-plan | phase3-consensus>

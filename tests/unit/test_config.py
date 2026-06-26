@@ -403,3 +403,48 @@ def test_llm_timeout_ms_set():
         "llm": {"timeout_ms": 600_000},
     })
     assert config.llm.timeout_ms == 600_000
+
+
+def test_llm_tool_policy_defaults_deny_unsafe_host_execution() -> None:
+    config = _parse_config({
+        "target_repo": ".",
+        "target_default_branch": "main",
+        "provider": "docker",
+    })
+
+    assert config.llm.tool_policy.file_boundary == "workspace"
+    assert config.llm.tool_policy.network_boundary == "harness_allowlist"
+    assert config.llm.tool_policy.allow_unsafe_host_execution is False
+
+
+def test_llm_tool_policy_config_override_requires_approval_metadata() -> None:
+    with pytest.raises(ValidationError, match="approval_reason"):
+        _parse_config({
+            "target_repo": ".",
+            "target_default_branch": "main",
+            "provider": "docker",
+            "llm": {
+                "tool_policy": {
+                    "allow_unsafe_host_execution": True,
+                },
+            },
+        })
+
+
+def test_llm_tool_policy_config_override_accepts_approved_unsafe_mode() -> None:
+    config = _parse_config({
+        "target_repo": ".",
+        "target_default_branch": "main",
+        "provider": "docker",
+        "llm": {
+            "tool_policy": {
+                "file_boundary": "workspace",
+                "network_boundary": "harness_allowlist",
+                "allow_unsafe_host_execution": True,
+                "approval_reason": "Operator approved disposable worktree after sandbox review.",
+            },
+        },
+    })
+
+    assert config.llm.tool_policy.allow_unsafe_host_execution is True
+    assert "disposable worktree" in config.llm.tool_policy.approval_reason

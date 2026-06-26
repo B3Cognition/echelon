@@ -161,6 +161,48 @@ class TestAgentResultIntegrity:
         assert state["blocked_reason"] == "missing_echelon_result"
         assert "phase1-what" not in state.get("completed_phases", [])
 
+    def test_phase4_document_blocks_when_phase_a_build_inputs_are_missing(
+        self, tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["blocked_reason"] == "phase_a_readiness_failed"
+        assert "spec.md absent" in "\n".join(state["phase_a_readiness_blockers"])
+
+    def test_phase4_document_completes_when_phase_a_build_inputs_exist(
+        self, tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+
 
 class TestCartographerResumeGuard:
     def test_phase1_what_prompt_blocks_duplicate_specify_on_resume(self, tmp_path):
@@ -265,6 +307,10 @@ class TestSquadControllerBasics:
         ctrl._cancelled = True   # simulate SIGINT received mid-run
         result = ctrl.run("msg", "banzai")
         assert result.status == "interrupted"
+        state = store.load()
+        assert state["status"] == "interrupted"
+        assert state["phase"] == "init"
+        assert state["interrupted_phase"] == "init"
 
     def test_stale_cancel_requested_cleared_on_resume(self, tmp_path):
         """cancel_requested left in state.json by a previous Ctrl+C does not
@@ -438,12 +484,58 @@ class TestSquadControllerBasics:
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )
-            # Third call+: WHY1 re-dispatch passes (quality_scores present)
+            if call_count["n"] == 3:
+                # Third call: WHY1 re-dispatch passes (quality_scores present)
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"quality_scores": [{"pass": True}]},
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 4:
+                # CHIEF/constitution uses a different phase contract.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"constitution_status": "exists"},
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 5:
+                # CARTOGRAPHER/WHAT writes spec metadata, not quality scores.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {
+                            "spec_id": "001-test",
+                            "spec_dir": "specs/001-test",
+                            "spec_status": "drafted",
+                            "lexicon_pass": True,
+                        },
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            if call_count["n"] == 6:
+                # WHY2 quality gate passes.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DONE",
+                        "state_updates": {"quality_scores": [{"pass": True}]},
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
+            # End the flow at phase2-decide so this test remains focused on
+            # banzai escalation recovery rather than full Phase A artifact output.
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
-                    "verdict": "DONE",
-                    "state_updates": {"quality_scores": [{"pass": True}]},
+                    "verdict": "KILL",
+                    "state_updates": {},
                 },
                 raw_output="", duration_ms=0, timed_out=False,
             )
@@ -481,6 +573,47 @@ class TestSquadControllerBasics:
         assert result.status == "blocked"
         # escalation_question must be in state for echelon resume to pick up
         assert store.load().get("escalation_question")
+
+    def test_fresh_checkpoint_question_ignores_stale_escalation_resolved(self, tmp_path):
+        """A prior resume must not suppress a later checkpoint human-gate question."""
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "status": "blocked",
+                    "blocked_reason": "checkpoint-assess human gate",
+                    "escalation_question": "Approve the Phase 1 gate?",
+                    "escalation_options": [
+                        {
+                            "id": "proceed_to_decide",
+                            "label": "Approve gate",
+                            "next_phase": "phase2-decide",
+                        }
+                    ],
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider, mode="semi")
+        store.initialize("r", "semi", "msg", 0, "checkpoint-assess", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state["escalation_resolved"] = True
+        store.save(state)
+
+        result = ctrl.run("msg", "semi")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert provider.exec_agent.call_count == 1
+        assert state["blocked_reason"] == "checkpoint-assess human gate"
+        assert state["escalation_question"] == "Approve the Phase 1 gate?"
+        assert state["escalation_resolved"] is False
+        assert state.get("blocked_reason") != "phase_dispatch_limit"
 
     def test_banzai_escalation_dispatches_commander_not_stops(self, tmp_path):
         """Banzai mode: blocked+escalation_question → COMMANDER called, run continues."""
@@ -677,6 +810,10 @@ class TestConsensusAcceptWithRiskRouting:
         state.update({"iteration": 9, "spec_dir": "specs/071-rule-studio"})
         store.save(state)
         _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "specs" / "071-rule-studio"
+        spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
         with patch.object(store, "advance", wraps=store.advance) as spy:
             result = ctrl.run("msg", "banzai")
@@ -1053,6 +1190,152 @@ class TestConstitutionPhase:
             "exec_agent was not called — phase1-constitution is still a harness no-op. "
             "It must be type=agent so CHIEF gets dispatched."
         )
+
+
+class TestCommanderJudgmentStateUpdates:
+    @staticmethod
+    def _ambiguous_node() -> PhaseNode:
+        return PhaseNode(
+            id="phase1-discover",
+            type="agent",
+            transitions=[
+                {
+                    "to": "phase1-why1",
+                    "condition": "quality_gates.pass",
+                }
+            ],
+        )
+
+    @staticmethod
+    def _phase_result() -> SquadAgentResult:
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    def test_invalid_judgment_state_update_blocks_before_mutation(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "phase1-why1",
+                    "unauthorized_key": "must-not-persist",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+
+        next_phase = ctrl._evaluate_transitions(
+            self._ambiguous_node(),
+            self._phase_result(),
+        )
+        state = store.load()
+
+        assert next_phase == "terminal-blocked"
+        assert state["status"] == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert "unauthorized_key" not in state
+        assert "unauthorized_key" in state["blocked_reason"]
+        assert "judgment state_updates validation failed" in state["blocked_reason"]
+
+    def test_valid_judgment_iteration_update_still_persists(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "phase1-why1",
+                    "iteration": 2,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+
+        next_phase = ctrl._evaluate_transitions(
+            self._ambiguous_node(),
+            self._phase_result(),
+        )
+
+        assert next_phase == "phase1-why1"
+        assert store.load()["iteration"] == 2
+
+    def test_banzai_escalation_cleanup_deletes_only_allowed_null_keys(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        state = store.load()
+        state["status"] = "running"
+        state["escalation_question"] = "Q1?"
+        state["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert "escalation_question" not in state
+        assert "blocked_reason" not in state
+        assert state["escalation_resolved"] is True
+        assert state["escalation_resolver"] == "COMMANDER-banzai"
+
+    def test_banzai_escalation_invalid_cleanup_key_blocks(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "blocked_reason": None,
+                    "last_dispatch": {"phase_id": "forged"},
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
+        state = store.load()
+        state["status"] = "running"
+        state["escalation_question"] = "Q1?"
+        state["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert state["status"] == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["escalation_question"] == "Q1?"
+        assert state["last_dispatch"] is None
+        assert "last_dispatch" in state["blocked_reason"]
 
 
 class TestGovernanceConfigMerge:

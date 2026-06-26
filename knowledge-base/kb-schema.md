@@ -25,6 +25,12 @@ Tier 2 files (schema version 2):
 4. Every write operation must carry provenance (`run_id`, `source`, `created_at`).
 5. Queue records in `knowledge-base/.pending/` must match the model in this document and `specs/001-echelon-improvements/data-model.md`.
 
+Deterministic validation lives in `src/codegen/memory/kb_schema_validator.py`.
+Agents and scripts that write durable knowledge-base records should validate
+parsed YAML before applying writes. The validator is intentionally conservative:
+it checks schema versions, append-only markers, provenance, pending-operation
+checksums, and project scoping for durable pattern/pitfall learnings.
+
 ## calibration-profile.yaml
 
 Required top-level keys:

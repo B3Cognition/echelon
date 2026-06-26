@@ -86,5 +86,7 @@ echelon_result:
       agent: speckit-echelon-monitor (MONITOR)
       data:
         pass: true
+        scores: {}
+        issues: []
         drift_signals: []
         recommendation: ""

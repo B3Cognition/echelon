@@ -66,6 +66,7 @@ class TestBenchmarkTemplates:
             "  output_files:\n"
             "    - {spec_dir}/performance-requirements.md\n"
             "    - {spec_dir}/capacity-model.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

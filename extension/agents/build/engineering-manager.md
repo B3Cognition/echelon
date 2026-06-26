@@ -226,6 +226,10 @@ echelon_result:
       phase: build
       agent: speckit-echelon-engineering-manager (ENGINEERING MANAGER)
       data:
+        artifact: "{spec_dir}/build-status.md"
+        section: "Iteration status"
+        reasoning: "<why the build loop should continue or stop>"
+        rationale: "<manager decision rationale>"
         iteration: <iteration_number>
         tasks_complete: <count>
         tasks_remaining: <count>

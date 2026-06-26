@@ -9,6 +9,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -16,7 +17,13 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph
-from harness.squad_executors import AgentExecutor, StagedParallelExecutor
+from harness.squad_executors import (
+    AgentExecutor,
+    ConditionalSequentialExecutor,
+    StagedParallelExecutor,
+    _canonical_echelon_result_contract,
+    _allowed_state_updates_contract,
+)
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
 
@@ -52,6 +59,42 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
     )
 
 
+def _journal_entry(entry_type: str = "insight", **overrides) -> dict:
+    data_by_type = {
+        "insight": {
+            "artifact": "spec.md",
+            "section": "requirements",
+            "reasoning": "test reasoning",
+            "confidence": 0.8,
+            "evidence_grade": "B",
+        },
+        "assumption": {
+            "artifact": "spec.md",
+            "section": "assumptions",
+            "reasoning": "test assumption",
+            "validation_method": "review",
+        },
+        "challenge": {
+            "artifact": "spec.md",
+            "section": "requirements",
+            "reasoning": "test challenge",
+            "confidence": 0.7,
+            "severity": "medium",
+            "action_required": "clarify",
+        },
+        "quality_check": {
+            "pass": True,
+            "scores": {"structure": 0.8},
+            "issues": [],
+        },
+    }
+    entry = {"type": entry_type}
+    if entry_type in data_by_type:
+        entry["data"] = data_by_type[entry_type]
+    entry.update(overrides)
+    return entry
+
+
 def _read_journal(tmp_path: Path, squad_dir: Path = None) -> list[dict]:
     if squad_dir is None:
         squad_dir = tmp_path / "squad" / "run-test"
@@ -70,7 +113,7 @@ def test_no_entries_writes_nothing(tmp_path):
 def test_single_entry_written(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight", "data": {"msg": "hello"}}]),
+        _result(entries=[_journal_entry("insight")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -84,7 +127,7 @@ def test_single_entry_written(tmp_path):
 def test_ids_are_monotonically_increasing(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight"}, {"type": "assumption"}]),
+        _result(entries=[_journal_entry("insight"), _journal_entry("assumption")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -94,8 +137,8 @@ def test_ids_are_monotonically_increasing(tmp_path):
 
 def test_second_call_continues_id_sequence(tmp_path):
     ex = _executor(tmp_path)
-    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
-    ex._write_journal_entries(_result(entries=[{"type": "challenge"}]), "phase1-b")
+    ex._write_journal_entries(_result(entries=[_journal_entry("insight")]), "phase1-a")
+    ex._write_journal_entries(_result(entries=[_journal_entry("challenge")]), "phase1-b")
     entries = _read_journal(tmp_path)
     assert len(entries) == 2
     assert entries[0]["id"] == 1
@@ -105,7 +148,7 @@ def test_second_call_continues_id_sequence(tmp_path):
 def test_existing_id_not_overwritten(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight", "id": 99}]),
+        _result(entries=[_journal_entry("insight", id=99)]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -115,7 +158,7 @@ def test_existing_id_not_overwritten(tmp_path):
 def test_existing_phase_not_overwritten(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight", "phase": "already-set"}]),
+        _result(entries=[_journal_entry("insight", phase="already-set")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -125,7 +168,7 @@ def test_existing_phase_not_overwritten(tmp_path):
 def test_non_dict_entries_skipped(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=["not-a-dict", None, {"type": "insight"}]),
+        _result(entries=["not-a-dict", None, _journal_entry("insight")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -136,8 +179,8 @@ def test_non_dict_entries_skipped(tmp_path):
 def test_parallel_results_written_serially(tmp_path):
     """Simulate stage-1 parallel agents: journal written after join, ids contiguous."""
     ex = _executor(tmp_path)
-    why3_result = _result(entries=[{"type": "challenge", "agent": "why3"}])
-    assess2_result = _result(entries=[{"type": "quality_check", "agent": "assess2"}])
+    why3_result = _result(entries=[_journal_entry("challenge", agent="why3")])
+    assess2_result = _result(entries=[_journal_entry("quality_check", agent="assess2")])
     # Both calls happen after ThreadPoolExecutor join — serial by construction
     ex._write_journal_entries(why3_result, "phase3-consensus")
     ex._write_journal_entries(assess2_result, "phase3-consensus")
@@ -147,6 +190,42 @@ def test_parallel_results_written_serially(tmp_path):
     assert entries[1]["id"] == 2
     types = {e["type"] for e in entries}
     assert types == {"challenge", "quality_check"}
+
+
+def test_invalid_registered_entry_is_quarantined_as_schema_warning(tmp_path):
+    ex = _executor(tmp_path)
+    ex._write_journal_entries(
+        _result(
+            entries=[
+                {
+                    "type": "routing_decision",
+                    "data": {
+                        "from_phase": "phase1-why1",
+                        "to_phase": "phase2-how",
+                        "reason": "missing evoi score",
+                    },
+                }
+            ]
+        ),
+        "phase1-why1",
+    )
+
+    entries = _read_journal(tmp_path)
+    assert [entry["type"] for entry in entries] == ["schema_warning"]
+    assert entries[0]["data"]["violating_entry_type"] == "routing_decision"
+    assert entries[0]["data"]["violation_type"] == "missing_required_field"
+
+
+def test_unknown_entry_type_is_preserved_without_schema_warning(tmp_path):
+    ex = _executor(tmp_path)
+    ex._write_journal_entries(
+        _result(entries=[{"type": "new_future_signal", "data": {"anything": True}}]),
+        "phase1-discover",
+    )
+
+    entries = _read_journal(tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["type"] == "new_future_signal"
 
 
 # ── SquadController._judgment_dispatch journal coverage ──────────────────────
@@ -221,7 +300,7 @@ def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
                     "id": None,
                     "timestamp": None,
                     "phase": None,
-                    "type": "quality_check",
+                    **_journal_entry("quality_check"),
                 }
             ],
         },
@@ -256,7 +335,7 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
     shared_squad_dir = tmp_path / "squad" / "run-test"
     shared_squad_dir.mkdir(parents=True, exist_ok=True)
     ex = _executor(tmp_path, squad_dir=shared_squad_dir)
-    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
+    ex._write_journal_entries(_result(entries=[_journal_entry("insight")]), "phase1-a")
 
     ctrl, provider = _squad_controller(tmp_path)
     provider.exec_agent.return_value = SquadAgentResult(
@@ -424,12 +503,29 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
     assert "overall:" in contract
 
 
+def test_allowed_state_updates_contract_renders_empty_allowlist():
+    contract = _allowed_state_updates_contract([])
+
+    assert "## Allowed state_updates for this dispatch" in contract
+    assert "Allowed keys: none." in contract
+    assert "state_updates: {}" in contract
+
+
+def test_canonical_result_contract_includes_schema_complete_journal_entry_shape(tmp_path):
+    contract = _canonical_echelon_result_contract(tmp_path / "missing-ext")
+
+    assert "Registered journal-entry types require `data`" in contract
+    assert "data:" in contract
+    assert "artifact:" in contract
+    assert "reasoning:" in contract
+
+
 def test_journal_written_to_squad_dir(tmp_path):
     """Journal entries go to squad_dir/reasoning-journal.jsonl, not .specify/squad."""
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     ex = _executor(tmp_path, squad_dir=squad_dir)
-    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
+    ex._write_journal_entries(_result(entries=[_journal_entry("insight")]), "phase1-a")
     journal = squad_dir / "reasoning-journal.jsonl"
     assert journal.exists()
     assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()
@@ -480,7 +576,9 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
     assert prompt.index("# Scout") < prompt.index("# Squad Run Context")
     assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
-    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "Registered journal-entry types require `data`" in prompt
+    assert "    - type: insight" in prompt
+    assert "        evidence_grade: <A|B|C|D|E>" in prompt
     assert "NEVER emit `<echelon_result>` XML" in prompt
 
 
@@ -518,6 +616,198 @@ def test_assemble_prompt_uses_echelon_result_template(tmp_path):
     assert prompt.rstrip().endswith("journal_entries: []")
 
 
+def test_assemble_prompt_includes_allowed_state_updates(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(
+        id="phase1-test",
+        type="agent",
+        allowed_state_updates=["spec_id", "spec_dir"],
+    )
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `spec_id`" in prompt
+    assert "- `spec_dir`" in prompt
+    assert "Any other top-level key blocks the run." in prompt
+
+
+def test_assemble_prompt_includes_empty_allowed_state_updates(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+    node = PhaseNode(id="phase1-test", type="agent", allowed_state_updates=[])
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "Allowed keys: none." in prompt
+    assert "state_updates: {}" in prompt
+
+
+def test_pre_dispatch_prompt_includes_parent_allowed_state_updates(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    agent_path = tmp_path / "golddigger.md"
+    agent_path.write_text("# GOLDDIGGER\n")
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_pre_dispatch_prompt(
+        agent_path,
+        {"id": "golddigger_mode1", "mode": 1},
+        state,
+        ["golddigger_status"],
+    )
+
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `golddigger_status`" in prompt
+
+
+def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
+    """Pre-dispatch agents must obey the phase state_update allowlist."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [{"type": "insight"}],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["allowed_key"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    state = state_store.load()
+    assert result is not None
+    assert result.verdict == "BLOCKED"
+    assert (
+        "state_updates key 'unexpected' is not allowed"
+        in result.state_updates["blocked_reason"]
+    )
+    assert "unexpected" not in state
+    assert not state.get("blocked_reason")
+    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+
+
+def test_agent_execute_blocks_unallowed_state_updates_before_journal_write(tmp_path):
+    """Normal agent dispatch must validate allowlists before journal mutation."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize(
+        run_id="r",
+        mode="greenfield",
+        user_message="msg",
+        token_budget=0,
+        entry_phase="phase-test",
+    )
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [{"type": "insight"}],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    ex._provider = provider
+    node = PhaseNode(id="phase-test", type="agent", allowed_state_updates=[])
+
+    result = ex.execute(node, state_store)
+
+    assert result.blocked is True
+    assert (
+        "state_updates key 'unexpected' is not allowed"
+        in result.state_updates["blocked_reason"]
+    )
+    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+
+
+def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
+    """Allowed pre-dispatch updates still flow into state."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"allowed_key": True},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["allowed_key"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    assert state_store.load()["allowed_key"] is True
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -547,7 +837,9 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
     assert prompt.index("# WHY3") < prompt.index("# Squad Run Context")
     assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
-    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "Registered journal-entry types require `data`" in prompt
+    assert "    - type: insight" in prompt
+    assert "        evidence_grade: <A|B|C|D|E>" in prompt
     assert "NEVER emit `<echelon_result>` XML" in prompt
 
 
@@ -581,6 +873,74 @@ def test_staged_prompt_uses_echelon_result_template(tmp_path):
 
     assert "STAGED_TEMPLATE_MARKER" in prompt
     assert prompt.rstrip().endswith("journal_entries: []")
+
+
+def test_staged_prompt_includes_allowed_state_updates(tmp_path):
+    """Staged consensus agents see the parent phase state-update allowlist."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "why3.md").write_text("# WHY3\nRole-specific instructions.")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._build_agent_prompt(
+        {"id": "WHY3", "mode": "WHY3"},
+        state,
+        allowed_state_updates=["quality_scores"],
+    )
+
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `quality_scores`" in prompt
+
+
+def test_conditional_sequential_prompt_includes_allowed_state_updates(tmp_path):
+    """Conditional sequential dispatches no longer send raw agent text only."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# Guardian\nRole-specific instructions.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase-test")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"risk_status": "reviewed"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = ConditionalSequentialExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = SimpleNamespace(
+        id="phase-test",
+        agents=[{"id": "speckit-echelon-guardian", "condition": "always"}],
+        allowed_state_updates=["risk_status"],
+    )
+
+    result = executor.execute(node, state_store)
+    prompt = provider.exec_agent.call_args.args[1]
+
+    assert result.verdict == "DONE"
+    assert "## Shared Agent Contract" in prompt
+    assert "## Allowed state_updates for this dispatch" in prompt
+    assert "- `risk_status`" in prompt
 
 
 def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
@@ -632,6 +992,47 @@ def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
     assert "RIGHT STAGING REPORT" in prompt
     assert "WRONG SPEC 016" not in prompt
     assert "WRONG TASKS 063" not in prompt
+
+
+def test_staged_parallel_blocks_state_update_outside_allowlist(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(provider, graph, tmp_path / "ext", tmp_path, squad_dir)
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        agents=[
+            {
+                "id": "speckit-echelon-sage",
+                "mode": "WHY3",
+                "stage": 1,
+                "context_pack": [],
+            }
+        ],
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "BLOCKED"
+    assert "not allowed" in result.state_updates["blocked_reason"]
+    assert "unexpected" not in state_store.load()
 
 
 def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):

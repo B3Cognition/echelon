@@ -201,6 +201,7 @@ echelon_result:
   verdict: INTEGRATED
   output_files:
     - {spec_dir}/integration-report.md
+  state_updates: {}
   journal_entries:
     - type: integration_finding
       phase: build

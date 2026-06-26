@@ -6,14 +6,20 @@ from unittest.mock import patch
 import pytest
 from harness.llm_provider import AICodingCliProvider
 from harness.config import HarnessConfig, LlmConfig
+from harness.llm_tool_policy import LlmToolPolicy
 
 
-def _config(config_dir=None, timeout_ms=1_200_000, cli="claude"):
+def _config(config_dir=None, timeout_ms=1_200_000, cli="claude", tool_policy=None):
     return HarnessConfig(
         target_repo=".",
         target_default_branch="main",
         provider="docker",
-        llm=LlmConfig(config_dir=config_dir, timeout_ms=timeout_ms, cli=cli),
+        llm=LlmConfig(
+            config_dir=config_dir,
+            timeout_ms=timeout_ms,
+            cli=cli,
+            tool_policy=tool_policy or LlmToolPolicy(),
+        ),
     )
 
 
@@ -57,8 +63,18 @@ class TestAICodingCliProvider:
         assert result == 0
         cmd_passed = mock_stream.call_args[0][0]
         assert "-p" in cmd_passed
-        assert "run generic prompt" in cmd_passed
+        assert "run generic prompt" in cmd_passed[cmd_passed.index("-p") + 1]
         assert "HARNESS_BUILD_STATUS_FILE" not in captured_env
+
+    def test_exec_prompt_injects_effective_tool_policy_preamble(self, tmp_path):
+        with _mock_streaming() as mock_stream:
+            AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")
+
+        cmd_passed = mock_stream.call_args[0][0]
+        prompt = cmd_passed[cmd_passed.index("-p") + 1]
+        assert prompt.startswith("## Effective Host Tool Policy")
+        assert "Unsafe host execution bypass: disabled" in prompt
+        assert "build this" in prompt
 
     def test_exec_prompt_calls_claude_p(self, tmp_path):
         with _mock_streaming() as mock_stream, \
@@ -78,6 +94,25 @@ class TestAICodingCliProvider:
         cmd_passed = mock_stream.call_args[0][0]
         assert "--output-format" in cmd_passed
         assert "stream-json" in cmd_passed
+
+    def test_exec_prompt_does_not_use_dangerous_claude_permissions_by_default(self, tmp_path):
+        with _mock_streaming() as mock_stream:
+            AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")
+
+        cmd_passed = mock_stream.call_args[0][0]
+        assert "--dangerously-skip-permissions" not in cmd_passed
+
+    def test_exec_prompt_uses_dangerous_claude_permissions_when_approved(self, tmp_path):
+        policy = LlmToolPolicy(
+            allow_unsafe_host_execution=True,
+            approval_reason="Operator approved disposable worktree after sandbox review.",
+        )
+
+        with _mock_streaming() as mock_stream:
+            AICodingCliProvider(_config(tool_policy=policy)).exec_prompt(str(tmp_path), "build this")
+
+        cmd_passed = mock_stream.call_args[0][0]
+        assert "--dangerously-skip-permissions" in cmd_passed
 
     def test_exec_prompt_disallows_claude_native_task_planning_tools(self, tmp_path):
         with _mock_streaming() as mock_stream:
@@ -233,9 +268,6 @@ class TestAICodingCliProvider:
             AICodingCliProvider(_config(cli="codex")).exec_prompt(str(tmp_path), "build this")
 
         cmd_passed = mock_plain.call_args[0][0]
-        assert cmd_passed == [
-            "codex",
-            "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "build this",
-        ]
+        assert cmd_passed[:2] == ["codex", "exec"]
+        assert "--dangerously-bypass-approvals-and-sandbox" not in cmd_passed
+        assert "Effective Host Tool Policy" in cmd_passed[-1]

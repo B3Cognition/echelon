@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import sys
+import textwrap
 from typing import IO, Any
 
-CARD_INNER = 52  # characters between ╭ and ╮
+CARD_INNER = 78  # 80 columns including ╭/╮ or │/│ borders
 
 
 def banner(
@@ -29,10 +30,17 @@ def banner(
     fill = "─" * max(0, CARD_INNER - len(prefix))
     _p(f"\n╭{prefix}{fill}╮")
     if subtitle:
-        body = f"  {subtitle}"
-        if len(body) > CARD_INNER:
-            body = body[: CARD_INNER - 1] + "…"
-        _p(f"│{body.ljust(CARD_INNER)}│")
+        wrap_width = max(1, CARD_INNER - 2)
+        for subtitle_line in subtitle.splitlines():
+            wrapped_lines = textwrap.wrap(
+                subtitle_line,
+                width=wrap_width,
+                break_long_words=True,
+                break_on_hyphens=False,
+            ) or [""]
+            for wrapped in wrapped_lines:
+                body = f"  {wrapped}"
+                _p(f"│{body.ljust(CARD_INNER)}│")
     _p(f"╰{'─' * CARD_INNER}╯\n")
 
     def _is_section(val: str) -> bool:

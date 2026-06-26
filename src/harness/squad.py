@@ -11,7 +11,12 @@ from pathlib import Path
 from typing import Optional
 
 from harness.condition_evaluator import ConditionEvaluator
+from harness.echelon_result_schema import (
+    EchelonResultValidationError,
+    validate_echelon_result,
+)
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
@@ -44,6 +49,27 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+JUDGMENT_STATE_UPDATE_KEYS = frozenset(
+    {
+        "next_phase",
+        "phase",
+        "iteration",
+        "status",
+        "blocked_reason",
+        "escalation_question",
+        "escalation_options",
+        "escalation_resolved",
+        "escalation_resolver",
+        "escalation_risk_level",
+        "escalation_recommended_answer",
+        "escalation_default_answer",
+        "risk_level",
+        "fallback_mode",
+        "execution_mode",
+        "dependency_fallbacks",
+        "shadow_output_recovered",
+    }
+)
 
 
 def _state_autonomy_mode(state: dict, fallback: str) -> str:
@@ -414,7 +440,13 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
 
             if self._cancelled:
-                return SquadResult.interrupted()
+                state = self._state_store.load()
+                state["status"] = "interrupted"
+                state["phase"] = phase
+                state["interrupted_phase"] = phase
+                state["blocked_reason"] = None
+                self._state_store.save(state)
+                return SquadResult.from_state(self._state_store.load())
 
             if self._budget_exhausted():
                 self._state_store.set_blocked("token_budget_exhausted")
@@ -474,7 +506,21 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
 
             next_phase = self._evaluate_transitions(node, result)
-            self._state_store.advance(phase, next_phase, result)
+            if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+                readiness = validate_phase_a_readiness(
+                    self._state_store.load(),
+                    self._phase_a_readiness_candidate_dirs(),
+                )
+                if not readiness.ready:
+                    self._block_after_phase_a_readiness_failure(readiness)
+                    return SquadResult.from_state(self._state_store.load())
+
+            self._state_store.advance(
+                phase,
+                next_phase,
+                result,
+                allowed_state_update_keys=node.allowed_state_updates,
+            )
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
             # The condition `iteration < max_iterations` in definition.yaml must work regardless
@@ -507,6 +553,8 @@ class SquadController:
                     s["blocked_reason"] = None
                     self._state_store.save(s)
                     self._judgment_dispatch_escalation(q, phase)
+                    if self._state_store.load().get("status") == "blocked":
+                        return SquadResult.from_state(self._state_store.load())
                     # Unconditionally mark escalation resolved — do not rely on COMMANDER
                     # to include it in state_updates. If it forgets, the check at line 354
                     # re-fires on every iteration, which spins forever on WHY phases.
@@ -528,6 +576,51 @@ class SquadController:
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
+
+    def _phase_a_readiness_candidate_dirs(self) -> list[Path]:
+        state = self._state_store.load()
+        candidates: list[Path] = []
+
+        def add(candidate: Path | None) -> None:
+            if candidate is None:
+                return
+            path = candidate if candidate.is_absolute() else self._project_root / candidate
+            if path not in candidates:
+                candidates.append(path)
+
+        spec_id = str(state.get("spec_id") or "").strip()
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        published_ref = str(state.get("published_spec_dir") or "").strip()
+        staging_ref = str(state.get("staging_dir") or "").strip()
+
+        if spec_dir_ref:
+            add(Path(spec_dir_ref))
+        if published_ref:
+            add(Path(published_ref))
+        if spec_id:
+            add(self._project_root / "specs" / spec_id)
+            add(self._squad_dir / "specs" / spec_id)
+        if staging_ref:
+            add(Path(staging_ref))
+        else:
+            add(self._squad_dir / "staging")
+
+        return candidates
+
+    def _block_after_phase_a_readiness_failure(
+        self, readiness: PhaseAReadinessResult
+    ) -> None:
+        state = self._state_store.load()
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        state["blocked_reason"] = "phase_a_readiness_failed"
+        state["phase_a_readiness_blockers"] = readiness.blockers
+        self._state_store.save(state)
+        print(
+            "[squad] ✗ phase4-document blocked: Phase A readiness failed "
+            "(build-input artifacts incomplete)",
+            flush=True,
+        )
 
     def _blocked_executor_reason(
         self, result: SquadAgentResult
@@ -565,6 +658,67 @@ class SquadController:
             "(phase not marked complete)",
             flush=True,
         )
+
+    def _block_after_judgment_validation_failure(
+        self,
+        phase: str,
+        reason: str,
+    ) -> None:
+        state = self._state_store.load()
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        state["blocked_reason"] = (
+            f"judgment state_updates validation failed: {reason}"
+        )
+        self._state_store.save(state)
+        print(
+            f"[squad] ✗ {phase} blocked: judgment state_updates validation failed: {reason}",
+            flush=True,
+        )
+
+    def _ensure_judgment_state_updates_allowed(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+    ) -> bool:
+        try:
+            result.echelon_result = validate_echelon_result(
+                result.echelon_result,
+                allowed_state_update_keys=JUDGMENT_STATE_UPDATE_KEYS,
+            )
+            return True
+        except EchelonResultValidationError as exc:
+            self._block_after_judgment_validation_failure(phase, str(exc))
+            return False
+
+    def _apply_judgment_state_updates(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+        *,
+        exclude_keys: set[str] | None = None,
+        delete_null: bool = False,
+    ) -> bool:
+        if not self._ensure_judgment_state_updates_allowed(result, phase):
+            return False
+
+        excluded = exclude_keys or set()
+        updates = {
+            key: value
+            for key, value in result.state_updates.items()
+            if key not in excluded
+        }
+        if not updates:
+            return True
+
+        state = self._state_store.load()
+        for key, value in updates.items():
+            if delete_null and value is None:
+                state.pop(key, None)
+            else:
+                state[key] = value
+        self._state_store.save(state)
+        return True
 
     def _guard_constitution_provenance(self, phase: str) -> str:
         """Route normal spec/build phases through CHIEF until constitution is proven.
@@ -820,6 +974,8 @@ class SquadController:
                     node,
                     result,
                 )
+                if not self._ensure_judgment_state_updates_allowed(judgment, node.id):
+                    return PHASE_TERMINAL_BLOCKED
                 # Accept either "next_phase" or "phase" as the routing key.
                 next_phase = (
                     judgment.state_updates.get("next_phase")
@@ -847,9 +1003,12 @@ class SquadController:
                     if k not in routing_keys
                 }
                 if extra:
-                    s = self._state_store.load()
-                    s.update(extra)
-                    self._state_store.save(s)
+                    if not self._apply_judgment_state_updates(
+                        judgment,
+                        node.id,
+                        exclude_keys=routing_keys,
+                    ):
+                        return PHASE_TERMINAL_BLOCKED
                 # If this judgment blocked the run (e.g. COMMANDER set
                 # status=blocked after reading SAGE artifacts), stop evaluating
                 # further transitions — continuing would let a second COMMANDER
@@ -940,16 +1099,13 @@ class SquadController:
             )
 
         result = self._provider.exec_agent(str(self._project_root), context)
+        if not self._apply_judgment_state_updates(
+            result,
+            blocked_phase,
+            delete_null=True,
+        ):
+            return result
         self._write_journal_entries(result, blocked_phase)
-
-        if result.state_updates:
-            s = self._state_store.load()
-            for k, v in result.state_updates.items():
-                if v is None:
-                    s.pop(k, None)   # null → remove key entirely
-                else:
-                    s[k] = v
-            self._state_store.save(s)
 
         return result
 
@@ -957,6 +1113,7 @@ class SquadController:
         """Mirror of PhaseExecutor._write_journal_entries for SquadController use."""
         import json as _json
         from datetime import datetime, timezone
+        from harness.journal_entry_validator import prepare_journal_entries_for_append
 
         entries = (result.echelon_result or {}).get("journal_entries", [])
         if not entries:
@@ -971,18 +1128,17 @@ class SquadController:
             next_id = len(lines) + 1
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prepared_entries = prepare_journal_entries_for_append(
+            entries,
+            phase_id=phase_id,
+            next_id=next_id,
+            timestamp=ts,
+            schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
+            invalid_registered_policy="quarantine",
+        )
         with journal_path.open("a") as fh:
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("id") is None:
-                    entry["id"] = next_id
-                if entry.get("timestamp") is None:
-                    entry["timestamp"] = ts
-                if entry.get("phase") is None:
-                    entry["phase"] = phase_id
+            for entry in prepared_entries:
                 fh.write(_json.dumps(entry) + "\n")
-                next_id += 1
 
     def _staging_changed_since(self, iso_timestamp: Optional[str]) -> bool:
         """Return True if any staging .md file is newer than iso_timestamp.

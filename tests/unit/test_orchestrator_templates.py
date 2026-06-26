@@ -68,6 +68,7 @@ class TestOrchestratorTemplates:
             "  output_files:\n"
             "    - {spec_dir}/tasks.md\n"
             "    - {spec_dir}/critical-path.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

@@ -80,6 +80,7 @@ class TestArchitectTemplates:
             "    - {spec_dir}/adr/ADR-001.md\n"
             "    - {spec_dir}/data-model.md\n"
             "    - {spec_dir}/api-contracts.md\n"
+            "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )

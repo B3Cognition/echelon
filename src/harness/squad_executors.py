@@ -63,6 +63,8 @@ _FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
 # Rules:
 # - ALWAYS include state_updates; use {} when no state changes are needed.
 # - ALWAYS include journal_entries; use [] when no journal entries are needed.
+# - Registered journal-entry types require `data` with all required fields from
+#   extension/workflow/journal-entry-types.yaml.
 # - NEVER wrap this block in markdown fences such as ```yaml or ```echelon_result.
 # - NEVER emit `<echelon_result>` XML, JSON, or prose-only summaries as the contract.
 # - NEVER put summaries, bullets, or sign-off text after the echelon_result block.
@@ -73,7 +75,13 @@ echelon_result:
     - <path/to/artifact.md>
   state_updates: {}
   journal_entries:
-    - type: <entry_type>"""
+    - type: insight
+      data:
+        artifact: <artifact-or-file>
+        section: <section-or-topic>
+        reasoning: <grounded reason for this entry>
+        confidence: <0.0-1.0>
+        evidence_grade: <A|B|C|D|E>"""
 
 
 def _canonical_echelon_result_contract(ext_dir: Path) -> str:
@@ -91,6 +99,43 @@ def _canonical_echelon_result_contract(ext_dir: Path) -> str:
         "but do not change the root key or wrapper.\n\n"
         f"{template}"
     )
+
+
+def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
+    """Render the deterministic state-update allowlist for an agent prompt."""
+    lines = [
+        "\n\n---",
+        "## Allowed state_updates for this dispatch",
+        "The harness validates `echelon_result.state_updates` before mutating state.",
+        "Return only the keys listed here; use `state_updates: {}` when no state",
+        "changes are needed. Any other top-level key blocks the run.",
+        "",
+    ]
+    if allowed_state_updates is None:
+        lines.extend(
+            [
+                "Allowed keys: not declared for this phase.",
+                "Prefer:",
+                "```yaml",
+                "state_updates: {}",
+                "```",
+            ]
+        )
+    else:
+        keys = [str(key) for key in allowed_state_updates]
+        if keys:
+            lines.append("Allowed keys:")
+            lines.extend(f"- `{key}`" for key in keys)
+        else:
+            lines.extend(
+                [
+                    "Allowed keys: none.",
+                    "```yaml",
+                    "state_updates: {}",
+                    "```",
+                ]
+            )
+    return "\n".join(lines)
 
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
@@ -228,6 +273,49 @@ class PhaseExecutor(ABC):
         from harness.paths import runs_dir as _runs_dir
         self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
+    def _validate_result_state_updates(
+        self,
+        node: "PhaseNode",
+        result: "SquadAgentResult",
+    ) -> "SquadAgentResult":
+        """Validate result state updates before executor-side direct state writes."""
+        if result.echelon_result is None:
+            return result
+
+        from harness.echelon_result_schema import (
+            EchelonResultValidationError,
+            validate_echelon_result,
+        )
+        from harness.squad_provider import SquadAgentResult
+
+        try:
+            result.echelon_result = validate_echelon_result(
+                result.echelon_result,
+                allowed_state_update_keys=getattr(
+                    node,
+                    "allowed_state_updates",
+                    None,
+                ),
+            )
+            return result
+        except EchelonResultValidationError as exc:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": (
+                            f"echelon_result validation failed: {exc}"
+                        ),
+                    },
+                    "journal_entries": [],
+                },
+                raw_output=result.raw_output,
+                duration_ms=result.duration_ms,
+                timed_out=result.timed_out,
+                cost_usd=result.cost_usd,
+            )
+
     @abstractmethod
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
@@ -244,6 +332,7 @@ class PhaseExecutor(ABC):
         """
         import json
         from datetime import datetime, timezone
+        from harness.journal_entry_validator import prepare_journal_entries_for_append
 
         entries = (result.echelon_result or {}).get("journal_entries", [])
         if not entries:
@@ -259,18 +348,17 @@ class PhaseExecutor(ABC):
             next_id = len(lines) + 1
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prepared_entries = prepare_journal_entries_for_append(
+            entries,
+            phase_id=phase_id,
+            next_id=next_id,
+            timestamp=ts,
+            schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
+            invalid_registered_policy="quarantine",
+        )
         with journal_path.open("a") as fh:
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("id") is None:
-                    entry["id"] = next_id
-                if entry.get("timestamp") is None:
-                    entry["timestamp"] = ts
-                if entry.get("phase") is None:
-                    entry["phase"] = phase_id
+            for entry in prepared_entries:
                 fh.write(json.dumps(entry, default=lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)) + "\n")
-                next_id += 1
 
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         static_parts: list[str] = []
@@ -380,13 +468,18 @@ class PhaseExecutor(ABC):
 
         # Append harness routing contract so agents know exactly what
         # state_updates fields the harness needs for transition evaluation.
-        prompt = prompt + _routing_contract(node) + _canonical_echelon_result_contract(self._ext_dir)
+        prompt = (
+            prompt
+            + _routing_contract(node)
+            + _allowed_state_updates_contract(node.allowed_state_updates)
+            + _canonical_echelon_result_contract(self._ext_dir)
+        )
 
         return _shared_agent_contract() + prompt
 
     def _run_pre_dispatch(
         self, node: "PhaseNode", state: dict, state_store: "SquadStateStore"
-    ) -> None:
+    ) -> Optional["SquadAgentResult"]:
         """Execute conditional pre_dispatch entries before the main agent."""
         from harness.condition_evaluator import ConditionEvaluator
         ev = ConditionEvaluator()
@@ -401,21 +494,31 @@ class PhaseExecutor(ABC):
             if rel:
                 pre_path = self._ext_dir / rel
                 if pre_path.exists():
-                    prompt = self._assemble_pre_dispatch_prompt(pre_path, entry, state_store.load())
+                    prompt = self._assemble_pre_dispatch_prompt(
+                        pre_path,
+                        entry,
+                        state_store.load(),
+                        node.allowed_state_updates,
+                    )
                     result = self._provider.exec_agent(
                         str(self._project_root), prompt
                     )
+                    result = self._validate_result_state_updates(node, result)
+                    if result.blocked:
+                        return result
                     self._write_journal_entries(result, node.id)
                     for k, v in result.state_updates.items():
                         s = state_store.load()
                         s[k] = v
                         state_store.save(s)
+        return None
 
     def _assemble_pre_dispatch_prompt(
         self,
         agent_path: Path,
         entry: dict,
         state: dict,
+        allowed_state_updates: object = None,
     ) -> str:
         """Build a real prompt for pre-dispatch agents.
 
@@ -448,6 +551,7 @@ class PhaseExecutor(ABC):
                 + f"Run **Mode {entry.get('mode', 1)} (Survey)** for target path `{self._project_root}`. "
                 + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
                 + "</instructions>\n"
+                + _allowed_state_updates_contract(allowed_state_updates)
                 + _canonical_echelon_result_contract(self._ext_dir)
             )
 
@@ -459,6 +563,7 @@ class PhaseExecutor(ABC):
             + f"SQUAD_DIR={squad_dir_str}\n"
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
@@ -557,10 +662,15 @@ class AgentExecutor(PhaseExecutor):
         from harness.squad_provider import SquadAgentResult
 
         state = state_store.load()
-        self._run_pre_dispatch(node, state, state_store)
+        pre_dispatch_result = self._run_pre_dispatch(node, state, state_store)
+        if pre_dispatch_result is not None and pre_dispatch_result.blocked:
+            return pre_dispatch_result
         state = state_store.load()  # re-load after pre_dispatch
         prompt = self._assemble_prompt(node, state)
         result = self._provider.exec_agent(str(self._project_root), prompt)
+        result = self._validate_result_state_updates(node, result)
+        if result.blocked:
+            return result
         self._write_journal_entries(result, node.id)
         state_store.increment_cost(result.cost_usd)
         if result.echelon_result is not None:
@@ -632,6 +742,7 @@ class StagedParallelExecutor(PhaseExecutor):
         agent_entry: dict,
         state: dict,
         extra_files: Optional[list] = None,
+        allowed_state_updates: object = None,
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -697,7 +808,12 @@ class StagedParallelExecutor(PhaseExecutor):
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
-        return _shared_agent_contract() + prompt + _canonical_echelon_result_contract(self._ext_dir)
+        return (
+            _shared_agent_contract()
+            + prompt
+            + _allowed_state_updates_contract(allowed_state_updates)
+            + _canonical_echelon_result_contract(self._ext_dir)
+        )
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
@@ -719,14 +835,21 @@ class StagedParallelExecutor(PhaseExecutor):
                     or agent_entry.get("id")
                     or agent_entry.get("agent", "")
                 )
-                prompt = self._build_agent_prompt(agent_entry, state)
+                prompt = self._build_agent_prompt(
+                    agent_entry,
+                    state,
+                    allowed_state_updates=getattr(node, "allowed_state_updates", None),
+                )
                 futures[pool.submit(
                     self._provider.exec_agent, str(self._project_root), prompt
                 )] = mode_label
 
             for future in as_completed(futures):
                 label = futures[future]
-                stage1_results[label] = future.result()
+                result = self._validate_result_state_updates(node, future.result())
+                if result.blocked:
+                    return result
+                stage1_results[label] = result
 
         # Write stage-1 verdicts, journal entries, and cost to state (serial — after join)
         for label, result in stage1_results.items():
@@ -760,8 +883,12 @@ class StagedParallelExecutor(PhaseExecutor):
                 agent_entry,
                 state,
                 extra_files=[impl_report_path] if impl_report_path else [],
+                allowed_state_updates=getattr(node, "allowed_state_updates", None),
             )
             stage2_result = self._provider.exec_agent(str(self._project_root), prompt)
+            stage2_result = self._validate_result_state_updates(node, stage2_result)
+            if stage2_result.blocked:
+                return stage2_result
             self._write_journal_entries(stage2_result, node.id)
             state_store.increment_cost(stage2_result.cost_usd)
             state = state_store.load()
@@ -806,9 +933,18 @@ class ConditionalSequentialExecutor(PhaseExecutor):
             if rel:
                 path = self._ext_dir / rel
                 if path.exists():
-                    result = self._provider.exec_agent(
-                        str(self._project_root), path.read_text()
+                    prompt = (
+                        _shared_agent_contract()
+                        + path.read_text()
+                        + _allowed_state_updates_contract(node.allowed_state_updates)
+                        + _canonical_echelon_result_contract(self._ext_dir)
                     )
+                    result = self._provider.exec_agent(
+                        str(self._project_root), prompt
+                    )
+                    result = self._validate_result_state_updates(node, result)
+                    if result.blocked:
+                        return result
                     self._write_journal_entries(result, node.id)
                     state = state_store.load()
                     for k, v in result.state_updates.items():

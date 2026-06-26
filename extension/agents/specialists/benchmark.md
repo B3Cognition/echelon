@@ -172,6 +172,7 @@ echelon_result:
   output_files:
     - {spec_dir}/performance-requirements.md
     - {spec_dir}/capacity-model.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase3-specialists

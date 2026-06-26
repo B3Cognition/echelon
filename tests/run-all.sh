@@ -32,6 +32,8 @@ SUITE_RESULTS=()
 PYTHON=""
 if [[ -x "$ROOT/.venv/bin/python" ]] && "$ROOT/.venv/bin/python" -m pytest --version >/dev/null 2>&1; then
   PYTHON="$ROOT/.venv/bin/python"
+elif [[ -x "$HOME/.echelon/venv/bin/python" ]] && "$HOME/.echelon/venv/bin/python" -m pytest --version >/dev/null 2>&1; then
+  PYTHON="$HOME/.echelon/venv/bin/python"
 else
   for candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 python3.12 python3 python; do
     if [[ -x "$candidate" ]] || command -v "$candidate" >/dev/null 2>&1; then
@@ -74,15 +76,11 @@ run_suite() {
     local test_name
     test_name="$(basename "$test_file")"
 
-    if [[ ! -x "$test_file" ]]; then
-      chmod +x "$test_file"
-    fi
-
     printf "  Running %-50s " "$test_name"
 
     local output
     local exit_code=0
-    output=$("$test_file" 2>&1) || exit_code=$?
+    output=$(bash "$test_file" 2>&1) || exit_code=$?
 
     if [[ "$exit_code" -eq 0 ]]; then
       printf "${GREEN}PASS${RESET}\n"
@@ -189,10 +187,9 @@ run_bench_suite() {
   for test_file in "${test_files[@]}"; do
     local test_name
     test_name="$(basename "$test_file")"
-    [[ ! -x "$test_file" ]] && chmod +x "$test_file"
     printf "  Running %-50s " "$test_name"
     local output exit_code=0
-    output=$("$test_file" 2>&1) || exit_code=$?
+    output=$(bash "$test_file" 2>&1) || exit_code=$?
     if [[ "$exit_code" -eq 0 ]]; then
       printf "${GREEN}PASS${RESET}\n"
       suite_pass=$((suite_pass + 1))
@@ -224,10 +221,9 @@ run_single_test() {
     return
   fi
 
-  [[ ! -x "$test_file" ]] && chmod +x "$test_file"
   printf "  Running %-50s " "$(basename "$test_file")"
   local output exit_code=0
-  output=$("$test_file" 2>&1) || exit_code=$?
+  output=$(bash "$test_file" 2>&1) || exit_code=$?
   if [[ "$exit_code" -eq 0 ]]; then
     printf "${GREEN}PASS${RESET}\n"
     TOTAL_PASS=$((TOTAL_PASS + 1))

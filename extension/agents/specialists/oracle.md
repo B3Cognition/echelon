@@ -147,6 +147,7 @@ echelon_result:
   verdict: COMPLETE
   output_files:
     - {spec_dir}/domain-patterns.md
+  state_updates: {}
   journal_entries:
     - type: decision
       phase: phase3-specialists

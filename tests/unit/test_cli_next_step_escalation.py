@@ -72,7 +72,7 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
         "# Quality Gates\n\n## Verdict: PASS\n",
         encoding="utf-8",
     )
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     _print_next_steps(tmp_path, "done")
@@ -86,6 +86,48 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     assert "next" in captured.out
     assert "echelon harness run 001-demo" in captured.out
     assert "\n  build\n" not in captured.out
+
+
+def test_done_run_without_spec_md_is_not_ready_to_build(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    constitution = tmp_path / ".specify" / "memory" / "constitution.md"
+    constitution.parent.mkdir(parents=True)
+    constitution.write_text("# Constitution\n\nReady.\n", encoding="utf-8")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text(
+        "# Quality Gates\n\n## Verdict: PASS\n",
+        encoding="utf-8",
+    )
+    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    run_dir = tmp_path / "runs" / "spec-20260623-100000-000001"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "done",
+                "phase": "DONE",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "completed_phases": ["phase1-constitution"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    captured = capsys.readouterr()
+    assert "READY TO BUILD" not in captured.out
+    assert "PHASE A INCOMPLETE" in captured.out
+    assert "BUILD BLOCKED" not in captured.out
+    assert "spec.md absent" in captured.out
 
 
 def test_partial_constitution_placeholders_are_reported_precisely(
@@ -130,7 +172,7 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
 
     spec_dir = tmp_path / "specs" / "006-element-creator"
     spec_dir.mkdir(parents=True)
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     (spec_dir / "quality-gates.md").write_text(
         "# Quality Gates\n\n## Verdict: FAIL\n",
@@ -162,6 +204,96 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     assert "echelon rewind phase3-sentinel" in captured.out
 
 
+def test_blocked_incomplete_discover_prioritizes_retry_over_constitution(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) == "phase1-discover"
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "RUN BLOCKED" in captured.out
+    assert "missing_echelon_result" in captured.out
+    assert "phase1-discover" in captured.out
+    assert "phase1-constitution has not completed" not in captured.out
+
+
+def test_blocked_timeout_next_step_uses_continue_not_resume(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "agent_timeout",
+                "last_dispatch": {"phase_id": "phase1-discover"},
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "RUN BLOCKED" in captured.out
+    assert "agent_timeout" in captured.out
+    assert "echelon continue" in captured.out
+    assert 'echelon resume "<your answer>"' not in captured.out
+
+
+def test_interrupted_next_step_retries_interrupted_phase(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260625-140321-450919"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "interrupted",
+                "phase": "phase1-discover",
+                "interrupted_phase": "phase1-discover",
+                "completed_phases": ["init"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) == "phase1-discover"
+
+    _print_next_steps(tmp_path, "interrupted")
+
+    captured = capsys.readouterr()
+    assert "RUN INTERRUPTED" in captured.out
+    assert "phase1-discover" in captured.out
+    assert "echelon continue" in captured.out
+    assert "phase1-constitution has not completed" not in captured.out
+
+
 def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
     tmp_path: Path,
     capsys,
@@ -172,7 +304,7 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
@@ -232,7 +364,7 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
-    for name in ("plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
