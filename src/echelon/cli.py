@@ -2261,6 +2261,52 @@ def _select_squad_dir(
     return existing_dir, False
 
 
+def _source_extension_dir() -> Path:
+    """Best-effort source checkout extension path for drift checks."""
+    return Path(__file__).resolve().parents[2] / "extension"
+
+
+def _print_extension_drift_warning(project_root: Path, ext_dir: Path) -> None:
+    """Warn when installed project extension content differs from source checkout."""
+    try:
+        from harness.extension_drift import assess_extension_drift
+
+        source_dir = _source_extension_dir()
+        report = assess_extension_drift(source_dir, ext_dir)
+    except Exception:
+        return
+
+    if not report.drifted:
+        return
+
+    examples: list[str] = []
+    for label, paths in (
+        ("changed", report.changed_files),
+        ("missing", report.missing_files),
+        ("extra", report.extra_files),
+    ):
+        for rel_path in paths[:3]:
+            examples.append(f"{label}: {rel_path}")
+    examples = examples[:6]
+
+    _banner(
+        "EXTENSION DRIFT",
+        [
+            ("installed", _repo_relative_or_absolute(ext_dir, project_root)),
+            ("source", str(source_dir)),
+            (
+                "diff",
+                f"{len(report.changed_files)} changed, "
+                f"{len(report.missing_files)} missing, "
+                f"{len(report.extra_files)} extra",
+            ),
+            ("examples", "\n".join(examples) if examples else "(none)"),
+            ("update", f"specify extension update --dev {source_dir}"),
+        ],
+        subtitle="Installed Echelon extension differs from this checkout",
+    )
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -2272,6 +2318,8 @@ def _cmd_run(
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+    _print_extension_drift_warning(project_root, ext_dir)
 
     # Parse optional flags
     mode = "semi"
@@ -2698,6 +2746,10 @@ def _cmd_status(project_root: Path) -> None:
 
     print(flush=True)
     _banner("ECHELON STATUS", [("Project", str(project_root))])
+    _print_extension_drift_warning(
+        project_root,
+        project_root / ".specify" / "extensions" / "echelon",
+    )
 
     # ── Run state ───────────────────────────────────────────────────────────
     run_dir = _find_current_run_dir(project_root)
@@ -2791,6 +2843,8 @@ def _cmd_continue(
     - nothing found:         prints guidance to start a fresh echelon run
     """
     import json as _json
+
+    _print_extension_drift_warning(project_root, ext_dir)
 
     # Optionally accept --mode override
     mode_override = ""
@@ -3027,6 +3081,8 @@ def _cmd_resume(
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+    _print_extension_drift_warning(project_root, ext_dir)
 
     answer = " ".join(args).strip()
     if not answer:

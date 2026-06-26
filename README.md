@@ -45,6 +45,14 @@ specify extension update --dev ~/echelon/extension
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
 
+Terminal `echelon status`, `echelon run`, `echelon continue`, and `echelon resume`
+warn when the installed project extension under `.specify/extensions/echelon`
+differs from this checkout. When you see `EXTENSION DRIFT`, rerun:
+
+```bash
+specify extension update --dev ~/echelon/extension
+```
+
 ### Per-project setup (once per repo)
 
 ```bash

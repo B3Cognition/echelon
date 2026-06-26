@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
 
@@ -218,3 +219,31 @@ def test_status_prints_authoritative_spec_dir_for_active_squad_run(
     assert "RUN STATE" in captured.out
     assert "Spec" in captured.out
     assert "specs/071-rule-studio-narrative" in captured.out
+
+
+def test_status_warns_when_installed_extension_differs_from_source(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source = tmp_path / "source" / "extension"
+    installed = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (installed / "agents" / "control").mkdir(parents=True)
+    (source / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
+    (installed / "extension.yml").write_text("name: echelon\n", encoding="utf-8")
+    (source / "agents" / "control" / "commander.md").write_text(
+        "new\n",
+        encoding="utf-8",
+    )
+    (installed / "agents" / "control" / "commander.md").write_text(
+        "old\n",
+        encoding="utf-8",
+    )
+
+    with patch("echelon.cli._source_extension_dir", return_value=source):
+        _cmd_status(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "EXTENSION DRIFT" in captured.out
+    assert "agents/control/commander.md" in captured.out
+    assert "specify extension update --dev" in captured.out
