@@ -41,6 +41,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     now document the canonical verdict contract.
   - Next-step guidance for missing Phase A authoring artifacts now reports
     `PHASE A INCOMPLETE` rather than `BUILD BLOCKED`.
+- **EGR-019 RepairLoop adoption pilot** — the coordinator-owned Phase 3
+  review-fix/re-entry cycle now runs through the reusable `RepairLoop`
+  primitive while preserving existing review terminal and Phase 1 re-entry
+  semantics.
+  - Focused regression coverage asserts that review re-entry still injects
+    `review-fix-*.md` content into the next Phase 1 build prompt and that the
+    coordinator invokes `RepairLoop` for the bounded cycle.
 
 ### Added
 

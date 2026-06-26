@@ -27,6 +27,13 @@ from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxProvider
 from harness.ralph import RalphController
+from harness.repair_loop import (
+    RepairAttempt,
+    RepairCheck,
+    RepairCritique,
+    RepairLoop,
+    RepairVerdict,
+)
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
@@ -390,7 +397,15 @@ class StrategyCoordinator:
                         base_dir=str(self._base_dir),
                         build_id=self._build_id,
                     )
-                    for _ in range(self._config.review_loop.max_fix_iterations):
+                    def critique(_check: RepairCheck, iteration: int) -> RepairCritique:
+                        return RepairCritique(
+                            summary=f"review-loop-cycle-{iteration}",
+                            signature="",
+                        )
+
+                    def repair(_critique: RepairCritique, _iteration: int) -> RepairAttempt:
+                        nonlocal result
+
                         worktree_path = self._gitops.get_latest_worktree(
                             intent.spec_id, strategy_id, build_id=self._build_id,
                         )
@@ -409,7 +424,13 @@ class StrategyCoordinator:
                             final_verify=result.final_verify,
                         )
                         if review_result.status != "review_fix_queued":
-                            break
+                            return RepairAttempt(
+                                output={
+                                    "result": result,
+                                    "review_status": review_result.status,
+                                }
+                            )
+
                         # echelon.review queued new fix tasks — re-run Phase 1
                         # Inject all review-fix content so Claude knows what to address.
                         reentry_prompt = self._build_reentry_prompt(
@@ -423,8 +444,65 @@ class StrategyCoordinator:
                             strategy_context=spec.context,
                             build_prompt=reentry_prompt,
                         )
-                        if result.status != "converged":
-                            break
+                        return RepairAttempt(
+                            output={
+                                "result": result,
+                                "review_status": review_result.status,
+                            }
+                        )
+
+                    def recheck(attempt: RepairAttempt, _iteration: int) -> RepairCheck:
+                        payload = attempt.output if isinstance(attempt.output, dict) else {}
+                        payload_result = payload.get("result")
+                        current = (
+                            payload_result
+                            if isinstance(payload_result, LoopResult)
+                            else result
+                        )
+                        review_status = str(payload.get("review_status") or "")
+
+                        if review_status != "review_fix_queued":
+                            return RepairCheck(
+                                verdict=(
+                                    RepairVerdict.ACCEPT
+                                    if current.status == "converged"
+                                    else RepairVerdict.BLOCK
+                                ),
+                                output=current,
+                                reason=current.termination_reason,
+                                tokens=0,
+                            )
+
+                        if current.status == "converged":
+                            return RepairCheck(
+                                verdict=RepairVerdict.CONTINUE,
+                                output=current,
+                                reason=current.termination_reason,
+                                tokens=0,
+                            )
+
+                        return RepairCheck(
+                            verdict=RepairVerdict.BLOCK,
+                            output=current,
+                            reason=current.termination_reason,
+                            tokens=0,
+                        )
+
+                    repair_loop_result = RepairLoop(
+                        max_repairs=self._config.review_loop.max_fix_iterations,
+                        critique=critique,
+                        repair=repair,
+                        recheck=recheck,
+                    ).run(
+                        RepairCheck(
+                            verdict=RepairVerdict.CONTINUE,
+                            output=result,
+                            reason=result.termination_reason,
+                            tokens=result.tokens_used,
+                        )
+                    )
+                    if isinstance(repair_loop_result.final_check.output, LoopResult):
+                        result = repair_loop_result.final_check.output
 
             return result
 

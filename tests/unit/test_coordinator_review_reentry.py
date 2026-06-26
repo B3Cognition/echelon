@@ -10,6 +10,7 @@ import pytest
 from harness.config import HarnessConfig, ReviewLoopConfig
 from harness.coordinator import StrategyCoordinator
 from harness.loop_result import LoopResult
+from harness.repair_loop import RepairLoop
 from harness.run_intent import RunIntent
 
 
@@ -146,9 +147,16 @@ class TestCoordinatorReviewReentry:
             max_outer=1,
             max_inner=1,
         )
+        repair_loop_runs = []
+
+        class SpyRepairLoop(RepairLoop):
+            def run(self, draft):
+                repair_loop_runs.append(draft)
+                return super().run(draft)
 
         with patch("harness.coordinator.RalphController") as MockRalph, \
              patch("harness.coordinator.ReviewLoopController") as MockReview, \
+             patch("harness.coordinator.RepairLoop", SpyRepairLoop, create=True), \
              patch("harness.coordinator.StateStore") as MockState, \
              patch("harness.coordinator.load_strategies") as mock_strat, \
              patch("subprocess.run", side_effect=[ls_result, show_result]):
@@ -179,6 +187,8 @@ class TestCoordinatorReviewReentry:
             mock_strat.return_value = {"default": StrategySpec()}
 
             coord._run_strategy(intent, "default", budget=None, spec=StrategySpec())
+
+        assert len(repair_loop_runs) == 1
 
         # Phase 1 was called twice
         assert ralph_instance.run_loop.call_count == 2
