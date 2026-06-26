@@ -21,6 +21,7 @@ from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
     StagedParallelExecutor,
+    _canonical_echelon_result_contract,
     _allowed_state_updates_contract,
 )
 from harness.squad_provider import SquadAgentResult
@@ -191,7 +192,7 @@ def test_parallel_results_written_serially(tmp_path):
     assert types == {"challenge", "quality_check"}
 
 
-def test_invalid_registered_entry_gets_schema_warning_sibling(tmp_path):
+def test_invalid_registered_entry_is_quarantined_as_schema_warning(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
         _result(
@@ -210,9 +211,9 @@ def test_invalid_registered_entry_gets_schema_warning_sibling(tmp_path):
     )
 
     entries = _read_journal(tmp_path)
-    assert [entry["type"] for entry in entries] == ["routing_decision", "schema_warning"]
-    assert entries[1]["data"]["violating_entry_id"] == entries[0]["id"]
-    assert entries[1]["data"]["violation_type"] == "missing_required_field"
+    assert [entry["type"] for entry in entries] == ["schema_warning"]
+    assert entries[0]["data"]["violating_entry_type"] == "routing_decision"
+    assert entries[0]["data"]["violation_type"] == "missing_required_field"
 
 
 def test_unknown_entry_type_is_preserved_without_schema_warning(tmp_path):
@@ -510,6 +511,15 @@ def test_allowed_state_updates_contract_renders_empty_allowlist():
     assert "state_updates: {}" in contract
 
 
+def test_canonical_result_contract_includes_schema_complete_journal_entry_shape(tmp_path):
+    contract = _canonical_echelon_result_contract(tmp_path / "missing-ext")
+
+    assert "Registered journal-entry types require `data`" in contract
+    assert "data:" in contract
+    assert "artifact:" in contract
+    assert "reasoning:" in contract
+
+
 def test_journal_written_to_squad_dir(tmp_path):
     """Journal entries go to squad_dir/reasoning-journal.jsonl, not .specify/squad."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -566,7 +576,9 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert prompt.index("## Shared Agent Contract") < prompt.index("# Scout")
     assert prompt.index("# Scout") < prompt.index("# Squad Run Context")
     assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
-    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "Registered journal-entry types require `data`" in prompt
+    assert "    - type: insight" in prompt
+    assert "        evidence_grade: <A|B|C|D|E>" in prompt
     assert "NEVER emit `<echelon_result>` XML" in prompt
 
 
@@ -825,7 +837,9 @@ def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     assert prompt.index("## Shared Agent Contract") < prompt.index("# WHY3")
     assert prompt.index("# WHY3") < prompt.index("# Squad Run Context")
     assert "## Canonical echelon_result contract — REQUIRED FINAL BLOCK" in prompt
-    assert prompt.rstrip().endswith("    - type: <entry_type>")
+    assert "Registered journal-entry types require `data`" in prompt
+    assert "    - type: insight" in prompt
+    assert "        evidence_grade: <A|B|C|D|E>" in prompt
     assert "NEVER emit `<echelon_result>` XML" in prompt
 
 

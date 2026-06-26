@@ -650,6 +650,9 @@
         "violating_entry_id",
         "violation_type",
         "details"
+      ],
+      "optional_data_fields": [
+        "violating_entry_type"
       ]
     },
     "unknown": {

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -103,8 +103,9 @@ def prepare_journal_entries_for_append(
     next_id: int,
     timestamp: str,
     schema_path: Path | None = None,
+    invalid_registered_policy: Literal["warn", "quarantine"] = "warn",
 ) -> list[dict[str, Any]]:
-    """Assign journal metadata and add schema_warning siblings when needed."""
+    """Assign journal metadata and add schema_warning entries when needed."""
     prepared: list[dict[str, Any]] = []
     current_id = next_id
     for raw_entry in entries:
@@ -118,19 +119,32 @@ def prepare_journal_entries_for_append(
             entry["timestamp"] = timestamp
         if entry.get("phase") is None:
             entry["phase"] = phase_id
-        prepared.append(entry)
-        current_id += 1
 
         verdict = validate_journal_entry(entry, schema_path=schema_path)
         if not verdict.valid:
+            warning_id = (
+                current_id + 1
+                if invalid_registered_policy == "warn"
+                else current_id
+            )
             warning = _schema_warning_entry(
                 entry=entry,
                 verdict=verdict,
-                warning_id=current_id,
+                warning_id=warning_id,
                 timestamp=timestamp,
             )
+            if invalid_registered_policy == "quarantine":
+                prepared.append(warning)
+                current_id += 1
+                continue
+
+            prepared.append(entry)
             prepared.append(warning)
-            current_id += 1
+            current_id += 2
+            continue
+
+        prepared.append(entry)
+        current_id += 1
 
     return prepared
 
@@ -151,6 +165,7 @@ def _schema_warning_entry(
         "timestamp": timestamp,
         "data": {
             "violating_entry_id": entry.get("id", "unknown"),
+            "violating_entry_type": entry.get("type", "unknown"),
             "violation_type": _violation_type(details),
             "details": details,
         },

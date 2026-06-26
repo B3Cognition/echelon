@@ -63,6 +63,8 @@ _FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
 # Rules:
 # - ALWAYS include state_updates; use {} when no state changes are needed.
 # - ALWAYS include journal_entries; use [] when no journal entries are needed.
+# - Registered journal-entry types require `data` with all required fields from
+#   extension/workflow/journal-entry-types.yaml.
 # - NEVER wrap this block in markdown fences such as ```yaml or ```echelon_result.
 # - NEVER emit `<echelon_result>` XML, JSON, or prose-only summaries as the contract.
 # - NEVER put summaries, bullets, or sign-off text after the echelon_result block.
@@ -73,7 +75,13 @@ echelon_result:
     - <path/to/artifact.md>
   state_updates: {}
   journal_entries:
-    - type: <entry_type>"""
+    - type: insight
+      data:
+        artifact: <artifact-or-file>
+        section: <section-or-topic>
+        reasoning: <grounded reason for this entry>
+        confidence: <0.0-1.0>
+        evidence_grade: <A|B|C|D|E>"""
 
 
 def _canonical_echelon_result_contract(ext_dir: Path) -> str:
@@ -346,6 +354,7 @@ class PhaseExecutor(ABC):
             next_id=next_id,
             timestamp=ts,
             schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
+            invalid_registered_policy="quarantine",
         )
         with journal_path.open("a") as fh:
             for entry in prepared_entries:

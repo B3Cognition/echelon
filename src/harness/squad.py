@@ -1134,6 +1134,7 @@ class SquadController:
             next_id=next_id,
             timestamp=ts,
             schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
+            invalid_registered_policy="quarantine",
         )
         with journal_path.open("a") as fh:
             for entry in prepared_entries:

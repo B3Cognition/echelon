@@ -130,6 +130,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - `src/harness/squad_executors.py` and `src/harness/squad.py` now append canonical `schema_warning` sibling entries when invalid registered journal entries are returned by agents or COMMANDER judgment dispatches.
   - Focused tests added in `tests/unit/test_journal_entry_validator.py` and `tests/kernel/test_squad_executors_journal.py`.
   - Verification: `pytest tests/unit/test_journal_entry_validator.py tests/kernel/test_squad_executors_journal.py tests/integration/test_journal_append_helper.py -q` (`58 passed`); `pytest tests/kernel -q` (`572 passed`).
+- **EGR-023 strict journal-entry runtime handling** — tightened Python journal writers so invalid registered entries are quarantined instead of persisted as first-class journal records.
+  - `prepare_journal_entries_for_append()` now supports an explicit `invalid_registered_policy="quarantine"` mode while preserving DR-001 warn-then-allow as the default helper behavior for shell compatibility.
+  - Squad and COMMANDER Python journal writers use quarantine mode: invalid registered entries are replaced by canonical `schema_warning` entries, while unknown future types remain preserved.
+  - The canonical `echelon_result` template now shows schema-complete `journal_entries.data` for the registered `insight` type instead of the old sparse `type: <entry_type>` example.
+  - Focused tests added/updated in `tests/unit/test_journal_entry_validator.py` and `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/unit/test_journal_entry_validator.py tests/kernel/test_squad_executors_journal.py tests/integration/test_journal_append_helper.py -q` (`60 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`573 passed`).
 
 ## [2.1.0] - 2026-05-17
 
