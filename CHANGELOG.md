@@ -144,9 +144,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - Verification: `pytest tests/unit/test_journal_prompt_validator.py tests/kernel/test_prompt_references.py -q` (`46 passed`); `bash tests/unit/test-json-freshness.sh` passed; `pytest tests/kernel -q` (`574 passed`).
 - **EGR-021 installed extension drift detection** — added a deterministic warning when terminal CLI commands see stale installed extension content.
   - `src/harness/extension_drift.py` fingerprints shipped extension files while ignoring project-local `echelon-config.yml` and `local-config.yml`.
-  - `echelon status`, `echelon run`, `echelon continue`, and `echelon resume` now print an `EXTENSION DRIFT` banner with changed/missing/extra counts, sample paths, and the `specify extension update --dev ...` command.
+  - Drift detection now requires a trusted source path: `ECHELON_EXTENSION_SOURCE`, an installed `.echelon-source.json` marker, or a verified editable checkout. Packaged installs without a known source stay silent instead of guessing a machine-local checkout.
+  - `echelon status`, `echelon run`, `echelon continue`, and `echelon resume` now print an `EXTENSION DRIFT` banner with changed/missing/extra counts, sample paths, and the `specify extension update --dev ...` command when a trusted source is available.
   - Focused tests added in `tests/unit/test_extension_drift.py`; `tests/unit/test_cli_status.py` covers the operator-facing warning.
-  - Verification: `pytest tests/unit/test_extension_drift.py tests/unit/test_cli_status.py tests/unit/test_readme_tool_policy_docs.py -q` (`14 passed`); `pytest tests/kernel -q` (`574 passed`); `pytest -q` (`2403 passed, 22 skipped`).
+  - Verification: `pytest tests/unit/test_extension_drift.py tests/unit/test_cli_status.py tests/unit/test_readme_tool_policy_docs.py -q` (`19 passed`); `pytest tests/kernel -q` (`574 passed`); `pytest -q` (`2408 passed, 22 skipped`).
 
 ## [2.1.0] - 2026-05-17
 

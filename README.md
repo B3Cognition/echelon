@@ -47,7 +47,10 @@ Knowledge-base data (calibration, feedback, patterns) is protected by `.extensio
 
 Terminal `echelon status`, `echelon run`, `echelon continue`, and `echelon resume`
 warn when the installed project extension under `.specify/extensions/echelon`
-differs from this checkout. When you see `EXTENSION DRIFT`, rerun:
+differs from a trusted source extension. In a dev checkout this is detected
+automatically; otherwise set `ECHELON_EXTENSION_SOURCE` to your Echelon repo or
+extension directory before running the command. When you see `EXTENSION DRIFT`,
+rerun:
 
 ```bash
 specify extension update --dev ~/echelon/extension

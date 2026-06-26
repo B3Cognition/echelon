@@ -2261,17 +2261,25 @@ def _select_squad_dir(
     return existing_dir, False
 
 
-def _source_extension_dir() -> Path:
-    """Best-effort source checkout extension path for drift checks."""
+def _inferred_source_extension_dir() -> Path:
+    """Possible dev-checkout extension path for source-aware drift checks."""
     return Path(__file__).resolve().parents[2] / "extension"
 
 
 def _print_extension_drift_warning(project_root: Path, ext_dir: Path) -> None:
-    """Warn when installed project extension content differs from source checkout."""
+    """Warn when installed extension differs from a trusted source extension."""
     try:
-        from harness.extension_drift import assess_extension_drift
+        from harness.extension_drift import (
+            assess_extension_drift,
+            resolve_extension_source_dir,
+        )
 
-        source_dir = _source_extension_dir()
+        source_dir = resolve_extension_source_dir(
+            ext_dir,
+            inferred_source_dir=_inferred_source_extension_dir(),
+        )
+        if source_dir is None:
+            return
         report = assess_extension_drift(source_dir, ext_dir)
     except Exception:
         return

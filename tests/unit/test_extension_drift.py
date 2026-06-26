@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from harness.extension_drift import assess_extension_drift
+from harness.extension_drift import assess_extension_drift, resolve_extension_source_dir
 
 
 def _write(path: Path, text: str) -> None:
@@ -57,3 +57,69 @@ def test_assess_extension_drift_ignores_project_local_config(tmp_path: Path) -> 
 
     assert report.status == "in_sync"
     assert report.drifted is False
+
+
+def test_resolve_extension_source_dir_uses_explicit_env_repo_root(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "checkout"
+    installed = tmp_path / "project" / ".specify" / "extensions" / "echelon"
+    _write(source_root / "extension" / "extension.yml", "name: echelon\n")
+
+    resolved = resolve_extension_source_dir(
+        installed,
+        env={"ECHELON_EXTENSION_SOURCE": str(source_root)},
+    )
+
+    assert resolved == (source_root / "extension").resolve()
+
+
+def test_resolve_extension_source_dir_uses_installed_source_marker(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "checkout" / "extension"
+    installed = tmp_path / "project" / ".specify" / "extensions" / "echelon"
+    _write(source / "extension.yml", "name: echelon\n")
+    _write(
+        installed / ".echelon-source.json",
+        '{"source_extension_dir": "' + str(source) + '"}\n',
+    )
+
+    resolved = resolve_extension_source_dir(installed, env={})
+
+    assert resolved == source.resolve()
+
+
+def test_resolve_extension_source_dir_rejects_unverified_inferred_path(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "site-packages-like" / "extension"
+    installed = tmp_path / "project" / ".specify" / "extensions" / "echelon"
+    _write(source / "extension.yml", "name: echelon\n")
+
+    resolved = resolve_extension_source_dir(
+        installed,
+        env={},
+        inferred_source_dir=source,
+    )
+
+    assert resolved is None
+
+
+def test_resolve_extension_source_dir_accepts_verified_dev_checkout(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "checkout"
+    source = source_root / "extension"
+    installed = tmp_path / "project" / ".specify" / "extensions" / "echelon"
+    _write(source / "extension.yml", "name: echelon\n")
+    _write(source_root / "pyproject.toml", "[project]\nname = 'echelon'\n")
+    (source_root / ".git").mkdir()
+
+    resolved = resolve_extension_source_dir(
+        installed,
+        env={},
+        inferred_source_dir=source,
+    )
+
+    assert resolved == source.resolve()
