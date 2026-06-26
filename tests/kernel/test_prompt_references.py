@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from harness.journal_prompt_validator import validate_prompt_journal_examples
+from harness.verdict_contract_validator import validate_verdict_contracts
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +94,16 @@ def test_prompt_journal_entry_examples_match_canonical_schema():
     assert not findings, "\n".join(
         f"{finding.path.relative_to(REPO_ROOT)}:{finding.line}: "
         f"{finding.entry_type}: {finding.reason}: {finding.details}"
+        for finding in findings
+    )
+
+
+def test_prompt_verdict_contracts_match_canonical_sources():
+    findings = validate_verdict_contracts(REPO_ROOT)
+
+    assert not findings, "\n".join(
+        f"{finding.path.relative_to(REPO_ROOT)}:{finding.line}: "
+        f"{finding.phase_id}: {finding.reason}: {finding.details}"
         for finding in findings
     )
 

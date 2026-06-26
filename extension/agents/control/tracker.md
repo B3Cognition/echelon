@@ -139,7 +139,7 @@ LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lex
 $LEXICON validate "{spec_dir}/intent-alignment-check.md" --type structural --artifact intent-alignment-check --spec-ref "{spec_dir}/spec.md" --json
 ```
 
-Parse JSON; on `ok:false` apply the smallest fix per finding (`missing-section` → add the section; `missing-verdict` → state ALIGNED/DRIFTING/ESCALATE explicitly; `unresolved-ref` → correct the id; `placeholder` → fill). Re-run, up to `max_repair`. Emit in `echelon_result.state_updates`:
+Parse JSON; on `ok:false` apply the smallest fix per finding (`missing-section` → add the section; `missing-verdict` → state ALIGNED/DRIFT/STOP_AND_ASK explicitly; `unresolved-ref` → correct the id; `placeholder` → fill). Re-run, up to `max_repair`. Emit in `echelon_result.state_updates`:
 
 ```yaml
 echelon_result:

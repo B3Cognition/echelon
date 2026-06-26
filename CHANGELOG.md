@@ -53,6 +53,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   allowing explicit result fields, known config/derived predicates, declared
   current/prior phase `allowed_state_updates`, transition `state_update` keys,
   and declared output fields.
+- **EGR-026 verdict-contract static validation** — explicit routing verdict
+  contracts in phase specs are now checked against workflow transition
+  verdicts, related agent prompts, and related templates; the tracker prompt's
+  stale `DRIFTING` / `ESCALATE` repair instruction was migrated to canonical
+  `DRIFT` / `STOP_AND_ASK`.
 
 ### Changed
 
