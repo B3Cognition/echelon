@@ -5,7 +5,7 @@ import sys
 import textwrap
 from typing import IO, Any
 
-CARD_INNER = 52  # characters between ╭ and ╮
+CARD_INNER = 78  # 80 columns including ╭/╮ or │/│ borders
 
 
 def banner(

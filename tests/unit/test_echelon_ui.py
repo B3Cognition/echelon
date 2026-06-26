@@ -40,7 +40,6 @@ def test_banner_wraps_long_subtitle_without_ellipsis() -> None:
 
     output = buf.getvalue()
     assert "…" not in output
-    assert "Installed Echelon extension differs from the" in output
-    assert "trusted source extension configured for this" in output
-    assert "project" in output
+    assert "Installed Echelon extension differs from the trusted source extension" in output
+    assert "configured for this project" in output
     assert all(len(line) == CARD_INNER + 2 for line in _box_lines(output))
