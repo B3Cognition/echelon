@@ -125,6 +125,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - The README no longer describes Claude as always running with `--dangerously-skip-permissions`.
   - It now documents that unsafe provider bypass flags are only added when `harness.llm.tool_policy.allow_unsafe_host_execution: true` is configured with an `approval_reason`.
   - Focused regression test added in `tests/unit/test_readme_tool_policy_docs.py`.
+- **EGR-018 Python journal-entry validation** — added a Python validator for reasoning-journal entries and wired both Python journal writers through it.
+  - `src/harness/journal_entry_validator.py` validates registered entry types against `extension/workflow/journal-entry-types.yaml`, preserves unknown types with warnings, and mirrors the existing DR-001 warn-then-allow behavior for registered entries missing required data fields.
+  - `src/harness/squad_executors.py` and `src/harness/squad.py` now append canonical `schema_warning` sibling entries when invalid registered journal entries are returned by agents or COMMANDER judgment dispatches.
+  - Focused tests added in `tests/unit/test_journal_entry_validator.py` and `tests/kernel/test_squad_executors_journal.py`.
+  - Verification: `pytest tests/unit/test_journal_entry_validator.py tests/kernel/test_squad_executors_journal.py tests/integration/test_journal_append_helper.py -q` (`58 passed`); `pytest tests/kernel -q` (`572 passed`).
 
 ## [2.1.0] - 2026-05-17
 

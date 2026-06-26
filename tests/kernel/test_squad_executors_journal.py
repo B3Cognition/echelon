@@ -58,6 +58,42 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
     )
 
 
+def _journal_entry(entry_type: str = "insight", **overrides) -> dict:
+    data_by_type = {
+        "insight": {
+            "artifact": "spec.md",
+            "section": "requirements",
+            "reasoning": "test reasoning",
+            "confidence": 0.8,
+            "evidence_grade": "B",
+        },
+        "assumption": {
+            "artifact": "spec.md",
+            "section": "assumptions",
+            "reasoning": "test assumption",
+            "validation_method": "review",
+        },
+        "challenge": {
+            "artifact": "spec.md",
+            "section": "requirements",
+            "reasoning": "test challenge",
+            "confidence": 0.7,
+            "severity": "medium",
+            "action_required": "clarify",
+        },
+        "quality_check": {
+            "pass": True,
+            "scores": {"structure": 0.8},
+            "issues": [],
+        },
+    }
+    entry = {"type": entry_type}
+    if entry_type in data_by_type:
+        entry["data"] = data_by_type[entry_type]
+    entry.update(overrides)
+    return entry
+
+
 def _read_journal(tmp_path: Path, squad_dir: Path = None) -> list[dict]:
     if squad_dir is None:
         squad_dir = tmp_path / "squad" / "run-test"
@@ -76,7 +112,7 @@ def test_no_entries_writes_nothing(tmp_path):
 def test_single_entry_written(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight", "data": {"msg": "hello"}}]),
+        _result(entries=[_journal_entry("insight")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -90,7 +126,7 @@ def test_single_entry_written(tmp_path):
 def test_ids_are_monotonically_increasing(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight"}, {"type": "assumption"}]),
+        _result(entries=[_journal_entry("insight"), _journal_entry("assumption")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -100,8 +136,8 @@ def test_ids_are_monotonically_increasing(tmp_path):
 
 def test_second_call_continues_id_sequence(tmp_path):
     ex = _executor(tmp_path)
-    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
-    ex._write_journal_entries(_result(entries=[{"type": "challenge"}]), "phase1-b")
+    ex._write_journal_entries(_result(entries=[_journal_entry("insight")]), "phase1-a")
+    ex._write_journal_entries(_result(entries=[_journal_entry("challenge")]), "phase1-b")
     entries = _read_journal(tmp_path)
     assert len(entries) == 2
     assert entries[0]["id"] == 1
@@ -111,7 +147,7 @@ def test_second_call_continues_id_sequence(tmp_path):
 def test_existing_id_not_overwritten(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight", "id": 99}]),
+        _result(entries=[_journal_entry("insight", id=99)]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -121,7 +157,7 @@ def test_existing_id_not_overwritten(tmp_path):
 def test_existing_phase_not_overwritten(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=[{"type": "insight", "phase": "already-set"}]),
+        _result(entries=[_journal_entry("insight", phase="already-set")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -131,7 +167,7 @@ def test_existing_phase_not_overwritten(tmp_path):
 def test_non_dict_entries_skipped(tmp_path):
     ex = _executor(tmp_path)
     ex._write_journal_entries(
-        _result(entries=["not-a-dict", None, {"type": "insight"}]),
+        _result(entries=["not-a-dict", None, _journal_entry("insight")]),
         "phase1-discover",
     )
     entries = _read_journal(tmp_path)
@@ -142,8 +178,8 @@ def test_non_dict_entries_skipped(tmp_path):
 def test_parallel_results_written_serially(tmp_path):
     """Simulate stage-1 parallel agents: journal written after join, ids contiguous."""
     ex = _executor(tmp_path)
-    why3_result = _result(entries=[{"type": "challenge", "agent": "why3"}])
-    assess2_result = _result(entries=[{"type": "quality_check", "agent": "assess2"}])
+    why3_result = _result(entries=[_journal_entry("challenge", agent="why3")])
+    assess2_result = _result(entries=[_journal_entry("quality_check", agent="assess2")])
     # Both calls happen after ThreadPoolExecutor join — serial by construction
     ex._write_journal_entries(why3_result, "phase3-consensus")
     ex._write_journal_entries(assess2_result, "phase3-consensus")
@@ -153,6 +189,42 @@ def test_parallel_results_written_serially(tmp_path):
     assert entries[1]["id"] == 2
     types = {e["type"] for e in entries}
     assert types == {"challenge", "quality_check"}
+
+
+def test_invalid_registered_entry_gets_schema_warning_sibling(tmp_path):
+    ex = _executor(tmp_path)
+    ex._write_journal_entries(
+        _result(
+            entries=[
+                {
+                    "type": "routing_decision",
+                    "data": {
+                        "from_phase": "phase1-why1",
+                        "to_phase": "phase2-how",
+                        "reason": "missing evoi score",
+                    },
+                }
+            ]
+        ),
+        "phase1-why1",
+    )
+
+    entries = _read_journal(tmp_path)
+    assert [entry["type"] for entry in entries] == ["routing_decision", "schema_warning"]
+    assert entries[1]["data"]["violating_entry_id"] == entries[0]["id"]
+    assert entries[1]["data"]["violation_type"] == "missing_required_field"
+
+
+def test_unknown_entry_type_is_preserved_without_schema_warning(tmp_path):
+    ex = _executor(tmp_path)
+    ex._write_journal_entries(
+        _result(entries=[{"type": "new_future_signal", "data": {"anything": True}}]),
+        "phase1-discover",
+    )
+
+    entries = _read_journal(tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["type"] == "new_future_signal"
 
 
 # ── SquadController._judgment_dispatch journal coverage ──────────────────────
@@ -227,7 +299,7 @@ def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
                     "id": None,
                     "timestamp": None,
                     "phase": None,
-                    "type": "quality_check",
+                    **_journal_entry("quality_check"),
                 }
             ],
         },
@@ -262,7 +334,7 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
     shared_squad_dir = tmp_path / "squad" / "run-test"
     shared_squad_dir.mkdir(parents=True, exist_ok=True)
     ex = _executor(tmp_path, squad_dir=shared_squad_dir)
-    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
+    ex._write_journal_entries(_result(entries=[_journal_entry("insight")]), "phase1-a")
 
     ctrl, provider = _squad_controller(tmp_path)
     provider.exec_agent.return_value = SquadAgentResult(
@@ -443,7 +515,7 @@ def test_journal_written_to_squad_dir(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     ex = _executor(tmp_path, squad_dir=squad_dir)
-    ex._write_journal_entries(_result(entries=[{"type": "insight"}]), "phase1-a")
+    ex._write_journal_entries(_result(entries=[_journal_entry("insight")]), "phase1-a")
     journal = squad_dir / "reasoning-journal.jsonl"
     assert journal.exists()
     assert not (tmp_path / ".specify/squad/reasoning-journal.jsonl").exists()

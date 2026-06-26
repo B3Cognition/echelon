@@ -324,6 +324,7 @@ class PhaseExecutor(ABC):
         """
         import json
         from datetime import datetime, timezone
+        from harness.journal_entry_validator import prepare_journal_entries_for_append
 
         entries = (result.echelon_result or {}).get("journal_entries", [])
         if not entries:
@@ -339,18 +340,16 @@ class PhaseExecutor(ABC):
             next_id = len(lines) + 1
 
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        prepared_entries = prepare_journal_entries_for_append(
+            entries,
+            phase_id=phase_id,
+            next_id=next_id,
+            timestamp=ts,
+            schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
+        )
         with journal_path.open("a") as fh:
-            for entry in entries:
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("id") is None:
-                    entry["id"] = next_id
-                if entry.get("timestamp") is None:
-                    entry["timestamp"] = ts
-                if entry.get("phase") is None:
-                    entry["phase"] = phase_id
+            for entry in prepared_entries:
                 fh.write(json.dumps(entry, default=lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)) + "\n")
-                next_id += 1
 
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         static_parts: list[str] = []
