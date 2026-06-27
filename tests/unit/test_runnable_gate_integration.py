@@ -3,8 +3,8 @@
 Covers:
   - TaskQueue + inject_compose_task: COMPOSE scheduled last (C3 guarantee)
   - parse_runnable_contract: valid SPA contract parses cleanly
-  - run_runnable_gate with stub probe: HOLLOW app (boots but primary surface absent) → fail
-  - run_runnable_gate with stub probe: fully-present composed app → pass
+  - run_runnable_gate with stub probe: HOLLOW app (liveness signal but primary evidence absent) → fail
+  - run_runnable_gate with stub probe: fully-present composition evidence → pass
   - Wiring guard: echelon.codegen.md lists codegen-6c-runnable BEFORE codegen-7-deliver
   - Wiring guard: codegen-7-deliver.md blocks on runnable_gate
 """
@@ -87,11 +87,11 @@ def test_parse_valid_spa_contract():
 
 @pytest.mark.unit
 def test_runnable_gate_hollow_app_fails():
-    """App that boots but primary surface absent → gate returns passed=False (DELIVER blocked)."""
+    """Liveness signal with absent primary evidence returns passed=False."""
     contract = parse_runnable_contract(_VALID_SPA_CONTRACT)
 
     def hollow_probe(workspace, c, port):
-        # App is live but the primary surface (FR-001) is not rendered.
+        # Probe reports liveness but primary evidence (FR-001) is absent.
         return ProbeOutcome(live=True, present={"FR-001": False})
 
     result = run_runnable_gate(contract, ".", probe_fn=hollow_probe)
@@ -107,7 +107,7 @@ def test_runnable_gate_hollow_app_fails():
 
 @pytest.mark.unit
 def test_runnable_gate_composed_app_passes():
-    """App that boots with all surfaces rendered → gate returns passed=True."""
+    """Present primary and secondary evidence returns passed=True."""
     contract = parse_runnable_contract(_VALID_SPA_CONTRACT)
 
     def full_probe(workspace, c, port):

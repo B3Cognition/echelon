@@ -2,13 +2,15 @@
 # Source: design 2026-06-22-codegen-runnable-composition-gate
 # Read by: speckit-echelon-orchestrator before Phase 6c RUNNABLE (echelon.codegen only)
 
-## Phase 6c: RUNNABLE — the composed whole must run
+## Phase 6c: RUNNABLE — static composition probe
 
-**Print:** `[CODEGEN] Phase RUNNABLE — Verifying the composed app boots and its primary surface renders...`
+**Print:** `[CODEGEN] Phase RUNNABLE — Verifying build plus static feature composition...`
 
 Runs AFTER SECURITY, BEFORE DELIVER. Skill-layer phase (NOT the Ψ `codegen gate`).
-Execute in an ephemeral workspace with an OS-assigned port and a teardown trap that
-fires on pass/fail/timeout (no leaked servers or browsers).
+Execute in an ephemeral workspace. For SPA projects this gate performs a build
+and static component-composition probe; it does NOT start a browser, observe a
+rendered page, call a backend, or prove real runtime behavior. Higher-fidelity
+runtime/browser verification is a future gate, not this one.
 
 1. Load `runnable_contract` from `codegen-state.json`. Missing/invalid → HALT + escalate (fail-closed).
 2. Run the gate:
@@ -28,14 +30,17 @@ print("RUNNABLE", state["runnable_gate"], "L2", result.surface_score, result.fai
 PY
 ```
 
-3. **L1 = liveness AND primary_surface.** Outcome:
+3. **L1 = build succeeds AND static composition is real.** Outcome:
    - `runnable_gate: pass` → ADVANCE to DELIVER.
    - `runnable_gate: fail` → **reopen the COMPOSE task** (`T-999` → status `PENDING`) with the
      failure as the re-dispatch reason, route back to IMPLEMENT. Cap at `runnable.max_attempts`
      (default 3); on exhaustion ESCALATE per `runnable.on_exhausted` (default `block`).
 4. L2 `runnable_surface_score` is recorded (advisory/ramping); it does not block initially.
 
-ALWAYS block on L1 failure and reopen COMPOSE; the composed whole must boot AND render its primary surface.
+ALWAYS block on L1 failure and reopen COMPOSE; the composed entry must build and
+statically mount real feature components rather than a shell/stub.
 NEVER advance to DELIVER with `runnable_gate != pass`.
+NEVER claim RUNNABLE proves the app booted, rendered in a browser, worked with
+real data, or exercised cross-service integration.
 
-**Print:** `[CODEGEN] Phase RUNNABLE — COMPLETE ✓ (app boots; primary surface renders)`
+**Print:** `[CODEGEN] Phase RUNNABLE — COMPLETE ✓ (static composition passed)`

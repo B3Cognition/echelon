@@ -1,8 +1,10 @@
-"""Executes a runnable_contract against the composed whole. L1 (hard) = liveness
-AND the primary surface; L2 (scored) = remaining surfaces. The probe_fn is
-injected so the L1/L2 decision logic is pure and unit-testable; the real probe
-families (browser/http/exec) and the ephemeral-sandbox lifecycle wrap it (Task 5
-in the design's execution-environment section)."""
+"""Executes a runnable_contract against the composed whole.
+
+For the current SPA probe, L1 (hard) is build success plus static feature
+composition evidence. It does not observe a browser-rendered runtime surface.
+The probe_fn is injected so the L1/L2 decision logic is pure and unit-testable;
+future higher-fidelity probe families can wrap the same decision boundary.
+"""
 from __future__ import annotations
 
 import os
@@ -137,8 +139,8 @@ def _browser_probe(workspace: str, contract: RunnableContract, port: int | None)
     """SPA composition probe: run the build, then assert the composed entry
     actually mounts feature components (not a stub). Deterministic, no browser
     or backend — catches the entry-point/composition gap that shipped a Psi=1.0
-    app rendering nothing. (A full headless-render check is a higher-fidelity
-    follow-up; this catches the motivating stub bug today.)"""
+    app with a hollow entry. (A full headless-render check is a higher-fidelity
+    follow-up; this catches the motivating static-composition bug today.)"""
     built_ok = True
     if contract.build:
         try:
@@ -152,11 +154,11 @@ def _browser_probe(workspace: str, contract: RunnableContract, port: int | None)
 
     evidence = _gather_composition_evidence(workspace)
     composed = composition_is_real(evidence)
-    # liveness = the app builds AND its entry composes real components (a stub
-    # that "builds" but mounts nothing is not live in any meaningful sense).
+    # Current SPA "liveness" means the app builds AND its entry composes real
+    # components. It is static evidence, not browser/runtime render evidence.
     live = built_ok and composed
     # every declared surface shares the composition signal (no per-surface
-    # render data without a backend); L2 is scored/non-blocking regardless.
+    # runtime render data without a backend); L2 is scored/non-blocking regardless.
     present = {contract.primary_surface["req"]: composed}
     for s in contract.surfaces:
         present[s["req"]] = composed

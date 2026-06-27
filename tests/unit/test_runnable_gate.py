@@ -32,8 +32,8 @@ def test_l1_fails_when_not_live():
 
 @pytest.mark.unit
 def test_stub_fails_l1_even_though_live():
-    # THE HEADLINE ANTI-REGRESSION CASE: app boots (live=True) but the primary
-    # surface does not render — exactly this session's Psi=1.0 stub.
+    # THE HEADLINE ANTI-REGRESSION CASE: a probe reports liveness but the
+    # primary requirement evidence is absent.
     probe = lambda ws, c, port: ProbeOutcome(live=True, present={"FR-001": False, "FR-006": False})
     r = run_runnable_gate(_contract(), "/tmp/ws", probe_fn=probe)
     assert r.passed is False
@@ -88,6 +88,24 @@ def test_runnable_phase_spec_exists_and_blocks_deliver():
     assert "runnable_gate" in rtext and "reopen" in rtext.lower()
     # DELIVER must refuse unless runnable_gate == pass
     assert 'runnable_gate' in deliver.read_text()
+
+
+@pytest.mark.unit
+def test_runnable_phase_spec_does_not_claim_runtime_render_evidence():
+    runnable = pathlib.Path("extension/workflow/phases/codegen-6c-runnable.md")
+    deliver = pathlib.Path("extension/workflow/phases/codegen-7-deliver.md")
+    text = f"{runnable.read_text()}\n{deliver.read_text()}".lower()
+
+    assert "static composition" in text
+    assert "static component" in text
+    forbidden_claims = [
+        "boots and its primary surface renders",
+        "boot and render its primary surface",
+        "app boots; primary surface renders",
+        "non-bootable / hollow app",
+    ]
+    for claim in forbidden_claims:
+        assert claim not in text
 
 
 # --- SPA composition probe (build + static-composition; catches the stub) ---

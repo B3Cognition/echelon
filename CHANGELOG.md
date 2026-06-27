@@ -82,6 +82,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   roadmap from the primary forward path in `workflow/definition.yaml` instead of
   a stale hardcoded phase list, and re-dispatched phases that already appear in
   `completed_phases` no longer make progress counts move backward.
+- **EGR-032 RUNNABLE evidence wording** — codegen RUNNABLE phase text now
+  describes the implemented gate as build plus static composition evidence,
+  avoids boot/render claims, and reserves runtime/browser verification for a
+  future higher-fidelity gate.
 
 ### Changed
 

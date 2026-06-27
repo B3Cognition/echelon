@@ -10,8 +10,10 @@ SOAR selects DELIVER only when: all Tier 1 tests pass, Ψ ≥ 0.70, zero CQ-ISC 
 
 **RUNNABLE precondition (hard):** DELIVER MUST refuse to package unless
 `codegen-state.json` has `runnable_gate == "pass"`. If it is absent or `"fail"`,
-HALT and route back to RUNNABLE — a non-bootable / hollow app is never shippable,
-regardless of Ψ or unit-test status.
+HALT and route back to RUNNABLE — a static-hollow app whose entry point does not
+compose real feature components is never shippable, regardless of Ψ or unit-test
+status. A passing RUNNABLE gate is still a static composition claim, not runtime
+boot/render proof.
 
 1. Write `./codegen-report.md` — human-readable summary with requirement citations per delivered feature.
 1b. **Write `./codegen-verification.md` — the honest verification-boundary manifest, and print its terminal summary.** Every gate is a proxy; this states what each did NOT bind so the green checks are not mistaken for a working system. Lead the human with the gaps, not the verdict:
