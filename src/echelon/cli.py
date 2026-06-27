@@ -2746,6 +2746,53 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     ).ready
 
 
+# Canonical squad happy-path order — the roadmap rendered by `echelon status`.
+_ROADMAP_PHASES = [
+    "init", "phase1-discover", "phase1-constitution", "phase1-what", "phase1-why2",
+    "phase2-decide", "phase2-strategic-overview", "phase2-tracker-alignment",
+    "phase3-specialists", "phase3-how", "phase3-sentinel", "phase3-plan",
+    "phase3-consensus", "checkpoint-plan", "phase4-document", "done",
+]
+
+
+def _print_roadmap(state: dict) -> None:
+    """Render the pipeline as a checkbox roadmap from the run's state.json:
+    [✓] completed · [▶] in progress · [ ] pending. A (×N) marks a re-dispatched
+    phase — the early signal of a non-converging loop."""
+    completed = state.get("completed_phases")
+    completed = completed if isinstance(completed, list) else []
+    counts = state.get("phase_dispatch_counts")
+    counts = counts if isinstance(counts, dict) else {}
+    current = state.get("current_phase")
+    ld = state.get("last_dispatch")
+    if not current and isinstance(ld, dict):
+        current = ld.get("phase_id") or ld.get("phase")
+
+    # A finished run marks every phase complete, even if `completed_phases`
+    # never recorded the terminal nodes (phase4-document / done).
+    run_done = state.get("status") == "done"
+
+    fields: list[tuple[str, str]] = []
+    done_n = 0
+    for ph in _ROADMAP_PHASES:
+        if run_done or (ph in completed and ph != current):
+            box = "[✓]"
+            done_n += 1
+            suffix = ""
+        elif ph == current:
+            box = "[▶]"
+            suffix = "  ← in progress"
+        else:
+            box = "[ ]"
+            suffix = ""
+        n = counts.get(ph, 0)
+        rerun = f"  (×{n} — re-dispatched)" if isinstance(n, int) and n > 1 else ""
+        fields.append((box, f"{ph}{rerun}{suffix}"))
+
+    pct = int(100 * done_n / len(_ROADMAP_PHASES))
+    _banner("ROADMAP", fields, subtitle=f"{done_n}/{len(_ROADMAP_PHASES)} phases complete ({pct}%)")
+
+
 def _cmd_status(project_root: Path) -> None:
     """Print a concise orientation summary for the current project state.
 
@@ -2820,6 +2867,9 @@ def _cmd_status(project_root: Path) -> None:
             fields.append(("Next", 'echelon resume "<your answer>"'))
 
         _banner("RUN STATE", fields)
+
+        # ── Pipeline roadmap ────────────────────────────────────────────────
+        _print_roadmap(state)
 
     # ── Staging artifacts ───────────────────────────────────────────────────
     _print_staging_artifacts(project_root, run_status=state.get("status", ""))
