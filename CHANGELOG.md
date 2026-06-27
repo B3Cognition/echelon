@@ -91,6 +91,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `lexicon validate --source-ref spec.md` enforces source hash freshness plus
   requirement/acceptance/error ID projection from the canonical rich `spec.md`.
   CARTOGRAPHER and phase docs now pass the source reference explicitly.
+- **EGR-034/#55 CodeGraph vendor contract** — the RE CodeGraph bridge now has
+  a deterministic vendor manifest and provenance note for the vendored
+  `@colbymchenry/codegraph` runtime package, including package version, npm
+  tarball integrity, license evidence, local payload hash, update procedure,
+  and the explicit split from the optional global CodeGraph CLI version.
 
 ### Changed
 

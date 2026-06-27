@@ -1,6 +1,8 @@
 """Contract tests for RE CodeGraph integration wiring."""
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -9,6 +11,24 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
+
+
+CODEGRAPH_VENDOR_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "re" / "vendor" / "codegraph"
+
+
+def _vendor_payload_sha256() -> str:
+    digest = hashlib.sha256()
+    paths = [CODEGRAPH_VENDOR_DIR / "package.json"]
+    paths.extend(sorted((CODEGRAPH_VENDOR_DIR / "dist").rglob("*")))
+    for path in paths:
+        if not path.is_file():
+            continue
+        rel = path.relative_to(CODEGRAPH_VENDOR_DIR).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def test_install_script_installs_re_node_dependencies_with_npm_ci():
@@ -27,6 +47,32 @@ def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
     assert '"@colbymchenry/codegraph@$CODEGRAPH_CLI_VERSION"' in install_script
     assert "codegraph install" not in install_script
     assert 'command -v codegraph' in install_script
+
+
+def test_vendored_codegraph_has_provenance_and_integrity_contract():
+    manifest_path = CODEGRAPH_VENDOR_DIR / "echelon-vendor.json"
+    provenance_path = CODEGRAPH_VENDOR_DIR / "PROVENANCE.md"
+
+    manifest = json.loads(manifest_path.read_text())
+    package = json.loads((CODEGRAPH_VENDOR_DIR / "package.json").read_text())
+    install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
+
+    assert provenance_path.exists()
+    assert manifest["schema_version"] == 1
+    assert manifest["package_name"] == "@colbymchenry/codegraph"
+    assert manifest["version"] == package["version"] == "0.7.2"
+    assert manifest["source_tarball"] == (
+        "https://registry.npmjs.org/@colbymchenry/codegraph/-/codegraph-0.7.2.tgz"
+    )
+    assert manifest["npm_integrity"] == (
+        "sha512-m6ALu7iSFYiSL7qe6TqPqqLkWSqU1rgg+S4voqQ4oNy+QFy4t26h61qcPRF+WtqqeAV9HH81dJPsdpeP4c2yZA=="
+    )
+    assert manifest["license"] == package["license"] == "MIT"
+    assert manifest["payload_sha256"] == _vendor_payload_sha256()
+    assert "dist/" in manifest["vendored_paths"]
+    assert manifest["optional_global_cli_version"] == "1.0.1"
+    assert f'CODEGRAPH_CLI_VERSION="{manifest["optional_global_cli_version"]}"' in install_script
+    assert manifest["runtime_uses_optional_global_cli"] is False
 
 
 def test_run_analysis_points_to_extension_node_install_path():
