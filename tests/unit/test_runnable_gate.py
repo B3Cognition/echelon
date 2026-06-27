@@ -88,3 +88,57 @@ def test_runnable_phase_spec_exists_and_blocks_deliver():
     assert "runnable_gate" in rtext and "reopen" in rtext.lower()
     # DELIVER must refuse unless runnable_gate == pass
     assert 'runnable_gate' in deliver.read_text()
+
+
+# --- SPA composition probe (build + static-composition; catches the stub) ---
+from codegen.runner.runnable_gate import (
+    composed_components, composition_is_real, _browser_probe,
+)
+
+_STUB_APP = "export function App(){ return <main>echelon</main>; }"
+_WIRED_APP = """
+import { CatalogTable } from './features/catalog/catalog-table.js';
+import { RunHeader } from './features/run-header/run-header.js';
+import { PhaseGraph } from './features/phase-graph/phase-graph.js';
+export function App(){ return (<main><RunHeader/><CatalogTable/><PhaseGraph/></main>); }
+"""
+
+
+@pytest.mark.unit
+def test_composed_components_ignores_shell_finds_features():
+    assert composed_components(_STUB_APP) == set()
+    got = composed_components(_WIRED_APP)
+    assert {"CatalogTable", "RunHeader", "PhaseGraph"} <= got
+    assert "App" not in got  # shell excluded
+
+
+@pytest.mark.unit
+def test_composition_is_real_stub_vs_wired():
+    assert composition_is_real(_STUB_APP) is False
+    assert composition_is_real(_WIRED_APP) is True
+
+
+def _contract_spa():
+    return parse_runnable_contract({
+        "kind": "spa", "build": "true", "start": "serve", "liveness": "boots",
+        "primary_surface": {"req": "FR-001", "assert": "catalog renders"},
+        "surfaces": [{"req": "FR-006", "assert": "graph renders"}],
+    })
+
+
+@pytest.mark.unit
+def test_browser_probe_blocks_stub_app(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text(_STUB_APP)
+    out = _browser_probe(str(tmp_path), _contract_spa(), None)
+    assert out.live is False                      # stub: nothing composed
+    assert out.present["FR-001"] is False         # primary surface absent
+
+
+@pytest.mark.unit
+def test_browser_probe_passes_wired_app(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text(_WIRED_APP)
+    out = _browser_probe(str(tmp_path), _contract_spa(), None)
+    assert out.live is True
+    assert out.present["FR-001"] is True
