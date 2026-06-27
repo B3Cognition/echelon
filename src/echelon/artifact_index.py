@@ -43,6 +43,15 @@ _ARTIFACTS = (
         "phase_a",
     ),
     ArtifactDefinition(
+        "requirements.lexicon.md",
+        "Derived requirements index",
+        "Compiled from `spec.md` for deterministic Lexicon validation.",
+        "Phase A",
+        "Cartographer",
+        "Regenerated when requirements in spec.md change.",
+        "Validators and task planners",
+    ),
+    ArtifactDefinition(
         "plan.md",
         "Implementation plan",
         "Outlines the implementation approach and sequencing.",

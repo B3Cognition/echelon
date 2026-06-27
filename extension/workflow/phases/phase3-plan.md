@@ -10,6 +10,7 @@
 Read and include in the subagent prompt:
 
 - `plan.md` + `research.md` + `data-model.md`
+- `spec.md` (canonical rich feature specification and requirement IDs)
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
 - `extension/templates/tasks-template.md`
@@ -28,7 +29,7 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
+  [include spec.md, plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>

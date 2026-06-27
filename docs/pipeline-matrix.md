@@ -29,6 +29,10 @@ Echelon's supported dual-artifact contract is:
 - Any controlled grammar form is a separate derived artifact,
   `requirements.lexicon.md`, unless the whole run explicitly opts in to a future
   Lexicon-native replacement mode.
+- The derived artifact starts with `# SOURCE: spec.md` and `# SOURCE_SHA256: ...`
+  metadata. `lexicon validate --source-ref spec.md` rejects stale derived files
+  and rejects derived requirement, acceptance-criteria, or error IDs that are not
+  projected from `spec.md`.
 
 ## Phase B: Build Execution Pipelines
 
@@ -78,7 +82,7 @@ The safer long-term contract is:
 1. Keep `spec.md` in the standard rich Markdown feature-spec format.
 2. Generate Lexicon controlled grammar as a derived artifact:
    `requirements.lexicon.md`.
-3. Run `lexicon validate` against that derived artifact.
+3. Run `lexicon validate --source-ref spec.md` against that derived artifact.
 4. Make `ARTIFACTS.md` list both artifacts and explain which consumers read each
    file.
 5. Only make Lexicon-native `spec.md` available behind an explicit, documented

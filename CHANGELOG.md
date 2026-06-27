@@ -86,6 +86,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   describes the implemented gate as build plus static composition evidence,
   avoids boot/render claims, and reserves runtime/browser verification for a
   future higher-fidelity gate.
+- **EGR-033/#54 derived Lexicon artifact contract** — `requirements.lexicon.md`
+  is now registered in `ARTIFACTS.md` as a derived requirements index, and
+  `lexicon validate --source-ref spec.md` enforces source hash freshness plus
+  requirement/acceptance/error ID projection from the canonical rich `spec.md`.
+  CARTOGRAPHER and phase docs now pass the source reference explicitly.
 
 ### Changed
 

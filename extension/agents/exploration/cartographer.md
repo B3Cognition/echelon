@@ -102,14 +102,21 @@ replace-spec mode is added and requested.
 
 ### Derived output format (Lexicon grammar)
 
-Author `requirements.lexicon.md` as an `ARTIFACT: SPEC` document of colon-keyword blocks.
+Author `requirements.lexicon.md` as a derived `ARTIFACT: SPEC` document of colon-keyword
+blocks. It is a compiled validation/index artifact, not a replacement for `spec.md`. The
+first lines MUST identify the source artifact and exact source hash:
+
+```
+# SOURCE: {source_ref}
+# SOURCE_SHA256: <sha256 of {spec_dir}/{source_ref}>
+ARTIFACT: SPEC
+TITLE: <real title>
+```
+
 Each normative requirement from `spec.md` is a `REQ` block; acceptance criteria are `AC`
 blocks; error paths are `ERROR` blocks:
 
 ```
-ARTIFACT: SPEC
-TITLE: <real title>
-
 REQ: <ID>
 GIVEN: <initial state>
 WHEN: <trigger>
@@ -154,6 +161,7 @@ After writing `requirements.lexicon.md`, run the validator and repair until clea
 # Prefer the installed CLI; fall back to the module if not on PATH.
 LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
 $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
+  --source-ref "{spec_dir}/{source_ref}" \
   --glossary "{spec_dir}/{glossary_file}" --json
 ```
 
@@ -175,6 +183,11 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
    | `dep-missing`     | point the `DEPENDS` ref at a REQ id defined in this spec, or remove it      |
    | `dep-self`        | remove the requirement's own id from its `DEPENDS` line                     |
    | `dep-cycle`       | break the dependency cycle — drop the back-edge `DEPENDS` ref               |
+   | `source-metadata-missing` | add `# SOURCE:` and `# SOURCE_SHA256:` header lines                  |
+   | `source-ref-mismatch` | set `# SOURCE:` to the configured `{source_ref}`                          |
+   | `source-hash-mismatch` | recompute `SOURCE_SHA256` from `{spec_dir}/{source_ref}` after edits     |
+   | `source-id-extra` | remove or rename the derived block so every ID exists in `{source_ref}`      |
+   | `source-id-missing` | add the missing source ID as a derived REQ/AC/ERROR block                 |
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.

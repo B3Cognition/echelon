@@ -28,6 +28,9 @@ def test_render_lists_present_known_artifacts(tmp_path: Path) -> None:
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
     (spec_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
     (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    (spec_dir / "requirements.lexicon.md").write_text(
+        "ARTIFACT: SPEC\nTITLE: Requirements\n", encoding="utf-8"
+    )
 
     text = render_artifact_index(spec_dir, generated_at=GENERATED_AT)
 
@@ -37,6 +40,9 @@ def test_render_lists_present_known_artifacts(tmp_path: Path) -> None:
     assert "`tasks.md`" in text
     assert "`plan.md`" in text
     assert "| `spec.md` | Present |" in text
+    assert "| `requirements.lexicon.md` | Present | Derived requirements index |" in text
+    assert "Compiled from `spec.md` for deterministic Lexicon validation." in text
+    assert "`requirements.lexicon.md`" not in text.partition("## Unclassified Files")[2]
     assert "Generated at: 2026-06-04T12:00:00+00:00" in text
 
 

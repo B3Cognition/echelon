@@ -22,7 +22,9 @@
 // Parsed with the LALR contextual lexer so a value line (TEXT) never swallows
 // the next keyword: at each point only the expected terminals are considered.
 
-start: header block+
+start: metadata* header block+
+
+metadata: COMMENT _NL
 
 header: "ARTIFACT:" TYPE _NL "TITLE:" TEXT _NL
 
@@ -65,6 +67,7 @@ example: "EXAMPLE:" TEXT _NL
 
 TYPE: "SPEC" | "STORY" | "ARTICLE"
 ID: /[A-Za-z][A-Za-z0-9_-]*/
+COMMENT: /#[^\n]*/
 TEXT: /[^\n]+/
 
 _NL: /(\r?\n[ \t]*)+/

@@ -187,6 +187,16 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             r"requirements\.lexicon\.md",
         ),
         PatternCheck(
+            "CARTOGRAPHER validates derived Lexicon artifact against source_ref",
+            cartographer,
+            r"--source-ref\s+\"\{spec_dir\}/\{source_ref\}\"",
+        ),
+        PatternCheck(
+            "CARTOGRAPHER requires source hash metadata",
+            cartographer,
+            r"SOURCE_SHA256",
+        ),
+        PatternCheck(
             "CARTOGRAPHER no longer says Lexicon authors spec.md",
             cartographer,
             r"Author `spec\.md` as an `ARTIFACT: SPEC`",
@@ -214,6 +224,11 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             orchestrator,
             r"--spec-ref\s+\"\{spec_dir\}/spec\.md\"",
             should_match=False,
+        ),
+        PatternCheck(
+            "phase3 plan prose includes canonical spec context",
+            root / "extension/workflow/phases/phase3-plan.md",
+            r"spec\.md",
         ),
         PatternCheck(
             "pipeline matrix documents rich spec as canonical",

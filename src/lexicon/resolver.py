@@ -34,6 +34,8 @@ def content_terms(text: str) -> list[tuple[str, int]]:
     """Return (term, 1-based line) for every content term in value text."""
     out: list[tuple[str, int]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("#"):
+            continue
         value = _LABEL_RE.sub("", line)
         for match in _TERM_RE.finditer(value):
             out.append((match.group(1), lineno))

@@ -80,6 +80,9 @@ def validate(
     spec_ref: Optional[Path] = typer.Option(
         None, "--spec-ref", exists=True, readable=True,
         help="spec.md for cross-document checks (used with --type tasks/structural)."),
+    source_ref: Optional[Path] = typer.Option(
+        None, "--source-ref", exists=True, readable=True,
+        help="Source artifact for derived Lexicon freshness and ID-equivalence checks."),
     as_json: bool = typer.Option(False, "--json", help="Emit a machine-readable report."),
     artifact_key: Optional[str] = typer.Option(
         None, "--artifact", help="governance.artifacts key (used with --type structural).",
@@ -176,6 +179,11 @@ def validate(
         glossary=_load_glossary(glossary),
         artifact_type=artifact_type.upper() if artifact_type else None,
     )
+    if source_ref is not None:
+        from .source_contract import source_contract_findings
+
+        report.findings.extend(source_contract_findings(text, source_ref))
+        report.ok = not report.findings
 
     if as_json:
         typer.echo(
@@ -183,6 +191,7 @@ def validate(
                 {
                     "file": str(spec),
                     "ok": report.ok,
+                    "source_ref": str(source_ref) if source_ref else None,
                     "parse_pass": report.parse_pass,
                     "artifact_type": report.artifact_type,
                     "term_resolution": report.term_resolution,

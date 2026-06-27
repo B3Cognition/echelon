@@ -209,8 +209,9 @@ specification.
 - The controlled glossary (`{glossary_file}`, already in the context pack as `glossary.md`).
 - Instruction: "Author in Lexicon Gate Mode — see `cartographer.md §Lexicon Gate Mode`. Keep
   `{spec_dir}/spec.md` as the rich Markdown feature specification, derive
-  `{spec_dir}/requirements.lexicon.md` from it in the Lexicon grammar, self-validate and repair
-  that derived artifact with `lexicon validate`, and return `lexicon_pass`."
+  `{spec_dir}/requirements.lexicon.md` from it in the Lexicon grammar with `SOURCE` and
+  `SOURCE_SHA256` metadata, self-validate and repair that derived artifact with
+  `lexicon validate --source-ref`, and return `lexicon_pass`."
 
 CARTOGRAPHER owns the in-dispatch repair loop (the "fix"). COMMANDER owns the re-dispatch
 decision on the controlled outcome (the "re-dispatch"). COMMANDER does NOT run `lexicon` itself.
