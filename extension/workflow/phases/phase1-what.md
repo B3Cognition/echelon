@@ -198,23 +198,26 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 
 ### 4.4 Lexicon Gate (when `lexicon_gate.enabled` in echelon-config.yml)
 
-This subsection is INERT when `lexicon_gate.enabled` is false (the default) — the standard
-flow above is unchanged. When it is true, the deterministic controlled-grammar gate applies.
+This subsection is INERT when `lexicon_gate.enabled` is false — the standard flow above is
+unchanged. When it is true, the deterministic controlled-grammar gate applies to a derived
+artifact. The canonical `{spec_dir}/spec.md` remains the rich spec-kit Markdown feature
+specification.
 
 **Dispatch additions.** Include in the CARTOGRAPHER prompt:
-- `lexicon_gate.enabled: true`, plus `artifact_type`, `glossary_file`, and `max_repair_attempts`
-  from `echelon-config.yml`.
+- `lexicon_gate.enabled: true`, plus `artifact_type`, `lexicon_path`, `source_ref`,
+  `glossary_file`, and `max_repair_attempts` from `echelon-config.yml`.
 - The controlled glossary (`{glossary_file}`, already in the context pack as `glossary.md`).
-- Instruction: "Author in Lexicon Gate Mode — see `cartographer.md §Lexicon Gate Mode`. Emit
-  the spec in the Lexicon grammar, self-validate and repair with `lexicon validate`, and return
-  `lexicon_pass`."
+- Instruction: "Author in Lexicon Gate Mode — see `cartographer.md §Lexicon Gate Mode`. Keep
+  `{spec_dir}/spec.md` as the rich Markdown feature specification, derive
+  `{spec_dir}/requirements.lexicon.md` from it in the Lexicon grammar, self-validate and repair
+  that derived artifact with `lexicon validate`, and return `lexicon_pass`."
 
 CARTOGRAPHER owns the in-dispatch repair loop (the "fix"). COMMANDER owns the re-dispatch
 decision on the controlled outcome (the "re-dispatch"). COMMANDER does NOT run `lexicon` itself.
 
 **Controlled-outcome routing.** After the dispatch, read `state.json.lexicon_pass`:
 - `lexicon_pass == true` → proceed to `phase1-why2` (soft `understanding`/SAGE scoring runs there,
-  once, on a structurally-clean spec).
+  once, on rich `spec.md`, after the derived requirements artifact is structurally clean).
 - `lexicon_pass == false AND iteration < max_iterations` → re-dispatch `phase1-what`
   (`increment_iteration`). This is the only condition that re-dispatches CARTOGRAPHER on the
   Lexicon outcome — see the transitions in `workflow/definition.yaml`.
@@ -233,7 +236,9 @@ echelon_result:
 ```
 
 > Ordering invariant: Lexicon is the FIRST, hard, deterministic gate; `understanding`/SAGE
-> (phase1-why2) is the soft score that runs only AFTER `lexicon_pass`. Never let the soft score
-> gate structure — that is the "score-quality-later" anti-pattern this gate replaces.
+> (phase1-why2) is the soft score that runs only AFTER `lexicon_pass`. The hard gate validates
+> `requirements.lexicon.md`; the soft score still reads the canonical rich `spec.md`. Never let
+> the soft score gate structure — that is the "score-quality-later" anti-pattern this gate
+> replaces.
 
 **Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`

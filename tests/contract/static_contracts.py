@@ -153,6 +153,78 @@ def validate_guardian_mode_config_naming_contract(root: Path) -> list[str]:
     return failures
 
 
+def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
+    """Lexicon must not replace the canonical rich spec.md artifact."""
+
+    config = root / "extension/echelon-config.yml"
+    config_template = root / "extension/config-template.yml"
+    cartographer = root / "extension/agents/exploration/cartographer.md"
+    phase1_what = root / "extension/workflow/phases/phase1-what.md"
+    orchestrator = root / "extension/agents/solution/orchestrator.md"
+    pipeline_matrix = root / "docs/pipeline-matrix.md"
+    flags = re.IGNORECASE
+
+    checks = [
+        PatternCheck(
+            "extension config routes Lexicon spec to derived artifact",
+            config,
+            r"requirements\.lexicon\.md",
+        ),
+        PatternCheck(
+            "config template documents derived Lexicon artifact",
+            config_template,
+            r"requirements\.lexicon\.md",
+        ),
+        PatternCheck(
+            "CARTOGRAPHER preserves rich spec.md",
+            cartographer,
+            r"spec\.md.*rich|rich.*spec\.md",
+            flags,
+        ),
+        PatternCheck(
+            "CARTOGRAPHER authors derived Lexicon artifact",
+            cartographer,
+            r"requirements\.lexicon\.md",
+        ),
+        PatternCheck(
+            "CARTOGRAPHER no longer says Lexicon authors spec.md",
+            cartographer,
+            r"Author `spec\.md` as an `ARTIFACT: SPEC`",
+            should_match=False,
+        ),
+        PatternCheck(
+            "phase1 what names derived Lexicon artifact",
+            phase1_what,
+            r"requirements\.lexicon\.md",
+        ),
+        PatternCheck(
+            "phase1 what no longer instructs emitting spec.md in Lexicon grammar",
+            phase1_what,
+            r"Emit\s+the\s+spec\s+in\s+the\s+Lexicon\s+grammar",
+            flags,
+            should_match=False,
+        ),
+        PatternCheck(
+            "ORCHESTRATOR validates tasks against configured spec_ref",
+            orchestrator,
+            r"--spec-ref\s+\"\{spec_dir\}/\$\{?spec_ref\}?",
+        ),
+        PatternCheck(
+            "ORCHESTRATOR does not hardcode tasks gate spec_ref to spec.md",
+            orchestrator,
+            r"--spec-ref\s+\"\{spec_dir\}/spec\.md\"",
+            should_match=False,
+        ),
+        PatternCheck(
+            "pipeline matrix documents rich spec as canonical",
+            pipeline_matrix,
+            r"`spec\.md`.*canonical|canonical.*`spec\.md`",
+            flags,
+        ),
+    ]
+    return _run_checks(checks)
+
+
 def validate_code_reviewer_confidence_filter_contract(root: Path) -> list[str]:
     target = root / "extension/agents/build/code-reviewer.md"
     flags = re.IGNORECASE | re.MULTILINE

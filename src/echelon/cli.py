@@ -2790,21 +2790,79 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
     ).ready
 
 
-# Canonical squad happy-path order — the roadmap rendered by `echelon status`.
-_ROADMAP_PHASES = [
-    "init", "phase1-discover", "phase1-constitution", "phase1-what", "phase1-why2",
-    "phase2-decide", "phase2-strategic-overview", "phase2-tracker-alignment",
+# Fallback only. Normal status rendering derives the roadmap from
+# workflow/definition.yaml so the UI cannot drift from the externalized graph.
+_FALLBACK_ROADMAP_PHASES = [
+    "init", "phase1-discover", "phase1-synthesizer", "phase1-modeler",
+    "phase1-tracker", "phase1-why1", "phase1-constitution", "phase1-what",
+    "phase1-why2", "checkpoint-assess", "phase2-decide",
+    "phase2-strategic-overview", "phase2-tracker-alignment",
     "phase3-specialists", "phase3-how", "phase3-sentinel", "phase3-plan",
     "phase3-consensus", "checkpoint-plan", "phase4-document", "done",
 ]
 
 
-def _print_roadmap(state: dict) -> None:
+def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
+    """Return the primary forward squad path from workflow/definition.yaml."""
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(workflow_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return list(_FALLBACK_ROADMAP_PHASES)
+
+    phases_raw = raw.get("phases")
+    if not isinstance(phases_raw, list):
+        return list(_FALLBACK_ROADMAP_PHASES)
+    phases = {
+        str(phase.get("id")): phase
+        for phase in phases_raw
+        if isinstance(phase, dict) and phase.get("id")
+    }
+
+    path: list[str] = []
+    current = "init"
+    seen: set[str] = set()
+    while current and current in phases and current not in seen:
+        path.append(current)
+        seen.add(current)
+        if current == "done":
+            break
+
+        next_phase = ""
+        transitions = phases[current].get("transitions") or []
+        if isinstance(transitions, list):
+            for transition in transitions:
+                if not isinstance(transition, dict):
+                    continue
+                candidate = str(transition.get("to") or "")
+                if candidate and candidate != current and candidate != "escalate":
+                    next_phase = candidate
+                    break
+        current = next_phase
+
+    if not path or path[-1] != "done":
+        return list(_FALLBACK_ROADMAP_PHASES)
+    return path
+
+
+_ROADMAP_PHASES = _derive_roadmap_phases(
+    Path(__file__).resolve().parents[2] / "extension/workflow/definition.yaml"
+)
+
+
+def _print_roadmap(state: dict, workflow_path: Path | None = None) -> None:
     """Render the pipeline as a checkbox roadmap from the run's state.json:
     [✓] completed · [▶] in progress · [ ] pending. A (×N) marks a re-dispatched
     phase — the early signal of a non-converging loop."""
+    roadmap_phases = (
+        _derive_roadmap_phases(workflow_path)
+        if workflow_path is not None
+        else list(_ROADMAP_PHASES)
+    )
     completed = state.get("completed_phases")
     completed = completed if isinstance(completed, list) else []
+    completed_set = {str(phase) for phase in completed}
     counts = state.get("phase_dispatch_counts")
     counts = counts if isinstance(counts, dict) else {}
     current = state.get("current_phase")
@@ -2818,14 +2876,19 @@ def _print_roadmap(state: dict) -> None:
 
     fields: list[tuple[str, str]] = []
     done_n = 0
-    for ph in _ROADMAP_PHASES:
-        if run_done or (ph in completed and ph != current):
+    for ph in roadmap_phases:
+        if run_done:
             box = "[✓]"
             done_n += 1
             suffix = ""
         elif ph == current:
             box = "[▶]"
+            done_n += 1 if ph in completed_set else 0
             suffix = "  ← in progress"
+        elif ph in completed_set:
+            box = "[✓]"
+            done_n += 1
+            suffix = ""
         else:
             box = "[ ]"
             suffix = ""
@@ -2833,8 +2896,8 @@ def _print_roadmap(state: dict) -> None:
         rerun = f"  (×{n} — re-dispatched)" if isinstance(n, int) and n > 1 else ""
         fields.append((box, f"{ph}{rerun}{suffix}"))
 
-    pct = int(100 * done_n / len(_ROADMAP_PHASES))
-    _banner("ROADMAP", fields, subtitle=f"{done_n}/{len(_ROADMAP_PHASES)} phases complete ({pct}%)")
+    pct = int(100 * done_n / len(roadmap_phases)) if roadmap_phases else 0
+    _banner("ROADMAP", fields, subtitle=f"{done_n}/{len(roadmap_phases)} phases complete ({pct}%)")
 
 
 def _cmd_status(project_root: Path) -> None:
@@ -2913,7 +2976,10 @@ def _cmd_status(project_root: Path) -> None:
         _banner("RUN STATE", fields)
 
         # ── Pipeline roadmap ────────────────────────────────────────────────
-        _print_roadmap(state)
+        _print_roadmap(
+            state,
+            project_root / ".specify" / "extensions" / "echelon" / "workflow" / "definition.yaml",
+        )
 
     # ── Staging artifacts ───────────────────────────────────────────────────
     _print_staging_artifacts(project_root, run_status=state.get("status", ""))

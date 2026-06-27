@@ -199,6 +199,32 @@ limits:
   wall_clock_timeout_minutes: 40
 
 # =============================================================================
+# LEXICON GATE — derived controlled-grammar validation
+# =============================================================================
+
+lexicon_gate:
+  # When enabled, keep spec.md as the canonical rich spec-kit feature
+  # specification and generate requirements.lexicon.md as a derived
+  # machine-checkable requirements artifact. Do not replace spec.md unless a
+  # future explicit replace-spec mode is added and every downstream consumer is
+  # made Lexicon-aware.
+  enabled: true
+  artifacts:
+    spec:
+      enabled: true
+      type: spec
+      path: requirements.lexicon.md
+      source_ref: spec.md
+      mode: derived
+    tasks:
+      enabled: true
+      type: tasks
+      spec_ref: requirements.lexicon.md
+  glossary_file: glossary.md
+  max_repair_attempts: 3
+  on_exhausted: warn
+
+# =============================================================================
 # QUALITY GATES (SAGE, Understanding thresholds)
 # =============================================================================
 

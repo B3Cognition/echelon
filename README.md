@@ -111,6 +111,11 @@ echelon review 001 pr_url=https://github.com/org/repo/pull/42
 
 Set `ECHELON_LLM` to switch AI provider for any command above — see [AI Provider Support](#ai-provider-support) below.
 
+Echelon has separate Phase A spec-authoring choices and Phase B build-strategy
+choices. Before enabling the derived Lexicon controlled-grammar gate or SOAR
+codegen, read [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the current
+compatibility contract.
+
 ### Other echelon commands
 
 ```bash
@@ -291,6 +296,11 @@ echelon harness run 001 strategy=codegen   # SOAR pipeline build
 ```
 
 Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
+
+Build strategy is independent from Phase A spec format. The default and codegen
+strategies both consume the published Phase A artifacts under `specs/<id>-*/`.
+See [Echelon Pipeline Matrix](docs/pipeline-matrix.md) for the supported
+spec-format/build-strategy combinations.
 
 ### Review Loop (Phase 3)
 

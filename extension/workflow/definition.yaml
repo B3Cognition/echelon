@@ -436,6 +436,7 @@ phases:
     outputs:
       - spec.md
       - 00-overview.md
+      - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
       - lexicon_pass → state.json        # only when lexicon_gate.enabled; drives the re-dispatch below
     allowed_state_updates:
       - spec_id

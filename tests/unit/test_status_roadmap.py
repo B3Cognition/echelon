@@ -6,8 +6,37 @@ a repeated phase (the early signal of a non-converging loop). A finished run
 recorded the terminal nodes.
 """
 import pytest
+import yaml
+from pathlib import Path
 
 from echelon.cli import _print_roadmap, _ROADMAP_PHASES
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def _workflow_primary_path() -> list[str]:
+    workflow = yaml.safe_load((ROOT / "extension/workflow/definition.yaml").read_text())
+    phases = {phase["id"]: phase for phase in workflow["phases"]}
+    path: list[str] = []
+    current = "init"
+    seen: set[str] = set()
+
+    while current and current not in seen:
+        path.append(current)
+        seen.add(current)
+        if current == "done":
+            break
+        transitions = phases[current].get("transitions", [])
+        next_phase = ""
+        for transition in transitions:
+            candidate = transition.get("to")
+            if candidate and candidate != current and candidate != "escalate":
+                next_phase = candidate
+                break
+        current = next_phase
+
+    return path
 
 
 @pytest.mark.unit
@@ -52,8 +81,18 @@ def test_redispatch_count_surfaces_loop_signal(capsys):
 
 
 @pytest.mark.unit
-def test_roadmap_covers_the_full_squad_happy_path():
-    # Guards the canonical order against accidental truncation.
-    assert _ROADMAP_PHASES[0] == "init" and _ROADMAP_PHASES[-1] == "done"
-    assert "phase3-consensus" in _ROADMAP_PHASES
-    assert len(_ROADMAP_PHASES) == 16
+def test_roadmap_is_derived_from_workflow_primary_path():
+    assert _ROADMAP_PHASES == _workflow_primary_path()
+
+
+@pytest.mark.unit
+def test_current_phase_that_was_completed_still_counts_toward_progress(capsys):
+    _print_roadmap({
+        "status": "running",
+        "completed_phases": ["init", "phase1-discover"],
+        "current_phase": "phase1-discover",
+        "phase_dispatch_counts": {"phase1-discover": 2},
+    })
+    out = capsys.readouterr().out
+    assert "[▶]" in out and "phase1-discover" in out
+    assert "2/" in out

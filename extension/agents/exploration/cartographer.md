@@ -75,27 +75,36 @@ injected into your prompt. Before authoring, read it directly from the canonical
 config (the same path the `echelon` CLI uses). Run:
 
 ```bash
-python3 -c "import yaml; c=yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}; g=(c.get('lexicon_gate') or {}); print('LEXICON_GATE=on' if g.get('enabled') else 'LEXICON_GATE=off'); print('artifact_type='+str((g.get('artifacts') or {}).get('spec',{}).get('type','spec'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
+python3 -c "import yaml; c=yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}; g=(c.get('lexicon_gate') or {}); a=(g.get('artifacts') or {}).get('spec',{}); print('LEXICON_GATE=on' if (g.get('enabled') and a.get('enabled', True)) else 'LEXICON_GATE=off'); print('artifact_type='+str(a.get('type','spec'))); print('lexicon_path='+str(a.get('path','requirements.lexicon.md'))); print('source_ref='+str(a.get('source_ref','spec.md'))); print('mode='+str(a.get('mode','derived'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
 ```
 
 If the output is `LEXICON_GATE=off` (or the file/key is absent), this entire section is INERT —
-author the standard bullet-format spec per "Spec Format Invariants" above. Only when it reads
-`LEXICON_GATE=on` do you enter Lexicon mode using the `artifact_type` / `glossary_file` /
-`max_repair_attempts` values printed above.
+author the standard rich spec per "Spec Format Invariants" above. Only when it reads
+`LEXICON_GATE=on` do you enter Lexicon mode using the `artifact_type` / `lexicon_path` /
+`source_ref` / `glossary_file` / `max_repair_attempts` values printed above.
 
 ALWAYS resolve the gate flag by reading `.specify/extensions/echelon/echelon-config.yml` yourself.
 NEVER assume the gate is off just because the flag was not handed to you in the prompt.
 
-When the flag IS true, you author the spec in the **Lexicon controlled grammar** instead
-of bullet requirements, and you VALIDATE AND REPAIR it yourself with the deterministic
-`lexicon` validator before returning. The `lexicon_pass` outcome you emit is the controlled
-signal COMMANDER uses to decide whether to re-dispatch you (see `phase1-what.md §4.4`).
+When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical rich spec-kit
+feature specification. You then derive `{spec_dir}/requirements.lexicon.md` (or the printed
+`lexicon_path`) in the **Lexicon controlled grammar** from the requirements, acceptance
+criteria, and error paths in `spec.md`, and you VALIDATE AND REPAIR that derived artifact
+with the deterministic `lexicon` validator before returning. The `lexicon_pass` outcome you
+emit is the controlled signal COMMANDER uses to decide whether to re-dispatch you (see
+`phase1-what.md §4.4`).
 
-### Output format (Lexicon grammar)
+ALWAYS preserve `spec.md` as a rich Markdown feature specification with feature metadata,
+user stories, acceptance scenarios, FR/NFR sections, entities, success criteria, scope,
+open questions, and assumptions where applicable.
+NEVER replace `spec.md` with `ARTIFACT: SPEC` controlled grammar unless a future explicit
+replace-spec mode is added and requested.
 
-Author `spec.md` as an `ARTIFACT: SPEC` document of colon-keyword blocks — NOT `- **FR-001**:`
-bullets. Each normative requirement is a `REQ` block; acceptance criteria are `AC` blocks;
-error paths are `ERROR` blocks:
+### Derived output format (Lexicon grammar)
+
+Author `requirements.lexicon.md` as an `ARTIFACT: SPEC` document of colon-keyword blocks.
+Each normative requirement from `spec.md` is a `REQ` block; acceptance criteria are `AC`
+blocks; error paths are `ERROR` blocks:
 
 ```
 ARTIFACT: SPEC
@@ -139,12 +148,12 @@ NEVER leave a requirement's relationships implicit by omitting `DEPENDS:` when i
 
 ### Self-Validation Repair Loop (the "fix")
 
-After writing `spec.md`, run the validator and repair until clean or capped:
+After writing `requirements.lexicon.md`, run the validator and repair until clean or capped:
 
 ```bash
 # Prefer the installed CLI; fall back to the module if not on PATH.
 LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
-$LEXICON validate "{spec_dir}/spec.md" --type {artifact_type} \
+$LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
   --glossary "{spec_dir}/{glossary_file}" --json
 ```
 
@@ -170,8 +179,9 @@ $LEXICON validate "{spec_dir}/spec.md" --type {artifact_type} \
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
 5. If still not `ok` after the cap → set `lexicon_pass: false` and return; COMMANDER decides
-   (re-dispatch or escalate per `on_exhausted`). Do NOT ship a spec you know is not `ok` while
-   claiming success — the validator's verdict is authoritative, not your own assessment.
+   (re-dispatch or escalate per `on_exhausted`). Do NOT ship a derived Lexicon artifact you know
+   is not `ok` while claiming success — the validator's verdict is authoritative, not your own
+   assessment.
 
 ### ALWAYS / NEVER (Lexicon mode)
 
@@ -183,6 +193,9 @@ NEVER regenerate the whole spec in response to a single finding.
 
 ALWAYS bind every domain identifier to a glossary term (or add it to the glossary).
 NEVER invent an ungoverned identifier to satisfy a sentence.
+
+ALWAYS keep `requirements.lexicon.md` traceable to `spec.md` by preserving the same FR/NFR/AC IDs.
+NEVER introduce requirements in `requirements.lexicon.md` that are absent from `spec.md`.
 
 ### echelon_result additions (Lexicon mode)
 

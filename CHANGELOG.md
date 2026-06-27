@@ -72,9 +72,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   that published build target before build-ready guidance. `echelon continue`
   routes old done-but-unpublished runs back through Phase 4 instead of claiming
   build-ready from run-local artifacts alone.
+- **EGR-030 Lexicon/spec contract reconciliation** — `spec.md` remains the
+  canonical rich spec-kit feature specification when the Lexicon gate is enabled.
+  CARTOGRAPHER now derives `requirements.lexicon.md` for controlled-grammar
+  validation, the tasks gate validates against the configured derived `spec_ref`,
+  and static pytest coverage prevents reintroducing destructive `spec.md`
+  replacement by default.
+- **EGR-031 status roadmap derivation** — `echelon status` now derives its
+  roadmap from the primary forward path in `workflow/definition.yaml` instead of
+  a stale hardcoded phase list, and re-dispatched phases that already appear in
+  `completed_phases` no longer make progress counts move backward.
 
 ### Changed
 
+- Added `docs/pipeline-matrix.md` to make the two independent pipeline axes
+  explicit: Phase A spec authoring format versus Phase B build execution
+  strategy and to document the supported dual-artifact contract for Lexicon
+  validation.
 - **EGR-022 shell-to-pytest migration step** — moved the no-new-dependencies
   repository-policy contract from `tests/unit/test-no-new-deps.sh` into pytest
   via `tests/contract/no_new_deps.py` and

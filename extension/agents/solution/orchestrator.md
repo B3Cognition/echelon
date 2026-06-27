@@ -350,7 +350,7 @@ echelon_result:
 **Activation — read the flag yourself.** Before authoring `tasks.md`, run:
 
 ```bash
-python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','spec.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
+python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','requirements.lexicon.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
 ```
 
 If the output is `TASKS_GATE=off` (or the file/key is absent), this entire section is INERT —
@@ -361,7 +361,7 @@ If `TASKS_GATE=on`, author `tasks.md` in the **canonical row format** per `exten
 
 ```bash
 LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
-$LEXICON validate "{spec_dir}/tasks.md" --type tasks --spec-ref "{spec_dir}/spec.md" --glossary "{spec_dir}/glossary.md" --json
+$LEXICON validate "{spec_dir}/tasks.md" --type tasks --spec-ref "{spec_dir}/${spec_ref}" --glossary "{spec_dir}/glossary.md" --json
 ```
 
 Parse the JSON; if `ok` is false, apply the localized fix per finding code (`parse-error` →
