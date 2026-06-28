@@ -4,6 +4,7 @@ from tests.contract.static_contracts import (
     validate_auditor_calibration_dashboard_contract,
     validate_auditor_internalization_contract,
     validate_auditor_internalizer_split_contract,
+    validate_cartographer_tool_usage_contract,
     validate_code_reviewer_confidence_filter_contract,
     validate_guardian_mode_config_naming_contract,
     validate_lexicon_derived_spec_contract,
@@ -14,6 +15,7 @@ from tests.contract.static_contracts import (
     validate_implementer_eval_protocol_contract,
     validate_sage_contradiction_types_contract,
     validate_sage_decisions_schema_contract,
+    validate_sage_understanding_followup_contract,
     validate_sentinel_flakiness_contract,
     validate_state_schema_build_qa_split_contract,
     validate_veteran_project_scoping_contract,
@@ -43,6 +45,10 @@ def test_lexicon_derived_spec_contract() -> None:
     assert validate_lexicon_derived_spec_contract(ROOT) == []
 
 
+def test_cartographer_tool_usage_contract() -> None:
+    assert validate_cartographer_tool_usage_contract(ROOT) == []
+
+
 def test_code_reviewer_confidence_filter_contract() -> None:
     assert validate_code_reviewer_confidence_filter_contract(ROOT) == []
 
@@ -65,6 +71,10 @@ def test_sage_contradiction_types_contract() -> None:
 
 def test_sage_decisions_schema_contract() -> None:
     assert validate_sage_decisions_schema_contract(ROOT) == []
+
+
+def test_sage_understanding_followup_contract() -> None:
+    assert validate_sage_understanding_followup_contract(ROOT) == []
 
 
 def test_veteran_project_scoping_contract() -> None:

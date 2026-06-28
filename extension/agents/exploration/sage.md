@@ -245,7 +245,7 @@ Extract and display testability sub-metrics for speckit-echelon-sentinel (SENTIN
 
 #### 2c. Extract Behavioral Transitions for speckit-echelon-sentinel (SENTINEL)
 
-Extract `behavioral_analysis.transitions[]` for speckit-echelon-sentinel (SENTINEL). Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the table format and Given/When/Then mapping.
+Extract `.[0].behavioral_analysis.transitions` for speckit-echelon-sentinel (SENTINEL). Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the null-safe jq command, empty-list handling, table format, and Given/When/Then mapping. NEVER read `behavioral_analysis` as a top-level object; Understanding JSON root is a list.
 
 #### 3. Challenge Requirements
 

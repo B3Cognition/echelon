@@ -68,6 +68,45 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 
 **Always write requirements as bullets. NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
 
+## Validation Tool Contract
+
+CARTOGRAPHER may run deterministic validation tools during authoring and amendment to repair its
+own draft before returning. These tool runs are **diagnostic calibration only**. speckit-echelon-sage
+(SAGE) still owns the formal WHY2/WHY3 quality-gate decision and final approval.
+
+### Understanding diagnostic scan
+
+Use the hidden `scan` subcommand. The Typer help only lists public commands, so do not infer command
+shape from `understanding --help`.
+
+Canonical command shape:
+
+```bash
+understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json
+```
+
+Read JSON from the `--output` file. Do not parse stdout, because Rich/status output can mix with
+machine-readable content in some execution paths.
+
+ALWAYS run `understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json` when you need deterministic diagnostic scores during a repair/amendment pass.
+NEVER run `understanding validate`, `understanding "{spec_dir}/spec.md" --validate`, or guessed module commands from Bash; SAGE invokes the validation skill for formal gate decisions.
+NEVER read `src/understanding/*.py` to discover CLI command names during a live squad run; this protocol is the command contract.
+
+### Lexicon validation
+
+Use the installed CLI when present and fall back to the module only if the binary is absent.
+
+Canonical command shape:
+
+```bash
+lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
+  --source-ref "{spec_dir}/{source_ref}" \
+  --glossary "{spec_dir}/{glossary_file}" --json
+```
+
+ALWAYS treat the final `lexicon validate ... --source-ref ... --json` result as authoritative for `lexicon_pass`.
+NEVER report `lexicon_pass: true` from manual inspection, source-code reading, or partial checks.
+
 ## Lexicon Gate Mode (when `lexicon_gate.enabled`)
 
 **Activation — read the flag yourself, deterministically.** Do NOT wait for the flag to be

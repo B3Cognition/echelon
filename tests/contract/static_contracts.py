@@ -240,6 +240,87 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
     return _run_checks(checks)
 
 
+def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
+    """CARTOGRAPHER must know the deterministic validation command surfaces."""
+
+    cartographer = root / "extension/agents/exploration/cartographer.md"
+    phase1_what = root / "extension/workflow/phases/phase1-what.md"
+    flags = re.IGNORECASE
+
+    return _run_checks(
+        [
+            PatternCheck(
+                "CARTOGRAPHER documents Understanding scan command",
+                cartographer,
+                r"understanding scan .*--enhanced .*--per-req .*--json .*--output",
+            ),
+            PatternCheck(
+                "CARTOGRAPHER forbids understanding validate subcommand guesses",
+                cartographer,
+                r"NEVER run `understanding validate`",
+            ),
+            PatternCheck(
+                "CARTOGRAPHER documents JSON output discipline",
+                cartographer,
+                r"--output /tmp/.*\.json",
+            ),
+            PatternCheck(
+                "CARTOGRAPHER documents Lexicon source-ref command",
+                cartographer,
+                r"lexicon validate .*--source-ref",
+            ),
+            PatternCheck(
+                "phase1 what passes validation tool contract",
+                phase1_what,
+                r"Validation Tool Contract",
+                flags,
+            ),
+            PatternCheck(
+                "phase1 what names understanding scan",
+                phase1_what,
+                r"understanding scan",
+            ),
+        ]
+    )
+
+
+def validate_sage_understanding_followup_contract(root: Path) -> list[str]:
+    """SAGE must use the documented Understanding JSON shape for handoff extraction."""
+
+    sage = root / "extension/agents/exploration/sage.md"
+    appendix = root / "extension/agents/exploration/appendices/sage-understanding-followup-reference.md"
+
+    return _run_checks(
+        [
+            PatternCheck(
+                "SAGE appendix documents indexed behavioral transition path",
+                appendix,
+                r"\.\[0\]\.behavioral_analysis\.transitions",
+            ),
+            PatternCheck(
+                "SAGE appendix uses empty-list transition fallback",
+                appendix,
+                r"behavioral_analysis\.transitions\s*//\s*\[\]",
+            ),
+            PatternCheck(
+                "SAGE appendix uses null-safe transition cell fallback",
+                appendix,
+                r"//\s*\"-\"",
+            ),
+            PatternCheck(
+                "SAGE prompt references indexed behavioral transition path",
+                sage,
+                r"\.\[0\]\.behavioral_analysis\.transitions",
+            ),
+            PatternCheck(
+                "SAGE prompt forbids top-level behavioral_analysis reads",
+                sage,
+                r"NEVER read `behavioral_analysis` as a top-level object",
+            ),
+        ]
+    )
+
+
 def validate_code_reviewer_confidence_filter_contract(root: Path) -> list[str]:
     target = root / "extension/agents/build/code-reviewer.md"
     flags = re.IGNORECASE | re.MULTILINE

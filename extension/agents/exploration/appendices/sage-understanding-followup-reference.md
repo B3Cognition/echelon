@@ -130,14 +130,38 @@ Extract testability sub-metrics and include them in `quality-gates.md`:
 | negative_space_coverage | {score} | Proportion of requirements specifying error/edge/boundary cases |
 ```
 
-Extract `behavioral_analysis.transitions[]` from enhanced JSON and include:
+Extract `.[0].behavioral_analysis.transitions` from enhanced JSON and include:
+
+```bash
+jq -r '
+  (.[0].behavioral_analysis.transitions // [])[]
+  | [
+      (.guard // "-"),
+      (.action // "-"),
+      (.outcome // "-"),
+      ((.is_complete // false) | tostring),
+      ((.requirement_index // "-") | tostring)
+    ]
+  | @tsv
+' /tmp/u_perreq.json
+```
+
+The Understanding JSON root is a list. Do not query `.behavioral_analysis.transitions[]`
+as a top-level object path; that causes jq errors and empty handoff evidence.
+
+If `.[0].behavioral_analysis.transitions // []` is empty, write `None extracted -
+Understanding returned no behavioral transitions; SENTINEL must derive tests from
+Given/When/Then acceptance criteria and FR/NFR bullets.` Do not treat an empty
+transition list as complete behavioral coverage. If any cell is `-`, preserve it
+in the table and call out the missing guard/action/outcome data as a SENTINEL
+handoff warning.
 
 ```markdown
 ## Behavioral Transitions (for speckit-echelon-sentinel (SENTINEL) consumption)
 
 | # | Guard | Action | Outcome | Complete | Requirement |
 |---|-------|--------|---------|----------|-------------|
-| 1 | when | validate | display | true | FR-003 |
+| 1 | when | validate | display | true | requirement_index: 3 |
 ```
 
 SENTINEL maps transitions to Given/When/Then test case templates.
