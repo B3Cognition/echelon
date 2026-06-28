@@ -144,6 +144,12 @@ _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
 }
 
+_GOLDDIGGER_HARNESS_STATE_KEYS = frozenset({
+    "golddigger_requests",
+    "golddigger_completed_domains",
+})
+_GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS = 6000
+
 
 def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
     """Return a robust repo-relative/absolute spec_dir reference.
@@ -190,6 +196,33 @@ def _render_context_candidate(file_ref: str, candidate: Path) -> str:
             )
         return "\n".join(chunks)
     return f"\n---\n# {file_ref}\n{candidate.read_text(encoding='utf-8', errors='replace')}"
+
+
+def _completed_golddigger_cache_paths(state: dict, squad_dir: Path) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for cache_key in state.get("golddigger_completed_domains") or []:
+        key = str(cache_key).strip()
+        if not key:
+            continue
+        path = squad_dir / "golddigger-cache" / f"{key}.md"
+        if path.exists() and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _render_golddigger_cache_context(state: dict, squad_dir: Path) -> str:
+    paths = _completed_golddigger_cache_paths(state, squad_dir)
+    if not paths:
+        return ""
+    chunks = ["\n---\n# GOLDDIGGER Mode 2 Cache"]
+    for path in paths:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if len(text) > _GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS:
+            text = text[:_GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS]
+        chunks.append(f"\n## {path.relative_to(squad_dir).as_posix()}\n{text}")
+    return "\n".join(chunks)
 
 
 def _routing_contract(node: "PhaseNode") -> str:
@@ -277,6 +310,7 @@ class PhaseExecutor(ABC):
         self,
         node: "PhaseNode",
         result: "SquadAgentResult",
+        allowed_state_updates: object = None,
     ) -> "SquadAgentResult":
         """Validate result state updates before executor-side direct state writes."""
         if result.echelon_result is None:
@@ -292,10 +326,8 @@ class PhaseExecutor(ABC):
             result.echelon_result = validate_echelon_result(
                 result.echelon_result,
                 allowed_state_update_keys=getattr(
-                    node,
-                    "allowed_state_updates",
-                    None,
-                ),
+                    node, "allowed_state_updates", None
+                ) if allowed_state_updates is None else allowed_state_updates,
             )
             return result
         except EchelonResultValidationError as exc:
@@ -368,6 +400,7 @@ class PhaseExecutor(ABC):
         # the text-level translation applied to agent/spec file content below.
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
 
         def _translate_squad_path(ref: str) -> str:
             """Rewrite legacy .specify/squad/ prefixes to the actual run dir."""
@@ -401,7 +434,12 @@ class PhaseExecutor(ABC):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            resolved = _translate_squad_path(file_ref.replace("{spec_dir}", spec_dir_ref))
+            resolved = _translate_squad_path(
+                file_ref.replace("{spec_dir}", spec_dir_ref).replace(
+                    "{context_dir}",
+                    context_dir_str,
+                )
+            )
             if resolved.startswith("/"):
                 candidates = [Path(resolved)]
             else:
@@ -415,12 +453,16 @@ class PhaseExecutor(ABC):
         state_path = self._squad_dir / "state.json"
         if state_path.exists():
             dynamic_parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
+        cache_context = _render_golddigger_cache_context(state, Path(squad_dir_str))
+        if cache_context:
+            dynamic_parts.append(cache_context)
 
         # Inject squad run context so agents know where to write
         context_preamble = (
             f"# Squad Run Context\n"
             f"SQUAD_DIR={squad_dir_str}\n"
             f"STAGING_DIR={staging_dir_str}\n"
+            f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
         )
         if spec_dir_ref:
@@ -459,6 +501,7 @@ class PhaseExecutor(ABC):
 
         prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
+        prompt = prompt.replace("{context_dir}", context_dir_str)
 
         # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
@@ -484,8 +527,14 @@ class PhaseExecutor(ABC):
         from harness.condition_evaluator import ConditionEvaluator
         ev = ConditionEvaluator()
         for entry in node.pre_dispatch:
+            state = state_store.load()
             condition = entry.get("condition", "always")
             if ev.evaluate(condition, state) is not True:
+                continue
+            if entry.get("id") == "golddigger_mode2_queue":
+                result = self._process_golddigger_mode2_queue(node, state_store)
+                if result is not None and result.blocked:
+                    return result
                 continue
             pre_agent = entry.get("agent", "").split(" ")[0]
             if not pre_agent:
@@ -513,6 +562,187 @@ class PhaseExecutor(ABC):
                         state_store.save(s)
         return None
 
+    def _normalize_golddigger_request(self, request: object) -> dict:
+        if isinstance(request, str):
+            return {
+                "domain": request,
+                "repo": None,
+                "requested_by": "unknown",
+                "reason": "",
+            }
+        if isinstance(request, dict):
+            normalized = dict(request)
+            normalized.setdefault("repo", None)
+            normalized.setdefault("requested_by", "unknown")
+            normalized.setdefault("reason", "")
+            return normalized
+        return {
+            "domain": "",
+            "repo": None,
+            "requested_by": "unknown",
+            "reason": "",
+        }
+
+    def _golddigger_cache_key(self, request: dict) -> str:
+        domain = str(request.get("domain") or "").strip()
+        repo = str(request.get("repo") or "").strip()
+        return f"{repo}--{domain}" if repo else domain
+
+    def _golddigger_cache_path(self, cache_key: str, state: dict) -> Path:
+        squad_dir = Path(state.get("squad_dir", str(self._squad_dir)))
+        return squad_dir / "golddigger-cache" / f"{cache_key}.md"
+
+    def _golddigger_artifact_paths(self, artifacts: object) -> list[str]:
+        paths: list[str] = []
+        seen: set[str] = set()
+
+        def _visit(value: object) -> None:
+            if isinstance(value, str):
+                candidate = value.strip()
+                if candidate and candidate not in seen:
+                    seen.add(candidate)
+                    paths.append(candidate)
+                return
+            if isinstance(value, dict):
+                for nested in value.values():
+                    _visit(nested)
+                return
+            if isinstance(value, list):
+                for nested in value:
+                    _visit(nested)
+
+        _visit(artifacts)
+        return paths
+
+    def _golddigger_mode2_policy(self) -> str:
+        """Resolve the Mode 2 queue policy, failing closed to requested_only."""
+        try:
+            from harness.config import get_full_resolved_config
+
+            full_config = get_full_resolved_config(self._project_root)
+        except Exception:
+            return "requested_only"
+
+        golddigger_config = full_config.get("golddigger")
+        if not isinstance(golddigger_config, dict):
+            return "requested_only"
+
+        policy = golddigger_config.get("mode2_policy")
+        if isinstance(policy, str) and policy.strip().lower() == "disabled":
+            return "disabled"
+        return "requested_only"
+
+    def _filtered_allowed_state_updates(
+        self,
+        node: "PhaseNode",
+        excluded_keys: set[str] | frozenset[str] = frozenset(),
+    ) -> object:
+        allowed_state_updates = getattr(node, "allowed_state_updates", None)
+        if allowed_state_updates is None:
+            return None
+        excluded = {str(key) for key in excluded_keys}
+        return [
+            key for key in allowed_state_updates if str(key) not in excluded
+        ]
+
+    def _process_golddigger_mode2_queue(
+        self,
+        node: "PhaseNode",
+        state_store: "SquadStateStore",
+    ) -> Optional["SquadAgentResult"]:
+        from harness.squad_provider import SquadAgentResult
+
+        state = state_store.load()
+        requests = list(state.get("golddigger_requests") or [])
+        if not requests:
+            return None
+        if self._golddigger_mode2_policy() == "disabled":
+            return None
+
+        rel = self._graph.agent_file("speckit-echelon-golddigger")
+        if not rel:
+            return None
+        agent_path = self._ext_dir / rel
+        if not agent_path.exists():
+            return None
+
+        allowed_state_updates = self._filtered_allowed_state_updates(
+            node,
+            excluded_keys=_GOLDDIGGER_HARNESS_STATE_KEYS,
+        )
+        completed_domains = list(state.get("golddigger_completed_domains") or [])
+
+        for index, raw_request in enumerate(requests):
+            request = self._normalize_golddigger_request(raw_request)
+            cache_key = self._golddigger_cache_key(request)
+            if not cache_key:
+                continue
+
+            cache_path = self._golddigger_cache_path(cache_key, state)
+            if cache_key in completed_domains and cache_path.exists():
+                continue
+            if cache_key in completed_domains and not cache_path.exists():
+                completed_domains = [key for key in completed_domains if key != cache_key]
+                state = state_store.load()
+                state["golddigger_completed_domains"] = completed_domains
+                state_store.save(state)
+
+            prompt = self._assemble_golddigger_mode2_prompt(
+                agent_path,
+                state_store.load(),
+                request,
+                allowed_state_updates,
+            )
+            result = self._provider.exec_agent(str(self._project_root), prompt)
+            result = self._validate_result_state_updates(
+                node,
+                result,
+                allowed_state_updates=allowed_state_updates,
+            )
+            if result.blocked:
+                state = state_store.load()
+                state["golddigger_requests"] = requests[index:]
+                state_store.save(state)
+                return result
+
+            self._write_journal_entries(result, node.id)
+            state = state_store.load()
+            for key, value in result.state_updates.items():
+                state[key] = value
+            golddigger_status = str(result.state_updates.get("golddigger_status") or "").strip().lower()
+            if golddigger_status == "complete" and not cache_path.exists():
+                state["golddigger_requests"] = requests[index:]
+                state_store.save(state)
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "BLOCKED",
+                        "state_updates": {
+                            "blocked_reason": "golddigger_mode2_missing_cache",
+                            "missing_outputs": [str(cache_path)],
+                        },
+                        "journal_entries": [],
+                    },
+                    raw_output=result.raw_output,
+                    duration_ms=result.duration_ms,
+                    timed_out=result.timed_out,
+                    cost_usd=result.cost_usd,
+                )
+            if golddigger_status != "complete":
+                state["golddigger_requests"] = requests[index:]
+                state_store.save(state)
+                return None
+            completed_domains = list(state.get("golddigger_completed_domains") or [])
+            if cache_key not in completed_domains:
+                completed_domains.append(cache_key)
+            state["golddigger_completed_domains"] = completed_domains
+            state_store.save(state)
+
+        state = state_store.load()
+        state["golddigger_requests"] = []
+        state_store.save(state)
+        return None
+
     def _assemble_pre_dispatch_prompt(
         self,
         agent_path: Path,
@@ -529,6 +759,7 @@ class PhaseExecutor(ABC):
         agent_text = agent_path.read_text()
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
         run_id = state.get("run_id", "")
         project_mode = state.get("mode", "")
 
@@ -540,6 +771,7 @@ class PhaseExecutor(ABC):
                 + f"# Squad Run Context\n"
                 + f"SQUAD_DIR={squad_dir_str}\n"
                 + f"STAGING_DIR={staging_dir_str}\n"
+                + f"CONTEXT_DIR={context_dir_str}\n"
                 + f"PROJECT_ROOT={self._project_root}\n\n"
                 + "<context>\n"
                 + f"project_root: {self._project_root}\n"
@@ -562,7 +794,64 @@ class PhaseExecutor(ABC):
             + f"# Squad Run Context\n"
             + f"SQUAD_DIR={squad_dir_str}\n"
             + f"STAGING_DIR={staging_dir_str}\n"
+            + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + _allowed_state_updates_contract(allowed_state_updates)
+            + _canonical_echelon_result_contract(self._ext_dir)
+        )
+
+    def _assemble_golddigger_mode2_prompt(
+        self,
+        agent_path: Path,
+        state: dict,
+        request: dict,
+        allowed_state_updates: object = None,
+    ) -> str:
+        agent_text = agent_path.read_text(encoding="utf-8")
+        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
+        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
+        run_id = state.get("run_id", "")
+        project_mode = state.get("mode", "")
+        domain = str(request.get("domain") or "").strip()
+        repo = request.get("repo")
+        repo_str = str(repo).strip() if repo is not None else ""
+        cache_key = self._golddigger_cache_key(request)
+        cache_path = self._golddigger_cache_path(cache_key, state)
+        target_path = self._project_root / repo_str if repo_str else self._project_root
+        context_lines = [
+            "<context>",
+            f"run_id: {run_id}",
+            f"mode: {project_mode}",
+            f"domain: {domain}",
+            f"repo: {repo_str or 'N/A'}",
+            f"requested_by: {request.get('requested_by', 'unknown')}",
+            f"reason: {request.get('reason', '')}",
+            f"cache_key: {cache_key}",
+        ]
+        if cache_path.exists():
+            context_lines.append(f"existing_cache_path: {cache_path}")
+        for artifact_path in self._golddigger_artifact_paths(state.get("golddigger_artifacts")):
+            context_lines.append(f"artifact_path: {artifact_path}")
+        context_lines.append("</context>")
+
+        return (
+            _shared_agent_contract()
+            + agent_text
+            + "\n\n"
+            + "# Squad Run Context\n"
+            + f"SQUAD_DIR={squad_dir_str}\n"
+            + f"STAGING_DIR={staging_dir_str}\n"
+            + f"CONTEXT_DIR={context_dir_str}\n"
+            + f"PROJECT_ROOT={self._project_root}\n\n"
+            + "\n".join(context_lines)
+            + "\n\n<instructions>\n"
+            + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
+            + f"Run **Mode 2 (Deep Dive)** for domain `{domain}` in repo `{repo_str or 'N/A'}` "
+            + f"at target path `{target_path}`.\n"
+            + "Return only your Mode 2 extraction status fields; the harness manages "
+            + "`golddigger_requests` and `golddigger_completed_domains`.\n"
+            + "</instructions>\n"
             + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)
         )
@@ -774,6 +1063,7 @@ class StagedParallelExecutor(PhaseExecutor):
         # and contaminate staged consensus prompts.
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
+        context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
 
@@ -781,7 +1071,10 @@ class StagedParallelExecutor(PhaseExecutor):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            resolved_ref = file_ref.replace("{spec_dir}", spec_dir_ref)
+            resolved_ref = file_ref.replace("{spec_dir}", spec_dir_ref).replace(
+                "{context_dir}",
+                context_dir_str,
+            )
             if resolved_ref.startswith("/"):
                 candidates = [Path(resolved_ref)]
             else:
@@ -797,17 +1090,22 @@ class StagedParallelExecutor(PhaseExecutor):
                 dynamic_parts.append(
                     f"\n---\n# {extra_path.name}\n{extra_path.read_text()}"
                 )
+        cache_context = _render_golddigger_cache_context(state, Path(squad_dir_str))
+        if cache_context:
+            dynamic_parts.append(cache_context)
 
         # 4. Squad run context preamble + mode instruction
         preamble = (
             f"# Squad Run Context\n"
             f"SQUAD_DIR={squad_dir_str}\n"
             f"STAGING_DIR={staging_dir_str}\n"
+            f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
+        prompt = prompt.replace("{context_dir}", context_dir_str)
         return (
             _shared_agent_contract()
             + prompt

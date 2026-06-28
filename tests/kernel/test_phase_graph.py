@@ -160,6 +160,38 @@ def test_phase1_constitution_context_pack_has_staging_artifacts():
     assert "user-intent" in pack
 
 
+def test_phase1_context_packs_include_generated_context_files():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    discover_pack = set(graph.get("phase1-discover").context_pack)
+    synthesizer_pack = set(graph.get("phase1-synthesizer").context_pack)
+    modeler_pack = set(graph.get("phase1-modeler").context_pack)
+    what_pack = set(graph.get("phase1-what").context_pack)
+
+    assert "{context_dir}/prior-spec-context.md" in discover_pack
+    assert "{context_dir}/stale-memory-report.md" in discover_pack
+
+    expected_full_pack = {
+        "{context_dir}/prior-spec-context.md",
+        "{context_dir}/current-feature-context.md",
+        "{context_dir}/stale-memory-report.md",
+    }
+    assert expected_full_pack.issubset(synthesizer_pack)
+    assert expected_full_pack.issubset(modeler_pack)
+    assert expected_full_pack.issubset(what_pack)
+
+    specialists = graph.get("phase3-specialists")
+    specialist_packs = {
+        agent["id"]: set(agent.get("context_pack", []))
+        for agent in specialists.agents
+        if agent["id"] in {"speckit-echelon-guardian", "speckit-echelon-investigator"}
+    }
+    assert expected_full_pack.issubset(specialist_packs["speckit-echelon-guardian"])
+    assert expected_full_pack.issubset(
+        specialist_packs["speckit-echelon-investigator"]
+    )
+
+
 def test_phase_graph_preserves_allowed_state_updates(tmp_path: Path):
     definition = tmp_path / "definition.yaml"
     extension_yml = tmp_path / "extension.yml"

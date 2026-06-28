@@ -128,6 +128,7 @@ class SquadStateStore:
             "convergence_guard_fire_count": 0,
             "squad_dir": str(self._squad_dir),
             "staging_dir": str(self._staging_dir),
+            "context_dir": str(self._squad_dir / "context"),
         })
 
     def _check_monotonics(self, old: dict, new: dict) -> None:

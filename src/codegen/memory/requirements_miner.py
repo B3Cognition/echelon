@@ -18,7 +18,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 # SEC-025 FIX-1: Import secret scrubber — applied to all content before ChromaDB writes.
 try:
@@ -332,7 +332,7 @@ class RequirementsMiner:
             self._writer = MemPalaceWriter(self.ctx)
         return self._writer
 
-    def mine_file(self, path: Path) -> MineResult:
+    def mine_file(self, path: Path, artifact_metadata: dict[str, Any] | None = None) -> MineResult:
         """
         Mine a single markdown/text spec file.
 
@@ -351,7 +351,7 @@ class RequirementsMiner:
         reqs = _parse_markdown(text, source=str(path))
         result.total = len(reqs)
         result.requirements = reqs
-        self._write_requirements(reqs, result)
+        self._write_requirements(reqs, result, artifact_metadata=artifact_metadata)
         logger.info(
             "[RequirementsMiner] %s: %d mined, %d written, %d failed",
             path.name, result.total, result.written, result.failed,
@@ -378,7 +378,7 @@ class RequirementsMiner:
         reqs = _parse_markdown(text, source=source)
         result.total = len(reqs)
         result.requirements = reqs
-        self._write_requirements(reqs, result)
+        self._write_requirements(reqs, result, artifact_metadata=None)
         return result
 
     def mine_jira_issues(self, issues: list[dict]) -> MineResult:
@@ -401,7 +401,7 @@ class RequirementsMiner:
                 result.errors.append(msg)
                 result.failed += 1
         result.requirements = reqs
-        self._write_requirements(reqs, result)
+        self._write_requirements(reqs, result, artifact_metadata=None)
         return result
 
     def mine_bug(self, bug: dict) -> MineResult:
@@ -423,11 +423,16 @@ class RequirementsMiner:
         )
         req = MinedRequirement(req_id=req_id, room="bugs", content=content, source="test-loop")
         result.requirements = [req]
-        self._write_requirements([req], result)
+        self._write_requirements([req], result, artifact_metadata=None)
         logger.info("[RequirementsMiner] Bug mined: %s", req_id)
         return result
 
-    def _write_requirements(self, reqs: list[MinedRequirement], result: MineResult) -> None:
+    def _write_requirements(
+        self,
+        reqs: list[MinedRequirement],
+        result: MineResult,
+        artifact_metadata: dict[str, Any] | None = None,
+    ) -> None:
         """Write mined requirements to MemPalace via MemPalaceWriter.
 
         SEC-025 FIX-1: All content fields are scrubbed of credentials before
@@ -456,6 +461,7 @@ class RequirementsMiner:
                     phase="RE",
                     provenance_type="requirements_mine",
                     source_file=req.source,
+                    extra_metadata=artifact_metadata,
                 )
                 if drawer_id:
                     result.written += 1

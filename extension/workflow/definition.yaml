@@ -247,6 +247,9 @@ phases:
       - user_request
       - knowledge-base/patterns.yaml       # if exists
       - knowledge-base/pitfalls.yaml       # if exists
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
       - calibration_map entry for speckit-echelon-scout (SCOUT)    # from init
     pre_dispatch:
       - id: golddigger_mode1
@@ -271,8 +274,11 @@ phases:
       - reference-architectures.md   # greenfield only
     allowed_state_updates:
       - golddigger_requests
+      - golddigger_completed_domains
       - golddigger_artifacts
       - golddigger_status
+      - golddigger_mode
+      - golddigger_notes
       - shadow_output_recovered
     transitions:
       - to: phase1-synthesizer
@@ -288,6 +294,9 @@ phases:
     context_pack:
       - all speckit-echelon-scout (SCOUT) outputs from .specify/squad/staging/
       - .specify/squad/reasoning-journal.jsonl [phase=phase1-discover]
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
     outputs:
       - glossary.md              # unified, contradictions flagged
       - mental-model.md          # unified, gaps flagged
@@ -314,6 +323,9 @@ phases:
     context_pack:
       - all source files (brownfield path)
       - golddigger artifacts (if available from state.json.golddigger_artifacts)
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
     outputs:
       - mental-model-code.md
       - codebase-graph.md
@@ -361,6 +373,9 @@ phases:
       - boundaries.md
       - assumptions.md
       - unknowns.md
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-discover]
       - calibration_map entry for speckit-echelon-sage (SAGE)
     outputs:
@@ -422,6 +437,9 @@ phases:
       - assumptions.md
       - unknowns.md
       - reference-architectures.md    # greenfield only, if exists
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-why1]
       - calibration_map entry for speckit-echelon-cartographer (CARTOGRAPHER)
     pre_dispatch:
@@ -431,14 +449,22 @@ phases:
           For each pending entry in state.json.golddigger_requests:
           check golddigger_completed_domains cache (verify file exists),
           dispatch speckit-echelon-golddigger (GOLDDIGGER) Mode 2 if cache miss,
-          append domain to golddigger_completed_domains,
-          include cached domain file in context pack.
+          append domain to golddigger_completed_domains only when
+          golddigger_status is complete and the cache file exists,
+          preserve failed/partial requests for later retry,
+          include completed cached domain files in context pack.
     outputs:
       - spec.md
       - 00-overview.md
       - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
       - lexicon_pass → state.json        # only when lexicon_gate.enabled; drives the re-dispatch below
     allowed_state_updates:
+      - golddigger_requests
+      - golddigger_completed_domains
+      - golddigger_artifacts
+      - golddigger_status
+      - golddigger_mode
+      - golddigger_notes
       - spec_id
       - spec_dir
       - spec_status
@@ -472,6 +498,9 @@ phases:
       - spec.md
       - constitution.md
       - assumptions.md
+      - "{context_dir}/prior-spec-context.md"
+      - "{context_dir}/current-feature-context.md"
+      - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]
       - calibration_map entry for speckit-echelon-sage (SAGE)
     outputs:
@@ -677,6 +706,9 @@ phases:
           - spec.md            # architecture.md does not exist yet — specialists run before speckit-echelon-architect (ARCHITECT)
           - boundaries.md
           - constitution.md
+          - "{context_dir}/prior-spec-context.md"
+          - "{context_dir}/current-feature-context.md"
+          - "{context_dir}/stale-memory-report.md"
         outputs:
           - security-findings.md
           - risk-acceptance-log.md
@@ -688,6 +720,9 @@ phases:
           - spec.md
           - architecture.md
           - unknowns.md
+          - "{context_dir}/prior-spec-context.md"
+          - "{context_dir}/current-feature-context.md"
+          - "{context_dir}/stale-memory-report.md"
           - .specify/squad/reasoning-journal.jsonl [type=belief_gate_triggered]   # if any
         outputs:
           - research.md

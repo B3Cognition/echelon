@@ -94,3 +94,24 @@ def test_miner_prints_warning_on_collision(tmp_path, capsys):
     captured = capsys.readouterr()
     assert "my-app" in captured.err
     assert "/other/project/spec.md" in captured.err
+
+
+def test_mine_file_passes_artifact_metadata(monkeypatch, tmp_path):
+    spec = tmp_path / "spec.md"
+    spec.write_text("FR-001: Upload.\n", encoding="utf-8")
+    ctx = MemPalaceContext(wing="demo", run_id="run-1", palace_path=str(tmp_path / "palace"))
+    miner = RequirementsMiner(ctx, project_dir=tmp_path)
+    calls = []
+
+    class Writer:
+        def write(self, **kwargs):
+            calls.append(kwargs)
+            return "drawer_demo"
+
+    monkeypatch.setattr(miner, "_get_writer", lambda: Writer())
+    monkeypatch.setattr("codegen.memory.requirements_miner.check_wing_collision", lambda *args, **kwargs: [])
+
+    miner.mine_file(spec, artifact_metadata={"artifact_hash": "sha256:" + "2" * 64, "canonical": True})
+
+    assert calls[0]["extra_metadata"]["artifact_hash"] == "sha256:" + "2" * 64
+    assert calls[0]["extra_metadata"]["canonical"] is True

@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from codegen.memory.context import MemPalaceContext
@@ -50,6 +50,7 @@ class MemPalaceWriter:
         embedding_model: str = "all-MiniLM-L6-v2@1.0",
         status: str = "pending",
         source_file: Optional[str] = None,
+        extra_metadata: Optional[dict[str, Any]] = None,
     ) -> Optional[str]:
         """Write a drawer. Returns drawer_id on success, None on failure."""
         if self.mempalace_disabled:
@@ -64,6 +65,8 @@ class MemPalaceWriter:
             "status": status,
             "source_file": source_file,
         }
+        if extra_metadata:
+            metadata.update(extra_metadata)
 
         start = time.monotonic()
         try:

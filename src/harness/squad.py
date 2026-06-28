@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import signal
 import shutil
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Optional
 
 from echelon.artifact_index import write_artifact_index
+from echelon.context_builder import build_run_context
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -73,6 +75,8 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
         "shadow_output_recovered",
     }
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _state_autonomy_mode(state: dict, fallback: str) -> str:
@@ -238,6 +242,52 @@ class SquadController:
         except Exception:
             pass
         return "greenfield"
+
+    def _refresh_run_context(self, reason: str = "") -> None:
+        state = self._state_store.load()
+        run_dir = Path(state.get("squad_dir", self._squad_dir))
+        user_request = str(state.get("user_request", state.get("user_message", "")))
+        try:
+            context_result = build_run_context(
+                self._project_root,
+                run_dir,
+                user_request=user_request,
+                drawers=self._retrieve_mempalace_context_drawers(
+                    user_request,
+                    str(state.get("run_id") or ""),
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "run-local context refresh failed for %s%s: %s",
+                run_dir,
+                f" ({reason})" if reason else "",
+                exc,
+            )
+            return
+
+        state["context_dir"] = str(context_result.context_dir)
+        self._state_store.save(state)
+
+    def _retrieve_mempalace_context_drawers(
+        self,
+        user_request: str,
+        run_id: str,
+    ) -> list[object]:
+        query = user_request.strip()
+        if not query:
+            return []
+        try:
+            from codegen.memory.context import MemPalaceContext
+            from codegen.memory.mempalace_reader import MemPalaceReader
+        except Exception:
+            return []
+        try:
+            ctx = MemPalaceContext.from_project(self._project_root, run_id=run_id or "squad-context")
+            reader = MemPalaceReader(ctx)
+            return list(reader.search_requirements(query, n_results=10))
+        except (Exception, SystemExit):
+            return []
 
     def run(
         self,
@@ -417,6 +467,7 @@ class SquadController:
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
             )
+            self._refresh_run_context("fresh initialization")
         else:
             print(f"[squad] resuming from phase: {self._state_store.current_phase()}", flush=True)
             state = self._state_store.load()
@@ -521,6 +572,7 @@ class SquadController:
                 result,
                 allowed_state_update_keys=node.allowed_state_updates,
             )
+            self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
             # The condition `iteration < max_iterations` in definition.yaml must work regardless
@@ -623,6 +675,10 @@ class SquadController:
             else:
                 published_spec_dir.mkdir(parents=True, exist_ok=True)
             write_artifact_index(published_spec_dir)
+            self._refresh_published_context_metadata(
+                published_spec_dir,
+                str(state.get("run_id") or "").strip(),
+            )
         except OSError as exc:
             return PhaseAReadinessResult(
                 ready=False,
@@ -635,6 +691,88 @@ class SquadController:
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._state_store.save(updated)
         return validate_phase_a_readiness(updated, [published_spec_dir])
+
+    def _refresh_published_context_metadata(
+        self,
+        published_spec_dir: Path,
+        run_id: str,
+    ) -> None:
+        spec_file = published_spec_dir / "spec.md"
+        if not spec_file.exists():
+            return
+
+        from echelon.context_metadata import FeatureMetadata, write_feature_metadata
+
+        metadata = FeatureMetadata.from_spec_dir(
+            published_spec_dir,
+            run_id=run_id or None,
+        )
+        write_feature_metadata(published_spec_dir, metadata)
+        self._mine_published_spec_best_effort(
+            published_spec_dir,
+            spec_file,
+            run_id,
+            metadata,
+        )
+
+    def _mine_published_spec_best_effort(
+        self,
+        published_spec_dir: Path,
+        spec_file: Path,
+        run_id: str,
+        metadata: object,
+    ) -> None:
+        try:
+            from codegen.memory.context import MemPalaceContext
+            from codegen.memory.requirements_miner import RequirementsMiner
+            from echelon.context_metadata import artifact_hash
+        except Exception:
+            return
+
+        artifact_metadata = self._canonical_spec_artifact_metadata(
+            spec_file,
+            metadata,
+            artifact_hash(spec_file),
+        )
+
+        try:
+            ctx = MemPalaceContext.from_project(self._project_root, run_id=run_id)
+            miner = RequirementsMiner(ctx, project_dir=self._project_root)
+            miner.mine_file(spec_file, artifact_metadata=artifact_metadata)
+        except (Exception, SystemExit):
+            return
+
+    def _canonical_spec_artifact_metadata(
+        self,
+        spec_file: Path,
+        metadata: object,
+        spec_hash: str,
+    ) -> dict[str, object]:
+        try:
+            artifact_path = spec_file.relative_to(self._project_root).as_posix()
+        except ValueError:
+            artifact_path = spec_file.as_posix()
+
+        payload: dict[str, object] = {
+            "scope": "canonical",
+            "canonical": True,
+            "artifact_path": artifact_path,
+            "artifact_hash": spec_hash,
+            "lifecycle_status": getattr(metadata, "status", "active"),
+            "spec_id": getattr(metadata, "spec_id", ""),
+            "feature_id": getattr(metadata, "feature_id", ""),
+        }
+        for reserved_key in {
+            "run_id",
+            "phase",
+            "run_outcome",
+            "provenance_type",
+            "embedding_model",
+            "status",
+            "source_file",
+        }:
+            payload.pop(reserved_key, None)
+        return payload
 
     def _active_phase_a_spec_dir(self, state: dict) -> Path | None:
         spec_ref = str(state.get("spec_dir") or "").strip()
@@ -662,9 +800,30 @@ class SquadController:
             existing = find_spec_dir(spec_id, self._project_root)
             if existing is not None:
                 return existing
+            if re.match(r"^[0-9]{3}-", spec_id):
+                return self._project_root / "specs" / spec_id
+            active_name = active_spec_dir.name
+            if active_name.startswith(f"{spec_id}-"):
+                return self._project_root / "specs" / active_name
+            slug = self._spec_title_slug(active_spec_dir)
+            if slug:
+                return self._project_root / "specs" / f"{spec_id}-{slug}"
             return self._project_root / "specs" / spec_id
 
         return self._project_root / "specs" / active_spec_dir.name
+
+    def _spec_title_slug(self, spec_dir: Path) -> str:
+        spec_file = spec_dir / "spec.md"
+        if not spec_file.exists():
+            return ""
+        for line in spec_file.read_text(encoding="utf-8").splitlines():
+            match = re.match(r"^\s*#\s+(.+?)\s*$", line)
+            if not match:
+                continue
+            title = match.group(1).strip().lower()
+            slug = re.sub(r"[^a-z0-9]+", "-", title).strip("-")
+            return slug
+        return ""
 
     def _copy_spec_tree(self, source: Path, destination: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)

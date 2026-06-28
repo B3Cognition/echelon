@@ -1,6 +1,6 @@
 # Project Context and Memory Reconciliation Design
 
-**Status:** Draft
+**Status:** Accepted for EGR-035 implementation planning
 **Date:** 2026-06-26
 **Owner:** Echelon
 

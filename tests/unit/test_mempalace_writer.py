@@ -145,3 +145,27 @@ def test_backfill_status_rejects_invalid_status():
     writer = MemPalaceWriter(ctx)
     result = writer.backfill_status(["drawer-id-abc"], "invalid-status")
     assert result == 0
+
+
+def test_write_merges_extra_metadata(monkeypatch, tmp_path):
+    captured = {}
+    ctx = MemPalaceContext(wing="demo", run_id="run-1", palace_path=str(tmp_path))
+    writer = MemPalaceWriter(ctx)
+
+    def fake_write_drawer(*, wing, room, content, metadata):
+        captured.update(metadata)
+        return "drawer_demo"
+
+    monkeypatch.setattr(writer, "_write_drawer", fake_write_drawer)
+
+    writer.write(
+        room="functional-requirements",
+        content="FR-001: Upload.",
+        phase="RE",
+        source_file="specs/001/spec.md",
+        extra_metadata={"artifact_hash": "sha256:" + "1" * 64, "canonical": True},
+    )
+
+    assert captured["artifact_hash"] == "sha256:" + "1" * 64
+    assert captured["canonical"] is True
+    assert captured["run_id"] == "run-1"

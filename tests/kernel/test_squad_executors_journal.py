@@ -808,6 +808,392 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
     assert state_store.load()["allowed_key"] is True
 
 
+def test_golddigger_mode2_queue_dispatches_without_agent_field(tmp_path):
+    """Mode 2 queue entries run even when definition.yaml omits an agent field."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents" / "exploration"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
+    state = state_store.load()
+    state["golddigger_requests"] = [
+        {
+            "domain": "auth",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need topology",
+        }
+    ]
+    state["golddigger_completed_domains"] = []
+    state_store.save(state)
+
+    provider = MagicMock()
+
+    def _exec_agent(project_root, prompt):
+        cache_dir = squad_dir / "golddigger-cache"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "auth.md").write_text("# Auth deep dive\n", encoding="utf-8")
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "COMPLETE",
+                "state_updates": {
+                    "golddigger_status": "complete",
+                    "golddigger_mode": "deep-dive",
+                },
+                "journal_entries": [],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+    provider.exec_agent.side_effect = _exec_agent
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/exploration/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
+        allowed_state_updates=["golddigger_status", "golddigger_mode"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    updated = state_store.load()
+    assert result is None
+    provider.exec_agent.assert_called_once()
+    assert "Mode 2 (Deep Dive)" in provider.exec_agent.call_args.args[1]
+    assert updated["golddigger_requests"] == []
+    assert updated["golddigger_completed_domains"] == ["auth"]
+
+
+def test_golddigger_mode2_queue_respects_disabled_policy(tmp_path):
+    """Disabled policy leaves the queue untouched and skips Mode 2 dispatch."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents" / "exploration"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
+    config_dir = tmp_path / ".specify" / "extensions" / "echelon"
+    config_dir.mkdir(parents=True)
+    (config_dir / "echelon-config.yml").write_text(
+        "golddigger:\n  mode2_policy: disabled\n",
+        encoding="utf-8",
+    )
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
+    state = state_store.load()
+    state["golddigger_requests"] = [
+        {
+            "domain": "auth",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need topology",
+        }
+    ]
+    state["golddigger_completed_domains"] = ["billing"]
+    state_store.save(state)
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/exploration/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
+        allowed_state_updates=["golddigger_status", "golddigger_mode"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    updated = state_store.load()
+    assert result is None
+    provider.exec_agent.assert_not_called()
+    assert updated["golddigger_requests"] == [
+        {
+            "domain": "auth",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need topology",
+        }
+    ]
+    assert updated["golddigger_completed_domains"] == ["billing"]
+
+
+def test_golddigger_mode2_queue_preserves_blocked_request(tmp_path):
+    """A blocked deep-dive leaves the current and remaining requests queued."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents" / "exploration"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
+    state = state_store.load()
+    state["golddigger_requests"] = [
+        {
+            "domain": "auth",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need auth topology",
+        },
+        {
+            "domain": "billing",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need billing topology",
+        },
+    ]
+    state["golddigger_completed_domains"] = []
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {"golddigger_status": "failed"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/exploration/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    updated = state_store.load()
+    assert result is not None
+    assert result.blocked is True
+    assert updated["golddigger_requests"] == [
+        {
+            "domain": "auth",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need auth topology",
+        },
+        {
+            "domain": "billing",
+            "repo": None,
+            "requested_by": "test",
+            "reason": "need billing topology",
+        },
+    ]
+    assert updated["golddigger_completed_domains"] == []
+
+
+def test_golddigger_mode2_queue_preserves_failed_clean_result(tmp_path):
+    """A clean failed/partial Mode 2 result is not marked completed or dequeued."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents" / "exploration"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
+    request = {
+        "domain": "auth",
+        "repo": None,
+        "requested_by": "test",
+        "reason": "need auth topology",
+    }
+    state = state_store.load()
+    state["golddigger_requests"] = [request]
+    state["golddigger_completed_domains"] = []
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {"golddigger_status": "failed"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/exploration/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    updated = state_store.load()
+    assert result is None
+    assert updated["golddigger_requests"] == [request]
+    assert updated["golddigger_completed_domains"] == []
+    assert updated["golddigger_status"] == "failed"
+
+
+def test_golddigger_mode2_queue_blocks_complete_result_without_cache(tmp_path):
+    """A claimed complete deep-dive must produce its cache artifact."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents" / "exploration"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
+    request = {
+        "domain": "auth",
+        "repo": None,
+        "requested_by": "test",
+        "reason": "need auth topology",
+    }
+    state = state_store.load()
+    state["golddigger_requests"] = [request]
+    state["golddigger_completed_domains"] = []
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {"golddigger_status": "complete"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/exploration/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    updated = state_store.load()
+    assert result is not None
+    assert result.blocked is True
+    assert result.state_updates["blocked_reason"] == "golddigger_mode2_missing_cache"
+    assert updated["golddigger_requests"] == [request]
+    assert updated["golddigger_completed_domains"] == []
+
+
+def test_golddigger_mode2_queue_blocks_harness_owned_state_updates(tmp_path):
+    """Mode 2 subagents cannot mutate harness-owned queue/cache state keys."""
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents" / "exploration"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
+    original_request = {
+        "domain": "auth",
+        "repo": None,
+        "requested_by": "test",
+        "reason": "need topology",
+    }
+    state = state_store.load()
+    state["golddigger_requests"] = [original_request]
+    state["golddigger_completed_domains"] = ["billing"]
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {
+                "golddigger_requests": [],
+                "golddigger_completed_domains": ["auth"],
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/exploration/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
+        allowed_state_updates=[
+            "golddigger_status",
+            "golddigger_requests",
+            "golddigger_completed_domains",
+        ],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    updated = state_store.load()
+    prompt = provider.exec_agent.call_args.args[1]
+    assert result is not None
+    assert result.blocked is True
+    assert "golddigger_requests" in result.state_updates["blocked_reason"]
+    assert "- `golddigger_status`" in prompt
+    assert "- `golddigger_requests`" not in prompt
+    assert "- `golddigger_completed_domains`" not in prompt
+    assert updated["golddigger_requests"] == [original_request]
+    assert updated["golddigger_completed_domains"] == ["billing"]
+    assert "golddigger_status" not in updated
+    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"

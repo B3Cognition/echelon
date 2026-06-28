@@ -184,6 +184,10 @@ discovery:
   git_history_limit: 2500               # Commits analyzed for hotspot analysis
   max_lines_per_file: 5000              # Max lines per file during extraction
 
+golddigger:
+  # Mode 2 deep dives run only for explicit queue requests.
+  mode2_policy: requested_only
+
 # =============================================================================
 # SCORING
 # =============================================================================
