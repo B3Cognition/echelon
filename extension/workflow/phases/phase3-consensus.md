@@ -62,7 +62,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
-  Run full Understanding quality gates. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Run full Understanding quality gates via `speckit.echelon.understanding-validate`. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

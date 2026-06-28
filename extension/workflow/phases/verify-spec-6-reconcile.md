@@ -26,7 +26,7 @@ Reconciliation is two-stage:
 
 ## Safety Rules
 
-ALWAYS use the deterministic harness command for each metadata or progress change.
+ALWAYS use the deterministic harness commands `python -m harness apply-task-requirement-mapping` and `python -m harness mark-task-progress` for metadata or progress changes.
 NEVER edit task checkboxes or `**Status:**` lines directly.
 NEVER edit task `req=` metadata directly.
 NEVER modify application source code, `spec.md`, or `plan.md`.

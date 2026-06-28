@@ -378,7 +378,7 @@ echelon_result:
 
 ## Failure Handling
 
-**Precondition:** You may only enter this path if the Skill tool was invoked and returned an error. Always invoke the Skill tool before treating the path as failed. If the Skill tool was never invoked, you are NOT in a failure state — go back and invoke it.
+**Precondition:** You may only enter this path if the `speckit.echelon.re-extract` Skill tool was invoked and returned an error. Always invoke `speckit.echelon.re-extract` before treating the path as failed. If the Skill tool was never invoked, you are NOT in a failure state — go back and invoke it.
 
 If a step fails **after the Skill tool was invoked:**
 

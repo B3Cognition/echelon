@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PROMPT_GLOBS = (
+    "extension/agents/**/*.md",
+    "extension/workflow/phases/**/*.md",
+)
+
+EXECUTABLE_REFERENCE_RE = re.compile(
+    r"\b(?:run|re-run|invoke|call|execute|use|validate|generate)\b"
+    r".{0,120}\b(?:Skill tool|CLI|validator|command|script|"
+    r"WebSearch|ToolSearch|Bash|Understanding|Lexicon|"
+    r"speckit\.echelon|/speckit\.echelon|codegen CLI)\b",
+    re.IGNORECASE,
+)
+
+EXACT_INVOCATION_RE = re.compile(
+    r"`[^`\n]*(?:"
+    r"speckit\.[\w.-]+|"
+    r"understanding(?:\s+scan|\s+diagram|\s+\"\$|\s+\$|\s+<|\s+[\w{/])|"
+    r"lexicon\s+validate|"
+    r"echelon\s+[\w.-]+|"
+    r"codegen\s+[\w.-]+|"
+    r"bash\s+[\w./${}\"'-]+|"
+    r"python\s+-m\s+[\w.]+(?:\s+[\w.-]+)?|"
+    r"python\s+[\w./${}\"'-]+|"
+    r"node\s+[\w./${}\"'-]+|"
+    r"[\w./-]+\.sh\b|"
+    r"sandbox-exec\.sh\b|"
+    r"ls\s+[-\w./${}\"']+|"
+    r"grep\s+[-\w./${}\"'|\\[\]()]+|"
+    r"jq\s+[-'\"]|"
+    r"pytest\s+[\w./:${}\"'-]+|"
+    r"WebSearch|WebFetch|ToolSearch|Bash|Read|Glob|Grep|Write|Edit"
+    r")[^`\n]*`",
+    re.IGNORECASE,
+)
+
+PLAIN_EXACT_INVOCATION_RE = re.compile(
+    r"(?:"
+    r"/speckit\.echelon\.[\w.-]+|"
+    r"\bspeckit\.echelon\.[\w.-]+|"
+    r"\b[\w./-]+\.sh\b|"
+    r"\bsandbox-exec\.sh\b|"
+    r"\bWebSearch\b|\bWebFetch\b|\bToolSearch\b|\bBash\b"
+    r")"
+)
+
+FENCED_COMMAND_RE = re.compile(
+    r"```(?:bash|sh|text|console)?\n"
+    r"(?:(?!```).)*(?:"
+    r"speckit\.[\w.-]+|"
+    r"understanding(?:\s+scan|\s+diagram|\s+\"\$|\s+\$|\s+<|\s+[\w{/])|"
+    r"lexicon\s+validate|"
+    r"echelon\s+[\w.-]+|"
+    r"codegen\s+[\w.-]+|"
+    r"bash\s+[\w./${}\"'-]+|"
+    r"python\s+-m\s+[\w.]+(?:\s+[\w.-]+)?|"
+    r"python\s+[\w./${}\"'-]+|"
+    r"node\s+[\w./${}\"'-]+|"
+    r"[\w./-]+\.sh\b|"
+    r"sandbox-exec\.sh\b|"
+    r"ls\s+[-\w./${}\"']+|"
+    r"grep\s+[-\w./${}\"'|\\[\]()]+|"
+    r"jq\s+[-'\"]|"
+    r"pytest\s+[\w./:${}\"'-]+"
+    r")(?:(?!```).)*```",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+@dataclass(frozen=True)
+class PromptToolContractFinding:
+    path: Path
+    line: int
+    reason: str
+    text: str
+
+
+def _default_prompt_paths(root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for pattern in PROMPT_GLOBS:
+        paths.extend(root.glob(pattern))
+    return sorted(path for path in paths if path.is_file())
+
+
+def _window(lines: list[str], index: int, radius: int = 10) -> str:
+    start = max(0, index - radius)
+    end = min(len(lines), index + radius + 1)
+    return "\n".join(lines[start:end])
+
+
+def _has_exact_invocation(context: str) -> bool:
+    return bool(
+        EXACT_INVOCATION_RE.search(context)
+        or PLAIN_EXACT_INVOCATION_RE.search(context)
+        or FENCED_COMMAND_RE.search(context)
+    )
+
+
+def _is_non_executable_reference(line: str) -> bool:
+    lowered = line.lower()
+    if "do not run understanding" in lowered or "does not run understanding" in lowered:
+        return True
+    if "understanding is not required" in lowered:
+        return True
+    if "understanding output" in lowered and "skill tool" not in lowered:
+        return True
+    if "`build`:" in line and "`start`:" in line:
+        return True
+    return False
+
+
+def scan_prompt_tool_contracts(
+    root: Path,
+    paths: list[Path] | None = None,
+) -> list[PromptToolContractFinding]:
+    """Find executable tool references that do not carry a concrete invocation.
+
+    The scanner is intentionally conservative. It only flags lines that combine
+    an action verb with an executable-tool noun, then accepts the reference when
+    a nearby inline or fenced exact command/tool identifier makes the operational
+    contract concrete.
+    """
+
+    findings: list[PromptToolContractFinding] = []
+    prompt_paths = paths if paths is not None else _default_prompt_paths(root)
+
+    for path in prompt_paths:
+        text = path.read_text(encoding="utf-8")
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not EXECUTABLE_REFERENCE_RE.search(stripped):
+                continue
+            if _is_non_executable_reference(stripped):
+                continue
+            context = _window(lines, index)
+            if _has_exact_invocation(context):
+                continue
+            findings.append(
+                PromptToolContractFinding(
+                    path=path,
+                    line=index + 1,
+                    reason="missing_exact_invocation",
+                    text=stripped,
+                )
+            )
+    return findings
