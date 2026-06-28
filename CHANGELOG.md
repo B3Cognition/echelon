@@ -96,6 +96,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `@colbymchenry/codegraph` runtime package, including package version, npm
   tarball integrity, license evidence, local payload hash, update procedure,
   and the explicit split from the optional global CodeGraph CLI version.
+- **EGR-035 project context and memory reconciliation** — squad Phase A now
+  generates run-local context under `runs/<run-id>/context/`, publishes
+  canonical feature metadata for finalized specs, mines finalized canonical
+  specs into MemPalace with artifact hashes, excludes stale MemPalace drawers
+  from prompt context, and executes GOLDDIGGER Mode 2 queue requests.
+- **EGR-036 CARTOGRAPHER validation tool contract** — CARTOGRAPHER now has an
+  explicit diagnostic command contract for Understanding and Lexicon during
+  amendment passes. It uses `understanding scan ... --output` for diagnostic
+  scoring, avoids guessed `understanding validate` subcommands, and treats
+  `lexicon validate --source-ref` as the authoritative derived-artifact gate.
+- **EGR-037/#58 prompt tool-contract scanner** — agent and phase prompts are
+  now scanned for executable tool references that omit an exact nearby command,
+  Skill id, slash command, or first-class tool name. The scanner caught and fixed
+  remaining ambiguous CHIEF, GOLDDIGGER, SAGE consensus, and verify-spec
+  command references.
+- **EGR-038 SAGE Understanding handoff contract** — SAGE's follow-up
+  Understanding appendix now documents the actual enhanced JSON list shape for
+  behavioral-transition extraction, including `.[0].behavioral_analysis.transitions`,
+  empty-list handling, and null-safe table cells for SENTINEL handoff evidence.
 
 ### Changed
 
