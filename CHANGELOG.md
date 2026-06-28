@@ -111,6 +111,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Skill id, slash command, or first-class tool name. The scanner caught and fixed
   remaining ambiguous CHIEF, GOLDDIGGER, SAGE consensus, and verify-spec
   command references.
+- **EGR-039/#60 resume missing-result recovery** — retryable dispatch-block
+  recovery now preserves the latest `last_dispatch.phase_id` even when a prior
+  pass of the same phase appears in `completed_phases`, so `missing_echelon_result`
+  after `echelon resume` guides `echelon continue` back to the failed phase
+  instead of vague manual recovery.
 - **EGR-038 SAGE Understanding handoff contract** — SAGE's follow-up
   Understanding appendix now documents the actual enhanced JSON list shape for
   behavioral-transition extraction, including `.[0].behavioral_analysis.transitions`,

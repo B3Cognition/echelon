@@ -1239,11 +1239,6 @@ def _last_incomplete_dispatch_phase(run_state: dict) -> str | None:
     if not phase_id or phase_id == "terminal-blocked":
         return None
 
-    completed = run_state.get("completed_phases")
-    completed_phases = completed if isinstance(completed, list) else []
-    if phase_id in completed_phases:
-        return None
-
     return phase_id
 
 

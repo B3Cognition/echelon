@@ -235,6 +235,45 @@ def test_blocked_incomplete_discover_prioritizes_retry_over_constitution(
     assert "phase1-constitution has not completed" not in captured.out
 
 
+def test_blocked_missing_result_retries_redispatched_completed_phase(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260627-201457-781907"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_echelon_result",
+                "last_dispatch": {"phase_id": "phase1-why2"},
+                "completed_phases": [
+                    "init",
+                    "phase1-constitution",
+                    "phase1-discover",
+                    "phase1-what",
+                    "phase1-why2",
+                    "checkpoint-assess",
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _next_continue_phase(tmp_path) == "phase1-why2"
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "RUN BLOCKED" in captured.out
+    assert "missing_echelon_result" in captured.out
+    assert "phase1-why2" in captured.out
+    assert "echelon continue" in captured.out
+    assert "manual recovery required" not in captured.out
+
+
 def test_blocked_timeout_next_step_uses_continue_not_resume(
     tmp_path: Path,
     capsys,
