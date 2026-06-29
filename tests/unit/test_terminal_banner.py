@@ -51,6 +51,7 @@ class TestEscalationBanner:
             category="same_failure_repeat",
             question="How to proceed?",
             context="3 identical failures",
+            spec_id="001-demo",
             file=buf,
         )
         output = buf.getvalue()
@@ -58,7 +59,8 @@ class TestEscalationBanner:
         assert "same_failure_repeat" in output
         assert "How to proceed?" in output
         assert "3 identical failures" in output
-        assert "/speckit-harness-resume" in output
+        assert "echelon harness resume 001-demo" in output
+        assert "/speckit-harness-resume" not in output
 
     def test_escalation_banner_to_stderr(self, capsys: pytest.CaptureFixture) -> None:
         import sys

@@ -105,7 +105,8 @@ class StrategyCoordinator:
                     print_escalation_sticky_banner(intent.spec_id, sid, str(existing["escalation_file"]))
                     raise RuntimeError(
                         f"[{sid}] blocked — escalation pending. "
-                        f"Answer with /speckit-harness-resume or pass --reset to discard."
+                        f"Append ## Answer to {existing['escalation_file']}, then run "
+                        f"echelon harness resume {intent.spec_id}; or pass --reset to discard."
                     )
 
         # Load strategy specs (build_command + context per strategy)

@@ -34,6 +34,36 @@ SCOPE_INPUT_FILENAMES = (
     "user-clarifications.md",
 )
 
+IMPLEMENTATION_INPUT_DIRS = (
+    "src",
+    "app",
+    "apps",
+    "lib",
+    "packages",
+    "tests",
+    "test",
+)
+
+IMPLEMENTATION_INPUT_FILES = (
+    "pyproject.toml",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "poetry.lock",
+    "uv.lock",
+    "Cargo.toml",
+    "Cargo.lock",
+    "go.mod",
+    "go.sum",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Makefile",
+)
+
 
 @dataclass(frozen=True)
 class FulfillmentRefreshResult:
@@ -87,10 +117,12 @@ class FulfillmentRunner:
         spec_dir = _resolve_spec_dir(spec_id, Path(worktree_path), orchestration_root)
         commit = _current_git_commit(worktree)
         spec_input_hash = _spec_input_hash(spec_dir) if spec_dir is not None else None
+        implementation_input_hash = _implementation_input_hash(worktree)
         cache_key = _verify_cache_key(
             spec_id=spec_id,
             commit=commit,
             spec_input_hash=spec_input_hash,
+            implementation_input_hash=implementation_input_hash,
         )
         report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
         report_path = str(report) if report is not None else None
@@ -112,6 +144,7 @@ class FulfillmentRunner:
             spec_dir=spec_dir,
             commit=commit,
             spec_input_hash=spec_input_hash,
+            implementation_input_hash=implementation_input_hash,
             cache_key=cache_key,
         ):
             return FulfillmentRefreshResult(
@@ -165,6 +198,7 @@ class FulfillmentRunner:
                 spec_dir=spec_dir,
                 commit=commit,
                 spec_input_hash=spec_input_hash,
+                implementation_input_hash=implementation_input_hash,
                 cache_key=cache_key,
             )
             report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
@@ -322,6 +356,7 @@ def _stamp_latest_report(
     spec_dir: Path | None = None,
     commit: str | None = None,
     spec_input_hash: str | None = None,
+    implementation_input_hash: str | None = None,
     cache_key: str | None = None,
 ) -> None:
     spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
@@ -336,6 +371,8 @@ def _stamp_latest_report(
     extra_metadata: dict[str, str] = {"verify_scope": "full"}
     if spec_input_hash:
         extra_metadata["spec_input_hash"] = spec_input_hash
+    if implementation_input_hash:
+        extra_metadata["implementation_input_hash"] = implementation_input_hash
     if cache_key:
         extra_metadata["verify_cache_key"] = cache_key
     stamp_fulfillment_report(
@@ -354,9 +391,16 @@ def _latest_full_report_matches_cache(
     spec_dir: Path | None,
     commit: str | None,
     spec_input_hash: str | None,
+    implementation_input_hash: str | None,
     cache_key: str | None,
 ) -> bool:
-    if spec_dir is None or commit is None or spec_input_hash is None or cache_key is None:
+    if (
+        spec_dir is None
+        or commit is None
+        or spec_input_hash is None
+        or implementation_input_hash is None
+        or cache_key is None
+    ):
         return False
     report = latest_fulfillment_report(spec_dir)
     if report is None:
@@ -367,6 +411,8 @@ def _latest_full_report_matches_cache(
     if metadata.get("verified_commit") != commit:
         return False
     if metadata.get("spec_input_hash") != spec_input_hash:
+        return False
+    if metadata.get("implementation_input_hash") != implementation_input_hash:
         return False
     if metadata.get("verify_cache_key") != cache_key:
         return False
@@ -389,21 +435,80 @@ def _spec_input_hash(spec_dir: Path | None) -> str | None:
     return digest.hexdigest()
 
 
+def _implementation_input_hash(worktree: Path) -> str:
+    """Hash implementation files that verify-spec maps to requirements.
+
+    The git commit alone is insufficient while Ralph is evaluating a fresh build
+    slice: the worktree may contain uncommitted source/test changes before the
+    checkpoint commit is written. This hash keeps full verify-spec caching valid
+    only when the actual implementation inputs are unchanged.
+    """
+    digest = hashlib.sha256()
+    for path in _implementation_input_paths(worktree):
+        rel = path.relative_to(worktree).as_posix()
+        digest.update(rel.encode("utf-8"))
+        digest.update(b"\0")
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _implementation_input_paths(worktree: Path) -> list[Path]:
+    paths: set[Path] = set()
+    for dirname in IMPLEMENTATION_INPUT_DIRS:
+        root = worktree / dirname
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if path.is_file() and not _is_ignored_implementation_path(path):
+                paths.add(path)
+    for filename in IMPLEMENTATION_INPUT_FILES:
+        path = worktree / filename
+        if path.is_file():
+            paths.add(path)
+    return sorted(paths, key=lambda path: path.relative_to(worktree).as_posix())
+
+
+def _is_ignored_implementation_path(path: Path) -> bool:
+    parts = set(path.parts)
+    return bool(
+        parts
+        & {
+            ".git",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            "__pycache__",
+            "node_modules",
+            "dist",
+            "build",
+            ".venv",
+            "venv",
+        }
+    )
+
+
 def _verify_cache_key(
     *,
     spec_id: str,
     commit: str | None,
     spec_input_hash: str | None,
+    implementation_input_hash: str | None,
 ) -> str | None:
-    if commit is None or spec_input_hash is None:
+    if commit is None or spec_input_hash is None or implementation_input_hash is None:
         return None
     digest = hashlib.sha256()
-    digest.update(b"verify-spec-cache-v1\0")
+    digest.update(b"verify-spec-cache-v2\0")
     digest.update(spec_id.encode("utf-8"))
     digest.update(b"\0full\0")
     digest.update(commit.encode("utf-8"))
     digest.update(b"\0")
     digest.update(spec_input_hash.encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(implementation_input_hash.encode("utf-8"))
     return digest.hexdigest()
 
 

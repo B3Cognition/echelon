@@ -112,6 +112,12 @@ class TestSameFailureEscalation:
         result = ctrl.run_loop(max_outer=1, max_inner=5)
         assert result.status == "blocked"
         assert result.termination_reason == "blocker_escalation"
+        escalation_file = next((tmp_path / "harness" / "escalations").glob("*.md"))
+        escalation_text = escalation_file.read_text(encoding="utf-8")
+        assert "3 consecutive time(s)" in escalation_text
+        assert "threshold=3" in escalation_text
+        assert "fingerprints=1" in escalation_text
+        assert "1 time(s)" not in escalation_text
 
     def test_same_failure_2x_does_not_trigger(self, tmp_path: Path) -> None:
         """Same failure 2x should NOT trigger escalation (threshold=3)."""

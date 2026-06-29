@@ -20,6 +20,10 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def _resume_command(spec_id: str) -> str:
+    return f"echelon harness resume {spec_id}"
+
+
 def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
     """Print a structured blocked banner to stderr when an escalation is still pending."""
     from echelon.ui import banner as _banner
@@ -29,7 +33,8 @@ def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str
             ("spec", spec_id),
             ("strategy", strategy_id),
             ("escalation", esc_file),
-            ("answer with", "/speckit-harness-resume"),
+            ("answer in", "Append a ## Answer section to the escalation file."),
+            ("resume with", _resume_command(spec_id)),
             ("discard with", f"echelon harness run {spec_id} --reset"),
         ],
         file=sys.stderr,
@@ -139,7 +144,7 @@ class EscalationHandler:
         filepath.write_text(content, encoding="utf-8")
 
         # Print terminal banner to stderr
-        _print_banner(category, question, context, file=sys.stderr)
+        _print_banner(spec_id, category, question, context, file=sys.stderr)
 
         logger.info("Escalation file written: %s", filepath)
         return str(filepath)
@@ -198,7 +203,7 @@ class EscalationHandler:
             "answer": answer,
             "answered_at": answered_at,
             "answered_by": "user",
-            "source": "speckit-harness-resume",
+            "source": "echelon-harness-resume",
         }
         resume_content = (
             f"\n\n## Answer\n\n"
@@ -323,14 +328,17 @@ def _render_escalation_file(
 
     lines.append("---")
     lines.append("")
-    lines.append("*To resume, run `/speckit-harness-resume` with your answer,")
-    lines.append("or append a `## Answer` section to this file.*")
+    lines.append(
+        f"*To resume, append a `## Answer` section to this file, then run "
+        f"`{_resume_command(spec_id)}`.*"
+    )
     lines.append("")
 
     return "\n".join(lines)
 
 
 def _print_banner(
+    spec_id: str,
     category: str,
     question: str,
     context: str,
@@ -347,7 +355,8 @@ def _print_banner(
         [
             ("question", question),
             ("context", context[:200] + ("..." if len(context) > 200 else "")),
-            ("next step", "Run /speckit-harness-resume with your answer"),
+            ("answer in", "Append a ## Answer section to the escalation file."),
+            ("resume with", _resume_command(spec_id)),
         ],
         file=file,
     )

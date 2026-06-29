@@ -57,6 +57,8 @@ from kernel.fulfillment import (
 
 logger = logging.getLogger(__name__)
 
+SAME_FAILURE_REPEAT_THRESHOLD = 3
+
 # Number of consecutive failed outer iterations with no file changes before
 # escalating with a no-progress block.
 _NO_PROGRESS_THRESHOLD = 2
@@ -719,8 +721,8 @@ class RalphController:
                                     "This usually means the LLM is stuck or the build "
                                     "instructions are unclear.\n\n"
                                     "Please review the build output above and either:\n"
-                                    "1. Clarify the task description and resume with "
-                                    "/speckit-harness-resume\n"
+                                    "1. Append clarification under ## Answer in the escalation "
+                                    f"file and run echelon harness resume {self._spec_id}\n"
                                     "2. Reset and restart with --reset flag"
                                 ),
                                 last_verify_result=_verify_to_dict(
@@ -858,15 +860,24 @@ class RalphController:
             failure_history.append(signatures)
 
             # Check same-failure detection (FR-LOOP-003a)
-            same_failures = detect_same_failure(failure_history, threshold=3)
+            same_failures = detect_same_failure(
+                failure_history,
+                threshold=SAME_FAILURE_REPEAT_THRESHOLD,
+            )
             if same_failures:
                 if self._mode.should_escalate("same_failure_repeat"):
+                    repeat_count = _consecutive_failure_repeat_count(
+                        failure_history,
+                        same_failures,
+                    )
                     self._escalation.escalate(
                         spec_id=self._spec_id,
                         strategy_id=self._strategy_id,
                         category="same_failure_repeat",
                         context=(
-                            f"Same failure detected {len(same_failures)} time(s) "
+                            f"Same failure detected {repeat_count} consecutive time(s) "
+                            f"(threshold={SAME_FAILURE_REPEAT_THRESHOLD}; "
+                            f"fingerprints={len(same_failures)}) "
                             f"in inner loop at outer_iter={outer_iter}, "
                             f"inner_iter={inner_iter}."
                         ),
@@ -2709,6 +2720,26 @@ class RalphController:
 
 # === Utility functions ===
 
+def _consecutive_failure_repeat_count(
+    failure_history: List[List[str]],
+    repeated_failures: set[str],
+) -> int:
+    """Return the current consecutive streak for the repeated failure set."""
+    if not failure_history or not repeated_failures:
+        return 0
+
+    max_count = 0
+    for fingerprint in repeated_failures:
+        count = 0
+        for failures in reversed(failure_history):
+            if fingerprint in failures:
+                count += 1
+            else:
+                break
+        max_count = max(max_count, count)
+    return max_count
+
+
 def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
     """Print a formatted banner when verify_command is missing."""
     from echelon.ui import banner as _banner
@@ -2740,7 +2771,8 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
             ("spec", spec_id),
             ("strategy", strategy_id),
             ("file", escalation_file),
-            ("answer with", "/speckit-harness-resume"),
+            ("answer in", "Append a ## Answer section to the escalation file."),
+            ("resume with", f"echelon harness resume {spec_id}"),
             ("discard with", f"echelon harness run {spec_id} --reset"),
         ],
         file=sys.stderr,

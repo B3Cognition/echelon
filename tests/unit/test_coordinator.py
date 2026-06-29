@@ -391,7 +391,7 @@ class TestStickyEscalationBlock:
         esc_path.parent.mkdir(parents=True, exist_ok=True)
         esc_path.write_text("# Escalation\n", encoding="utf-8")
 
-        # Simulate what /speckit-harness-resume does — append ## Answer via EscalationHandler.resume()
+        # Simulate answering the escalation file before `echelon harness resume`.
         handler = EscalationHandler(str(tmp_path))
         handler.resume(str(esc_path), "Continue with approach B")
 

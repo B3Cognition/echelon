@@ -79,6 +79,7 @@ def print_escalation_banner(
     question: str,
     context: str,
     *,
+    spec_id: str = "<spec_id>",
     file: Any = None,
 ) -> None:
     """Print escalation-specific banner.
@@ -93,6 +94,9 @@ def print_escalation_banner(
     print_banner(
         header=f"BLOCKED -- {category}",
         body=body,
-        footer="Next step: Run /speckit-harness-resume with your answer",
+        footer=(
+            "Next step: append ## Answer to the escalation file, then run "
+            f"echelon harness resume {spec_id}"
+        ),
         file=file,
     )

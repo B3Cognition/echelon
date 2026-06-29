@@ -107,6 +107,7 @@ class TestFulfillmentRunner:
         assert metadata["verified_commit"] == "abc123"
         assert metadata["verify_scope"] == "full"
         assert isinstance(metadata["spec_input_hash"], str)
+        assert isinstance(metadata["implementation_input_hash"], str)
         assert isinstance(metadata["verify_cache_key"], str)
 
     def test_refresh_rejects_report_with_ids_not_in_requirement_audit(self, tmp_path):
@@ -407,6 +408,35 @@ class TestFulfillmentRunner:
         with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
             first = runner.refresh(str(tmp_path), "spec-001")
             (spec_dir / "tasks.md").write_text("# Tasks\n- [ ] T001\n", encoding="utf-8")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert second.used_cache is False
+        assert provider.exec_prompt.call_count == 2
+
+    def test_refresh_invalidates_cache_when_source_changes_without_commit_change(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        source = tmp_path / "src" / "demo.py"
+        source.parent.mkdir()
+        source.write_text("VALUE = 1\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            source.write_text("VALUE = 2\n", encoding="utf-8")
             second = runner.refresh(str(tmp_path), "spec-001")
 
         assert first.status == "refreshed"
