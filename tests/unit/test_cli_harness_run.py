@@ -12,6 +12,53 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.run_intent import parse_intent
+from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+
+
+VALID_PLAN = """# Implementation Plan: Demo
+
+## Summary
+Demo.
+
+## Technical Context
+Python.
+
+## Architecture Decisions
+- ADR-001: Keep it simple.
+
+## Project Structure
+```text
+src/
+```
+
+## Implementation Phases
+- Foundation.
+
+## Testing Strategy
+- Unit tests.
+
+## Risks
+- None.
+
+## Constitution Check
+| Principle | Compliance |
+| --- | --- |
+| Local-first | PASS |
+"""
+
+
+def _write_phase_a_build_inputs(spec_dir: Path) -> None:
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+        if name == "plan.md":
+            content = VALID_PLAN
+        elif name == "tasks.md":
+            content = "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
+        elif name == "constitution.md":
+            content = "# Constitution\n\nReal project rules.\n"
+        else:
+            content = f"# {name}\n"
+        (spec_dir / name).write_text(content, encoding="utf-8")
 
 
 @pytest.mark.unit
@@ -194,12 +241,7 @@ class TestHarnessRunTaskFormatErrors:
         mirror.mkdir(parents=True)
 
         spec_dir = tmp_path / "specs" / "003-test"
-        spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-        (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
-            encoding="utf-8",
-        )
+        _write_phase_a_build_inputs(spec_dir)
 
         monkeypatch.chdir(tmp_path)
 
@@ -227,6 +269,46 @@ class TestHarnessRunTaskFormatErrors:
         assert "start Docker" in err
         assert "echelon harness run 003" in err
         assert "Traceback" not in err
+
+    def test_placeholder_constitution_blocks_before_harness_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        spec_dir = tmp_path / "specs" / "003-test"
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "constitution.md").write_text(
+            "# Constitution\n\nProject: [PROJECT_NAME]\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
+            from echelon.cli import _cmd_harness_run
+
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["003"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "Phase A build inputs are not ready" in err
+        assert "constitution.md contains unresolved template markers" in err
+        assert "echelon continue" in err
 
 
 @pytest.mark.unit
@@ -279,7 +361,7 @@ class TestHarnessTargetPreflight:
     ) -> None:
         root = tmp_path
         spec_dir = root / "specs" / "001-opta-points-perf-fix"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir)
         (spec_dir / "spec.md").write_text("# OptaPoints\n", encoding="utf-8")
         (spec_dir / "tasks.md").write_text(
             "Fix `src/lib/sdapi/services/shared-promise.ts`\n",

@@ -10,6 +10,54 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+
+
+VALID_PLAN = """# Implementation Plan: Demo
+
+## Summary
+Demo.
+
+## Technical Context
+Python.
+
+## Architecture Decisions
+- ADR-001: Keep it simple.
+
+## Project Structure
+```text
+src/
+```
+
+## Implementation Phases
+- Foundation.
+
+## Testing Strategy
+- Unit tests.
+
+## Risks
+- None.
+
+## Constitution Check
+| Principle | Compliance |
+| --- | --- |
+| Local-first | PASS |
+"""
+
+
+def _write_phase_a_build_inputs(spec_dir: Path) -> None:
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+        if name == "plan.md":
+            content = VALID_PLAN
+        elif name == "tasks.md":
+            content = "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+        elif name == "constitution.md":
+            content = "# Constitution\n\nReal project rules.\n"
+        else:
+            content = f"# {name}\n"
+        (spec_dir / name).write_text(content, encoding="utf-8")
+
 
 @pytest.mark.unit
 class TestSingleRepoPathUnchanged:
@@ -98,13 +146,9 @@ class TestSingleRepoPathUnchanged:
         )
 
         spec_dir = polyrepo / "specs" / "024-test"
-        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir)
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n  - repo-a\n---\n# spec\n",
-            encoding="utf-8",
-        )
-        (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n",
             encoding="utf-8",
         )
 

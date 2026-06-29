@@ -98,19 +98,15 @@ Read and verify these files exist in `{spec_dir}/`:
 - `estimates.md` — Effort estimates per task
 - `calibration-profile.yaml` — Historical accuracy data
 
-Before validating, resolve `constitution.md` from `.specify/memory/` if missing from the spec dir:
+Do not copy, synthesize, or repair `constitution.md` in this build phase.
+`spec_dir/constitution.md` is a published Phase A snapshot, and the terminal
+harness preflight must already have verified that it exists and contains no
+unresolved constitution template markers.
 
-```bash
-if [ ! -f "${SPEC_DIR}/constitution.md" ]; then
-  if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
-    cp "${PROJECT_ROOT}/.specify/memory/constitution.md" \
-       "${SPEC_DIR}/constitution.md"
-    echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
-  fi
-fi
-```
-
-If `tasks.md` or `spec.md` is missing, STOP with error: "Phase A artifacts not found. Run `speckit.echelon.run` first."
+If `constitution.md`, `tasks.md`, or `spec.md` is missing, or if
+`constitution.md` contains unresolved template markers such as
+`[PROJECT_NAME]`, `[PRINCIPLE_1_NAME]`, or `[CONSTITUTION_VERSION]`, STOP with
+error: "Phase A artifacts are not build-ready. Run `echelon continue` first."
 
 ### 1.2 Parse Tasks
 

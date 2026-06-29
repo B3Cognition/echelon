@@ -653,3 +653,43 @@ def validate_state_schema_build_qa_split_contract(root: Path) -> list[str]:
             PatternCheck("CHANGE_PENDING token", schema, r'"CHANGE_PENDING"'),
         ]
     )
+
+
+def validate_build_phase_constitution_preflight_contract(root: Path) -> list[str]:
+    """Build prompts must consume only preflight-validated constitution snapshots."""
+
+    build_init = root / "extension/workflow/phases/build-1-init.md"
+    cli = root / "src/echelon/cli.py"
+    flags = re.IGNORECASE | re.DOTALL
+
+    return _run_checks(
+        [
+            PatternCheck(
+                "build init forbids constitution copy recovery",
+                build_init,
+                r"Do not copy, synthesize, or repair `constitution\.md`",
+            ),
+            PatternCheck(
+                "build init no longer copies constitution from memory",
+                build_init,
+                r"cp\s+.*\.specify/memory/constitution\.md",
+                should_match=False,
+            ),
+            PatternCheck(
+                "build init treats template constitution as hard stop",
+                build_init,
+                r"unresolved constitution template markers.*STOP",
+                flags,
+            ),
+            PatternCheck(
+                "harness run calls Phase A readiness preflight",
+                cli,
+                r"_block_if_harness_phase_a_not_ready",
+            ),
+            PatternCheck(
+                "harness run preflight uses shared readiness validator",
+                cli,
+                r"validate_phase_a_readiness\(\{\"status\": \"done\"\}, \[spec_dir\]\)",
+            ),
+        ]
+    )

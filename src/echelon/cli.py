@@ -688,6 +688,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             # design documented in CLAUDE.md); a single target is just the
             # one-element case of the same path.
             targets = validate_targets(targets_rel, polyrepo_root)
+            _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
             sys.exit(run_multi_target(spec_id, targets, args[1:]))
 
         detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
@@ -697,6 +698,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             if mode == "banzai" and detection.recommended_target:
                 write_targets(spec_dir, [detection.recommended_target])
                 target = validate_single_target([detection.recommended_target], polyrepo_root)
+                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
                 print(
                     f"✓ Wrote inferred implementation target: {detection.recommended_target} "
                     f"(confidence {detection.confidence:.2f})"
@@ -795,6 +797,10 @@ def _cmd_harness_run(args: list[str]) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+
+    if spec_dir is not None:
+        _block_if_harness_phase_a_not_ready(spec_dir, spec_dir.name)
+
     target_display = str(getattr(config, "target_repo", None) or "local")
     _banner("HARNESS RUN", [
         ("Spec", f"{spec_id}" + (f"  ({task_count} tasks)" if task_count else "")),
@@ -831,6 +837,25 @@ def _cmd_harness_run(args: list[str]) -> None:
             command="echelon harness run",
             exc=exc,
         )
+
+
+def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
+    """Fail before build LLM dispatch when published Phase A inputs are invalid."""
+    readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    if readiness.ready:
+        return
+
+    blockers = "\n".join(f"  - {blocker}" for blocker in readiness.blockers)
+    print(
+        "✗ Phase A build inputs are not ready.\n"
+        f"  Spec dir: {spec_dir}\n"
+        "  Blockers:\n"
+        f"{blockers}\n"
+        "  Fix: run 'echelon continue' to republish Phase A artifacts, then rerun:\n"
+        f"       echelon harness run {spec_id}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _is_docker_unavailable_error(exc: Exception) -> bool:
