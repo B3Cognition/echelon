@@ -165,7 +165,10 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     (source / "agents" / "build").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (source / "agents" / "build" / "spec-guard.md").write_text("guard\n", encoding="utf-8")
+    (source / "agents" / "build" / "spec-guard.md").write_text(
+        "# SPEC GUARD\n\nguard\n",
+        encoding="utf-8",
+    )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
@@ -179,8 +182,13 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
 
     commander = worktree / ".claude" / "agents" / "speckit-echelon-commander.md"
     spec_guard = worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md"
-    assert commander.read_text(encoding="utf-8") == "commander\n"
-    assert spec_guard.read_text(encoding="utf-8") == "guard\n"
+    commander_text = commander.read_text(encoding="utf-8")
+    assert commander_text.startswith("---\nname: speckit-echelon-commander\n")
+    assert "\ncommander\n" in commander_text
+    spec_guard_text = spec_guard.read_text(encoding="utf-8")
+    assert spec_guard_text.startswith("---\nname: speckit-echelon-spec-guard\n")
+    assert "description: SPEC GUARD" in spec_guard_text
+    assert "# SPEC GUARD\n\nguard\n" in spec_guard_text
     assert ".claude/agents/" in exclude.read_text(encoding="utf-8")
 
 

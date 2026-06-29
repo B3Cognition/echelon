@@ -373,6 +373,10 @@ class TestOuterLoopConvergence:
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=build req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
         (spec_dir / "fulfillment-report.md").write_text(
             "| ID | Status | Evidence | Confidence | Notes |\n"
             "|---|---|---|---|---|\n"
@@ -538,11 +542,12 @@ class TestOuterLoopConvergence:
             encoding="utf-8",
         )
 
-        controller._apply_build_task_progress(
+        applied = controller._apply_build_task_progress(
             worktree_path=str(worktree),
             task_ids=["T-001"],
         )
 
+        assert applied == ["T-001"]
         text = tasks_path.read_text(encoding="utf-8")
         assert "- [x] T-001 complexity=standard phase=foundation req=INFRA depends=none" in text
         assert "  **Status:** DONE" in text
@@ -551,6 +556,31 @@ class TestOuterLoopConvergence:
         build = state_store.read()["build"]
         assert build["completed_tasks"] == 1
         assert build["task_results"]["T-001"]["status"] == "DONE"
+
+    def test_build_reported_unknown_task_ids_are_not_silently_applied(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph exposes failed task-ledger updates for the build loop to block."""
+        controller, _, _, _ = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+
+        applied = controller._apply_build_task_progress(
+            worktree_path=str(worktree),
+            task_ids=["T-999"],
+        )
+
+        assert applied == []
+        assert "- [ ] T-001" in tasks_path.read_text(encoding="utf-8")
 
     def test_task_progress_gate_reads_orchestration_tasks_for_polyrepo(
         self, tmp_path: Path
@@ -870,6 +900,10 @@ class TestOuterLoopConvergence:
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=build req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
         (spec_dir / "fulfillment-report.md").write_text(
             "| ID | Status | Evidence | Confidence | Notes |\n"
             "|---|---|---|---|---|\n"

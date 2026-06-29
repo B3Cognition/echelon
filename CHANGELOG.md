@@ -120,6 +120,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Understanding appendix now documents the actual enhanced JSON list shape for
   behavioral-transition extraction, including `.[0].behavioral_analysis.transitions`,
   empty-list handling, and null-safe table cells for SENTINEL handoff evidence.
+- **EGR-043/#64, EGR-044/#65, EGR-045/#66, EGR-046/#67 harness evidence hardening** — harness
+  runtime extension sync now materializes valid Claude custom-agent files for
+  Echelon agents, reported `completed_task_ids` that cannot be written to
+  canonical `tasks.md` now block before verification, Phase A readiness rejects
+  missing or placeholder `constitution.md`, and CodeGraph term-match-only
+  source/test rows stay low-confidence fallback evidence instead of being
+  treated as resolved medium-confidence mappings.
+- **EGR-047/#68 dry-run validation repair** — `scripts/bash/dry-run.sh`
+  now resolves repository and extension roots explicitly, supports both the
+  documented repo-root invocation and an explicit extension-root argument,
+  validates the current thin-wrapper plus COMMANDER role-separation contract,
+  and keeps knowledge-base YAML parseable as part of the gate.
 
 ### Changed
 

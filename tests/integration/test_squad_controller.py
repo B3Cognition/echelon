@@ -206,6 +206,9 @@ class TestAgentResultIntegrity:
         assert (published_dir / "spec.md").exists()
         assert (published_dir / "plan.md").exists()
         assert (published_dir / "tasks.md").exists()
+        assert (
+            published_dir / "constitution.md"
+        ).read_text(encoding="utf-8") == "# Constitution\n\nReal project rules.\n"
         assert (published_dir / "ARTIFACTS.md").exists()
         state = store.load()
         assert state["published_spec_dir"] == "specs/001-demo"
@@ -243,6 +246,9 @@ class TestAgentResultIntegrity:
         assert (published_dir / "research.md").exists()
         assert (published_dir / "data-model.md").exists()
         assert (published_dir / "tasks.md").exists()
+        assert (
+            published_dir / "constitution.md"
+        ).read_text(encoding="utf-8") == "# Constitution\n\nReal project rules.\n"
         assert (published_dir / "contracts" / "api.md").exists()
         assert (published_dir / "manual-note.md").exists()
         assert (published_dir / "ARTIFACTS.md").exists()

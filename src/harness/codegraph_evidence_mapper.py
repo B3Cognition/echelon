@@ -329,13 +329,33 @@ def _confidence(
                 "Runtime threshold has assertion-only source/test symbols; measured CI/runtime evidence is still required.",
             )
         return "medium", "CodeGraph found assertion-gate source and test symbols."
+    if implementation and tests and _all_evidence_term_match_only(implementation + tests):
+        return (
+            "low",
+            "CodeGraph found only term-match source/test candidates; LLM fallback must verify behavioral fit.",
+        )
     if implementation and tests:
         return "medium", "CodeGraph found both source and executable test symbols."
+    if tests and _all_evidence_term_match_only(tests):
+        return (
+            "low",
+            "CodeGraph found only term-match test candidates; implementation evidence is still required.",
+        )
     if tests:
         return "medium", "CodeGraph found test symbols but no implementation symbol."
     if implementation:
         return "low", "CodeGraph found source candidates but no executable test symbol."
     return "none", "No deterministic CodeGraph evidence found; LLM fallback should inspect."
+
+
+def _all_evidence_term_match_only(evidence_items: list[dict[str, Any]]) -> bool:
+    if not evidence_items:
+        return False
+    for item in evidence_items:
+        reasons = [str(reason) for reason in item.get("reasons") or []]
+        if not reasons or any(not reason.startswith("term_match:") for reason in reasons):
+            return False
+    return True
 
 
 def _is_runtime_threshold(row: RequirementRow) -> bool:

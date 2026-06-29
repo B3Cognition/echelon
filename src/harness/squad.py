@@ -674,6 +674,7 @@ class SquadController:
                 self._copy_spec_tree(active_spec_dir, published_spec_dir)
             else:
                 published_spec_dir.mkdir(parents=True, exist_ok=True)
+            self._publish_constitution_snapshot(published_spec_dir)
             write_artifact_index(published_spec_dir)
             self._refresh_published_context_metadata(
                 published_spec_dir,
@@ -691,6 +692,16 @@ class SquadController:
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._state_store.save(updated)
         return validate_phase_a_readiness(updated, [published_spec_dir])
+
+    def _publish_constitution_snapshot(self, published_spec_dir: Path) -> None:
+        """Copy the project constitution into the published spec build inputs."""
+        source = self._project_root / ".specify" / "memory" / "constitution.md"
+        target = published_spec_dir / "constitution.md"
+        if source.exists():
+            target.write_text(
+                source.read_text(encoding="utf-8", errors="replace"),
+                encoding="utf-8",
+            )
 
     def _refresh_published_context_metadata(
         self,

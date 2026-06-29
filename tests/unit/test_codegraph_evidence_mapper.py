@@ -209,6 +209,69 @@ def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path
     assert entry["implementation_evidence"] == []
 
 
+def test_term_match_only_source_and_test_stays_in_fallback_queue(tmp_path: Path):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "\n".join(
+            [
+                "# Requirement Audit",
+                "",
+                "| ID | Category | Source | Requirement | Acceptance Signal |",
+                "| --- | --- | --- | --- | --- |",
+                "| FR-064 | functional | spec.md#requirements | Animation loop maintains stable frame timing while rendering theme sprites. | Measured runtime artifact shows frame intervals remain within tolerance. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(
+        json.dumps(
+            {
+                "symbols": [
+                    {
+                        "kind": "class",
+                        "qualified_name": "Frame",
+                        "name": "Frame",
+                        "file_path": "src/asciianim/frame.py",
+                    },
+                    {
+                        "kind": "method",
+                        "qualified_name": "ThemeTests::test_frame_theme_rendering",
+                        "name": "test_frame_theme_rendering",
+                        "file_path": "tests/test_theme_frame.py",
+                    },
+                ],
+                "call_graph": [],
+                "impact_radius": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [ ] T-064 complexity=standard phase=runtime req=FR-064 depends=none\n",
+        encoding="utf-8",
+    )
+
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+    write_codegraph_evidence_map(
+        requirement_audit_path=audit,
+        codegraph_analysis_path=analysis,
+        tasks_path=tasks,
+        out_json_path=out_json,
+        out_md_path=out_md,
+    )
+
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    entry = payload["requirements"][0]
+    assert entry["evidence_kind"] == "source_and_test"
+    assert entry["confidence"] == "low"
+    assert entry["id"] in payload["summary"]["fallback_requirement_ids"]
+
+
 def test_runtime_threshold_assertion_only_evidence_is_not_high_confidence(tmp_path: Path):
     audit = tmp_path / "requirement-audit.md"
     audit.write_text(

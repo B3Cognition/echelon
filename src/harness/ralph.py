@@ -335,13 +335,22 @@ class RalphController:
                         build_result.get("duration_s", 0.0),
                         build_result.get("tokens", 0),
                     )
-                    self._apply_build_task_progress(
-                        worktree_path=worktree_path,
-                        task_ids=build_result.get("task_ids"),
-                    )
                     scoped_completed_task_ids = _clean_task_ids(
                         build_result.get("task_ids")
                     )
+                    applied_task_ids = self._apply_build_task_progress(
+                        worktree_path=worktree_path,
+                        task_ids=build_result.get("task_ids"),
+                    )
+                    if scoped_completed_task_ids and set(applied_task_ids) != set(scoped_completed_task_ids):
+                        missing_task_ids = sorted(set(scoped_completed_task_ids) - set(applied_task_ids))
+                        build_result["passed"] = False
+                        build_result["build_status"] = "task_progress_update_failed"
+                        build_result["build_reason"] = (
+                            "could not mark completed_task_ids in canonical tasks.md: "
+                            + ", ".join(missing_task_ids)
+                        )
+                        build_result["exit_code"] = 1
                     scoped_changed_files = self._changed_files_since_head(worktree_path)
                     build_checkpoint = self._try_checkpoint_progress_commit(
                         worktree_path=worktree_path,
@@ -477,6 +486,12 @@ class RalphController:
                                 meaning = (
                                     "COMMANDER reported the build slice done, but did not "
                                     "identify the canonical tasks Ralph must mark DONE"
+                                )
+                            elif build_status == "task_progress_update_failed":
+                                why = "completed_task_ids could not be reconciled with tasks.md"
+                                meaning = (
+                                    "COMMANDER reported completed task IDs, but Ralph could "
+                                    "not update the canonical task ledger before verification"
                                 )
                             else:
                                 why = f"build reported status '{build_status}'"
@@ -1239,22 +1254,22 @@ class RalphController:
         *,
         worktree_path: str,
         task_ids: object,
-    ) -> None:
+    ) -> list[str]:
         """Apply build-reported completed task IDs to canonical tasks.md."""
         if not isinstance(task_ids, list) or not task_ids:
-            return
+            return []
 
         spec_dir = self._find_spec_dir(worktree_path)
         if spec_dir is None:
-            return
+            return []
 
         tasks_path = spec_dir / "tasks.md"
         if not tasks_path.exists():
-            return
+            return []
 
         completed_ids = [str(task_id).strip() for task_id in task_ids if str(task_id).strip()]
         if not completed_ids:
-            return
+            return []
 
         markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
         applied: list[str] = []
@@ -1267,7 +1282,7 @@ class RalphController:
             applied.append(task_id)
 
         if not applied:
-            return
+            return []
 
         tasks_path.write_text(markdown, encoding="utf-8")
         summary = summarize_task_progress(markdown)
@@ -1290,6 +1305,7 @@ class RalphController:
         build["task_results"] = task_results
         state["build"] = build
         self._state_store.write(state)
+        return applied
 
     def _enforce_completed_task_ids(
         self,

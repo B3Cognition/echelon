@@ -65,7 +65,7 @@ entries:
     domain: estimation
     trigger: GATEKEEPER estimates effort without checking calibration-profile.yaml for a matching domain. Domain exists (e.g., cognitive-orchestration with correction factor 0.08) but GATEKEEPER uses human-developer reference class instead.
     impact: Estimates are 9-12x too high (e.g., 3.6 person-days vs ~3 hours actual). User over-allocates time; schedule is misleading; if GATEKEEPER's estimate is used for user-facing commitments, expectations are set incorrectly.
-    avoidance: GATEKEEPER first-pass protocol must include an explicit step: "Read calibration-profile.yaml. If a domain matching the current work type exists (e.g., cognitive-orchestration for md/yaml edits), apply its correction_factor before producing any estimate. Only fall back to human-class reference if no domain match exists." The GATEKEEPER in this run explicitly stated "No calibration-profile.yaml exists for this instance" — which was factually wrong.
+    avoidance: 'GATEKEEPER first-pass protocol must include an explicit step: "Read calibration-profile.yaml. If a domain matching the current work type exists (e.g., cognitive-orchestration for md/yaml edits), apply its correction_factor before producing any estimate. Only fall back to human-class reference if no domain match exists." The GATEKEEPER in this run explicitly stated "No calibration-profile.yaml exists for this instance" — which was factually wrong.'
     source: squad-run-echelon-proto-cognitive-enhancement, estimates.md, knowledge-base/estimates-log.yaml est-003/006/007, knowledge-base/calibration-profile.yaml
     confidence: 0.91
     tags: ["estimation", "calibration", "gatekeeper", "reference-class", "lookup-failure"]
@@ -78,7 +78,7 @@ entries:
     domain: understanding-integration
     trigger: spec.md uses FR tables or bold-ID format (**FR-ENG-001** — Title) for requirements. Understanding NLP parser cannot extract actor-action-object triples from table rows or from bold-ID preamble patterns; these appear as top "actors" (e.g., "#", "0", "%"), suppressing completeness_score to ~0.14-0.20 permanently.
     impact: Structure gate fails (0.57 vs 0.70 threshold) across all 4 WHY passes regardless of content quality. The spec may be substantively complete (35 FRs, 11 NFRs, 5 GWT blocks) but parser instrumentation does not reflect this. Forces 3+ remediation passes for format-only issues without resolving the underlying parser incompatibility.
-    avoidance: Use plain bullet format for all FRs from the first draft: **FR-ID** on its own line, then *Actor:* / *Action:* / *Acceptance Criteria:* bullets below. Do NOT combine FR ID and title into a Markdown bold-header pattern. If using table format for readability during WHAT, convert to bullet format before first WHY2 validation pass.
+    avoidance: 'Use plain bullet format for all FRs from the first draft: **FR-ID** on its own line, then *Actor:* / *Action:* / *Acceptance Criteria:* bullets below. Do NOT combine FR ID and title into a Markdown bold-header pattern. If using table format for readability during WHAT, convert to bullet format before first WHY2 validation pass.'
     source: squad-run-echelon-proto-cognitive-enhancement, reasoning-journal entries RJ-SAGE-WHY2P4-001, RJ-SAGE-WHY2P2-001
     confidence: 0.92
     tags: ["understanding", "nlp-parser", "fr-format", "bold-id", "structure-gate", "why2"]

@@ -60,6 +60,30 @@ def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
     )
 
 
+def _claude_agent_from_runtime_agent(agent_file: Path, agent_name: str) -> str:
+    """Create a Claude custom-agent file from a synced Echelon agent prompt."""
+    raw = agent_file.read_text(encoding="utf-8")
+    metadata, _body = _split_frontmatter(raw)
+    if _frontmatter_value(metadata, "name"):
+        return raw
+    description = _first_heading(raw) or f"Echelon runtime agent {agent_name}"
+    return (
+        "---\n"
+        f"name: {agent_name}\n"
+        f"description: {description}\n"
+        "---\n\n"
+        f"{raw.rstrip()}\n"
+    )
+
+
+def _first_heading(markdown: str) -> str | None:
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return stripped.removeprefix("# ").strip()
+    return None
+
+
 def _split_frontmatter(raw: str) -> tuple[str, str]:
     if not raw.startswith("---\n"):
         return "", raw
@@ -622,7 +646,7 @@ class GitOpsManager:
         for agent_file in sorted(agents_dir.rglob("*.md")):
             agent_name = f"speckit-echelon-{agent_file.stem}"
             (target / f"{agent_name}.md").write_text(
-                agent_file.read_text(encoding="utf-8"),
+                _claude_agent_from_runtime_agent(agent_file, agent_name),
                 encoding="utf-8",
             )
         self._exclude_claude_agents(worktree)

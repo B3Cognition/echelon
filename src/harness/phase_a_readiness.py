@@ -11,6 +11,19 @@ REQUIRED_PHASE_A_BUILD_INPUTS = (
     "research.md",
     "data-model.md",
     "tasks.md",
+    "constitution.md",
+)
+
+CONSTITUTION_TEMPLATE_MARKERS = (
+    "[PROJECT_NAME]",
+    "[CONSTITUTION_VERSION]",
+    "[RATIFICATION_DATE]",
+    "[LAST_AMENDED_DATE]",
+    "[PRINCIPLE_1_NAME]",
+    "[PRINCIPLE_2_NAME]",
+    "[PRINCIPLE_3_NAME]",
+    "[PRINCIPLE_4_NAME]",
+    "[PRINCIPLE_5_NAME]",
 )
 
 
@@ -40,6 +53,9 @@ def validate_phase_a_readiness(
     normalized_dirs = _dedupe_existing_or_referenced_dirs(candidate_spec_dirs)
     for spec_dir in normalized_dirs:
         if all((spec_dir / name).exists() for name in REQUIRED_PHASE_A_BUILD_INPUTS):
+            constitution_blocker = _constitution_blocker(spec_dir / "constitution.md")
+            if constitution_blocker is not None:
+                continue
             return PhaseAReadinessResult(
                 ready=True,
                 blockers=[],
@@ -58,6 +74,11 @@ def validate_phase_a_readiness(
         if missing_dirs and len(missing_dirs) == len(checked_dirs):
             missing[name] = missing_dirs
             blockers.append(f"{name} absent")
+
+    for spec_dir in checked_dirs:
+        constitution_blocker = _constitution_blocker(spec_dir / "constitution.md")
+        if constitution_blocker is not None and constitution_blocker not in blockers:
+            blockers.append(constitution_blocker)
 
     if not checked_dirs:
         blockers.append("no Phase A spec directory found")
@@ -80,3 +101,16 @@ def _dedupe_existing_or_referenced_dirs(paths: list[Path]) -> list[Path]:
         seen.add(key)
         result.append(path)
     return result
+
+
+def _constitution_blocker(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8", errors="replace")
+    markers = [
+        marker for marker in CONSTITUTION_TEMPLATE_MARKERS
+        if marker in text
+    ]
+    if markers:
+        return "constitution.md contains unresolved template markers: " + ", ".join(markers)
+    return None

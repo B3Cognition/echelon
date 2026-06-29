@@ -53,6 +53,10 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReal project rules.\n",
+        encoding="utf-8",
+    )
 
     assert _next_continue_phase(tmp_path) is None
 
@@ -114,6 +118,10 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
     published_spec_dir.mkdir(parents=True)
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (published_spec_dir / name).write_text(f"# published {name}\n", encoding="utf-8")
+    (published_spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReal project rules.\n",
+        encoding="utf-8",
+    )
 
     assert _next_continue_phase(tmp_path) is None
 

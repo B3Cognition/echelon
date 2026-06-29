@@ -74,6 +74,10 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     )
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReady.\n",
+        encoding="utf-8",
+    )
 
     _print_next_steps(tmp_path, "done")
 
@@ -174,6 +178,10 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     spec_dir.mkdir(parents=True)
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReady.\n",
+        encoding="utf-8",
+    )
     (spec_dir / "quality-gates.md").write_text(
         "# Quality Gates\n\n## Verdict: FAIL\n",
         encoding="utf-8",
@@ -345,6 +353,10 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
     spec_dir.mkdir(parents=True)
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReady.\n",
+        encoding="utf-8",
+    )
 
     run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
     staging_dir = run_dir / "staging"
@@ -405,6 +417,10 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
     spec_dir.mkdir(parents=True)
     for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nReady.\n",
+        encoding="utf-8",
+    )
 
     run_dir = tmp_path / "runs" / "spec-20260619-153850-805795"
     staging_dir = run_dir / "staging"
