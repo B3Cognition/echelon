@@ -52,6 +52,15 @@ def test_readme_documents_harness_history() -> None:
     assert "tracked runs, checkpoint state, and token/cost totals" in text
 
 
+def test_readme_documents_podman_harness_runtime() -> None:
+    text = _readme()
+
+    assert "### Container Runtime" in text
+    assert "ECHELON_CONTAINER_CLI=podman echelon harness init" in text
+    assert "harness.container_cli" in text
+    assert "podman machine start" in text
+
+
 def test_readme_has_single_artifacts_intro() -> None:
     text = _readme()
 

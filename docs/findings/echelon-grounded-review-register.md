@@ -1,10 +1,10 @@
 # Echelon Grounded Review Register
 
-**Last full review snapshot:** `docs/findings/2026-06-27-echelon-grounded-source-review-refresh.md`
-**Last full review HEAD:** `e7656ae2cba07674a72ba5fbe29976ee0178705c`
+**Last full review snapshot:** `docs/findings/2026-06-28-echelon-grounded-source-review-refresh.md`
+**Last full review HEAD:** `b0aa12a847efca83793c6b7ed7f489e0e8254954`
 **Last delta review snapshot:** `docs/findings/2026-06-24-egr-delta-review-after-egr-011.md`
 **Last delta review HEAD:** `07279388913057066329ccdf2285d1fa821e7987`
-**Last updated:** 2026-06-27
+**Last updated:** 2026-06-29
 
 ## Operating Model
 
@@ -38,7 +38,7 @@ When the repo changes:
 Suggested command:
 
 ```bash
-git diff e7656ae2cba07674a72ba5fbe29976ee0178705c..HEAD -- src extension docs tests
+git diff b0aa12a847efca83793c6b7ed7f489e0e8254954..HEAD -- src extension docs tests
 ```
 
 ### EGR Completion Gate
@@ -100,11 +100,13 @@ the same time as the code lands.
 | EGR-037 | P1 | fixed | Agent and phase prompts could still contain uncontracted tool references, allowing LLMs to guess command names, output shapes, or source-discovery paths during live runs. | EGR-036 was found from a live `echelon resume` transcript where CARTOGRAPHER guessed `understanding validate` and read `src/understanding` files to discover the real hidden `scan` command. Later EGR-038 found SAGE using the wrong Understanding JSON root. Before this fix, only one-off prompt contracts were statically protected. | Fixed: `tests/contract/prompt_tool_contracts.py` now scans agent and phase prompts for executable tool references that lack an exact nearby command, Skill id, slash command, or first-class tool name. Static pytest coverage caught and fixed ambiguous CHIEF verification, GOLDDIGGER re-extract, SAGE consensus Understanding, and verify-spec harness-command references. |
 | EGR-038 | P1 | fixed | SAGE's Understanding follow-up handoff could still read enhanced JSON with the wrong root shape, producing empty behavioral-transition evidence and jq errors during live resume. | Live resume transcript showed SAGE first extracting empty behavioral handoff data, then failing with `Cannot index array with string "behavioral_analysis"` before discovering that Understanding JSON is an array. `extension/agents/exploration/appendices/sage-understanding-followup-reference.md` documented `[0]` paths at the top but later instructed `behavioral_analysis.transitions[]`; `extension/agents/exploration/sage.md` repeated the unindexed path. | Fixed: SAGE now extracts `.[0].behavioral_analysis.transitions`, uses `// []` for missing transition lists, preserves `-` for null guard/action/outcome fields, and documents empty transition lists as SENTINEL handoff warnings rather than complete coverage. Static pytest coverage enforces the handoff contract. |
 | EGR-039 | P1 | fixed | `echelon resume` could still end in vague manual recovery when the re-dispatched phase failed with `missing_echelon_result`, even though the failed phase was known and retryable. | Live resume transcript after checkpoint option A: checkpoint-assess produced a valid BLOCKED `echelon_result`; `echelon resume` accepted the answer and resumed into `phase1-why2`; SAGE emitted no final `echelon_result`; the controller blocked with `missing_echelon_result`, but next-step output said `RUN BLOCKED — manual recovery required` and `no human question, safe rewind target, or retryable dispatch was recorded` despite `last_dispatch.phase_id = phase1-why2`. Root cause: recovery suppressed `last_dispatch.phase_id` when the phase already appeared in `completed_phases`, which is wrong for re-dispatched phases. | Fixed: retryable dispatch-block recovery now trusts the latest `last_dispatch.phase_id` even if a previous pass of the same phase is in `completed_phases`. Regression coverage verifies `missing_echelon_result` after human resume routes `echelon continue` back to `phase1-why2` instead of manual recovery. |
+| EGR-040 | P1 | open | Existing project runtime configs can preserve stale Lexicon task `spec_ref` values after source contract changes, causing agents to compensate manually instead of relying on deterministic config. | Live `/tmp/echelon.out` from a current `echelon run` showed ORCHESTRATOR reading `spec_ref: spec.md`, observing that rich `spec.md` yields false task-orphan findings, and overriding to `requirements.lexicon.md` by reasoning. Current source config already uses `lexicon_gate.artifacts.tasks.spec_ref: requirements.lexicon.md` in `extension/echelon-config.yml` and `extension/config-template.yml`, so the issue is migration or runtime validation of existing `.specify/extensions/echelon/echelon-config.yml` copies. | Add a deterministic project-config migration or compatibility check for stale Lexicon task `spec_ref`, surface it in `echelon status/run` before agents dispatch, and add regression coverage for existing project configs that still contain `spec_ref: spec.md`. |
 
 ## Next EGR Backlog
 
 | Priority | Recommendation | Why it matters | Suggested files/modules to change | Expected impact |
 |---|---|---|---|---|
+| P1 | EGR-040: Migrate or block stale project Lexicon task `spec_ref`. | Prevents agents from overriding stale runtime config by reasoning and keeps tasks validation tied to the deterministic derived requirements artifact. | `src/echelon/cli.py`, config loading or migration helpers, `extension/echelon-config.yml`, `extension/config-template.yml`, tests for stale project `.specify/extensions/echelon/echelon-config.yml` | Existing projects either migrate to `requirements.lexicon.md` or receive a clear pre-dispatch warning/block instead of misleading ORCHESTRATOR. |
 | P3 | EGR-009: Integrate external RCA pipeline from source. | Adds incident/RCA capability without inventing duplicate behavior. | Future RCA integration adapter, workflow namespace, docs/tests after source is available | Source-grounded RCA flow tied into Echelon. |
 
 ## Review Notes
@@ -166,3 +168,5 @@ the same time as the code lands.
 | 2026-06-28 | `working tree on main` | EGR-037 implemented: added a prompt tool-contract scanner for agent and phase prompts, fixed the remaining ambiguous executable-tool references it found, and verified the scanner against synthetic and repository prompts. Verification: focused prompt/static/registry pytest set passed. |
 | 2026-06-28 | `working tree on main` | Added EGR-039 from live resume transcript: checkpoint-assess result was valid, but a later SAGE WHY2 missing `echelon_result` after resume degraded to manual recovery instead of preserving the retryable failed phase. |
 | 2026-06-28 | `working tree on main` | EGR-039 implemented: retryable dispatch-block recovery now preserves the latest `last_dispatch.phase_id` even when a previous pass of that phase is listed in `completed_phases`. Verification: `pytest tests/unit/test_cli_next_step_escalation.py tests/unit/test_cli_continue.py tests/unit/test_registry_sync_pytest.py -q` passed with 33 tests. |
+| 2026-06-28 | `b0aa12a847efca83793c6b7ed7f489e0e8254954` | Full refreshed source review completed after EGR-039. EGR-001 through EGR-039 remain fixed, EGR-009 remains accepted-risk, and no new P0/P1/P2 EGR was promoted. Verification: `pytest tests/unit/test_cli_next_step_escalation.py tests/unit/test_cli_continue.py tests/unit/test_prompt_tool_contracts.py tests/unit/test_static_contracts_pytest.py tests/unit/test_registry_sync_pytest.py tests/kernel/test_squad_executors_journal.py tests/kernel/test_workflow_validator.py -q` passed with 137 tests. |
+| 2026-06-29 | `working tree on main` | Added EGR-040 from `/tmp/echelon.out`: the run's project runtime config exposed stale `tasks.spec_ref: spec.md`, causing ORCHESTRATOR to bypass the configured value and validate tasks against `requirements.lexicon.md` by reasoning. Current source defaults are correct, so the tracked gap is migration/runtime validation for existing project configs. |

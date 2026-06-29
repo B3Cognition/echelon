@@ -249,6 +249,38 @@ The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` —
 
 The harness is the Phase B execution substrate: it takes echelon's Phase A output (spec.md, tasks.md, feature branch) and runs build → Docker verify → PR in an isolated sandbox. LLM reasoning stays on the host; deterministic work (build, test, verify) runs inside Docker.
 
+### Container Runtime
+
+`echelon harness` uses a Docker-compatible container CLI for sandbox creation.
+Docker is the default, and Podman is supported by setting `harness.container_cli`
+to `podman`.
+
+Initialize a project with Podman:
+
+```bash
+ECHELON_CONTAINER_CLI=podman echelon harness init
+```
+
+`echelon harness init` persists the selected CLI in
+`.specify/extensions/echelon/echelon-config.yml`:
+
+```yaml
+harness:
+  provider: docker
+  container_cli: podman
+```
+
+On macOS, make sure the Podman machine is running first:
+
+```bash
+podman machine start
+podman info
+```
+
+Future `echelon harness run` and `echelon harness resume` commands read the
+persisted `harness.container_cli` value. If no value is configured, Echelon uses
+Docker.
+
 ### Deployment Models
 
 **Single-repo (recommended):** Install harness in the same repo you are building. Specs, code, and harness config all live together.
@@ -727,6 +759,7 @@ cp config-template.yml echelon-config.yml
 | `quality_gates.overall` | Minimum spec quality | `0.70` |
 | `quality_gates.depth` | Minimum depth score | `0.30` (Understanding v3.6+) |
 | `convergence.quality_delta_threshold` | Stop when improvement below | `0.02` |
+| `harness.container_cli` | Docker-compatible sandbox CLI | `docker` (default) or `podman` |
 | `specialists.guardian_mode` | GUARDIAN dispatch mode | `always_on` (default) |
 | `endocrine.enabled` | Hormone-modulated motivation | `false` (default) |
 | `deploy.enabled` | Enable local blue/green CD after merge | `true` (default); set `false` to skip deploy infra |
