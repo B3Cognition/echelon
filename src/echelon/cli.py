@@ -51,6 +51,7 @@ SKILL_MAP = {
 }
 
 CLI_VERSION = "3.0.0"
+LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
 
@@ -2314,6 +2315,111 @@ def _print_extension_drift_warning(project_root: Path, ext_dir: Path) -> None:
     )
 
 
+@dataclass(frozen=True)
+class ProjectConfigCompatibilityIssue:
+    title: str
+    path: str
+    current: str
+    expected: str
+    config_file: Path
+
+
+def _project_echelon_config(project_root: Path) -> Path:
+    return project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+
+
+def _project_config_compatibility_issues(
+    project_root: Path,
+) -> list[ProjectConfigCompatibilityIssue]:
+    """Detect project config values incompatible with current deterministic flows."""
+    cfg_file = _project_echelon_config(project_root)
+    if not cfg_file.exists():
+        return []
+
+    try:
+        import yaml
+        raw = yaml.safe_load(cfg_file.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    if not isinstance(raw, dict):
+        return []
+
+    lexicon_gate = raw.get("lexicon_gate") or {}
+    if not isinstance(lexicon_gate, dict) or not lexicon_gate.get("enabled", False):
+        return []
+    artifacts = lexicon_gate.get("artifacts") or {}
+    if not isinstance(artifacts, dict):
+        return []
+    spec_artifact = artifacts.get("spec") or {}
+    tasks_artifact = artifacts.get("tasks") or {}
+    if not isinstance(spec_artifact, dict) or not isinstance(tasks_artifact, dict):
+        return []
+    if not tasks_artifact.get("enabled", False):
+        return []
+
+    expected = str(spec_artifact.get("path") or "requirements.lexicon.md").strip()
+    current = str(tasks_artifact.get("spec_ref") or expected).strip()
+    if current == expected:
+        return []
+    return [
+        ProjectConfigCompatibilityIssue(
+            title="Stale Lexicon tasks spec_ref",
+            path=LEXICON_TASK_SPEC_REF_PATH,
+            current=current,
+            expected=expected,
+            config_file=cfg_file,
+        )
+    ]
+
+
+def _print_project_config_compatibility_warning(project_root: Path) -> None:
+    issues = _project_config_compatibility_issues(project_root)
+    if not issues:
+        return
+
+    fields: list[tuple[str, str]] = []
+    for issue in issues:
+        fields.extend(
+            [
+                ("problem", issue.title),
+                ("config", _repo_relative_or_absolute(issue.config_file, project_root)),
+                ("key", issue.path),
+                ("current", issue.current or "(empty)"),
+                ("expected", issue.expected),
+                ("fix", f"set {issue.path}: {issue.expected}"),
+            ]
+        )
+    _banner(
+        "CONFIG COMPATIBILITY",
+        fields,
+        subtitle="Project config is stale for the current Echelon workflow",
+    )
+
+
+def _enforce_project_config_compatibility(project_root: Path) -> None:
+    issues = _project_config_compatibility_issues(project_root)
+    if not issues:
+        return
+
+    issue = issues[0]
+    _banner(
+        "CONFIG BLOCKED",
+        [
+            ("problem", issue.title),
+            ("config", _repo_relative_or_absolute(issue.config_file, project_root)),
+            ("key", issue.path),
+            ("current", issue.current or "(empty)"),
+            ("expected", issue.expected),
+            ("why", "Tasks Lexicon validation must read the derived requirements artifact."),
+            ("fix", f"edit config and set {issue.path}: {issue.expected}"),
+            ("then", "echelon run \"<task>\" or echelon continue"),
+        ],
+        subtitle="Refusing to dispatch agents with stale Lexicon task config",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -2327,6 +2433,7 @@ def _cmd_run(
     from harness.squad_state import SquadStateStore
 
     _print_extension_drift_warning(project_root, ext_dir)
+    _enforce_project_config_compatibility(project_root)
 
     # Parse optional flags
     mode = "semi"
@@ -2911,6 +3018,7 @@ def _cmd_status(project_root: Path) -> None:
         project_root,
         project_root / ".specify" / "extensions" / "echelon",
     )
+    _print_project_config_compatibility_warning(project_root)
 
     # ── Run state ───────────────────────────────────────────────────────────
     run_dir = _find_current_run_dir(project_root)
@@ -3287,6 +3395,7 @@ def _cmd_resume(
         )
         sys.exit(1)
     ensure_blocked_decision(state)
+    _enforce_project_config_compatibility(project_root)
 
     _banner("RESUMING SQUAD RUN", [
         ("Run ID", state.get("run_id", "?")),
