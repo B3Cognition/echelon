@@ -415,7 +415,22 @@ class RalphController:
                             )
                             build_reason = build_result.get("build_reason")
                             build_exit_code = build_result.get("exit_code")
-                            if build_status == "unknown" and _is_provider_session_limit(build_result):
+                            if build_status == "unknown" and _is_host_tool_permission_denied(build_result):
+                                why = "host LLM tool permissions blocked the build"
+                                meaning = (
+                                    "The selected AI CLI refused writes or local command "
+                                    "execution in the harness worktree before COMMANDER "
+                                    "could write the build completion marker"
+                                )
+                                build_status = "host_tool_permission_denied"
+                                build_reason = (
+                                    "Unsafe host execution is disabled. If this disposable "
+                                    "harness worktree is approved for AI-driven writes and "
+                                    "local test execution, set "
+                                    "harness.llm.tool_policy.allow_unsafe_host_execution: true "
+                                    "and provide harness.llm.tool_policy.approval_reason."
+                                )
+                            elif build_status == "unknown" and _is_provider_session_limit(build_result):
                                 why = "LLM provider session limit reached before COMMANDER finalized"
                                 meaning = (
                                     "The provider stopped the build because its session budget "
@@ -743,7 +758,11 @@ class RalphController:
                     pr_url = self._manage_pr(pr_url, branch, converged=False)
 
                 finally:
-                    self._provider.destroy(handle)
+                    try:
+                        self._provider.destroy(handle)
+                    except Exception as exc:
+                        self._record_cleanup_warning("sandbox_destroy", exc)
+                        logger.warning("Sandbox cleanup failed after build iteration: %s", exc)
 
             finally:
                 # Keep last worktree (FR-REPO-003b)
@@ -2156,6 +2175,8 @@ class RalphController:
         build_status = str(build_result.get("build_status") or "unknown")
         if build_status != "unknown":
             return False
+        if _is_host_tool_permission_denied(build_result):
+            return False
 
         try:
             exit_code = int(build_result.get("exit_code", 1))
@@ -2196,6 +2217,25 @@ class RalphController:
             "Build status marker missing after clean exit; continuing to verify "
             "because harness worktree progress was detected"
         )
+
+    def _record_cleanup_warning(self, operation: str, exc: Exception) -> None:
+        """Persist non-fatal cleanup failures without replacing the run blocker."""
+        try:
+            state = self._state_store.read()
+            warnings = state.get("cleanup_warnings")
+            if not isinstance(warnings, list):
+                warnings = []
+            warnings.append(
+                {
+                    "operation": operation,
+                    "error": str(exc),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            state["cleanup_warnings"] = warnings
+            self._state_store.write(state)
+        except Exception as state_exc:
+            logger.warning("Could not persist cleanup warning: %s", state_exc)
 
     def _has_confirmed_file_changes(self, worktree_path: str) -> bool:
         """Return True only when git confirms the worktree has changes."""
@@ -2954,6 +2994,41 @@ def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
         "reset window",
     )
     return any(needle in text for needle in needles)
+
+
+def _is_host_tool_permission_denied(build_result: dict[str, object]) -> bool:
+    text = "\n".join(
+        str(build_result.get(key) or "")
+        for key in ("stdout", "stderr", "build_reason", "reason")
+    ).lower()
+    if not text:
+        return False
+    permission_needles = (
+        "requires approval",
+        "require approval",
+        "requested permissions",
+        "permission not granted",
+        "permissions gate",
+        "permission mode is denying",
+        "requires permission",
+        "command requires approval",
+        "this command requires approval",
+        "write access",
+        "execute access",
+    )
+    action_needles = (
+        "write",
+        "bash",
+        "python",
+        "pytest",
+        "command",
+        "execution",
+        "tool",
+        "worktree",
+    )
+    return any(needle in text for needle in permission_needles) and any(
+        needle in text for needle in action_needles
+    )
 
 
 def _newly_completed_task_ids(

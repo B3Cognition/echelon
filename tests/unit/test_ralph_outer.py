@@ -1243,6 +1243,53 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_permission_denied_reports_host_tool_policy_blocker(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Host AI CLI permission denials must not be misreported as verify gaps."""
+        from harness.build_result import BuildResult
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="unknown",
+            impasse_file=None,
+            stdout=(
+                "The first Write to pyproject.toml returned permission not granted. "
+                "This session's permission mode is denying file writes and python "
+                "execution inside the worktree."
+            ),
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        provider.destroy = MagicMock(side_effect=RuntimeError("podman rm timed out"))
+
+        result = controller.run_loop(
+            max_outer=5,
+            max_inner=3,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        captured = capsys.readouterr()
+        assert "host LLM tool permissions blocked the build" in captured.err
+        assert "allow_unsafe_host_execution: true" in captured.err
+        assert "verify_command" not in captured.err
+        state = state_store.read()
+        assert state["termination_reason"] == "build_incomplete"
+        assert state["build_status"] == "host_tool_permission_denied"
+        assert "allow_unsafe_host_execution" in state["build_reason"]
+        assert state["cleanup_warnings"][0]["operation"] == "sandbox_destroy"
+        assert "podman rm timed out" in state["cleanup_warnings"][0]["error"]
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
     def test_llm_build_impasse_reports_marker_status(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
