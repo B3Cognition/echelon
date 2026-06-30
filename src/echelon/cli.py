@@ -2466,6 +2466,16 @@ def _enforce_project_config_compatibility(project_root: Path) -> None:
     sys.exit(1)
 
 
+def _phase_run_requires_task_lexicon_config(phase_id: str) -> bool:
+    """Return True when a manual phase run can use task Lexicon config.
+
+    The stale spec_ref guard protects ORCHESTRATOR task generation and PLAN2
+    repair. It must not block unrelated targeted repairs such as CHIEF
+    constitution replay.
+    """
+    return phase_id in {"phase3-plan", "phase3-consensus"}
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -3528,8 +3538,6 @@ def _cmd_phase(
         print("  Usage: echelon phase list | echelon phase run <phase-id>", file=sys.stderr)
         sys.exit(1)
 
-    _enforce_project_config_compatibility(project_root)
-
     if len(args) < 2:
         print("✗ Missing phase id.", file=sys.stderr)
         print("  Usage: echelon phase run <phase-id> [--spec <id>]", file=sys.stderr)
@@ -3542,6 +3550,9 @@ def _cmd_phase(
         for known in graph.all_phase_ids():
             print(f"  - {known}", file=sys.stderr)
         sys.exit(1)
+
+    if _phase_run_requires_task_lexicon_config(phase_id):
+        _enforce_project_config_compatibility(project_root)
 
     mode = "semi"
     spec_arg = ""

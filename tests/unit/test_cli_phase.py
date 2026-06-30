@@ -49,6 +49,64 @@ def test_phase_run_rejects_unknown_phase(tmp_path: Path, capsys) -> None:
     assert "phase1-constitution" in err
 
 
+def test_phase_run_constitution_does_not_require_task_lexicon_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+    def fail_if_called(_project_root: Path) -> None:
+        raise AssertionError("constitution replay must not enforce task Lexicon config")
+
+    class FakeProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, project_root: str, _prompt: str, timeout_ms: int | None = None) -> SquadAgentResult:
+            constitution = Path(project_root) / ".specify" / "memory" / "constitution.md"
+            constitution.parent.mkdir(parents=True, exist_ok=True)
+            constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"constitution_status": "complete"},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=10,
+                timed_out=False,
+            )
+
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", fail_if_called)
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", FakeProvider)
+
+    _cmd_phase(
+        ["run", "phase1-constitution", "--spec", "001"],
+        project_root=tmp_path,
+        ext_dir=EXT_DIR,
+    )
+
+    assert (spec_dir / "constitution.md").exists()
+
+
+def test_phase_run_plan_enforces_task_lexicon_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def blocked(_project_root: Path) -> None:
+        raise SystemExit(7)
+
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", blocked)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_phase(["run", "phase3-plan"], project_root=tmp_path, ext_dir=EXT_DIR)
+
+    assert exc.value.code == 7
+
+
 def test_phase_run_records_manual_replay_and_targets_spec_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
