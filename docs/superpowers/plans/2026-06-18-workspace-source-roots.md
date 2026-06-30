@@ -60,7 +60,7 @@ Create or modify these files:
 - Create: `src/echelon/workspace_model.py`
 - Create: `tests/unit/test_workspace_model.py`
 
-- [ ] **Step 1: Write failing workspace model tests**
+- [x] **Step 1: Write failing workspace model tests**
 
 Create `tests/unit/test_workspace_model.py`:
 
@@ -151,7 +151,7 @@ def test_manifest_json_round_trips(tmp_path: Path) -> None:
     assert loaded == manifest
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -161,7 +161,7 @@ python -m pytest tests/unit/test_workspace_model.py -q
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'echelon.workspace_model'`.
 
-- [ ] **Step 3: Implement the workspace model**
+- [x] **Step 3: Implement the workspace model**
 
 Create `src/echelon/workspace_model.py`:
 
@@ -383,7 +383,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 4: Run tests and verify they pass**
+- [x] **Step 4: Run tests and verify they pass**
 
 Run:
 
@@ -393,7 +393,7 @@ python -m pytest tests/unit/test_workspace_model.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/echelon/workspace_model.py tests/unit/test_workspace_model.py
@@ -407,7 +407,7 @@ git commit -m "feat: add workspace source roots model"
 - Modify: `tests/integration/re/test-discover-repos.sh`
 - Test artifact: sibling `workspace-manifest.json` beside `repos-manifest.json`
 
-- [ ] **Step 1: Write failing integration assertions**
+- [x] **Step 1: Write failing integration assertions**
 
 In `tests/integration/re/test-discover-repos.sh`, add assertions after the script call that currently writes `repos-manifest.json`:
 
@@ -422,7 +422,7 @@ jq -e '.sources[] | select(.path == "repo-a")' "$workspace_manifest" >/dev/null
 
 The existing fixture names are `repo-a`, `repo-b`, and `repo-c`; keep those names in the assertions.
 
-- [ ] **Step 2: Run the integration test and verify it fails**
+- [x] **Step 2: Run the integration test and verify it fails**
 
 Run:
 
@@ -432,7 +432,7 @@ bash tests/integration/re/test-discover-repos.sh
 
 Expected: FAIL because `workspace-manifest.json` is absent.
 
-- [ ] **Step 3: Call Python manifest writer from discovery script**
+- [x] **Step 3: Call Python manifest writer from discovery script**
 
 In `extension/scripts/bash/re/discover-repos.sh`, after the existing `repos-manifest.json` write succeeds, add:
 
@@ -452,7 +452,7 @@ ECHELON_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
 
 Do not make failure to write `workspace-manifest.json` silent. If Python exists but the module fails, the script should fail because discovery state is incomplete.
 
-- [ ] **Step 4: Run the integration test and verify it passes**
+- [x] **Step 4: Run the integration test and verify it passes**
 
 Run:
 
@@ -462,7 +462,7 @@ bash tests/integration/re/test-discover-repos.sh
 
 Expected: PASS and both manifests exist.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add extension/scripts/bash/re/discover-repos.sh tests/integration/re/test-discover-repos.sh
@@ -476,7 +476,7 @@ git commit -m "feat: emit workspace manifest during RE discovery"
 - Modify: `tests/integration/re/test-run-analysis-polyrepo.sh`
 - Modify: `tests/kernel/test_codegraph_integration_contract.py`
 
-- [ ] **Step 1: Add failing contract checks**
+- [x] **Step 1: Add failing contract checks**
 
 In `tests/kernel/test_codegraph_integration_contract.py`, update the analyzer contract test so it asserts both file names are present and preference is explicit:
 
@@ -494,7 +494,7 @@ jq -e '.sources | length == 3' "$RE_OUTPUT_DIR/workspace-manifest.json" >/dev/nu
 test ! -d "$RE_OUTPUT_DIR/.specify"
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -505,7 +505,7 @@ bash tests/integration/re/test-run-analysis-polyrepo.sh
 
 Expected: FAIL on missing prompt/script references.
 
-- [ ] **Step 3: Update `run-analysis.sh` manifest resolution**
+- [x] **Step 3: Update `run-analysis.sh` manifest resolution**
 
 In `extension/scripts/bash/re/run-analysis.sh`, add a helper near argument parsing:
 
@@ -545,7 +545,7 @@ fi
 
 Keep existing `repos-manifest.json` behavior intact for older run directories.
 
-- [ ] **Step 4: Update prompt contracts**
+- [x] **Step 4: Update prompt contracts**
 
 In `extension/agents/re/analyzer.md`, replace `repos-manifest.json`-only instructions with:
 
@@ -555,7 +555,7 @@ Prefer `workspace-manifest.json` when present. It defines the workspace root and
 
 Apply the same wording to `extension/agents/re/specifier.md`, `extension/agents/re/verifier.md`, `extension/agents/re/constituter.md`, `extension/agents/re/golddigger.md`, and `extension/agents/exploration/scout.md` wherever they describe polyrepo discovery.
 
-- [ ] **Step 5: Run tests and verify they pass**
+- [x] **Step 5: Run tests and verify they pass**
 
 Run:
 
@@ -566,7 +566,7 @@ bash tests/integration/re/test-run-analysis-polyrepo.sh
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add extension/scripts/bash/re/run-analysis.sh extension/agents/re/analyzer.md extension/agents/re/specifier.md extension/agents/re/verifier.md extension/agents/re/constituter.md extension/agents/re/golddigger.md extension/agents/exploration/scout.md tests/integration/re/test-run-analysis-polyrepo.sh tests/kernel/test_codegraph_integration_contract.py
@@ -579,7 +579,7 @@ git commit -m "feat: prefer workspace manifest in reverse engineering"
 - Modify: `src/echelon/cli.py`
 - Create: `tests/unit/test_workspace_git_preflight.py`
 
-- [ ] **Step 1: Write failing preflight tests**
+- [x] **Step 1: Write failing preflight tests**
 
 Create `tests/unit/test_workspace_git_preflight.py`:
 
@@ -622,7 +622,7 @@ def test_single_repo_workspace_passes(tmp_path: Path) -> None:
     _workspace_git_preflight(tmp_path, command_name="echelon run")
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -632,7 +632,7 @@ python -m pytest tests/unit/test_workspace_git_preflight.py -q
 
 Expected: FAIL because `_workspace_git_preflight` does not exist.
 
-- [ ] **Step 3: Implement preflight helper**
+- [x] **Step 3: Implement preflight helper**
 
 In `src/echelon/cli.py`, add:
 
@@ -666,7 +666,7 @@ Then rerun:
 
 If `src/echelon/cli.py` already has a central error helper, use that helper to print and exit but keep the exact message content.
 
-- [ ] **Step 4: Wire preflight into commands**
+- [x] **Step 4: Wire preflight into commands**
 
 Call `_workspace_git_preflight(Path.cwd(), command_name=...)` at the start of:
 
@@ -678,7 +678,7 @@ Call `_workspace_git_preflight(Path.cwd(), command_name=...)` at the start of:
 
 Do not run this preflight for pure read-only help/version commands.
 
-- [ ] **Step 5: Run tests and verify they pass**
+- [x] **Step 5: Run tests and verify they pass**
 
 Run:
 
@@ -688,7 +688,7 @@ python -m pytest tests/unit/test_workspace_git_preflight.py tests/unit/test_cli_
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/echelon/cli.py tests/unit/test_workspace_git_preflight.py
@@ -701,7 +701,7 @@ git commit -m "feat: require git-backed echelon workspace"
 - Modify: `src/echelon/target_detection.py`
 - Modify: `tests/unit/test_target_detection.py`
 
-- [ ] **Step 1: Write failing source-root target tests**
+- [x] **Step 1: Write failing source-root target tests**
 
 Add to `tests/unit/test_target_detection.py`:
 
@@ -765,7 +765,7 @@ def test_target_detection_keeps_single_repo_dot_behavior(tmp_path: Path) -> None
     assert result.decision == "single_source_root"
 ```
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -775,7 +775,7 @@ python -m pytest tests/unit/test_target_detection.py -q
 
 Expected: FAIL because `detect_target` does not accept `workspace_manifest`.
 
-- [ ] **Step 3: Update target detection**
+- [x] **Step 3: Update target detection**
 
 The current public signature is keyword-only with `spec_dir` and `polyrepo_root`. Preserve that compatibility by implementing this concrete signature instead:
 
@@ -806,7 +806,7 @@ TargetDetectionResult(recommended_target, confidence, decision, candidates)
 
 For source-root decisions, candidates should be `TargetCandidate(repo=source.id, confidence=1.0, evidence=["workspace source root"])`. Do not include `polyrepo_root` as a candidate unless a source path is `.`.
 
-- [ ] **Step 4: Run tests and verify they pass**
+- [x] **Step 4: Run tests and verify they pass**
 
 Run:
 
@@ -816,7 +816,7 @@ python -m pytest tests/unit/test_target_detection.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/echelon/target_detection.py tests/unit/test_target_detection.py
@@ -831,7 +831,7 @@ git commit -m "feat: detect harness targets from workspace sources"
 - Modify: `src/harness/ralph.py`
 - Modify: `tests/unit/test_ralph_outer.py`
 
-- [ ] **Step 1: Add failing state round-trip test**
+- [x] **Step 1: Add failing state round-trip test**
 
 In `tests/unit/test_harness_target_state.py`, add:
 
@@ -859,7 +859,7 @@ def test_target_state_updates_include_workspace_and_source_metadata(tmp_path: Pa
     assert updates["source_git_role"] == "source"
 ```
 
-- [ ] **Step 2: Run state test and verify it fails**
+- [x] **Step 2: Run state test and verify it fails**
 
 Run:
 
@@ -869,7 +869,7 @@ python -m pytest tests/unit/test_harness_target_state.py -q
 
 Expected: FAIL on missing fields.
 
-- [ ] **Step 3: Add fields to target state**
+- [x] **Step 3: Add fields to target state**
 
 In `src/harness/target_state.py`, extend `target_state_updates` with optional keyword-only parameters:
 
@@ -891,7 +891,7 @@ The returned dictionary must keep existing keys and add these keys:
 "source_git_role": source_git_role,
 ```
 
-- [ ] **Step 4: Add prompt context assertion**
+- [x] **Step 4: Add prompt context assertion**
 
 In `tests/unit/test_ralph_outer.py`, add:
 
@@ -918,7 +918,7 @@ def test_harness_context_names_workspace_and_source_roots(self, tmp_path: Path) 
 
 Adapt controller construction to the helpers already used in this test file.
 
-- [ ] **Step 5: Implement harness prompt context**
+- [x] **Step 5: Implement harness prompt context**
 
 In `src/harness/ralph.py`, extend deterministic harness context:
 
@@ -933,7 +933,7 @@ Do not search for the application repo. Use source_root as the implementation ch
 
 Preserve existing `HARNESS_SOURCE_DIR` instructions that prevent searching for Ralph/harness code.
 
-- [ ] **Step 6: Run tests and verify they pass**
+- [x] **Step 6: Run tests and verify they pass**
 
 Run:
 
@@ -943,7 +943,7 @@ python -m pytest tests/unit/test_harness_target_state.py tests/unit/test_ralph_o
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/harness/target_state.py src/harness/ralph.py tests/unit/test_harness_target_state.py tests/unit/test_ralph_outer.py
@@ -959,7 +959,7 @@ git commit -m "feat: persist workspace source metadata in harness"
 - Modify: `tests/unit/test_harness_single_repo_unchanged.py`
 - Modify: `tests/unit/test_polyrepo_target_docs.py`
 
-- [ ] **Step 1: Add failing CLI tests**
+- [x] **Step 1: Add failing CLI tests**
 
 In `tests/unit/test_cli_harness_run.py`, add:
 
@@ -1007,7 +1007,7 @@ def test_harness_run_uses_single_source_root(tmp_path: Path, monkeypatch) -> Non
 
 If `_resolve_harness_workspace_target` does not exist, create it in Step 3.
 
-- [ ] **Step 2: Run tests and verify they fail**
+- [x] **Step 2: Run tests and verify they fail**
 
 Run:
 
@@ -1017,7 +1017,7 @@ python -m pytest tests/unit/test_cli_harness_run.py tests/unit/test_harness_sing
 
 Expected: FAIL on missing helper or old target behavior.
 
-- [ ] **Step 3: Implement harness workspace target resolver**
+- [x] **Step 3: Implement harness workspace target resolver**
 
 In `src/echelon/cli.py`, add:
 
@@ -1058,7 +1058,7 @@ def _resolve_harness_workspace_target(project_root: Path, explicit_target: str |
 
 Pass this metadata into orchestrator/run state rather than recomputing it inside the build loop.
 
-- [ ] **Step 4: Preserve single-repo behavior**
+- [x] **Step 4: Preserve single-repo behavior**
 
 In `tests/unit/test_harness_single_repo_unchanged.py`, assert the single-repo resolver uses `.`:
 
@@ -1075,7 +1075,7 @@ def test_single_repo_resolver_uses_project_root(tmp_path: Path) -> None:
     assert target.source_id == "."
 ```
 
-- [ ] **Step 5: Run tests and verify they pass**
+- [x] **Step 5: Run tests and verify they pass**
 
 Run:
 
@@ -1085,7 +1085,7 @@ python -m pytest tests/unit/test_cli_harness_run.py tests/unit/test_harness_sing
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/echelon/cli.py src/echelon/orchestrator.py tests/unit/test_cli_harness_run.py tests/unit/test_harness_single_repo_unchanged.py tests/unit/test_polyrepo_target_docs.py
@@ -1100,7 +1100,7 @@ git commit -m "feat: resolve harness targets from workspace sources"
 - Modify: `tests/integration/test_squad_controller.py`
 - Modify: `tests/kernel/test_squad_executors_journal.py`
 
-- [ ] **Step 1: Add failing squad continuation test**
+- [x] **Step 1: Add failing squad continuation test**
 
 In `tests/integration/test_squad_controller.py`, add a test using a branchless polyrepo fixture:
 
@@ -1121,7 +1121,7 @@ def test_continue_blocks_branchless_workspace_before_new_run(tmp_path: Path, mon
     assert "git init" in err
 ```
 
-- [ ] **Step 2: Run test and verify it fails**
+- [x] **Step 2: Run test and verify it fails**
 
 Run:
 
@@ -1131,7 +1131,7 @@ python -m pytest tests/integration/test_squad_controller.py -q
 
 Expected: FAIL because continue currently creates a new run in a branchless workspace.
 
-- [ ] **Step 3: Use the same preflight before squad run creation**
+- [x] **Step 3: Use the same preflight before squad run creation**
 
 In `src/echelon/cli.py`, call `_workspace_git_preflight` before `echelon run` starts a new squad run and before `echelon continue` creates or resumes a run.
 
@@ -1143,7 +1143,7 @@ legacy branchless run detected; continuing for recovery only
 
 This exception should not create a new branchless run.
 
-- [ ] **Step 4: Run tests and verify they pass**
+- [x] **Step 4: Run tests and verify they pass**
 
 Run:
 
@@ -1153,7 +1153,7 @@ python -m pytest tests/integration/test_squad_controller.py tests/kernel/test_sq
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/echelon/cli.py src/harness/squad.py tests/integration/test_squad_controller.py tests/kernel/test_squad_executors_journal.py
@@ -1169,7 +1169,7 @@ git commit -m "feat: block new branchless workspace runs"
 - Modify: `README.md`
 - Modify: `tests/unit/test_polyrepo_target_docs.py`
 
-- [ ] **Step 1: Add failing docs test**
+- [x] **Step 1: Add failing docs test**
 
 In `tests/unit/test_polyrepo_target_docs.py`, add:
 
@@ -1189,7 +1189,7 @@ def test_re_docs_use_workspace_source_roots_not_monorepo_of_monorepos() -> None:
     assert "monorepo of monorepos" not in text
 ```
 
-- [ ] **Step 2: Run docs test and verify it fails**
+- [x] **Step 2: Run docs test and verify it fails**
 
 Run:
 
@@ -1199,7 +1199,7 @@ python -m pytest tests/unit/test_polyrepo_target_docs.py -q
 
 Expected: FAIL because docs are not updated.
 
-- [ ] **Step 3: Create workspace docs**
+- [x] **Step 3: Create workspace docs**
 
 Create `docs/workspace-model.md`:
 
@@ -1233,7 +1233,7 @@ echelon harness run 001-feature
 ```
 ````
 
-- [ ] **Step 4: Update RE docs**
+- [x] **Step 4: Update RE docs**
 
 In `docs/re-overview.md`, add:
 
@@ -1249,7 +1249,7 @@ In `docs/re-config.md`, add:
 
 In `README.md`, add a short link to `docs/workspace-model.md` near the harness/polyrepo section.
 
-- [ ] **Step 5: Run docs test and verify it passes**
+- [x] **Step 5: Run docs test and verify it passes**
 
 Run:
 
@@ -1259,7 +1259,7 @@ python -m pytest tests/unit/test_polyrepo_target_docs.py -q
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add README.md docs/workspace-model.md docs/re-overview.md docs/re-config.md tests/unit/test_polyrepo_target_docs.py
@@ -1271,7 +1271,7 @@ git commit -m "docs: document workspace source roots"
 **Files:**
 - Create: `tests/integration/test_workspace_source_roots_e2e.py`
 
-- [ ] **Step 1: Write e2e regression tests**
+- [x] **Step 1: Write e2e regression tests**
 
 Create `tests/integration/test_workspace_source_roots_e2e.py`:
 
@@ -1317,7 +1317,7 @@ def test_workspace_manifest_cli_polyrepo(tmp_path: Path) -> None:
     assert [source["path"] for source in data["sources"]] == ["og-platform", "pbg-api"]
 ```
 
-- [ ] **Step 2: Run e2e tests and verify they pass**
+- [x] **Step 2: Run e2e tests and verify they pass**
 
 Run:
 
@@ -1327,7 +1327,7 @@ python -m pytest tests/integration/test_workspace_source_roots_e2e.py -q
 
 Expected: PASS.
 
-- [ ] **Step 3: Run focused regression suite**
+- [x] **Step 3: Run focused regression suite**
 
 Run:
 
@@ -1350,7 +1350,7 @@ bash tests/integration/re/test-run-analysis-polyrepo.sh
 
 Expected: all PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/integration/test_workspace_source_roots_e2e.py
@@ -1363,7 +1363,7 @@ git commit -m "test: cover workspace source roots end to end"
 - Modify: `docs/superpowers/specs/2026-06-18-workspace-source-roots-design.md`
 - Create: `docs/superpowers/reports/2026-06-18-workspace-source-roots-verification.md`
 
-- [ ] **Step 1: Run complete verification subset**
+- [x] **Step 1: Run complete verification subset**
 
 Run:
 
@@ -1387,7 +1387,7 @@ bash tests/integration/re/test-run-analysis-polyrepo.sh
 
 Expected: all PASS.
 
-- [ ] **Step 2: Write verification report**
+- [x] **Step 2: Write verification report**
 
 Create `docs/superpowers/reports/2026-06-18-workspace-source-roots-verification.md`:
 
@@ -1413,7 +1413,7 @@ Implemented deterministic workspace/source-root model across discovery, RE analy
 - Harness prompt context includes explicit workspace and source root paths.
 ```
 
-- [ ] **Step 3: Update design status**
+- [x] **Step 3: Update design status**
 
 Append to `docs/superpowers/specs/2026-06-18-workspace-source-roots-design.md`:
 
@@ -1423,14 +1423,14 @@ Append to `docs/superpowers/specs/2026-06-18-workspace-source-roots-design.md`:
 Implemented on branch `workspace-source-roots-design`. Verification evidence is in `docs/superpowers/reports/2026-06-18-workspace-source-roots-verification.md`.
 ```
 
-- [ ] **Step 4: Commit final docs**
+- [x] **Step 4: Commit final docs**
 
 ```bash
 git add docs/superpowers/specs/2026-06-18-workspace-source-roots-design.md docs/superpowers/reports/2026-06-18-workspace-source-roots-verification.md
 git commit -m "docs: record workspace source roots verification"
 ```
 
-- [ ] **Step 5: Push branch**
+- [x] **Step 5: Push branch**
 
 Run:
 
