@@ -169,6 +169,73 @@ def _make_controller(
 class TestOuterLoopConvergence:
     """Test outer loop converges on first iteration."""
 
+    def test_sync_phase_a_inputs_overwrites_stale_worktree_constitution(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _provider, gitops, state_store = _make_controller(tmp_path)
+        project = tmp_path / "project"
+        gitops.base_dir = project
+        source = project / "specs" / "spec-001-demo"
+        source.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        (source / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        (source / "constitution.md").write_text(
+            "# Real Constitution\n\nProject-specific governance.\n",
+            encoding="utf-8",
+        )
+        canonical = project / ".specify" / "memory" / "constitution.md"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("# Real Constitution\n", encoding="utf-8")
+
+        worktree = tmp_path / "worktree"
+        stale = worktree / "specs" / "spec-001-demo"
+        stale.mkdir(parents=True)
+        (stale / "constitution.md").write_text(
+            "# [PROJECT_NAME] Constitution\n\n[PRINCIPLE_1_NAME]\n",
+            encoding="utf-8",
+        )
+        stale_canonical = worktree / ".specify" / "memory" / "constitution.md"
+        stale_canonical.parent.mkdir(parents=True)
+        stale_canonical.write_text("# [PROJECT_NAME] Constitution\n", encoding="utf-8")
+
+        state = state_store.read()
+        state["spec_dir"] = str(source)
+        state_store.write(state)
+
+        blockers = controller._sync_phase_a_inputs_into_worktree(worktree)
+
+        assert blockers == []
+        assert "[PROJECT_NAME]" not in (stale / "constitution.md").read_text(encoding="utf-8")
+        assert "Real Constitution" in (stale / "constitution.md").read_text(encoding="utf-8")
+        assert "[PROJECT_NAME]" not in stale_canonical.read_text(encoding="utf-8")
+
+    def test_sync_phase_a_inputs_blocks_invalid_worktree_copy(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _provider, gitops, state_store = _make_controller(tmp_path)
+        project = tmp_path / "project"
+        gitops.base_dir = project
+        source = project / "specs" / "spec-001-demo"
+        source.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        (source / "constitution.md").write_text(
+            "# [PROJECT_NAME] Constitution\n",
+            encoding="utf-8",
+        )
+
+        state = state_store.read()
+        state["spec_dir"] = str(source)
+        state_store.write(state)
+
+        blockers = controller._sync_phase_a_inputs_into_worktree(tmp_path / "worktree")
+
+        assert any("constitution.md contains unresolved template markers" in blocker for blocker in blockers)
+
     def test_harness_context_uses_worktree_spec_paths_for_single_repo_runs(
         self, tmp_path: Path
     ) -> None:

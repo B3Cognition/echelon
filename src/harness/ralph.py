@@ -40,6 +40,7 @@ from harness.loop_result import LoopResult
 from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_history import append_implementation_run
+from harness.phase_a_readiness import validate_phase_a_readiness
 from harness.spec_frontmatter import find_spec_dir, write_status
 from harness.state import StateStore
 from harness.task_progress import (
@@ -277,6 +278,29 @@ class RalphController:
             preserve_worktree = False
 
             try:
+                phase_a_blockers = self._sync_phase_a_inputs_into_worktree(
+                    Path(worktree_path)
+                )
+                if phase_a_blockers:
+                    preserve_worktree = True
+                    reason = (
+                        "Phase A artifacts are not build-ready in harness worktree: "
+                        + "; ".join(phase_a_blockers)
+                    )
+                    return self._finalize(
+                        status="blocked",
+                        reason="build_incomplete",
+                        outer_iterations=outer_iter + 1,
+                        inner_iterations=total_inner_iterations,
+                        pr_url=pr_url,
+                        tokens_used=tokens_used,
+                        final_verify=None,
+                        extra_state={
+                            "build_status": "phase_a_not_ready",
+                            "build_reason": reason,
+                        },
+                    )
+
                 # Create sandbox
                 sandbox_spec = self._build_sandbox_spec(worktree_path, outer_iter)
                 handle = self._provider.create(sandbox_spec)
@@ -2038,6 +2062,53 @@ class RalphController:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, dest)
         return dest
+
+    def _sync_phase_a_inputs_into_worktree(self, worktree: Path) -> list[str]:
+        """Materialize current Phase A inputs into the build worktree.
+
+        The CLI preflight validates the project-visible published spec directory,
+        but Ralph builds in a generated git worktree that may be based on an older
+        feature-branch commit. Copy the current published spec artifacts into that
+        worktree before dispatch so the build agent sees the same inputs that
+        preflight approved.
+        """
+        if self._spec_artifacts_mode() != "worktree":
+            return []
+
+        source = self._source_phase_a_spec_dir(worktree)
+        if source is None:
+            return []
+        try:
+            if source.resolve().is_relative_to(worktree.resolve()):
+                return []
+        except OSError:
+            return []
+
+        dest = worktree / "specs" / source.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source, dest, dirs_exist_ok=True)
+
+        source_constitution = self._orchestration_root(worktree) / ".specify" / "memory" / "constitution.md"
+        if source_constitution.exists():
+            target_constitution = worktree / ".specify" / "memory" / "constitution.md"
+            target_constitution.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_constitution, target_constitution)
+
+        readiness = validate_phase_a_readiness({"status": "done"}, [dest])
+        if readiness.ready:
+            return []
+        return readiness.blockers or ["Phase A build inputs are not ready"]
+
+    def _source_phase_a_spec_dir(self, worktree: Path) -> Path | None:
+        state = self._state_store.read()
+        state_spec_dir = state.get("spec_dir")
+        if state_spec_dir:
+            source = Path(str(state_spec_dir))
+            if not source.is_absolute():
+                source = self._orchestration_root(worktree) / source
+            if source.is_dir():
+                return source
+        return find_spec_dir(self._spec_id, self._orchestration_root(worktree))
 
     def _find_spec_dir_in_root(self, root: Path) -> Path | None:
         """Find a spec directory directly under root without walking parents."""
