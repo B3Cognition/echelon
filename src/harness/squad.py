@@ -629,6 +629,119 @@ class SquadController:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
 
+    def run_single_phase(
+        self,
+        phase_id: str,
+        user_message: str = "",
+        mode: str = "semi",
+        initial_state_updates: dict | None = None,
+    ) -> SquadResult:
+        """Execute one explicit workflow phase and stop after recording state.
+
+        This is for targeted repair/replay. It uses the normal phase executor,
+        transition evaluator, journal writer, and state validation path, but it
+        never enters the full controller loop.
+        """
+        import os as _os
+
+        _os.environ["ECHELON_SQUAD_ACTIVE"] = "1"
+
+        if phase_id not in self._graph.all_phase_ids():
+            raise KeyError(f"Phase not found in definition.yaml: {phase_id!r}")
+
+        existing = self._state_store.load()
+        if not existing:
+            run_id = f"squad-{int(time.time())}"
+            project_mode = self._detect_project_mode(mode)
+            self._state_store.initialize(
+                run_id=run_id,
+                mode=project_mode,
+                user_message=user_message or f"Manual phase run: {phase_id}",
+                token_budget=self._token_budget,
+                entry_phase=phase_id,
+                max_iterations=self._max_iterations,
+                autonomy_mode=mode,
+            )
+            if initial_state_updates:
+                state = self._state_store.load()
+                state.update(initial_state_updates)
+                self._state_store.save(state)
+            self._refresh_run_context("manual phase initialization")
+        else:
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["phase"] = phase_id
+            if user_message and not state.get("user_message"):
+                state["user_message"] = user_message
+            state["blocked_reason"] = None
+            state["escalation_question"] = None
+            state["escalation_options"] = None
+            if initial_state_updates:
+                state.update(initial_state_updates)
+            self._state_store.save(state)
+            self._refresh_run_context(f"manual phase replay {phase_id}")
+
+        phase = phase_id
+        guarded_phase = self._guard_constitution_provenance(phase)
+        if guarded_phase in TERMINAL_PHASES:
+            return SquadResult.from_state(self._state_store.load())
+        phase = guarded_phase
+
+        node = self._graph.get(phase)
+        label = node.label or node.id
+        print(f"\n[squad] ▶ {node.id}  {label}  (manual phase run)", flush=True)
+
+        executor = self._executors.get(node.type)
+        if executor is None:
+            result = self._judgment_dispatch(
+                f"Unknown phase type {node.type!r} for phase {phase!r}",
+                node,
+            )
+        else:
+            result = executor.execute(node, self._state_store)
+
+        blocked_result = self._blocked_executor_reason(result)
+        if blocked_result:
+            self._block_after_executor_failure(phase, blocked_result, result)
+            return SquadResult.from_state(self._state_store.load())
+
+        next_phase = self._evaluate_transitions(node, result)
+        if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+            readiness = self._publish_phase_a_artifacts_for_build()
+            if not readiness.ready:
+                self._block_after_phase_a_readiness_failure(readiness)
+                return SquadResult.from_state(self._state_store.load())
+        else:
+            self._publish_manual_phase_artifacts()
+
+        self._state_store.advance(
+            phase,
+            next_phase,
+            result,
+            allowed_state_update_keys=node.allowed_state_updates,
+            manual_phase_run=True,
+        )
+        self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
+        print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
+        return SquadResult.from_state(self._state_store.load())
+
+    def _publish_manual_phase_artifacts(self) -> None:
+        """Refresh project-visible spec metadata after a targeted phase run."""
+        state = self._state_store.load()
+        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
+        if not spec_ref:
+            return
+        spec_dir = Path(spec_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        if not spec_dir.exists() or not spec_dir.is_dir():
+            return
+        self._publish_constitution_snapshot(spec_dir)
+        try:
+            write_artifact_index(spec_dir)
+        except OSError:
+            logger.warning("Could not refresh artifact index for %s", spec_dir)
+
     def _phase_a_readiness_candidate_dirs(self) -> list[Path]:
         state = self._state_store.load()
         candidates: list[Path] = []

@@ -164,6 +164,7 @@ class SquadStateStore:
         result: "SquadAgentResult",
         *,
         allowed_state_update_keys: Iterable[str] | None = None,
+        manual_phase_run: bool = False,
     ) -> None:
         state = self.load()
         try:
@@ -195,6 +196,20 @@ class SquadStateStore:
             "verdict": result.verdict,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if manual_phase_run:
+            state["last_dispatch"]["manual_phase_run"] = True
+            manual_runs = state.get("manual_phase_runs")
+            if not isinstance(manual_runs, list):
+                manual_runs = []
+            manual_runs.append(
+                {
+                    "phase_id": from_phase,
+                    "next_phase": to_phase,
+                    "verdict": result.verdict,
+                    "completed_at": state["last_dispatch"]["completed_at"],
+                }
+            )
+            state["manual_phase_runs"] = manual_runs
         completed = state.get("completed_phases")
         if not isinstance(completed, list):
             completed = []

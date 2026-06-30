@@ -80,6 +80,11 @@ Commands:
                                             If human input is needed, prints `resume`.
   rewind  <phase-id>                        Rewind the active squad run to a safe checkpoint
                                             phase and prepare it for `echelon continue`.
+  phase list                                List workflow phases available for manual replay.
+  phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
+                                            Run one explicit phase, write artifacts to the
+                                            target spec directory when resolvable, record
+                                            state/journal through COMMANDER contracts, then stop.
   resume  "<answers>"                       Answer escalation questions from a blocked run.
                                             Use only when the run asked for human input;
                                             after recording the answer, Echelon continues.
@@ -2723,6 +2728,102 @@ def _build_target_continue_spec_dir(project_root: Path, current_state: dict) -> 
     return None
 
 
+def _resolve_phase_target_spec_dir(
+    project_root: Path,
+    current_state: dict,
+    spec_arg: str = "",
+) -> Path | None:
+    """Resolve the project-visible spec dir for a manual phase run."""
+    from harness.spec_frontmatter import find_spec_dir
+
+    value = spec_arg.strip()
+    if value:
+        candidate = Path(value)
+        if candidate.exists() and candidate.is_dir():
+            return candidate if candidate.is_absolute() else project_root / candidate
+        return find_spec_dir(value, project_root)
+
+    target = _build_target_continue_spec_dir(project_root, current_state)
+    if target is not None:
+        return target
+    return _single_project_spec_dir(project_root)
+
+
+def _phase_state_updates_for_target(
+    project_root: Path,
+    current_state: dict,
+    target_spec_dir: Path | None,
+) -> dict:
+    """Build state fields that make phase context/output target the spec dir."""
+    if target_spec_dir is None:
+        return {}
+
+    target_spec_dir.mkdir(parents=True, exist_ok=True)
+
+    source_ref = str(current_state.get("spec_dir") or "").strip()
+    if source_ref:
+        source = Path(source_ref)
+        if not source.is_absolute():
+            source = project_root / source
+        if source.exists() and source.is_dir() and source.resolve() != target_spec_dir.resolve():
+            _copy_missing_tree(source, target_spec_dir)
+
+    updates: dict[str, str] = {
+        "spec_id": target_spec_dir.name,
+        "spec_dir": _repo_relative_or_absolute(target_spec_dir, project_root),
+        "published_spec_dir": _repo_relative_or_absolute(target_spec_dir, project_root),
+    }
+    if source_ref:
+        updates["phase_run_source_spec_dir"] = source_ref
+    return updates
+
+
+def _phase_context_resolution_rows(
+    node: object,
+    project_root: Path,
+    state: dict,
+    target_spec_dir: Path | None,
+) -> list[tuple[str, str]]:
+    """Return compact context-pack resolution rows for phase-run UX."""
+    staging_ref = str(state.get("staging_dir") or "").strip()
+    staging = Path(staging_ref) if staging_ref else None
+    if staging is not None and not staging.is_absolute():
+        staging = project_root / staging
+
+    bases: list[Path] = []
+    if target_spec_dir is not None:
+        bases.append(target_spec_dir)
+    source_ref = str(state.get("spec_dir") or "").strip()
+    if source_ref:
+        source = Path(source_ref)
+        if not source.is_absolute():
+            source = project_root / source
+        if source not in bases:
+            bases.append(source)
+    if staging is not None:
+        bases.append(staging)
+    bases.append(project_root)
+
+    rows: list[tuple[str, str]] = []
+    for raw_item in getattr(node, "context_pack", []) or []:
+        file_ref = str(raw_item).split(" ")[0].split("(")[0].rstrip()
+        if not file_ref or file_ref.startswith("#"):
+            continue
+        resolved_ref = file_ref
+        if staging is not None:
+            resolved_ref = resolved_ref.replace(".specify/squad/staging/", f"{staging}/")
+            resolved_ref = resolved_ref.replace(".specify/squad/staging", str(staging))
+        if target_spec_dir is not None:
+            resolved_ref = resolved_ref.replace("{spec_dir}", str(target_spec_dir))
+        if resolved_ref.startswith("/"):
+            candidates = [Path(resolved_ref)]
+        else:
+            candidates = [base / resolved_ref for base in bases]
+        found = next((candidate for candidate in candidates if candidate.exists()), None)
+        rows.append((file_ref, str(found) if found is not None else "missing"))
+    return rows
+
+
 def _phase_a_readiness_candidate_dirs(
     project_root: Path,
     current_state: dict,
@@ -3382,6 +3483,173 @@ def _cmd_rewind(
     _banner("REWIND PREPARED", details)
 
 
+def _cmd_phase(
+    args: list[str],
+    project_root: Path,
+    ext_dir: Path,
+) -> None:
+    from harness.config import get_full_resolved_config, load_config
+    from harness.paths import make_spec_run_id
+    from harness.phase_graph import PhaseGraph
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadCliProvider
+    from harness.squad_state import SquadStateStore
+
+    _print_extension_drift_warning(project_root, ext_dir)
+    _enforce_project_config_compatibility(project_root)
+
+    graph = PhaseGraph(
+        ext_dir / "workflow/definition.yaml",
+        ext_dir / "extension.yml",
+    )
+
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage:\n"
+            "  echelon phase list\n"
+            "  echelon phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]\n",
+            flush=True,
+        )
+        return
+
+    subcommand = args[0]
+    if subcommand == "list":
+        _banner(
+            "PHASES",
+            [
+                (phase_id, f"{graph.get(phase_id).label or '-'}  [{graph.get(phase_id).type}]")
+                for phase_id in graph.all_phase_ids()
+            ],
+            subtitle="Workflow phases available for manual replay",
+        )
+        return
+
+    if subcommand != "run":
+        print(f"✗ Unknown phase subcommand: {subcommand}", file=sys.stderr)
+        print("  Usage: echelon phase list | echelon phase run <phase-id>", file=sys.stderr)
+        sys.exit(1)
+
+    if len(args) < 2:
+        print("✗ Missing phase id.", file=sys.stderr)
+        print("  Usage: echelon phase run <phase-id> [--spec <id>]", file=sys.stderr)
+        sys.exit(1)
+
+    phase_id = args[1]
+    if phase_id not in graph.all_phase_ids():
+        print(f"✗ Unknown phase id: {phase_id}", file=sys.stderr)
+        print("Available phases:", file=sys.stderr)
+        for known in graph.all_phase_ids():
+            print(f"  - {known}", file=sys.stderr)
+        sys.exit(1)
+
+    mode = "semi"
+    spec_arg = ""
+    message_parts: list[str] = []
+    i = 2
+    while i < len(args):
+        if args[i] == "--mode" and i + 1 < len(args):
+            mode = args[i + 1]
+            i += 2
+        elif args[i] == "--spec" and i + 1 < len(args):
+            spec_arg = args[i + 1]
+            i += 2
+        elif args[i] == "--message" and i + 1 < len(args):
+            message_parts.append(args[i + 1])
+            i += 2
+        else:
+            print(f"✗ Unknown phase run argument: {args[i]}", file=sys.stderr)
+            print(
+                "  Usage: echelon phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    if mode not in {"semi", "banzai", "guided"}:
+        print(f"✗ Invalid mode: {mode}", file=sys.stderr)
+        sys.exit(1)
+
+    run_dir = _find_current_run_dir(project_root)
+    if run_dir is None:
+        run_dir = _setup_run_dir(project_root, make_spec_run_id())
+
+    state_store = SquadStateStore(run_dir)
+    current_state = state_store.load()
+    target_spec_dir = _resolve_phase_target_spec_dir(project_root, current_state, spec_arg)
+    if spec_arg and target_spec_dir is None:
+        print(f"✗ Spec not found for --spec {spec_arg!r}", file=sys.stderr)
+        sys.exit(1)
+
+    initial_updates = _phase_state_updates_for_target(
+        project_root,
+        current_state,
+        target_spec_dir,
+    )
+    if initial_updates:
+        initial_updates["manual_phase_run"] = True
+
+    node = graph.get(phase_id)
+    context_rows = _phase_context_resolution_rows(
+        node,
+        project_root,
+        {**current_state, **initial_updates},
+        target_spec_dir,
+    )
+    resolved_count = sum(1 for _, resolved in context_rows if resolved != "missing")
+    _banner(
+        "PHASE RUN",
+        [
+            ("phase", phase_id),
+            ("run", run_dir.name),
+            ("mode", mode),
+            ("target", str(target_spec_dir) if target_spec_dir else "(none resolved)"),
+            ("context", f"{resolved_count}/{len(context_rows)} resolved" if context_rows else "(none)"),
+        ],
+        subtitle="Manual single-phase replay",
+    )
+
+    config = load_config(project_root, squad_only=True)
+    provider = SquadCliProvider(config)
+
+    token_budget = 0
+    max_iterations = 5
+    try:
+        full_config = get_full_resolved_config(project_root)
+        analysis = full_config.get("analysis") or {}
+        token_budget_k = int(analysis.get("token_budget_k") or 0)
+        token_budget = token_budget_k * 1000 if token_budget_k else 0
+        max_iterations = int(analysis.get("max_iterations") or 5)
+    except Exception:
+        pass
+
+    controller = SquadController(
+        provider=provider,
+        state_store=state_store,
+        phase_graph=graph,
+        ext_dir=ext_dir,
+        project_root=project_root,
+        token_budget=token_budget,
+        max_iterations=max_iterations,
+        squad_dir=run_dir,
+    )
+
+    user_message = " ".join(message_parts) or current_state.get("user_message", "")
+    result = controller.run_single_phase(
+        phase_id,
+        user_message=user_message,
+        mode=mode,
+        initial_state_updates=initial_updates,
+    )
+
+    status_icon = "✓" if result.status in {"running", "done"} else "✗"
+    _banner(
+        f"{status_icon}  PHASE RUN {result.status.upper()}",
+        [
+            ("phase", result.phase),
+            ("artifacts", str(target_spec_dir or run_dir)),
+            ("next", "echelon continue"),
+        ],
+    )
+
+
 def _cmd_resume(
     args: list[str],
     project_root: Path,
@@ -3889,6 +4157,27 @@ def main() -> None:
 
     if command == "rewind":
         _cmd_rewind(args[1:], project_root=Path.cwd())
+        return
+
+    if command == "phase":
+        project_root = Path.cwd()
+        ext_dir = project_root / ".specify" / "extensions" / "echelon"
+        if not ext_dir.exists():
+            print(
+                f"✗ Echelon extension not installed: {ext_dir}\n"
+                "  Run: specify extension add echelon",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        cfg_file = ext_dir / "echelon-config.yml"
+        if not cfg_file.exists():
+            print(
+                f"✗ Project not initialized — config not found: {cfg_file}\n"
+                "  Run: echelon init",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _cmd_phase(args[1:], project_root=project_root, ext_dir=ext_dir)
         return
 
     if command == "resume":
