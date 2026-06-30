@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-060 / #82 missing verify-command recovery UX** — `echelon harness init`
+  now stops suggesting `harness run` as the next step when verify-command
+  detection declined, and `echelon harness resume` uses persisted detection
+  metadata to prioritize manual `verify_command` setup instead of sending users
+  back through another no-op `harness init`.
 - **EGR-059 / #81 harness resume contract** — `echelon harness resume`
   now accepts `blocker_escalation` as a legitimate blocked harness state and
   delegates back into the coordinator instead of telling users to use

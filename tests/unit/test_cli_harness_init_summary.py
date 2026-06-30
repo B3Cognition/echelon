@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from echelon.cli import _harness_init_detection_fields
+from echelon.cli import _harness_init_detection_fields, _harness_init_next_step
 
 
 @pytest.mark.unit
@@ -76,6 +76,26 @@ class TestHarnessInitDetectionFields:
             "not configured - none: no Dockerfile, compose file, or frontend dev target detected",
         ) in fields
 
+    def test_init_next_step_blocks_harness_run_when_verify_detection_declined(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            "harness:\n"
+            "  verify_command_detection: none\n"
+            "  verify_command_reason: no high-confidence test runner detected\n",
+            encoding="utf-8",
+        )
+
+        next_step = _harness_init_next_step(config_file)
+
+        assert "set top-level verify_command before harness build" in next_step
+        assert "no high-confidence test runner detected" in next_step
+        assert "verify_command: pytest" in next_step
+        assert not next_step.startswith("echelon run")
+
     def test_reports_manual_settings_without_auto_detection_metadata(self, tmp_path: Path) -> None:
         config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         config_file.parent.mkdir(parents=True)
@@ -94,3 +114,12 @@ class TestHarnessInitDetectionFields:
 
         assert ("Verify", "pytest (configured)") in fields
         assert ("App runtime", "web via docker_compose at http://localhost:8080 (configured)") in fields
+
+    def test_init_next_step_allows_harness_run_when_verify_is_configured(self, tmp_path: Path) -> None:
+        config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("verify_command: pytest\n", encoding="utf-8")
+
+        next_step = _harness_init_next_step(config_file)
+
+        assert next_step == 'echelon run "<feature>"\n  echelon harness run <spec_id>'

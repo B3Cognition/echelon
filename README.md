@@ -124,7 +124,8 @@ compatibility contract.
 echelon change  001 "scope change description"   # mid-build spec change
 echelon codegen 001                              # SOAR pipeline directly (no harness)
 echelon build   001                              # agent-driven build (no harness)
-echelon harness init                            # re-run to auto-detect high-confidence verify_command
+echelon harness init                            # auto-detect high-confidence verify_command, if possible
+# If init reports "not configured", set top-level verify_command manually before harness run/resume.
 ```
 
 ### Harness fulfillment refresh policy

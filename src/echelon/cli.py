@@ -564,8 +564,58 @@ def _cmd_harness_init(args: list[str]) -> None:
     if image_note.strip():
         fields.append(("Base image", image_note.strip()))
     fields.extend(_harness_init_detection_fields(config_file))
-    fields.append(("Next step", "echelon run \"<feature>\"\n  echelon harness run <spec_id>"))
+    fields.append(("Next step", _harness_init_next_step(config_file)))
     _banner("HARNESS INIT — COMPLETE", fields)
+
+
+def _harness_verify_status(config_file: Path) -> tuple[str, str, str]:
+    """Return (verify_command, detection_status, detection_reason)."""
+    try:
+        import yaml as _yaml
+
+        raw = _yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return "", "", ""
+
+    if not isinstance(raw, dict):
+        return "", "", ""
+    harness_raw = raw.get("harness", {})
+    if not isinstance(harness_raw, dict):
+        harness_raw = {}
+
+    return (
+        str(raw.get("verify_command") or ""),
+        str(harness_raw.get("verify_command_detection") or ""),
+        str(harness_raw.get("verify_command_reason") or ""),
+    )
+
+
+def _harness_init_next_step(config_file: Path) -> str:
+    """Return the init banner next step without suggesting an invalid harness run."""
+    verify_command, verify_detection, verify_reason = _harness_verify_status(config_file)
+    if verify_command:
+        return "echelon run \"<feature>\"\n  echelon harness run <spec_id>"
+
+    if verify_detection or verify_reason:
+        detail = verify_detection or "none"
+        if verify_reason:
+            detail += f": {verify_reason}"
+        return (
+            "set top-level verify_command before harness build\n"
+            f"  detection: {detail}\n"
+            "  examples:\n"
+            "    verify_command: pytest\n"
+            "    verify_command: npm test\n"
+            "    verify_command: go test ./...\n"
+            "  then: echelon harness resume <spec_id>  # if recovering a blocked run\n"
+            "        echelon harness run <spec_id>     # for a new build"
+        )
+
+    return (
+        "echelon run \"<feature>\"\n"
+        "  echelon harness run <spec_id>\n"
+        "  if verification blocks: echelon harness init or set verify_command manually"
+    )
 
 
 def _harness_init_detection_fields(config_file: Path) -> list[tuple[str, str]]:
@@ -626,6 +676,38 @@ def _harness_init_detection_fields(config_file: Path) -> list[tuple[str, str]]:
         fields.append(("Sandbox report", str(config_file.with_name("sandbox-suggestion.md"))))
 
     return fields
+
+
+def _format_missing_verify_command_resume_message(config_file: Path, spec_id: str) -> str:
+    """Format actionable resume guidance when verify_command is still missing."""
+    _verify_command, verify_detection, verify_reason = _harness_verify_status(config_file)
+    examples = (
+        "    verify_command: swift test --package-path Packages/MyLib\n"
+        "    verify_command: pytest\n"
+        "    verify_command: npm test\n"
+        "    verify_command: go test ./..."
+    )
+
+    if verify_detection or verify_reason:
+        detail = verify_detection or "none"
+        if verify_reason:
+            detail += f": {verify_reason}"
+        return (
+            "✗ verify_command is still not set in echelon-config.yml.\n\n"
+            "  Auto-detection already ran and did not configure a command.\n"
+            f"  detection: {detail}\n\n"
+            f"  Add a top-level verify_command to {config_file}, for example:\n"
+            f"{examples}\n\n"
+            f"  Then re-run:  echelon harness resume {spec_id}"
+        )
+
+    return (
+        "✗ verify_command is still not set in echelon-config.yml.\n\n"
+        "  Option 1 — auto-detect once:  echelon harness init\n"
+        "  Option 2 — manual:            add a top-level verify_command to echelon-config.yml:\n"
+        f"{examples}\n\n"
+        f"  Then re-run:  echelon harness resume {spec_id}"
+    )
 
 
 def _cmd_cicd(args: list[str]) -> None:
@@ -1590,13 +1672,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
 
     if not config.verify_command:
         print(
-            "✗ verify_command is still not set in echelon-config.yml.\n\n"
-            "  Option 1 — auto-detect:  echelon harness init\n"
-            "  Option 2 — manual:       add to echelon-config.yml:\n"
-            "    verify_command: swift test --package-path Packages/MyLib\n"
-            "    verify_command: pytest\n"
-            "    verify_command: go test ./...\n\n"
-            f"  Then re-run:  echelon harness resume {spec_id}",
+            _format_missing_verify_command_resume_message(echelon_yml, spec_id),
             file=sys.stderr,
         )
         sys.exit(1)
