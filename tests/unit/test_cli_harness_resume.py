@@ -86,7 +86,11 @@ class TestCmdHarnessResume:
         rc = self._call(["001"], tmp_path)
         assert rc == 1
 
-    def test_wrong_blocked_reason_exits_1(self, tmp_path: Path) -> None:
+    def test_unsupported_blocked_reason_exits_without_run_to_resume_guidance(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
         sd = _setup_build(tmp_path, "001")
         _write_state(sd, "001", "default", {
@@ -94,6 +98,11 @@ class TestCmdHarnessResume:
         })
         rc = self._call(["001"], tmp_path)
         assert rc == 1
+        err = capsys.readouterr().err
+        assert "unsupported resume reason" in err
+        assert "echelon harness resume 001" in err
+        assert "echelon harness run 001 --reset" in err
+        assert "Use 'echelon harness run <spec_id>' to resume" not in err
 
     def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
         _make_echelon_yml(tmp_path)   # no verify_command
@@ -123,6 +132,34 @@ class TestCmdHarnessResume:
             _cmd_harness_resume(["001"])
 
         mock_run.assert_called_once()
+
+    def test_blocker_escalation_resume_calls_run_without_redirecting_to_run(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "blocker_escalation",
+            "escalation_file": str(tmp_path / "runs" / "build-test" / "escalation-default.md"),
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001", "mode=banzai"])
+
+        mock_run.assert_called_once()
+        user_message = mock_run.call_args.args[0]
+        assert "spec 001" in user_message
+        assert "mode=banzai" in user_message
+        err = capsys.readouterr().err
+        assert "blocked for a different reason" not in err
+        assert "Use 'echelon harness run <spec_id>' to resume" not in err
 
     def test_branchless_legacy_resume_warns_and_continues(
         self,

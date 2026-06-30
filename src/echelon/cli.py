@@ -106,7 +106,7 @@ Commands:
                                             Land a spec: merge PR, clean up
   harness init   [<target_repo>]            Initialize harness (no LLM)
   harness run    <spec_id> [strategy=<s>]   Run build→verify→PR loop
-  harness resume <spec_id> [strategy=<s>]   Resume harness blocked on verify_command_needed
+  harness resume <spec_id> [strategy=<s>]   Resume a blocked harness run
   spec target    <spec_id> <repo> [repo...] Set target repos in spec frontmatter
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
@@ -488,7 +488,7 @@ def _cmd_harness(args: list[str]) -> None:
             "  run    <spec_id> [strategy=<s>]    Run build→verify→PR loop\n"
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
             "                                     mode:     semi (default) | banzai | guided\n"
-            "  resume <spec_id>                   Resume a blocked run (e.g. after adding verify_command)\n\n"
+            "  resume <spec_id>                   Resume a blocked run after answering/fixing its blocker\n\n"
             "Examples:\n"
             "  echelon harness init\n"
             "  echelon harness init https://github.com/org/repo\n"
@@ -1289,10 +1289,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon harness resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n\n"
-            "Resume a blocked harness run. Supports verify_command_needed and\n"
-            "recovery from build_incomplete/publish_failed committed work.\n\n"
+            "Resume a blocked harness run after answering/fixing its blocker.\n"
+            "Supports blocker_escalation, verify_command_needed,\n"
+            "checkpoint continuation, repaired harness_error, and recovery from\n"
+            "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
-            "  1. For verify_command_needed: add verify_command to echelon-config.yml\n"
+            "  1. Fix the blocker shown by the previous harness output.\n"
+            "     For blocker_escalation: append ## Answer to the escalation file.\n"
+            "     For verify_command_needed: add verify_command to echelon-config.yml\n"
             "     (or re-run 'echelon harness init' to auto-detect high-confidence commands).\n"
             "  2. Run: echelon harness resume <spec_id>\n",
         )
@@ -1368,7 +1372,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
     recoverable_reasons = {"build_incomplete", "publish_failed"}
-    continuation_reasons = {"checkpoint_outer_cap"}
+    continuation_reasons = {"blocker_escalation", "checkpoint_outer_cap"}
     retryable_error_reasons = {"harness_error"}
 
     if current_status != "blocked" and termination_reason not in recoverable_reasons:
@@ -1386,8 +1390,10 @@ def _cmd_harness_resume(args: list[str]) -> None:
         *retryable_error_reasons,
     }:
         print(
-            f"✗ Spec {spec_id!r} is blocked for a different reason: {termination_reason!r}.\n"
-            "  Use 'echelon harness run <spec_id>' to resume.",
+            f"✗ Spec {spec_id!r} is blocked for unsupported resume reason: {termination_reason!r}.\n"
+            f"  Inspect with: echelon status\n"
+            f"  After fixing the blocker, retry: echelon harness resume {spec_id}\n"
+            f"  To discard this blocked harness state and start fresh: echelon harness run {spec_id} --reset",
             file=sys.stderr,
         )
         sys.exit(1)

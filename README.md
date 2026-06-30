@@ -591,7 +591,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon harness init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
 | `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
 | `echelon harness run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a loop blocked on escalation or missing `verify_command`; prints `HARNESS HISTORY` |
+| `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked loop after answering/fixing its blocker, including escalation, missing `verify_command`, checkpoint recovery, or repaired harness errors; prints `HARNESS HISTORY` |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
 
 ## Codegen Pipeline

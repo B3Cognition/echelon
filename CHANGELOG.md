@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-059 / #81 harness resume contract** — `echelon harness resume`
+  now accepts `blocker_escalation` as a legitimate blocked harness state and
+  delegates back into the coordinator instead of telling users to use
+  `harness run` to resume. Unsupported blocked reasons now point to
+  `harness resume` after fixing the blocker or `harness run --reset` only when
+  discarding blocked state.
 - Clarified and enforced squad recovery command contracts. `echelon continue`
   is now the no-input recovery executor, `echelon resume` only answers human
   gates before delegating back to continuation, and blocked runs without human
