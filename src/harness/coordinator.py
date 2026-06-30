@@ -212,6 +212,12 @@ class StrategyCoordinator:
         }
 
         for sid, result in results.items():
+            state = {}
+            try:
+                store = self._state_stores.get(sid)
+                state = store.read() if store is not None else {}
+            except Exception:
+                state = {}
             comparison["strategies"][sid] = {
                 "status": result.status,
                 "termination_reason": result.termination_reason,
@@ -221,6 +227,13 @@ class StrategyCoordinator:
                 "pr_url": result.pr_url,
                 "branch": result.branch,
                 "converged": result.status == "converged",
+                "build_status": state.get("build_status"),
+                "build_reason": state.get("build_reason"),
+                "provider_reset_hint": state.get("provider_reset_hint"),
+                "provider_limit_message": state.get("provider_limit_message"),
+                "salvage_commit": state.get("salvage_commit"),
+                "salvage_branch": state.get("salvage_branch"),
+                "salvage_verified": state.get("salvage_verified"),
             }
 
         # Summary

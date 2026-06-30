@@ -1464,7 +1464,7 @@ class TestOuterLoopConvergence:
             exit_code=1,
             status="unknown",
             impasse_file=None,
-            stdout="You've hit your session limit",
+            stdout="You've hit your session limit · resets 9:10pm",
             stderr="",
             duration_ms=1000,
         )
@@ -1483,12 +1483,19 @@ class TestOuterLoopConvergence:
         assert result.status == "blocked"
         assert result.termination_reason == "build_incomplete"
         captured = capsys.readouterr()
+        assert "HARNESS — PROVIDER SESSION LIMIT" in captured.err
         assert "LLM provider session limit reached before COMMANDER finalized" in captured.err
+        assert "You've hit your session limit" in captured.err
+        assert "9:10pm" in captured.err
+        assert "retry after" in captured.err
+        assert "echelon harness resume spec-001" in captured.err
         assert "missing build status marker" not in captured.err
         assert "COMMANDER may have changed files, but did not write" not in captured.err
         state = state_store.read()
         assert state["build_status"] == "provider_session_limit"
         assert state["build_exit_code"] == 1
+        assert state["provider_reset_hint"] == "9:10pm"
+        assert state["provider_limit_message"] == "You've hit your session limit · resets 9:10pm"
         assert provider.destroyed is True
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()

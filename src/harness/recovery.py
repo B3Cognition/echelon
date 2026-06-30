@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from typing import Any, Optional
 
 from harness.errors import GitOpsError
@@ -26,6 +27,8 @@ class RecoveryResult:
     commit: str
     target_branch: str
     applied: bool
+    backed_up_untracked: tuple[str, ...] = ()
+    backup_dir: str = ""
 
 
 def recover_blocked_run(
@@ -316,6 +319,11 @@ def _apply_commit(
             applied=False,
         )
 
+    backed_up_untracked, backup_dir = _prepare_untracked_cherry_pick_collisions(
+        project_dir=project_dir,
+        source_repo=source_repo,
+        commit=commit,
+    )
     try:
         _run_git(["cherry-pick", commit], cwd=str(project_dir))
     except GitOpsError as e:
@@ -326,6 +334,8 @@ def _apply_commit(
                 commit=commit,
                 target_branch=target_branch,
                 applied=False,
+                backed_up_untracked=backed_up_untracked,
+                backup_dir=backup_dir,
             )
         if _resolve_only_build_status_marker_conflict(project_dir):
             return RecoveryResult(
@@ -333,6 +343,8 @@ def _apply_commit(
                 commit=commit,
                 target_branch=target_branch,
                 applied=True,
+                backed_up_untracked=backed_up_untracked,
+                backup_dir=backup_dir,
             )
         raise HarnessRecoveryError(f"Could not cherry-pick recovered commit {commit}: {e}") from e
     return RecoveryResult(
@@ -340,7 +352,88 @@ def _apply_commit(
         commit=commit,
         target_branch=target_branch,
         applied=True,
+        backed_up_untracked=backed_up_untracked,
+        backup_dir=backup_dir,
     )
+
+
+def _prepare_untracked_cherry_pick_collisions(
+    *,
+    project_dir: Path,
+    source_repo: Path,
+    commit: str,
+) -> tuple[tuple[str, ...], str]:
+    """Clear untracked files that would block cherry-pick of ``commit``.
+
+    Git refuses to cherry-pick when an untracked target path would be
+    overwritten. For harness recovery this commonly happens when Phase A/spec
+    artifacts exist in the project checkout but the salvage commit also adds
+    them. Identical duplicates are safe to remove because cherry-pick restores
+    the same bytes as tracked files. Differing duplicates are copied to a
+    recovery backup before removal so the salvage commit can still be applied
+    without data loss.
+    """
+    untracked = _run_git(
+        ["ls-files", "--others", "--exclude-standard"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    untracked_paths = {
+        line.strip()
+        for line in untracked.stdout.splitlines()
+        if line.strip()
+    }
+    if not untracked_paths:
+        return (), ""
+
+    commit_files = _run_git(
+        ["diff-tree", "-r", "--no-commit-id", "--name-only", commit],
+        cwd=str(source_repo),
+        check=False,
+    )
+    commit_paths = {
+        line.strip()
+        for line in commit_files.stdout.splitlines()
+        if line.strip()
+    }
+    collisions = sorted(untracked_paths & commit_paths)
+    if not collisions:
+        return (), ""
+
+    backup_dir = project_dir / ".echelon" / "recovery-backups" / commit[:12]
+    backed_up: list[str] = []
+    for relpath in collisions:
+        target = project_dir / relpath
+        if not target.is_file() and not target.is_symlink():
+            raise HarnessRecoveryError(
+                f"Untracked path would be overwritten by recovered commit and is not a file: {relpath}"
+            )
+
+        blob = _read_commit_blob(source_repo, commit, relpath)
+        current = target.read_bytes()
+        if blob != current:
+            backup = backup_dir / relpath
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_bytes(current)
+            backed_up.append(relpath)
+        target.unlink()
+
+    return tuple(backed_up), str(backup_dir) if backed_up else ""
+
+
+def _read_commit_blob(repo: Path, commit: str, relpath: str) -> bytes:
+    result = subprocess.run(
+        ["git", "show", f"{commit}:{relpath}"],
+        cwd=repo,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise HarnessRecoveryError(
+            f"Could not read {relpath!r} from recovered commit {commit}"
+        )
+    return result.stdout
 
 
 def _resolve_only_build_status_marker_conflict(project_dir: Path) -> bool:

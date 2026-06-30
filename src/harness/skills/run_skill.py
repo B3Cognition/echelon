@@ -56,10 +56,15 @@ def _print_delivery_summary(
         result = result_map.get(sid)
         converged = info.get("converged", False)
         reason = getattr(result, "termination_reason", None) if result is not None else info.get("termination_reason")
-        checkpointed = (not converged) and reason in _CHECKPOINT_REASONS
+        build_status = str(info.get("build_status") or "")
+        provider_limited = (not converged) and build_status == "provider_session_limit"
+        checkpointed = (not converged) and reason in _CHECKPOINT_REASONS and not provider_limited
         if converged:
             status_icon = "✓"
             status_str = "CONVERGED"
+        elif provider_limited:
+            status_icon = "◐"
+            status_str = "PROVIDER SESSION LIMIT"
         elif checkpointed:
             status_icon = "◐"
             status_str = "CHECKPOINTED"
@@ -79,7 +84,25 @@ def _print_delivery_summary(
         ]
         if result is not None:
             if reason and reason != "converged":
-                if checkpointed:
+                if provider_limited:
+                    lines.append("stopped: provider session limit")
+                    provider_message = str(info.get("provider_limit_message") or "")
+                    provider_reset = str(info.get("provider_reset_hint") or "")
+                    salvage_commit = str(info.get("salvage_commit") or "")
+                    salvage_branch = str(info.get("salvage_branch") or "")
+                    salvage_verified = str(info.get("salvage_verified") or "")
+                    if provider_message:
+                        lines.append(f"provider: {provider_message}")
+                    if provider_reset:
+                        lines.append(f"reset: {provider_reset}")
+                    if salvage_commit:
+                        lines.append(f"salvage commit: {salvage_commit[:12]}")
+                    if salvage_branch:
+                        lines.append(f"salvage branch: {salvage_branch}")
+                    if salvage_verified:
+                        lines.append(f"salvage verified: {salvage_verified}")
+                    lines.append(f"resume: echelon harness resume {intent.spec_id}")
+                elif checkpointed:
                     if reason == "checkpoint_outer_cap":
                         lines.append("stopped: checkpoint continuation needed")
                     else:
@@ -128,18 +151,27 @@ def _print_delivery_summary(
         1
         for sid, info in comparison.get("strategies", {}).items()
         if not info.get("converged", False)
+        and info.get("build_status") != "provider_session_limit"
         and (
             getattr(result_map.get(sid), "termination_reason", None)
             or info.get("termination_reason")
         )
         in _CHECKPOINT_REASONS
     )
+    n_provider_limited = sum(
+        1
+        for info in comparison.get("strategies", {}).values()
+        if not info.get("converged", False)
+        and info.get("build_status") == "provider_session_limit"
+    )
     raw_failed = summary.get("failed", 0)
-    n_failed = max(0, raw_failed - n_checkpointed)
+    n_failed = max(0, raw_failed - n_checkpointed - n_provider_limited)
     total_tokens = summary.get("total_tokens", 0)
     result_str = f"{n_converged} converged, {n_failed} failed"
     if n_checkpointed:
         result_str += f", {n_checkpointed} checkpointed"
+    if n_provider_limited:
+        result_str += f", {n_provider_limited} provider-limited"
     if total_tokens:
         result_str += f"  ·  {total_tokens:,} tokens"
     fields.append(("result", result_str))

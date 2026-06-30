@@ -152,6 +152,42 @@ def test_next_steps_report_salvage_commit_for_blocked_harness_build(
     assert "not_run" in captured.out
 
 
+def test_next_steps_report_provider_session_limit_as_first_class_block(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_build_state(
+        tmp_path,
+        "build-20260606-221522-964255",
+        status="blocked",
+        spec_id="001-demo",
+        termination_reason="build_incomplete",
+        extra={
+            "build_status": "provider_session_limit",
+            "build_reason": "LLM provider session limit reached before COMMANDER finalized",
+            "provider_limit_message": "You've hit your session limit · resets 9:10pm",
+            "provider_reset_hint": "9:10pm",
+            "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
+            "salvage_branch": "harness/001-demo/default/iter-0",
+            "salvage_verified": "not_run",
+            "tokens_used": 1234,
+        },
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    captured = capsys.readouterr()
+    assert "HARNESS PROVIDER SESSION LIMIT" in captured.out
+    assert "HARNESS BUILD CHECKPOINTED" not in captured.out
+    assert "You've hit your session limit" in captured.out
+    assert "9:10pm" in captured.out
+    assert "1,234 tokens recorded before provider stop" in captured.out
+    assert "abcdef123456" in captured.out
+    assert "harness/001-demo/default/iter-0" in captured.out
+    assert "not_run" in captured.out
+    assert "wait for provider reset, then echelon harness resume 001-demo" in captured.out
+
+
 def test_next_steps_labels_running_harness_build_as_in_progress(
     tmp_path: Path,
     capsys,

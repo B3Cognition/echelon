@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -426,6 +427,8 @@ class RalphController:
                             )
                             build_reason = build_result.get("build_reason")
                             build_exit_code = build_result.get("exit_code")
+                            provider_reset_hint = ""
+                            provider_limit_message = ""
                             if build_status == "unknown" and _is_host_tool_permission_denied(build_result):
                                 why = "host LLM tool permissions blocked the build"
                                 meaning = (
@@ -442,6 +445,8 @@ class RalphController:
                                     "and provide harness.llm.tool_policy.approval_reason."
                                 )
                             elif build_status == "unknown" and _is_provider_session_limit(build_result):
+                                provider_reset_hint = _provider_session_limit_reset_hint(build_result)
+                                provider_limit_message = _provider_session_limit_message(build_result)
                                 why = "LLM provider session limit reached before COMMANDER finalized"
                                 meaning = (
                                     "The provider stopped the build because its session budget "
@@ -511,8 +516,15 @@ class RalphController:
                                     [
                                         ("salvage commit", salvage["salvage_commit"][:12]),
                                         ("salvage branch", salvage["salvage_branch"]),
+                                        ("salvage verified", salvage.get("salvage_verified", "not_run")),
                                     ]
                                 )
+                            if build_status == "provider_session_limit":
+                                if provider_limit_message:
+                                    fields.append(("provider", provider_limit_message))
+                                if provider_reset_hint:
+                                    fields.append(("reset", provider_reset_hint))
+                                fields.append(("retry after", "provider reset window"))
                             fields.extend(
                                 [
                                     ("meaning", meaning),
@@ -522,17 +534,22 @@ class RalphController:
                                     ),
                                 ]
                             )
-                            _ui_banner(
-                                "HARNESS — BUILD DID NOT COMPLETE",
-                                fields,
-                                file=sys.stderr,
+                            title = (
+                                "HARNESS — PROVIDER SESSION LIMIT"
+                                if build_status == "provider_session_limit"
+                                else "HARNESS — BUILD DID NOT COMPLETE"
                             )
+                            _ui_banner(title, fields, file=sys.stderr)
                             blocked_state = {
                                 **(salvage or {}),
                                 "build_status": build_status,
                                 "build_reason": build_reason,
                                 "build_exit_code": build_exit_code,
                             }
+                            if provider_reset_hint:
+                                blocked_state["provider_reset_hint"] = provider_reset_hint
+                            if provider_limit_message:
+                                blocked_state["provider_limit_message"] = provider_limit_message
                             return self._finalize(
                                 status="blocked",
                                 reason="build_incomplete",
@@ -3027,10 +3044,7 @@ def _salvage_build_worktree(
 
 
 def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
-    text = "\n".join(
-        str(build_result.get(key) or "")
-        for key in ("stdout", "stderr", "build_reason", "reason")
-    ).lower()
+    text = _provider_limit_text(build_result).lower()
     if not text:
         return False
     needles = (
@@ -3042,6 +3056,42 @@ def _is_provider_session_limit(build_result: dict[str, object]) -> bool:
         "reset window",
     )
     return any(needle in text for needle in needles)
+
+
+def _provider_limit_text(build_result: dict[str, object]) -> str:
+    return "\n".join(
+        str(build_result.get(key) or "")
+        for key in ("stdout", "stderr", "build_reason", "reason")
+    )
+
+
+def _provider_session_limit_message(build_result: dict[str, object]) -> str:
+    text = _provider_limit_text(build_result)
+    for line in text.splitlines():
+        cleaned = line.strip()
+        if not cleaned:
+            continue
+        lower = cleaned.lower()
+        if any(
+            needle in lower
+            for needle in ("session limit", "usage limit", "rate limit", "quota exceeded")
+        ):
+            return cleaned
+    return ""
+
+
+def _provider_session_limit_reset_hint(build_result: dict[str, object]) -> str:
+    text = _provider_limit_text(build_result)
+    patterns = (
+        r"resets?\s+(?:at\s+|in\s+)?([^\n.;]+)",
+        r"reset window[:\s]+([^\n.;]+)",
+        r"try again\s+(?:at\s+|in\s+)?([^\n.;]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+    return ""
 
 
 def _is_host_tool_permission_denied(build_result: dict[str, object]) -> bool:

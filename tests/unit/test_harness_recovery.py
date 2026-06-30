@@ -184,6 +184,110 @@ def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_clears_identical_untracked_collision(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    recovered = _commit_file(
+        worktree,
+        "specs/001-feature/spec.md",
+        "same spec\n",
+        "harness-salvage: 001-feature default iter-0",
+    )
+
+    (project / "specs" / "001-feature").mkdir(parents=True)
+    (project / "specs" / "001-feature" / "spec.md").write_text(
+        "same spec\n",
+        encoding="utf-8",
+    )
+    _git(project, "checkout", "001-feature")
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "salvage_commit": recovered,
+            "salvage_branch": "001-feature",
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.applied is True
+    assert result.backed_up_untracked == ()
+    assert _git(project, "ls-files", "specs/001-feature/spec.md") == "specs/001-feature/spec.md"
+    assert (project / "specs" / "001-feature" / "spec.md").read_text(encoding="utf-8") == "same spec\n"
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_backs_up_differing_untracked_collision(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    relpath = "specs/001-feature/harness-run-history.json"
+    recovered = _commit_file(
+        worktree,
+        relpath,
+        '{"runs":["salvage"]}\n',
+        "harness-salvage: 001-feature default iter-0",
+    )
+
+    (project / "specs" / "001-feature").mkdir(parents=True)
+    (project / relpath).write_text('{"runs":["local"]}\n', encoding="utf-8")
+    _git(project, "checkout", "001-feature")
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "salvage_commit": recovered,
+            "salvage_branch": "001-feature",
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.applied is True
+    assert result.backed_up_untracked == (relpath,)
+    assert result.backup_dir
+    assert (Path(result.backup_dir) / relpath).read_text(encoding="utf-8") == '{"runs":["local"]}\n'
+    assert (project / relpath).read_text(encoding="utf-8") == '{"runs":["salvage"]}\n'
+    assert _git(project, "ls-files", relpath) == relpath
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_prefers_checkpoint_commit_over_salvage(
     tmp_path: Path,
 ) -> None:

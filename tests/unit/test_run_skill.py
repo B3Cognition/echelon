@@ -316,6 +316,56 @@ class TestRunSkillAutoLand:
         assert "resume: echelon harness resume 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
+    def test_delivery_summary_renders_provider_session_limit_as_block(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result = _make_checkpoint_result()
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "branch": result.branch,
+                    "converged": False,
+                    "build_status": "provider_session_limit",
+                    "provider_limit_message": "You've hit your session limit · resets 9:10pm",
+                    "provider_reset_hint": "9:10pm",
+                    "salvage_commit": "abcdef1234567890abcdef1234567890abcdef12",
+                    "salvage_branch": "harness/001-demo/default/iter-0",
+                    "salvage_verified": "not_run",
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+
+        _print_delivery_summary(
+            intent,
+            {"default": result},
+            comparison,
+            base_dir="/tmp/nonexistent",
+        )
+
+        captured = capsys.readouterr()
+        assert "◐ PROVIDER SESSION LIMIT" in captured.err
+        assert "stopped: provider session limit" in captured.err
+        assert "You've hit your session limit" in captured.err
+        assert "reset: 9:10pm" in captured.err
+        assert "salvage commit: abcdef123456" in captured.err
+        assert "salvage branch: harness/001-demo/default/iter-0" in captured.err
+        assert "salvage verified: not_run" in captured.err
+        assert "resume: echelon harness resume 001-demo" in captured.err
+        assert "0 converged, 0 failed, 1 provider-limited" in captured.err
+        assert "CHECKPOINTED" not in captured.err
+
     def test_delivery_summary_renders_deferred_outer_cap_as_checkpointed(
         self,
         capsys: pytest.CaptureFixture[str],

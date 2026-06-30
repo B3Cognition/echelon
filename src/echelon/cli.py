@@ -1058,7 +1058,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
             sys.exit(1)
 
         action = "applied" if recovered.applied else "already present"
-        _banner("HARNESS RESUME — RECOVERED", [
+        fields = [
             ("Spec", spec_id),
             ("Strategy", strategy),
             ("Reason", termination_reason),
@@ -1066,7 +1066,11 @@ def _cmd_harness_resume(args: list[str]) -> None:
             ("Commit", recovered.commit[:12]),
             ("Branch", recovered.target_branch),
             ("Status", action),
-        ])
+        ]
+        if recovered.backed_up_untracked:
+            fields.append(("Untracked backups", str(len(recovered.backed_up_untracked))))
+            fields.append(("Backup dir", recovered.backup_dir))
+        _banner("HARNESS RESUME — RECOVERED", fields)
 
         from harness.skills.run_skill import run
         provider = DockerWorktreeProvider(
@@ -1626,6 +1630,15 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("build status", build_status))
         if build_reason and build_reason != "None":
             fields.append(("build reason", build_reason))
+        provider_reset_hint = str(harness_state.get("provider_reset_hint") or "")
+        provider_limit_message = str(harness_state.get("provider_limit_message") or "")
+        if provider_limit_message:
+            fields.append(("provider", provider_limit_message))
+        if provider_reset_hint:
+            fields.append(("reset", provider_reset_hint))
+        tokens_used = harness_state.get("tokens_used")
+        if build_status == "provider_session_limit":
+            fields.append(("token accounting", f"{int(tokens_used or 0):,} tokens recorded before provider stop"))
         salvage_commit = str(harness_state.get("salvage_commit") or "")
         salvage_branch = str(harness_state.get("salvage_branch") or "")
         salvage_verified = str(harness_state.get("salvage_verified") or "")
@@ -1636,7 +1649,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if salvage_verified:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
-        if is_checkpoint:
+        if build_status == "provider_session_limit":
+            fields.append(("next", f"wait for provider reset, then echelon harness resume {spec_id}"))
+            subtitle = "HARNESS PROVIDER SESSION LIMIT"
+        elif is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
                 fields.append(
                     (
@@ -1662,7 +1678,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         else:
             fields.append(("next", f"echelon harness run {spec_id} --reset"))
             subtitle = "HARNESS BUILD BLOCKED"
-        if is_checkpoint:
+        if is_checkpoint and build_status != "provider_session_limit":
             subtitle = "HARNESS BUILD CHECKPOINTED"
         _banner("NEXT STEP", fields, subtitle=subtitle)
         return
