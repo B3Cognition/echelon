@@ -11,6 +11,7 @@ Read and include in the subagent prompt:
 
 - `plan.md` + `research.md` + `data-model.md`
 - `spec.md` (canonical rich feature specification and requirement IDs)
+- `constitution.md` (read-only published Phase A governance snapshot)
 - `contracts/` + `test-strategy.md`
 - Risk data from specialists (threat-model.md, performance-requirements.md, etc.)
 - `extension/templates/tasks-template.md`
@@ -29,11 +30,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include spec.md, plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
+  [include spec.md, read-only constitution.md, plan.md, research.md, data-model.md, contracts/, test-strategy.md, risk data from specialists, planning output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
+  Treat `constitution.md` as read-only governance context. Every task decomposition and risk/dependency decision must respect its non-negotiable principles. Do not edit, rewrite, append to, or output `constitution.md`.
   Break the architecture into executable tasks (foundation, features, polish). Use the provided planning templates; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

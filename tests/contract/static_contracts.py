@@ -821,3 +821,97 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
         ),
     ]
     return _run_checks(checks)
+
+
+def validate_constitution_context_pack_contract(root: Path) -> list[str]:
+    """Spec and planning agents that must honor governance receive read-only constitution context."""
+
+    workflow = root / "extension/workflow/definition.yaml"
+    phase1_what = root / "extension/workflow/phases/phase1-what.md"
+    phase3_plan = root / "extension/workflow/phases/phase3-plan.md"
+    phase3_consensus = root / "extension/workflow/phases/phase3-consensus.md"
+    architect = root / "extension/agents/solution/architect.md"
+    flags = re.IGNORECASE | re.DOTALL
+
+    checks = [
+        PatternCheck(
+            "workflow phase1-what includes canonical constitution memory",
+            workflow,
+            r"id:\s+phase1-what[\s\S]*?context_pack:[\s\S]*?\.specify/memory/constitution\.md",
+        ),
+        PatternCheck(
+            "workflow phase3-plan includes constitution snapshot",
+            workflow,
+            r"id:\s+phase3-plan[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
+        ),
+        PatternCheck(
+            "workflow WHY3 includes constitution snapshot",
+            workflow,
+            r"id:\s+speckit-echelon-sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
+        ),
+        PatternCheck(
+            "workflow PLAN2 includes constitution snapshot",
+            workflow,
+            r"id:\s+speckit-echelon-orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
+        ),
+        PatternCheck(
+            "phase1 what prompt includes read-only constitution",
+            phase1_what,
+            r"read-only \.specify/memory/constitution\.md",
+        ),
+        PatternCheck(
+            "phase1 what prompt forbids CARTOGRAPHER constitution mutation",
+            phase1_what,
+            r"do not edit, patch, append to, or regenerate the constitution",
+            flags,
+        ),
+        PatternCheck(
+            "phase3 plan prompt includes read-only constitution",
+            phase3_plan,
+            r"read-only constitution\.md",
+        ),
+        PatternCheck(
+            "phase3 plan forbids ORCHESTRATOR constitution output",
+            phase3_plan,
+            r"Do not edit, rewrite, append to, or output `constitution\.md`",
+        ),
+        PatternCheck(
+            "phase3 consensus WHY3 includes constitution",
+            phase3_consensus,
+            r"including the read-only constitution snapshot",
+        ),
+        PatternCheck(
+            "phase3 consensus PLAN2 includes read-only constitution",
+            phase3_consensus,
+            r"PLAN2 Context Pack[\s\S]*?`constitution\.md` \(read-only published Phase A governance snapshot\)",
+            flags,
+        ),
+        PatternCheck(
+            "phase3 consensus PLAN2 forbids constitution mutation",
+            phase3_consensus,
+            r"Treat `constitution\.md` as read-only governance context\. Do not edit, rewrite, append to, or output `constitution\.md`",
+        ),
+        PatternCheck(
+            "ARCHITECT consumes published constitution snapshot",
+            architect,
+            r"read-only `constitution\.md` snapshot",
+        ),
+        PatternCheck(
+            "ARCHITECT forbids speckit constitution invocation",
+            architect,
+            r"NEVER invoke `speckit\.constitution`",
+        ),
+        PatternCheck(
+            "ARCHITECT stale fallback removed",
+            architect,
+            r"USE\*\* `speckit\.constitution` if one doesn't exist|If constitution doesn't exist",
+            flags,
+            should_match=False,
+        ),
+        PatternCheck(
+            "ARCHITECT outputs amendment candidates only",
+            architect,
+            r"constitution-amendment-candidates\.md",
+        ),
+    ]
+    return _run_checks(checks)

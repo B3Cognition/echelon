@@ -431,6 +431,7 @@ phases:
     agent: speckit-echelon-cartographer
     tier: exploration
     context_pack:
+      - .specify/memory/constitution.md
       - glossary.md
       - mental-model.md
       - boundaries.md
@@ -817,6 +818,7 @@ phases:
     tier: solution
     context_pack:
       - spec.md
+      - constitution.md
       - architecture.md
       - adr/ADR-*.md
       - test-strategy.md
@@ -872,6 +874,7 @@ phases:
         tier: exploration
         context_pack:
           - spec.md
+          - constitution.md
           - plan.md
           - research.md
           - data-model.md
@@ -892,6 +895,7 @@ phases:
         tier: feasibility
         context_pack:
           - spec.md
+          - constitution.md
           - plan.md
           - research.md
           - data-model.md
@@ -901,7 +905,6 @@ phases:
           - coverage-map.md
           - estimates.md
           - mvp-scope.md
-          - constitution.md
         outputs:
           - assess2-verdict: PASS | REJECTED
           - implementability-report.md     # required by PLAN2
@@ -913,6 +916,7 @@ phases:
         tier: solution
         context_pack:
           - spec.md
+          - constitution.md
           - plan.md
           - research.md
           - data-model.md

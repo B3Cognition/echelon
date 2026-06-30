@@ -12,6 +12,7 @@ This phase runs **WHY3 + ASSESS2 + PLAN2 in parallel** using multiple Agent tool
 Read these artifacts in `{spec_dir}/`:
 
 - Spec and architecture artifacts: `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`
+- Governance artifact: `constitution.md` (read-only published Phase A snapshot)
 - Planning artifacts: `tasks.md`, `critical-path.md`, `risk-matrix.md`, `dependencies.md`
 - Test artifacts: `test-strategy.md`, `coverage-map.md`
 - Specialist outputs, if present
@@ -39,6 +40,7 @@ Read these artifacts in `{spec_dir}/`:
 Read these artifacts in `{spec_dir}/`:
 
 - `spec.md`, `plan.md`, `research.md`, `data-model.md`, `contracts/`
+- `constitution.md` (read-only published Phase A governance snapshot)
 - `tasks.md`, `critical-path.md`, `risk-matrix.md`, `dependencies.md`
 - `test-strategy.md`, `coverage-map.md`
 - WHY3 outputs: `quality-gates.md`, `issues.md`
@@ -57,12 +59,12 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, critical-path.md, risk-matrix.md, dependencies.md, test-strategy.md, coverage-map.md, sage WHY3 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
+  [include spec.md, read-only constitution.md, plan.md, research.md, data-model.md, contracts/, tasks.md, critical-path.md, risk-matrix.md, dependencies.md, test-strategy.md, coverage-map.md, sage WHY3 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY3 — consensus).
-  Run full Understanding quality gates via `speckit.echelon.understanding-validate`. Check cross-artifact consistency across ALL artifacts. This is the final quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Run full Understanding quality gates via `speckit.echelon.understanding-validate`. Check cross-artifact consistency across ALL artifacts, including the read-only constitution snapshot. This is the final quality check. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -97,11 +99,12 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, critical-path.md, risk-matrix.md, dependencies.md, test-strategy.md, coverage-map.md, quality-gates.md, issues.md, implementability-report.md from ASSESS2, reasoning-journal.jsonl]
+  [include spec.md, read-only constitution.md, plan.md, research.md, data-model.md, contracts/, tasks.md, critical-path.md, risk-matrix.md, dependencies.md, test-strategy.md, coverage-map.md, quality-gates.md, issues.md, implementability-report.md from ASSESS2, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
+  Treat `constitution.md` as read-only governance context. Do not edit, rewrite, append to, or output `constitution.md`.
   Re-evaluate task dependencies and task-to-spec coverage against spec.md, plan.md, contracts/, coverage-map.md, WHY3 issues, and ASSESS2 implementability feedback. Update critical path if sequencing changed. Validate all specialist and test-strategy outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context, and add missing requirement/test tasks. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

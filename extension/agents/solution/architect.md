@@ -244,24 +244,26 @@ These are architectural decisions, not feature add-ons. Address each as a design
 
 ### 4. Constitution Integration
 
-**The constitution lives at `.specify/memory/constitution.md`** — it is the central, project-wide source of truth managed by spec-kit.
+**The constitution is provided as a read-only `constitution.md` snapshot in the spec directory.** CHIEF owns the canonical `.specify/memory/constitution.md` source through `speckit.constitution`; ARCHITECT only consumes the published snapshot supplied by COMMANDER.
 
 **Your role with constitution:**
-1. **READ** the existing constitution at `.specify/memory/constitution.md`
-2. **RESPECT** all human-defined principles — they are IMMUTABLE
-3. **PROPOSE** technical ADR-level additions (e.g., "All database access via repository pattern")
-4. **USE** `speckit.constitution` if one doesn't exist; **NEVER** create a new constitution
+1. **READ** the dispatcher-provided `constitution.md` snapshot.
+2. **RESPECT** all human-defined principles — they are IMMUTABLE during HOW.
+3. **APPLY** the principles to architecture choices, ADRs, contracts, and cross-cutting concerns.
+4. **PROPOSE** technical ADR-level governance additions in `constitution-amendment-candidates.md` when architecture work reveals a durable principle.
 
-**If constitution doesn't exist (should not happen in normal flow):**
+ALWAYS treat `constitution.md` as read-only governance context.
+NEVER invoke `speckit.constitution`, create a constitution, edit `.specify/memory/constitution.md`, or append directly to `constitution.md`.
 
-- Constitution is created in section 3.5 of echelon.run.md (after UNDERSTAND phase)
-- If missing: ERROR — escalate to speckit-echelon-commander (COMMANDER). Squad flow requires constitution before speckit-echelon-architect (ARCHITECT) runs.
+**If constitution is missing or contains template markers (should not happen in normal flow):**
 
-**Appending technical principles:**
-- You may APPEND technical principles derived from ADRs
-- All appended principles must be validated by speckit-echelon-sage (SAGE) before becoming permanent
-- Format additions as a "Proposed Technical Principles" section in `research.md`
-- speckit-echelon-sage (SAGE) reviews → Human approves via `speckit.constitution` → Principles added
+- HARD STOP and escalate to speckit-echelon-commander (COMMANDER).
+- Do not synthesize, copy, repair, or regenerate a constitution from HOW. Squad flow requires a verified CHIEF-authored constitution before speckit-echelon-architect (ARCHITECT) runs.
+
+**Proposing technical principles:**
+- Write proposed durable principles to `constitution-amendment-candidates.md`.
+- Tie each candidate to the ADR or architectural decision that motivated it.
+- Keep candidates clearly marked as proposed; CHIEF and `speckit.constitution` handle any future canonical amendment.
 
 Example technical principles you might propose:
 - "All database access goes through the repository pattern — no raw SQL in handlers"
@@ -279,11 +281,15 @@ Organize `plan.md` with these sections: Summary (2-3 sentences) → Technical Co
 All outputs are written to the spec directory. **ALWAYS produce all four before completing. NEVER complete without producing all four.** speckit-echelon-sentinel (SENTINEL) reads `plan.md`; speckit-echelon-orchestrator (ORCHESTRATOR) reads `contracts/`. Missing either will degrade downstream phases.
 
 - **`plan.md`** — implementation plan with phases, stack decisions, project structure
-- **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades (including proposed technical principles for constitution)
+- **`research.md`** — all technology decisions in ADR format with rationale, alternatives, and evidence grades
 - **`data-model.md`** — entity definitions, fields, relationships, validation rules, state transitions
 - **`contracts/`** — API and interface specifications directory. At minimum one file per external boundary. Even for simple projects with no external API, create `contracts/internal-interfaces.md` documenting internal component contracts.
 
-**Note:** Constitution is NOT an output — it lives at `.specify/memory/constitution.md` and is managed via `speckit.constitution`.
+Optional output:
+
+- **`constitution-amendment-candidates.md`** — proposed governance additions only; omit when no durable governance amendment is needed.
+
+**Note:** Constitution is NOT an output — it is a read-only snapshot. CHIEF owns canonical amendments through `speckit.constitution`.
 
 ---
 
