@@ -1008,6 +1008,25 @@ def _harness_error_resume_blockers(*, project_root: Path, spec_id: str, spec_dir
     return blockers
 
 
+def _is_phase_a_build_incomplete_retry(state: dict) -> bool:
+    """Return True when build_incomplete should retry without git recovery."""
+    if state.get("termination_reason") != "build_incomplete":
+        return False
+    if state.get("salvage_commit") or state.get("target_commit"):
+        return False
+    checkpoint_commits = state.get("checkpoint_commits")
+    if isinstance(checkpoint_commits, list) and checkpoint_commits:
+        return False
+
+    build_status = str(state.get("build_status") or "").strip()
+    build_reason = str(state.get("build_reason") or "")
+    return (
+        build_status == "phase_a_not_ready"
+        or "Phase A artifacts are not build-ready" in build_reason
+        or "constitution.md contains unresolved template markers" in build_reason
+    )
+
+
 def _cmd_harness_resume(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -1109,6 +1128,66 @@ def _cmd_harness_resume(args: list[str]) -> None:
         sys.exit(1)
 
     gitops = GitOpsManager(config)
+
+    if _is_phase_a_build_incomplete_retry(state):
+        blockers = _harness_error_resume_blockers(
+            project_root=cwd,
+            spec_id=spec_id,
+            spec_dir=resolved_spec_dir,
+        )
+        if blockers:
+            print(
+                f"✗ Spec {spec_id!r} is still blocked after Phase A repair.\n"
+                "  Resume preflight failed:\n"
+                + "".join(f"  - {blocker}\n" for blocker in blockers)
+                + f"  Fix the blockers, then re-run: echelon harness resume {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        fields = [
+            ("Spec", spec_id),
+            ("Strategy", strategy),
+            ("Reason", "phase_a_repaired"),
+        ]
+        if resolved_spec_dir is not None:
+            fields.append(("Spec dir", str(resolved_spec_dir)))
+        if spec_paths_refreshed:
+            fields.append(("State", "refreshed stale spec artifact paths"))
+        _banner("HARNESS RESUME — RETRYING", fields)
+
+        from harness.skills.run_skill import run
+        provider = DockerWorktreeProvider(
+            buffer_limit_bytes=config.buffer_limit_bytes,
+            container_cli=_container_runtime_cli(config),
+        )
+        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        try:
+            run(user_message, provider, gitops)
+        except Exception as exc:
+            if _is_docker_unavailable_error(exc):
+                _mark_current_harness_state_blocked(
+                    cwd,
+                    spec_id,
+                    strategy,
+                    "docker_unavailable",
+                )
+                print(
+                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                    f"  Error: {exc}\n"
+                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                    f"       echelon harness resume {spec_id}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _print_harness_error_and_exit(
+                project_root=cwd,
+                spec_id=spec_id,
+                strategy=strategy,
+                command="echelon harness resume",
+                exc=exc,
+            )
+        return
 
     if termination_reason in retryable_error_reasons:
         blockers = _harness_error_resume_blockers(

@@ -222,6 +222,62 @@ class TestCmdHarnessResume:
         state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
         assert state["termination_reason"] == "harness_error"
 
+    def test_phase_a_build_incomplete_retries_without_git_recovery(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        _make_phase_a_spec(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_incomplete",
+            "build_status": "blocked",
+            "build_reason": "Phase A artifacts are not build-ready: constitution.md contains unresolved template markers",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+
+    def test_phase_a_build_incomplete_stays_blocked_when_preflight_fails(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        _make_phase_a_spec(tmp_path, canonical_tasks=False)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_incomplete",
+            "build_status": "phase_a_not_ready",
+            "build_reason": "Phase A artifacts are not build-ready",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_resume(["001"])
+
+        assert exc.value.code == 1
+        mock_recover.assert_not_called()
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "still blocked after Phase A repair" in err
+        assert "tasks.md is not canonical" in err
+
     @pytest.mark.parametrize("reason", ["build_incomplete", "publish_failed"])
     def test_recoverable_blocked_reason_recovers_and_calls_run(
         self,
