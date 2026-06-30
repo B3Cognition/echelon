@@ -170,11 +170,13 @@ def discover_workspace(root: Path) -> WorkspaceManifest:
     child_sources = _child_source_roots(resolved)
     root_markers = project_markers(resolved)
 
-    if child_sources:
+    child_git_sources = tuple(source for source in child_sources if source.git_present)
+
+    if child_git_sources:
         git_role: GitRole = "orchestration"
         sources = child_sources
-    elif root_markers:
-        git_role = "source"
+    elif root_markers and (workspace_git_present or not child_sources):
+        git_role: GitRole = "source"
         sources = (
             SourceRoot(
                 id=".",
@@ -184,6 +186,9 @@ def discover_workspace(root: Path) -> WorkspaceManifest:
                 source_file_count=count_source_files(resolved),
             ),
         )
+    elif child_sources:
+        git_role = "orchestration"
+        sources = child_sources
     else:
         git_role = "orchestration"
         sources = ()

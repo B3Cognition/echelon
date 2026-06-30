@@ -173,8 +173,7 @@ For a polyrepo workspace, the `.gitignore` should ignore child source repos unle
 /fet-frontend-libs/
 /pe-argocd-deployments-og/
 /pressbox-terraform/
-/runs/build-*/
-/runs/verify-*/
+/runs/
 .codegraph/
 .DS_Store
 ```

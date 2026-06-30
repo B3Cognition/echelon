@@ -29,6 +29,7 @@ class WorkspaceGitMigrationPlan:
 @dataclass(frozen=True)
 class WorkspaceGitMigrationResult:
     plan: WorkspaceGitMigrationPlan
+    write_requested: bool
     git_initialized: bool
     gitignore_updated: bool
     staged_paths: tuple[str, ...]
@@ -79,7 +80,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         for source in manifest.sources
         if source.path != "."
     )
-    runtime_ignore_entries = ("/runs/build-*/", "/runs/verify-*/")
+    runtime_ignore_entries = ("/runs/",)
     stage_paths = _existing_stage_paths(root)
 
     return WorkspaceGitMigrationPlan(
@@ -95,7 +96,13 @@ def _append_missing_gitignore_entries(root: Path, entries: tuple[str, ...]) -> b
     gitignore = root / ".gitignore"
     existing_text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
     existing = set(existing_text.splitlines())
-    missing = [entry for entry in entries if entry not in existing]
+    existing_normalized = {_normalize_gitignore_entry(entry) for entry in existing}
+    missing = [
+        entry
+        for entry in entries
+        if entry not in existing
+        and _normalize_gitignore_entry(entry) not in existing_normalized
+    ]
     if not missing:
         return False
 
@@ -105,6 +112,13 @@ def _append_missing_gitignore_entries(root: Path, entries: tuple[str, ...]) -> b
         encoding="utf-8",
     )
     return True
+
+
+def _normalize_gitignore_entry(entry: str) -> str:
+    stripped = entry.strip()
+    if not stripped or stripped.startswith("#"):
+        return stripped
+    return stripped.strip("/")
 
 
 def _stage_workspace_files(root: Path, stage_paths: tuple[str, ...]) -> tuple[str, ...]:
@@ -126,6 +140,7 @@ def migrate_workspace(
     if not write:
         return WorkspaceGitMigrationResult(
             plan=plan,
+            write_requested=False,
             git_initialized=False,
             gitignore_updated=False,
             staged_paths=(),
@@ -141,10 +156,11 @@ def migrate_workspace(
         plan.workspace_root,
         plan.gitignore_entries,
     )
-    staged_paths = _stage_workspace_files(
-        plan.workspace_root,
-        _existing_stage_paths(plan.workspace_root),
-    )
+    if plan.already_git_backed:
+        stage_paths = (".gitignore",) if gitignore_updated else ()
+    else:
+        stage_paths = _existing_stage_paths(plan.workspace_root)
+    staged_paths = _stage_workspace_files(plan.workspace_root, stage_paths)
 
     committed = False
     if commit:
@@ -153,6 +169,7 @@ def migrate_workspace(
 
     return WorkspaceGitMigrationResult(
         plan=plan,
+        write_requested=True,
         git_initialized=git_initialized,
         gitignore_updated=gitignore_updated,
         staged_paths=staged_paths,
@@ -170,8 +187,14 @@ def _print_plan(result: WorkspaceGitMigrationResult) -> None:
     print("Stage paths:")
     for path in plan.stage_paths:
         print(f"  {path}")
-    if not result.git_initialized and not result.gitignore_updated and not result.staged_paths:
+    if not result.write_requested:
         print("Dry-run only. Re-run with --write to apply.")
+    elif (
+        not result.git_initialized
+        and not result.gitignore_updated
+        and not result.staged_paths
+    ):
+        print("No changes needed.")
     else:
         print("Applied:")
         print(f"  git_initialized: {result.git_initialized}")

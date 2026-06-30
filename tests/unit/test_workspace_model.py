@@ -31,6 +31,40 @@ def test_single_repo_workspace_is_source_root(tmp_path: Path) -> None:
     assert "package.json" in manifest.sources[0].project_markers
 
 
+def test_git_backed_root_with_project_marker_remains_single_source_root(
+    tmp_path: Path,
+) -> None:
+    _git_dir(tmp_path)
+    (tmp_path / ".specify").mkdir()
+    (tmp_path / "specs").mkdir()
+    (tmp_path / "App.xcodeproj").mkdir()
+    (tmp_path / "App.xcodeproj" / "project.xcworkspace").mkdir()
+    package = tmp_path / "Lambda"
+    package.mkdir()
+    (package / "Package.swift").write_text("// swift package\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert manifest.workspace.git_role == "source"
+    assert [source.path for source in manifest.sources] == ["."]
+    assert manifest.sources[0].git_present is True
+
+
+def test_branchless_wrapper_with_project_marker_and_children_uses_child_sources(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text('{"name":"workspace-wrapper"}\n', encoding="utf-8")
+    for name in ("app-a", "lib"):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "package.json").write_text(f'{{"name":"{name}"}}\n', encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert manifest.workspace.git_role == "orchestration"
+    assert [source.path for source in manifest.sources] == ["app-a", "lib"]
+
+
 def test_polyrepo_workspace_uses_child_source_roots(tmp_path: Path) -> None:
     _git_dir(tmp_path)
     (tmp_path / ".specify").mkdir()

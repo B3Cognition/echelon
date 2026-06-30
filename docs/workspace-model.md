@@ -12,7 +12,7 @@ For polyrepo work, initialize a lightweight workspace Git repo:
 
 ```bash
 git init
-printf "/og-platform/\n/pbg-api/\n/runs/build-*/\n/runs/verify-*/\n" >> .gitignore
+printf "/og-platform/\n/pbg-api/\n/runs/\n" >> .gitignore
 git add .gitignore .specify specs
 git commit -m "chore: initialize echelon workspace"
 ```
