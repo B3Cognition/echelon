@@ -24,6 +24,21 @@ def test_phase_list_prints_workflow_phases(tmp_path: Path, capsys) -> None:
     assert "phase3-plan" in out
 
 
+def test_phase_list_does_not_require_dispatch_config_compatibility(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(_project_root: Path) -> None:
+        raise AssertionError("phase list must not enforce agent-dispatch config")
+
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", fail_if_called)
+
+    _cmd_phase(["list"], project_root=tmp_path, ext_dir=EXT_DIR)
+
+    assert "phase1-constitution" in capsys.readouterr().out
+
+
 def test_phase_run_rejects_unknown_phase(tmp_path: Path, capsys) -> None:
     with pytest.raises(SystemExit) as exc:
         _cmd_phase(["run", "phase-does-not-exist"], project_root=tmp_path, ext_dir=EXT_DIR)

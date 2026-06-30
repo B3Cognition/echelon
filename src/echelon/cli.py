@@ -3496,7 +3496,6 @@ def _cmd_phase(
     from harness.squad_state import SquadStateStore
 
     _print_extension_drift_warning(project_root, ext_dir)
-    _enforce_project_config_compatibility(project_root)
 
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
@@ -3528,6 +3527,8 @@ def _cmd_phase(
         print(f"✗ Unknown phase subcommand: {subcommand}", file=sys.stderr)
         print("  Usage: echelon phase list | echelon phase run <phase-id>", file=sys.stderr)
         sys.exit(1)
+
+    _enforce_project_config_compatibility(project_root)
 
     if len(args) < 2:
         print("✗ Missing phase id.", file=sys.stderr)

@@ -126,6 +126,7 @@ with open(sys.argv[1]) as f:
     data = yaml.safe_load(f)
 with open(sys.argv[2], 'w') as f:
     json.dump(data, f, indent=2)
+    f.write('\n')
 " "$JETYPES_YAML" "$JETYPES_JSON"
 echo "  ✓ journal-entry-types.json generated"
 
