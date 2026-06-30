@@ -80,6 +80,40 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     assert ".specify/extensions/echelon/" in exclude.read_text(encoding="utf-8")
 
 
+def test_sync_runtime_extension_refreshes_existing_stale_extension(tmp_path):
+    """Feature-branch worktrees must not keep stale tracked extension files."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow" / "phases").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text("fresh commander\n", encoding="utf-8")
+    (source / "workflow" / "definition.yaml").write_text("fresh workflow\n", encoding="utf-8")
+    (source / "workflow" / "phases" / "codegen-7-deliver.md").write_text(
+        "fresh deliver with codegen-verification.md\n",
+        encoding="utf-8",
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    dest = worktree / ".specify" / "extensions" / "echelon"
+    (dest / "agents" / "control").mkdir(parents=True)
+    (dest / "workflow" / "phases").mkdir(parents=True)
+    (dest / "agents" / "control" / "commander.md").write_text("old commander\n", encoding="utf-8")
+    (dest / "workflow" / "definition.yaml").write_text("old workflow\n", encoding="utf-8")
+    (dest / "workflow" / "phases" / "codegen-7-deliver.md").write_text(
+        "old deliver without manifest\n",
+        encoding="utf-8",
+    )
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    assert (
+        dest / "workflow" / "phases" / "codegen-7-deliver.md"
+    ).read_text(encoding="utf-8") == "fresh deliver with codegen-verification.md\n"
+
+
 def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
     """Harness worktrees keep CodeGraph Node deps required by the vendored bridge."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

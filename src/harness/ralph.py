@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
+from codegen.harness_gate import enforce_codegen_verification
 from echelon.artifact_index import write_artifact_index
 from harness.build_result import BUILD_STATUS_FILENAME
 from harness.config import HarnessConfig
@@ -360,6 +361,11 @@ class RalphController:
                         outer_iter=outer_iter,
                         inner_iter=0,
                         phase="build",
+                    )
+                    self._apply_codegen_verification_gate(
+                        build_result,
+                        build_command=build_command,
+                        worktree_path=worktree_path,
                     )
 
                     # Check mode boundary
@@ -1359,6 +1365,28 @@ class RalphController:
             "successful harness build marker omitted completed_task_ids for a "
             "task-backed build slice"
         )
+        build_result["exit_code"] = 1
+
+    def _apply_codegen_verification_gate(
+        self,
+        build_result: Dict[str, Any],
+        *,
+        build_command: str,
+        worktree_path: str,
+    ) -> None:
+        """Run Python-owned codegen gates before ordinary verification."""
+        if not build_result.get("passed", True):
+            return
+        if build_command.strip() != "echelon codegen":
+            return
+
+        gate = enforce_codegen_verification(Path(worktree_path))
+        if gate.passed:
+            return
+
+        build_result["passed"] = False
+        build_result["build_status"] = gate.build_status
+        build_result["build_reason"] = "; ".join(gate.failures)
         build_result["exit_code"] = 1
 
     def _has_non_verify_worktree_changes(self, worktree_path: str) -> bool:

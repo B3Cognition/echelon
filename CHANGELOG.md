@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#20 deterministic codegen verification gates** — harness codegen builds now
+  run Python-owned RUNNABLE enforcement after the LLM build phase and before
+  ordinary verification, fail closed on missing/invalid/hollow
+  `runnable_contract` evidence, and emit `codegen-verification.md` from Python
+  instead of relying on the DELIVER LLM to self-report. Runtime extension sync
+  now refreshes stale feature-branch copies from the current source extension so
+  committed gate changes reach harness worktrees.
 - Clarified and enforced squad recovery command contracts. `echelon continue`
   is now the no-input recovery executor, `echelon resume` only answers human
   gates before delegating back to continuation, and blocked runs without human

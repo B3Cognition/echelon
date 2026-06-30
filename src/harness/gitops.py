@@ -568,13 +568,12 @@ class GitOpsManager:
         source = self._base_dir / RUNTIME_EXTENSION_REL
         dest = worktree / RUNTIME_EXTENSION_REL
 
-        if self._runtime_extension_ready(dest):
-            self._sync_claude_command_skills(dest, worktree)
-            self._sync_claude_agents(dest, worktree)
-            self._exclude_runtime_extension(worktree)
-            return
-
         if not source.exists() or not self._runtime_extension_ready(source):
+            if self._runtime_extension_ready(dest):
+                self._sync_claude_command_skills(dest, worktree)
+                self._sync_claude_agents(dest, worktree)
+                self._exclude_runtime_extension(worktree)
+                return
             raise GitOpsError(
                 "Harness runtime extension is missing. Expected "
                 f"{source / 'agents' / 'control' / 'commander.md'} and "

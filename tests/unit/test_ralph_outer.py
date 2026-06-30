@@ -2554,7 +2554,7 @@ class TestSignalDuringBuild:
 
         result = controller.run_loop(
             max_outer=2,
-            build_command="echelon codegen",
+            build_command="echelon build",
             build_prompt="build a hello world",
         )
 
@@ -2605,7 +2605,7 @@ class TestVerifyLocallyUnknownProjectType:
         result = controller.run_loop(
             max_outer=1,
             max_inner=0,
-            build_command="echelon codegen",
+            build_command="echelon build",
             build_prompt="build a hello world",
         )
 
@@ -2614,6 +2614,104 @@ class TestVerifyLocallyUnknownProjectType:
         assert result.final_verify is not None
         assert result.final_verify.passed is False
         assert any(f.id == "local-verify-skipped" for f in result.final_verify.failures)
+
+
+@pytest.mark.unit
+class TestCodegenHarnessVerification:
+    """Codegen strategy gates must be Python-owned, not LLM self-reported."""
+
+    def test_codegen_build_runs_python_verification_gate_before_verify(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text("// swift-tools-version:5.9\n")
+        (worktree / "codegen-state.json").write_text(
+            json.dumps(
+                {
+                    "runnable_contract": {
+                        "kind": "spa",
+                        "build": "true",
+                        "liveness": "static composition evidence",
+                        "primary_surface": {
+                            "req": "FR-001",
+                            "assert": "feature renders",
+                        },
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        gitops.create_worktree.return_value = str(worktree)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        with patch("harness.ralph.enforce_codegen_verification") as mock_gate, \
+             patch("subprocess.run") as mock_sp, \
+             patch("shutil.which", return_value="/usr/bin/swift"):
+            mock_gate.return_value = MagicMock(passed=True, build_status="done", failures=[])
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+
+            result = controller.run_loop(
+                max_outer=1,
+                max_inner=0,
+                build_command="echelon codegen",
+                build_prompt="x",
+            )
+
+        mock_gate.assert_called_once_with(worktree)
+        assert result.final_verify is not None
+
+    def test_codegen_runnable_gate_failure_blocks_before_local_verify(
+        self, tmp_path: Path
+    ) -> None:
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        controller, _, gitops, _ = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        (worktree / "Package.swift").write_text("// swift-tools-version:5.9\n")
+        gitops.create_worktree.return_value = str(worktree)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=500,
+        )
+
+        with patch("harness.ralph.enforce_codegen_verification") as mock_gate, \
+             patch.object(controller, "_exec_verify") as mock_verify:
+            mock_gate.return_value = MagicMock(
+                passed=False,
+                build_status="runnable_gate_failed",
+                failures=["primary surface FR-001 not present"],
+            )
+
+            result = controller.run_loop(
+                max_outer=1,
+                max_inner=0,
+                build_command="echelon codegen",
+                build_prompt="x",
+            )
+
+        mock_verify.assert_not_called()
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        state = controller._state_store.read()
+        assert state["build_status"] == "runnable_gate_failed"
 
 
 @pytest.mark.unit
@@ -2639,7 +2737,7 @@ class TestVerifyCommandNeeded:
         )
 
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         err = capsys.readouterr().err
         assert "TEST RUNNER MISSING" in err
         assert "verify_command" in err
@@ -2664,7 +2762,7 @@ class TestVerifyCommandNeeded:
         )
 
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         state = state_store.read()
         assert state["status"] == "blocked"
         assert state["termination_reason"] == "verify_command_needed"
@@ -2688,7 +2786,7 @@ class TestVerifyCommandNeeded:
         )
 
         controller.run_loop(max_outer=5, max_inner=3,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         # Build must only have been called once (hard stop, no retries)
         assert build_runner.exec_build.call_count == 1
 
@@ -2713,7 +2811,7 @@ class TestVerifyCommandNeeded:
 
         # First run: blocks
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
         assert state_store.read()["termination_reason"] == "verify_command_needed"
 
         # Now configure verify_command on the controller's config
@@ -2729,7 +2827,7 @@ class TestVerifyCommandNeeded:
         with patch("subprocess.run") as mock_sp:
             mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = controller.run_loop(max_outer=1, max_inner=0,
-                                         build_command="echelon codegen", build_prompt="x")
+                                         build_command="echelon build", build_prompt="x")
 
         # Loop re-entered: build was called again
         assert build_runner.exec_build.call_count == 1
@@ -2754,11 +2852,11 @@ class TestVerifyCommandNeeded:
 
         # First run blocks
         controller.run_loop(max_outer=1, max_inner=0,
-                            build_command="echelon codegen", build_prompt="x")
+                            build_command="echelon build", build_prompt="x")
 
         # Resume without adding verify_command → still blocked
         result = controller.run_loop(max_outer=1, max_inner=0,
-                                     build_command="echelon codegen", build_prompt="x")
+                                     build_command="echelon build", build_prompt="x")
         assert result.status == "blocked"
         assert result.termination_reason == "verify_command_needed"
 
