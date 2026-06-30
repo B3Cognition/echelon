@@ -38,7 +38,9 @@ Verify the workspace looks like a project root. Check for `.git`, `package.json`
 
 Read `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir` (default `.specify/echelon/re` for standalone RE, `runs/<run-id>/re` during an active echelon run).
 
-**Polyrepo marker check**: When `$RE_OUTPUT_DIR/repos-manifest.json` exists and `repo_count > 1`, the root-level `analysis.json` may be absent — check per-repo paths `$RE_OUTPUT_DIR/{repo-name}/analysis.json` instead. Missing root-level `analysis.json` is expected in polyrepo mode.
+**Manifest preference**: Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
+**Polyrepo marker check**: When `$RE_OUTPUT_DIR/workspace-manifest.json` exists with more than one source, or fallback `$RE_OUTPUT_DIR/repos-manifest.json` exists with `repo_count > 1`, check per-source paths `$RE_OUTPUT_DIR/{source-name}/analysis.json`.
 
 ### Step 2: Create Output Directory
 
@@ -55,6 +57,8 @@ mkdir -p "$RE_OUTPUT_DIR"
 Read the resulting `repos-manifest.json`:
 - `repo_count == 1` — single repo.
 - `repo_count > 1` — polyrepo workspace. Pass the manifest to `run-analysis.sh` which handles both.
+
+Also read the sibling `workspace-manifest.json` when present. Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
 
 ### Step 4: Run Extraction Scripts
 
@@ -84,6 +88,7 @@ Per-repo analysis:
 
 Aggregate:
   - $RE_OUTPUT_DIR/analysis.json       (aggregate summary)
+  - $RE_OUTPUT_DIR/workspace-manifest.json (workspace and source root list)
   - $RE_OUTPUT_DIR/repos-manifest.json (repo list)
   - $RE_OUTPUT_DIR/cross-repo.json     (only if repo_count > 1)
 ```
@@ -111,6 +116,7 @@ echelon_result:
     domains: []
     artifacts:
       analysis_json: "{RE_OUTPUT_DIR}/analysis.json"
+      workspace_manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"
       repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
       cross_repo: null
       codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json" | null

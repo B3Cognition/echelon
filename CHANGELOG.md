@@ -132,6 +132,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   documented repo-root invocation and an explicit extension-root argument,
   validates the current thin-wrapper plus COMMANDER role-separation contract,
   and keeps knowledge-base YAML parseable as part of the gate.
+- **EGR-048/#69 Phase A readiness at harness dispatch** — reconciled the
+  existing tracked issue for placeholder `constitution.md` reaching harness
+  build dispatch; the register now records that the deterministic Phase A
+  readiness gate blocks missing or template constitution input before build
+  agents run.
+- **EGR-054/#70 workspace/source-root model** — Echelon now treats projects as
+  Git-backed orchestration workspaces with zero or more source roots. Reverse
+  engineering emits and prefers `workspace-manifest.json`, harness target
+  selection resolves against source roots, harness state records workspace and
+  source metadata, branchless workspaces are blocked for new runs with legacy
+  recovery only, and a one-time migration script initializes lightweight
+  workspace Git without staging child implementation repositories.
 
 ### Changed
 

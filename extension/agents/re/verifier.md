@@ -11,7 +11,7 @@ ALWAYS enumerate source files from disk using Glob before claiming coverage is c
 NEVER claim coverage without actual source file enumeration.
 
 ### Rule 2 - Polyrepo Breakdown
-ALWAYS include the per-repo breakdown when `repos-manifest.json` has `repo_count > 1`.
+ALWAYS include the per-source breakdown when `workspace-manifest.json` has more than one source, or fallback `repos-manifest.json` has `repo_count > 1`.
 NEVER skip the per-repo breakdown in polyrepo mode.
 
 ### Rule 3 - Explicit Coverage Evidence
@@ -36,7 +36,9 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.
 
-Check `$RE_OUTPUT_DIR/repos-manifest.json` for repo count. Read `$RE_OUTPUT_DIR/analysis.json` to get `metadata.total_files`.
+Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
+Check `$RE_OUTPUT_DIR/workspace-manifest.json` for source count, falling back to `$RE_OUTPUT_DIR/repos-manifest.json` for repo count. Read `$RE_OUTPUT_DIR/analysis.json` to get `metadata.total_files`.
 
 Use the Glob tool to enumerate all source file paths on disk. Load `source_extensions` from resolved config (`specify extension config resolve echelon --format json`) or use built-in defaults:
 
@@ -80,8 +82,8 @@ For each cluster compute a confidence score (0–1), suggest a domain name, and 
 
 ### Step 5.5: Polyrepo Coverage Calculation
 
-If `repos-manifest.json` has `repo_count > 1`:
-1. Calculate per-repo coverage independently: `repo_coverage = covered_in_repo / total_in_repo × 100`.
+If `workspace-manifest.json` has more than one source, or fallback `repos-manifest.json` has `repo_count > 1`:
+1. Calculate per-source coverage independently: `source_coverage = covered_in_source / total_in_source × 100`.
 2. Calculate aggregate coverage: sum covered and total across all repos.
 3. Flag any repo whose individual coverage falls below the threshold (default 80%) as a warning — even if aggregate is above threshold.
 4. Include per-repo breakdown table in the report.

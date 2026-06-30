@@ -153,6 +153,7 @@ echo ""
 echo "=== Test 3: polyrepo mode ==="
 
 TMPDIR3=$(mktemp -d)
+RE_OUTPUT_DIR="$TMPDIR3"
 MANIFEST3=$(mktemp)
 trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
 
@@ -164,31 +165,134 @@ MANIFEST3_COUNT=$(jq -r '.repo_count' "$MANIFEST3")
 assert_eq "manifest repo_count is 3" "3" "$MANIFEST3_COUNT"
 
 # Run analysis in polyrepo mode
-(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" "$TMPDIR3" "$MANIFEST3" 2>/dev/null)
+(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" "$RE_OUTPUT_DIR" "$MANIFEST3" 2>/dev/null)
+
+assert_file_exists "workspace-manifest.json copied to output" "$RE_OUTPUT_DIR/workspace-manifest.json"
+assert_json_field "workspace manifest has 3 sources" "$RE_OUTPUT_DIR/workspace-manifest.json" '.sources | length' "3"
+assert_path_not_exists "analysis output does not include workspace .specify" "$RE_OUTPUT_DIR/.specify"
 
 # Per-repo output directories with analysis.json
-assert_file_exists "repo-a/analysis.json exists" "$TMPDIR3/repo-a/analysis.json"
-assert_file_exists "repo-b/analysis.json exists" "$TMPDIR3/repo-b/analysis.json"
-assert_file_exists "repo-c/analysis.json exists" "$TMPDIR3/repo-c/analysis.json"
+assert_file_exists "repo-a/analysis.json exists" "$RE_OUTPUT_DIR/repo-a/analysis.json"
+assert_file_exists "repo-b/analysis.json exists" "$RE_OUTPUT_DIR/repo-b/analysis.json"
+assert_file_exists "repo-c/analysis.json exists" "$RE_OUTPUT_DIR/repo-c/analysis.json"
 assert_path_not_exists "polyrepo fixture remains free of .codegraph" "$FIXTURES_DIR/polyrepo/.codegraph"
 
 # cross-repo.json at root
-assert_file_exists "cross-repo.json exists" "$TMPDIR3/cross-repo.json"
+assert_file_exists "cross-repo.json exists" "$RE_OUTPUT_DIR/cross-repo.json"
 
 # Root-level aggregate analysis.json
-assert_file_exists "root-level analysis.json" "$TMPDIR3/analysis.json"
-assert_json_field "root analysis has metadata" "$TMPDIR3/analysis.json" '.metadata | type' "object"
-assert_json_field "root analysis has repo_count" "$TMPDIR3/analysis.json" '.metadata.repo_count' "3"
-assert_json_field "root analysis has repos array" "$TMPDIR3/analysis.json" '.repos | type' "array"
+assert_file_exists "root-level analysis.json" "$RE_OUTPUT_DIR/analysis.json"
+assert_json_field "root analysis has metadata" "$RE_OUTPUT_DIR/analysis.json" '.metadata | type' "object"
+assert_json_field "root analysis has repo_count" "$RE_OUTPUT_DIR/analysis.json" '.metadata.repo_count' "3"
+assert_json_field "root analysis has repos array" "$RE_OUTPUT_DIR/analysis.json" '.repos | type' "array"
+assert_json_field "root analysis records preferred manifest" "$RE_OUTPUT_DIR/analysis.json" '.manifest_path' "workspace-manifest.json"
 
 # Per-repo analysis.json should have repo_name field
-assert_json_field "repo-a analysis has repo_name" "$TMPDIR3/repo-a/analysis.json" '.repo_name' "repo-a"
-assert_json_field "repo-b analysis has repo_name" "$TMPDIR3/repo-b/analysis.json" '.repo_name' "repo-b"
-assert_json_field "repo-c analysis has repo_name" "$TMPDIR3/repo-c/analysis.json" '.repo_name' "repo-c"
+assert_json_field "repo-a analysis has repo_name" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.repo_name' "repo-a"
+assert_json_field "repo-b analysis has repo_name" "$RE_OUTPUT_DIR/repo-b/analysis.json" '.repo_name' "repo-b"
+assert_json_field "repo-c analysis has repo_name" "$RE_OUTPUT_DIR/repo-c/analysis.json" '.repo_name' "repo-c"
 
 # Per-repo analysis.json should have expected structure fields
-assert_json_field "repo-a has metadata" "$TMPDIR3/repo-a/analysis.json" '.metadata | type' "object"
-assert_json_field "repo-a has structure" "$TMPDIR3/repo-a/analysis.json" '.structure | type' "object"
+assert_json_field "repo-a has metadata" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.metadata | type' "object"
+assert_json_field "repo-a has structure" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.structure | type' "object"
+
+# ---------- Test 4: Legacy repos-manifest fallback ----------
+
+echo ""
+echo "=== Test 4: legacy repos-manifest fallback ==="
+
+TMPDIR4=$(mktemp -d)
+MANIFEST4_DIR=$(mktemp -d)
+MANIFEST4="$MANIFEST4_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$MANIFEST4_DIR"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
+
+(cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$MANIFEST4" 2>/dev/null)
+rm -f "$MANIFEST4_DIR/workspace-manifest.json"
+
+(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" "$TMPDIR4" "$MANIFEST4" 2>/dev/null)
+
+assert_file_exists "legacy repo-a/analysis.json exists" "$TMPDIR4/repo-a/analysis.json"
+assert_file_exists "legacy repo-b/analysis.json exists" "$TMPDIR4/repo-b/analysis.json"
+assert_file_exists "legacy repo-c/analysis.json exists" "$TMPDIR4/repo-c/analysis.json"
+assert_file_exists "legacy repos-manifest.json copied to output" "$TMPDIR4/repos-manifest.json"
+assert_file_not_exists "legacy workspace-manifest.json absent" "$TMPDIR4/workspace-manifest.json"
+assert_json_field "legacy root analysis records repos manifest" "$TMPDIR4/analysis.json" '.manifest_path' "repos-manifest.json"
+
+# ---------- Test 5: Workspace manifest drives cross-repo extraction ----------
+
+echo ""
+echo "=== Test 5: workspace manifest drives cross-repo extraction ==="
+
+TMPROOT5=$(mktemp -d)
+TMPDIR5=$(mktemp -d)
+MANIFEST5_DIR=$(mktemp -d)
+MANIFEST5="$MANIFEST5_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$TMPROOT5" "$TMPDIR5" "$MANIFEST4_DIR" "$MANIFEST5_DIR"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
+
+cat > "$TMPROOT5/package.json" <<'JSON'
+{"name": "workspace-wrapper"}
+JSON
+mkdir -p "$TMPROOT5/app-a/src" "$TMPROOT5/lib/src"
+cat > "$TMPROOT5/app-a/package.json" <<'JSON'
+{"name": "app-a", "dependencies": {"@scope/contracts": "workspace:*"}}
+JSON
+cat > "$TMPROOT5/app-a/src/index.ts" <<'TS'
+import "@scope/contracts";
+TS
+cat > "$TMPROOT5/lib/package.json" <<'JSON'
+{"name": "@scope/contracts"}
+JSON
+cat > "$TMPROOT5/lib/src/index.ts" <<'TS'
+export const value = 1;
+TS
+
+(cd "$TMPROOT5" && "$DISCOVER_SCRIPT" "$MANIFEST5" 2>/dev/null)
+
+assert_json_field "legacy manifest sees wrapper root" "$MANIFEST5" '.repo_count' "1"
+assert_json_field "workspace manifest sees child sources" "$MANIFEST5_DIR/workspace-manifest.json" '.sources | length' "2"
+
+(cd "$TMPROOT5" && "$RUN_ANALYSIS" "$TMPDIR5" "$MANIFEST5" 2>/dev/null)
+
+assert_file_exists "workspace-driven app-a analysis exists" "$TMPDIR5/app-a/analysis.json"
+assert_file_exists "workspace-driven lib analysis exists" "$TMPDIR5/lib/analysis.json"
+assert_json_field "workspace-driven root analysis repo_count" "$TMPDIR5/analysis.json" '.metadata.repo_count' "2"
+assert_json_field "workspace-driven cross-repo repo_count" "$TMPDIR5/cross-repo.json" '.repo_count' "2"
+assert_json_field "workspace-driven compatibility manifest repo_count" "$TMPDIR5/repos-manifest.json" '.repo_count' "2"
+assert_json_field "workspace-driven package identifier derived" "$TMPDIR5/repos-manifest.json" '.repos[] | select(.name == "lib") | .pkg_identifiers[0].id' "@scope/contracts"
+assert_json_field "workspace-driven dependency link detected" "$TMPDIR5/cross-repo.json" '.dependency_links | length' "1"
+
+# ---------- Test 6: Workspace manifest derives setup.py package identifiers ----------
+
+echo ""
+echo "=== Test 6: workspace manifest derives setup.py package identifiers ==="
+
+TMPROOT6=$(mktemp -d)
+TMPDIR6=$(mktemp -d)
+MANIFEST6_DIR=$(mktemp -d)
+MANIFEST6="$MANIFEST6_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPDIR1" "$TMPDIR2" "$TMPDIR3" "$TMPDIR4" "$TMPROOT5" "$TMPDIR5" "$TMPROOT6" "$TMPDIR6" "$MANIFEST4_DIR" "$MANIFEST5_DIR" "$MANIFEST6_DIR"; rm -f "$MANIFEST2" "$MANIFEST3"' EXIT
+
+cat > "$TMPROOT6/package.json" <<'JSON'
+{"name": "workspace-wrapper"}
+JSON
+mkdir -p "$TMPROOT6/api" "$TMPROOT6/lib"
+cat > "$TMPROOT6/api/requirements.txt" <<'REQ'
+shared-contracts==1.0.0
+REQ
+cat > "$TMPROOT6/api/setup.py" <<'PY'
+from setuptools import setup
+setup(name="api-app")
+PY
+cat > "$TMPROOT6/lib/setup.py" <<'PY'
+from setuptools import setup
+setup(name="shared-contracts")
+PY
+
+(cd "$TMPROOT6" && "$DISCOVER_SCRIPT" "$MANIFEST6" 2>/dev/null)
+(cd "$TMPROOT6" && "$RUN_ANALYSIS" "$TMPDIR6" "$MANIFEST6" 2>/dev/null)
+
+assert_json_field "workspace-driven setup.py package identifier derived" "$TMPDIR6/repos-manifest.json" '.repos[] | select(.name == "lib") | .pkg_identifiers[0].id' "shared-contracts"
+assert_json_field "workspace-driven setup.py dependency link detected" "$TMPDIR6/cross-repo.json" '.dependency_links | length' "1"
 
 # ---------- summary ----------
 

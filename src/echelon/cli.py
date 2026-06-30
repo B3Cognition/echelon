@@ -19,9 +19,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from harness.phase_a_readiness import validate_phase_a_readiness
@@ -53,6 +55,7 @@ SKILL_MAP = {
 CLI_VERSION = "3.0.0"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
+from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
 from echelon.ui import banner as _banner  # noqa: E402  (after stdlib imports)
 
 
@@ -115,6 +118,77 @@ Skill file locations (auto-detected from ECHELON_LLM env var):
 
 
 # ── init (pure Python, no LLM) ────────────────────────────────────────────
+
+def _workspace_git_preflight(project_root: Path, *, command_name: str) -> None:
+    manifest = discover_workspace(project_root)
+    if manifest.workspace.git_present:
+        return
+
+    source_paths = [source.path for source in manifest.sources if source.path != "."]
+    ignore_lines = "\n".join(f"/{path}/" for path in source_paths) or "/source-repo/"
+    print(
+        "✗ Echelon workspace root is not a Git repo.\n\n"
+        "Echelon requires workspace Git so specs, run state, and recovery metadata "
+        "have durable version history.\n\n"
+        "Fix:\n"
+        "  git init\n"
+        f"  printf \"{ignore_lines}\\n/runs/build-*/\\n/runs/verify-*/\\n\" >> .gitignore\n"
+        "  git add .gitignore .specify specs\n"
+        "  git commit -m \"chore: initialize echelon workspace\"\n\n"
+        "Then rerun:\n"
+        f"  {command_name}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def _workspace_git_present(project_root: Path) -> bool:
+    return discover_workspace(project_root).workspace.git_present
+
+
+def _print_legacy_branchless_recovery_notice(command_name: str) -> None:
+    print(
+        "legacy branchless run detected; continuing for recovery only\n"
+        "Initialize workspace Git before starting new Echelon runs.",
+        file=sys.stderr,
+    )
+
+
+def _command_display(prefix: str, args: list[str]) -> str:
+    return shlex.join([*prefix.split(), *args])
+
+
+def _workspace_git_preflight_for_squad_run(
+    project_root: Path,
+    *,
+    command_name: str,
+    user_message: str,
+    reset: bool,
+) -> None:
+    if _workspace_git_present(project_root):
+        return
+    if reset:
+        _workspace_git_preflight(project_root, command_name=command_name)
+
+    existing_dir = _find_current_run_dir(project_root)
+    if not existing_dir or not (existing_dir / "state.json").exists():
+        _workspace_git_preflight(project_root, command_name=command_name)
+
+    try:
+        import json as _json
+
+        state = _json.loads((existing_dir / "state.json").read_text(encoding="utf-8"))
+    except Exception:
+        _workspace_git_preflight(project_root, command_name=command_name)
+
+    if state.get("status") in ("running", "in_progress") and (
+        not user_message or user_message == state.get("user_message", "")
+    ):
+        _print_legacy_branchless_recovery_notice(command_name)
+        return
+
+    _workspace_git_preflight(project_root, command_name=command_name)
+
 
 def _derive_wing_suggestion(project_dir: Path) -> str:
     """Suggest a wing name: git remote slug if available, else dirname-hash6."""
@@ -602,6 +676,161 @@ def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path
     )
 
 
+def _target_candidate_lines(candidates: list[object]) -> str:
+    lines: list[str] = []
+    for candidate in candidates:
+        repo = str(getattr(candidate, "repo", ""))
+        evidence = [str(item) for item in getattr(candidate, "evidence", [])]
+        source_path = None
+        for item in evidence:
+            prefix = "workspace source path `"
+            if item.startswith(prefix) and item.endswith("`"):
+                source_path = item[len(prefix):-1]
+                break
+        if source_path and source_path != repo:
+            lines.append(f"  - {repo} (path: {source_path})")
+        elif repo:
+            lines.append(f"  - {repo}")
+    return "\n".join(lines)
+
+
+def _source_dispatch_metadata(
+    *,
+    target: Path,
+    polyrepo_root: Path,
+    source_id: str | None,
+) -> dict[str, object]:
+    resolved_target = target.resolve()
+    resolved_workspace = polyrepo_root.resolve()
+    resolved_source_id = source_id or ("." if resolved_target == resolved_workspace else target.name)
+    workspace_git_role = (
+        "source"
+        if resolved_target == resolved_workspace and resolved_source_id == "."
+        else "orchestration"
+    )
+    return {
+        "workspace_root": resolved_workspace,
+        "workspace_git_role": workspace_git_role,
+        "source_ids": {str(resolved_target): resolved_source_id},
+        "source_git_roles": {str(resolved_target): "source"},
+    }
+
+
+@dataclass(frozen=True)
+class HarnessWorkspaceTarget:
+    workspace_root: Path
+    workspace_git_role: str
+    source_root: Path
+    source_id: str
+    source_git_role: str
+
+
+def _resolve_harness_workspace_target(
+    project_root: Path,
+    explicit_target: str | None,
+    *,
+    spec_dir: Path | None = None,
+    spec_id: str | None = None,
+    rerun_command: str | None = None,
+) -> HarnessWorkspaceTarget:
+    from echelon.target_detection import detect_target
+    from echelon.workspace_model import SourceRoot, discover_workspace
+
+    manifest = discover_workspace(project_root)
+    result = detect_target(
+        spec_dir=spec_dir or project_root,
+        polyrepo_root=project_root,
+        workspace_manifest=manifest,
+        explicit_target=explicit_target,
+    )
+
+    def _candidate_lines() -> str:
+        return _target_candidate_lines(result.candidates)
+
+    if result.decision == "no_source_roots":
+        print(
+            "✗ No source roots found; harness build needs at least one implementation source root.\n\n"
+            "  Add or checkout the source repo(s), or add source project markers to this workspace."
+            + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    if result.decision == "multiple_source_roots_need_target":
+        spec_ref = spec_id or "<spec-id>"
+        print(
+            "✗ Multiple source roots found; choose one before running harness.\n\n"
+            "  Source roots:\n"
+            f"{_candidate_lines()}\n\n"
+            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    if result.decision == "invalid_target":
+        spec_ref = spec_id or "<spec-id>"
+        configured = f"\n  Configured target: {explicit_target}" if explicit_target else ""
+        print(
+            "✗ Configured implementation target does not match a workspace source root.\n"
+            f"{configured}\n\n"
+            "  Source roots:\n"
+            f"{_candidate_lines()}\n\n"
+            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    if not result.recommended_target:
+        print(
+            "✗ No implementation target configured and target detection was ambiguous.\n"
+            f"  Fix: run 'echelon spec target {spec_id or '<spec-id>'} <repo>'.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    source_root = (
+        manifest.workspace.root
+        if result.recommended_target == "."
+        else (manifest.workspace.root / result.recommended_target).resolve()
+    )
+    source: SourceRoot | None = None
+    for candidate in manifest.sources:
+        candidate_root = (
+            manifest.workspace.root
+            if candidate.path == "."
+            else (manifest.workspace.root / candidate.path).resolve()
+        )
+        if candidate_root == source_root:
+            source = candidate
+            break
+    if source is None:
+        print(
+            "✗ Recommended implementation target does not match a workspace source root.\n"
+            f"  Target: {result.recommended_target}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    return HarnessWorkspaceTarget(
+        workspace_root=manifest.workspace.root,
+        workspace_git_role=manifest.workspace.git_role,
+        source_root=source_root,
+        source_id=source.id,
+        source_git_role=source.git_role,
+    )
+
+
+def _workspace_target_dispatch_metadata(target: HarnessWorkspaceTarget) -> dict[str, object]:
+    return {
+        "workspace_root": target.workspace_root,
+        "workspace_git_role": target.workspace_git_role,
+        "source_ids": {str(target.source_root.resolve()): target.source_id},
+        "source_git_roles": {str(target.source_root.resolve()): target.source_git_role},
+    }
+
+
 def _cmd_harness_run(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -609,6 +838,9 @@ def _cmd_harness_run(args: list[str]) -> None:
     if not args:
         print("echelon harness run: missing spec_id\n", file=sys.stderr)
         sys.exit(1)
+
+    rerun_command = _command_display("echelon harness run", args)
+    _workspace_git_preflight(Path.cwd(), command_name=rerun_command)
 
     spec_id = args[0]
     kv: dict[str, str] = {}
@@ -632,13 +864,6 @@ def _cmd_harness_run(args: list[str]) -> None:
         parts.append("--reset")
     user_message = " ".join(parts)
 
-    from harness.config import load_config, ValidationError as HarnessValidationError
-    from harness.docker_provider import DockerWorktreeProvider
-    from harness.gitops import GitOpsManager
-    from harness.skills.run_skill import run, _count_tasks
-    from harness.plan_validation import PlanValidationError, validate_plan_file
-    from harness.task_validation import TaskValidationError
-
     # Orchestrator mode: spec targets take priority over local echelon-config.yml.
     # Check targets first so a polyrepo root with its own echelon-config.yml (e.g. for
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
@@ -654,7 +879,6 @@ def _cmd_harness_run(args: list[str]) -> None:
         validate_single_target,
         validate_targets,
     )
-    from echelon.target_detection import detect_target
 
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
@@ -688,51 +912,82 @@ def _cmd_harness_run(args: list[str]) -> None:
         frontmatter = read_frontmatter(spec_dir)
         targets_rel: list[str] = frontmatter.get("targets") or []
         if targets_rel and not target_env:
-            # A spec may declare one or many targets. Multiple targets dispatch
+            if len(targets_rel) == 1:
+                workspace_target = _resolve_harness_workspace_target(
+                    polyrepo_root,
+                    targets_rel[0],
+                    spec_dir=spec_dir,
+                    spec_id=resolved_spec_id,
+                    rerun_command=rerun_command,
+                )
+                target_rel = (
+                    "."
+                    if workspace_target.source_root == workspace_target.workspace_root
+                    else workspace_target.source_root.relative_to(workspace_target.workspace_root).as_posix()
+                )
+                if target_rel != targets_rel[0]:
+                    write_targets(spec_dir, [target_rel])
+                target = validate_single_target([target_rel], polyrepo_root)
+                sys.exit(run_multi_target(
+                    spec_id,
+                    [target],
+                    args[1:],
+                    **_workspace_target_dispatch_metadata(workspace_target),
+                ))
+
+            # A spec may declare multiple targets. Multiple targets dispatch
             # to each sub-repo in parallel via run_multi_target (the polyrepo
-            # design documented in CLAUDE.md); a single target is just the
-            # one-element case of the same path.
+            # design documented in CLAUDE.md).
             targets = validate_targets(targets_rel, polyrepo_root)
             _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-            sys.exit(run_multi_target(spec_id, targets, args[1:]))
+            source_ids: dict[str, str] = {}
+            source_git_roles: dict[str, str] = {}
+            for target in targets:
+                target_metadata = _source_dispatch_metadata(
+                    target=target,
+                    polyrepo_root=polyrepo_root,
+                    source_id=None,
+                )
+                source_ids.update(target_metadata["source_ids"])
+                source_git_roles.update(target_metadata["source_git_roles"])
+            dispatch_metadata: dict[str, object] = {
+                "workspace_root": polyrepo_root.resolve(),
+                "workspace_git_role": "orchestration",
+                "source_ids": source_ids,
+                "source_git_roles": source_git_roles,
+            }
+            sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
-        detection = detect_target(spec_dir=spec_dir, polyrepo_root=polyrepo_root)
-        if target_env:
-            detection = None
-        if detection and detection.decision == "recommend":
-            if mode == "banzai" and detection.recommended_target:
-                write_targets(spec_dir, [detection.recommended_target])
-                target = validate_single_target([detection.recommended_target], polyrepo_root)
+        if not target_env:
+            workspace_target = _resolve_harness_workspace_target(
+                polyrepo_root,
+                None,
+                spec_dir=spec_dir,
+                spec_id=resolved_spec_id,
+                rerun_command=rerun_command,
+            )
+            if workspace_target.source_root != workspace_target.workspace_root:
+                target_rel = workspace_target.source_root.relative_to(
+                    workspace_target.workspace_root
+                ).as_posix()
+                if mode == "banzai":
+                    write_targets(spec_dir, [target_rel])
+                    print(f"✓ Wrote inferred implementation target: {target_rel}")
+                target = validate_single_target([target_rel], polyrepo_root)
                 _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-                print(
-                    f"✓ Wrote inferred implementation target: {detection.recommended_target} "
-                    f"(confidence {detection.confidence:.2f})"
-                )
-                sys.exit(run_multi_target(spec_id, [target], args[1:]))
-            print(
-                f"✗ No implementation target configured.\n"
-                f"  Recommended implementation target: {detection.recommended_target} "
-                f"(confidence {detection.confidence:.2f})\n"
-                "  Evidence:\n"
-                + "".join(
-                    f"  - {item}\n"
-                    for item in (
-                        detection.candidates[0].evidence
-                        if detection.candidates else []
-                    )
-                )
-                + f"  Confirm with: echelon spec target {resolved_spec_id} {detection.recommended_target}\n"
-                + f"  Then rerun:  echelon harness run {resolved_spec_id}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        if detection and detection.decision == "ambiguous":
-            print(
-                "✗ No implementation target configured and target detection was ambiguous.\n"
-                f"  Fix: run 'echelon spec target {spec_id} <repo>'.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+                sys.exit(run_multi_target(
+                    spec_id,
+                    [target],
+                    args[1:],
+                    **_workspace_target_dispatch_metadata(workspace_target),
+                ))
+
+    from harness.config import load_config, ValidationError as HarnessValidationError
+    from harness.docker_provider import DockerWorktreeProvider
+    from harness.gitops import GitOpsManager
+    from harness.skills.run_skill import run, _count_tasks
+    from harness.plan_validation import PlanValidationError, validate_plan_file
+    from harness.task_validation import TaskValidationError
 
     # Single-repo mode: require local echelon-config.yml (harness config).
     echelon_yml = config_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
@@ -784,7 +1039,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             f"  Error: {e}\n"
             f"  Preview migration: python -m harness migrate-tasks {tasks_path}\n"
             f"  Apply migration:   python -m harness migrate-tasks {tasks_path} --write\n"
-            f"  Then rerun:        echelon harness run {spec_id}",
+            f"  Then rerun:        {rerun_command}",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -798,7 +1053,7 @@ def _cmd_harness_run(args: list[str]) -> None:
                 f"  Error: {e}\n"
                 f"  Preview migration: python -m harness migrate-plan {plan_path}\n"
                 f"  Apply migration:   python -m harness migrate-plan {plan_path} --write\n"
-                f"  Then rerun:        echelon harness run {spec_id}",
+                f"  Then rerun:        {rerun_command}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -831,7 +1086,7 @@ def _cmd_harness_run(args: list[str]) -> None:
                 f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
                 f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                f"       echelon harness run {spec_id}",
+                f"       {rerun_command}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -839,7 +1094,7 @@ def _cmd_harness_run(args: list[str]) -> None:
             project_root=Path.cwd(),
             spec_id=spec_id,
             strategy=strategy,
-            command="echelon harness run",
+            command=rerun_command,
             exc=exc,
         )
 
@@ -947,7 +1202,7 @@ def _print_harness_error_and_exit(
         "✗ Harness run failed before completion.\n"
         f"  Error: {exc}\n"
         "  State was marked blocked instead of left running.\n"
-        f"  Next:  {command} {spec_id}",
+        f"  Next:  {command if spec_id in command else f'{command} {spec_id}'}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -1084,6 +1339,16 @@ def _cmd_harness_resume(args: list[str]) -> None:
         state_dir = runs_dir(cwd) / "state"
     state_store = StateStore(state_dir, spec_id, strategy)
     state = state_store.read()
+    if not _workspace_git_present(cwd):
+        if state:
+            _print_legacy_branchless_recovery_notice(
+                _command_display("echelon harness resume", args)
+            )
+        else:
+            _workspace_git_preflight(
+                cwd,
+                command_name=_command_display("echelon harness resume", args),
+            )
 
     if not state:
         print(
@@ -2697,6 +2962,7 @@ def _cmd_run(
 
     _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
+    _workspace_git_preflight(project_root, command_name="echelon run")
 
     # Parse optional flags
     mode = "semi"
@@ -2721,6 +2987,12 @@ def _cmd_run(
             message_parts.append(args[i])
             i += 1
     message = " ".join(message_parts)
+    _workspace_git_preflight_for_squad_run(
+        project_root,
+        command_name=_command_display("echelon run", args),
+        user_message=message,
+        reset=reset,
+    )
 
     prev_dir = _find_current_run_dir(project_root)
     squad_dir, is_fresh = _select_squad_dir(project_root, message, reset=reset)
@@ -3492,6 +3764,10 @@ def _cmd_continue(
 
     squad_dir = _find_current_run_dir(project_root)
     if not squad_dir or not (squad_dir / "state.json").exists():
+        _workspace_git_preflight(
+            project_root,
+            command_name=_command_display("echelon continue", args),
+        )
         print(
             "No prior run found in this project.\n"
             "Start a new run:  echelon run \"<task description>\"",
@@ -3504,6 +3780,17 @@ def _cmd_continue(
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
+    if not _workspace_git_present(project_root):
+        if status in ("running", "in_progress"):
+            _print_legacy_branchless_recovery_notice(
+                _command_display("echelon continue", args)
+            )
+        else:
+            _workspace_git_preflight(
+                project_root,
+                command_name=_command_display("echelon continue", args),
+            )
+
     prepared_state, _ = _ensure_active_continue_spec_context(
         project_root,
         squad_dir,

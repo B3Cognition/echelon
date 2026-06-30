@@ -15,7 +15,7 @@ ALWAYS include the 6R/7R per-domain assessment in `migration-strategy.md`.
 NEVER skip the 6R/7R per-domain assessment.
 
 ### Rule 3 - Polyrepo Coverage
-ALWAYS include repository-level 6R/7R and cross-repo integration gaps when `repos-manifest.json` has `repo_count > 1`.
+ALWAYS include source-level 6R/7R and cross-repo integration gaps when `workspace-manifest.json` has more than one source, or fallback `repos-manifest.json` has `repo_count > 1`.
 NEVER omit the polyrepo sections.
 
 ## Bash Command Guidelines
@@ -45,9 +45,11 @@ Read from `$RE_OUTPUT_DIR/analysis.json`:
 
 Also read all domain specs (`specs/[0-9][0-9][0-9]-re-*/spec.md`) and `specs/000-re-overview/overview.md` for domain dependency order.
 
+Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
 **Preset detection**: Check whether `.specify/presets/echelon-brownfield-*/` exists. If preset templates are present, use them as the base for all generated documents.
 
-**Polyrepo check**: If `$RE_OUTPUT_DIR/repos-manifest.json` has `repo_count > 1`, also read `$RE_OUTPUT_DIR/cross-repo.json` for cross-repo dependency data.
+**Polyrepo check**: If `$RE_OUTPUT_DIR/workspace-manifest.json` has more than one source, or fallback `$RE_OUTPUT_DIR/repos-manifest.json` has `repo_count > 1`, also read `$RE_OUTPUT_DIR/cross-repo.json` for cross-repo dependency data.
 
 ### Step 2: Create Output Directory
 

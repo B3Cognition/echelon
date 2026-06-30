@@ -265,4 +265,15 @@ mkdir -p "$OUTPUT_DIR"
 
 echo "$OUTPUT_JSON" > "$OUTPUT_FILE"
 
+if ! command -v python3 &>/dev/null; then
+    echo "ERROR: python3 is required to write workspace-manifest.json." >&2
+    exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+WORKSPACE_MANIFEST_FILE="$OUTPUT_DIR/workspace-manifest.json"
+PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+    python3 -m echelon.workspace_model "$ROOT_DIR" "$WORKSPACE_MANIFEST_FILE"
+
 echo "Discovered $REPO_COUNT repo(s) → $OUTPUT_FILE" >&2

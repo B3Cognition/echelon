@@ -158,10 +158,49 @@ def test_re_preflight_prefers_active_run_output_dir_and_tracks_codegraph_artifac
 def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
     analyzer = (EXT_ROOT / "extension" / "agents" / "re" / "analyzer.md").read_text()
 
+    assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" "$RE_OUTPUT_DIR" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
+    assert "repos-manifest.json" in analyzer
+    assert "Prefer workspace-manifest.json" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" ".specify/echelon/re"' not in analyzer
+
+
+def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
+    for rel_path in [
+        "extension/agents/re/analyzer.md",
+        "extension/agents/re/specifier.md",
+        "extension/agents/re/verifier.md",
+        "extension/agents/re/constituter.md",
+        "extension/agents/exploration/scout.md",
+        "extension/agents/exploration/golddigger.md",
+    ]:
+        text = (EXT_ROOT / rel_path).read_text()
+
+        assert "workspace-manifest.json" in text, rel_path
+        assert "repos-manifest.json" in text, rel_path
+        assert "Prefer workspace-manifest.json" in text, rel_path
+        assert "compatibility fallback" in text, rel_path
+
+
+def test_golddigger_reports_workspace_manifest_as_primary_artifact():
+    text = (EXT_ROOT / "extension/agents/exploration/golddigger.md").read_text()
+
+    assert 'manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"' in text
+    assert 'repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"' in text
+    assert "Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json" in text
+    assert "per_repo_codegraph" in text
+    assert '"{RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json"' in text
+
+
+def test_polyrepo_prompts_describe_per_source_codegraph_shape():
+    scout = (EXT_ROOT / "extension/agents/exploration/scout.md").read_text()
+    specifier = (EXT_ROOT / "extension/agents/re/specifier.md").read_text()
+
+    assert "aggregate index of per-source summaries" in scout
+    assert "$RE_OUTPUT_DIR/{source}/codegraph-summary.json" in specifier
+    assert "$RE_OUTPUT_DIR/{source}/codegraph-analysis.json" in specifier
 
 
 def test_exploration_agents_do_not_hardcode_re_artifact_reads():

@@ -61,6 +61,20 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
 
 @pytest.mark.unit
 class TestSingleRepoPathUnchanged:
+    def test_single_repo_resolver_uses_project_root(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+
+        from echelon.cli import _resolve_harness_workspace_target
+
+        target = _resolve_harness_workspace_target(tmp_path, explicit_target=None)
+
+        assert target.workspace_root == tmp_path.resolve()
+        assert target.workspace_git_role == "source"
+        assert target.source_root == tmp_path.resolve()
+        assert target.source_id == "."
+        assert target.source_git_role == "source"
+
     def test_no_targets_in_spec_uses_single_repo_path(self, tmp_path: Path) -> None:
         """Spec with no targets and local echelon-config.yml: run_multi_target never called."""
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
@@ -98,6 +112,7 @@ class TestSingleRepoPathUnchanged:
         This is the kill-gate scenario: a polyrepo root that has its own echelon-config.yml
         (e.g. for deploy) must not silently run the harness against itself.
         """
+        (tmp_path / ".git").mkdir()
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
@@ -107,16 +122,21 @@ class TestSingleRepoPathUnchanged:
         (spec_dir / "spec.md").write_text(
             "---\ntargets:\n  - repo-a\n---\n# spec\n", encoding="utf-8"
         )
+        target = tmp_path / "repo-a"
+        (target / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
 
         import os
         orig = os.getcwd()
         try:
             os.chdir(tmp_path)
             from echelon.cli import _cmd_harness_run
-            with pytest.raises(SystemExit) as exc:
-                _cmd_harness_run(["024"])
-            # validate_targets exits 1 because repo-a doesn't exist
-            assert exc.value.code == 1
+            with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+                with pytest.raises(SystemExit) as exc:
+                    _cmd_harness_run(["024"])
+            assert exc.value.code == 0
+            mock_run.assert_called_once()
+            assert mock_run.call_args.args[1] == [target.resolve()]
         finally:
             os.chdir(orig)
 
@@ -190,6 +210,7 @@ class TestSingleRepoPathUnchanged:
     def test_spec_without_targets_in_polyrepo_blocks_before_wrapper_harness(
         self, tmp_path: Path, capsys
     ) -> None:
+        (tmp_path / ".git").mkdir()
         spec_dir = tmp_path / "specs" / "024-test"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Wrapper spec\n", encoding="utf-8")
@@ -206,12 +227,12 @@ class TestSingleRepoPathUnchanged:
             from echelon.cli import _cmd_harness_run
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["024"])
-            assert exc.value.code == 1
+            assert exc.value.code == 2
         finally:
             os.chdir(orig)
 
         err = capsys.readouterr().err
-        assert "No implementation target configured" in err
+        assert "Multiple source roots found" in err
         assert "echelon spec target" in err
 
     def test_find_spec_dir_local_takes_precedence(self, tmp_path: Path) -> None:

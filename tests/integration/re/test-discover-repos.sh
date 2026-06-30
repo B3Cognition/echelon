@@ -53,6 +53,18 @@ assert_contains() {
     fi
 }
 
+assert_file_exists() {
+    local label="$1"
+    local path="$2"
+    if [[ -f "$path" ]]; then
+        echo "  PASS: $label"
+        PASS_COUNT=$((PASS_COUNT + 1))
+    else
+        echo "  FAIL: $label (missing: $path)"
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+    fi
+}
+
 # ---------- prerequisites ----------
 
 if [[ ! -x "$DISCOVER_SCRIPT" ]]; then
@@ -70,8 +82,9 @@ fi
 echo ""
 echo "=== Test 1: polyrepo detection ==="
 
-TMPOUT1=$(mktemp)
-trap 'rm -f "$TMPOUT1"' EXIT
+TMPOUT1_DIR=$(mktemp -d)
+TMPOUT1="$TMPOUT1_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPOUT1_DIR"' EXIT
 
 (cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT1")
 
@@ -87,6 +100,21 @@ assert_eq "discovers 3 repos" "3" "$REPOS_LEN"
 # Should include repo-a, repo-b, repo-c
 REPO_NAMES=$(jq -r '.repos[].name' "$TMPOUT1" | sort | tr '\n' ',' | sed 's/,$//')
 assert_eq "repo names" "repo-a,repo-b,repo-c" "$REPO_NAMES"
+
+WORKSPACE_MANIFEST1="$TMPOUT1_DIR/workspace-manifest.json"
+assert_file_exists "workspace manifest written next to repos manifest" "$WORKSPACE_MANIFEST1"
+
+WORKSPACE_SCHEMA_VERSION=$(jq '.schema_version' "$WORKSPACE_MANIFEST1")
+assert_eq "workspace manifest schema_version is 1" "1" "$WORKSPACE_SCHEMA_VERSION"
+
+WORKSPACE_GIT_ROLE=$(jq -r '.workspace.git_role' "$WORKSPACE_MANIFEST1")
+assert_eq "workspace git_role is orchestration" "orchestration" "$WORKSPACE_GIT_ROLE"
+
+WORKSPACE_SOURCES_LEN=$(jq '.sources | length' "$WORKSPACE_MANIFEST1")
+assert_eq "workspace manifest has 3 sources" "3" "$WORKSPACE_SOURCES_LEN"
+
+WORKSPACE_SOURCE_PATHS=$(jq -r '.sources[].path' "$WORKSPACE_MANIFEST1" | sort | tr '\n' ',' | sed 's/,$//')
+assert_eq "workspace source paths" "repo-a,repo-b,repo-c" "$WORKSPACE_SOURCE_PATHS"
 
 # Should NOT include .specify or not-a-repo
 NAMES_RAW=$(jq -r '.repos[].name' "$TMPOUT1")
@@ -113,7 +141,7 @@ echo "=== Test 2: single-repo detection ==="
 
 TMPOUT2=$(mktemp)
 # update trap to clean both
-trap 'rm -f "$TMPOUT1" "$TMPOUT2"' EXIT
+trap 'rm -rf "$TMPOUT1_DIR"; rm -f "$TMPOUT2"' EXIT
 
 (cd "$FIXTURES_DIR/single-repo" && "$DISCOVER_SCRIPT" "$TMPOUT2")
 
@@ -154,7 +182,7 @@ echo "=== Test 4: has_git detection ==="
 mkdir -p "$FIXTURES_DIR/polyrepo/repo-b/.git"
 
 TMPOUT4=$(mktemp)
-trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4"; rm -rf "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
+trap 'rm -rf "$TMPOUT1_DIR"; rm -f "$TMPOUT2" "$TMPOUT4"; rm -rf "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
 
 (cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT4")
 
@@ -168,7 +196,7 @@ rm -rf "$FIXTURES_DIR/polyrepo/repo-b/.git"
 printf 'gitdir: ../.git/modules/repo-b\n' > "$FIXTURES_DIR/polyrepo/repo-b/.git"
 
 TMPOUT4_FILE=$(mktemp)
-trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4" "$TMPOUT4_FILE"; rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
+trap 'rm -rf "$TMPOUT1_DIR"; rm -f "$TMPOUT2" "$TMPOUT4" "$TMPOUT4_FILE"; rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
 
 (cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT4_FILE")
 
@@ -182,7 +210,7 @@ rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"
 
 # Re-run without .git to check repo-c has_git false
 TMPOUT4b=$(mktemp)
-trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4" "$TMPOUT4b"' EXIT
+trap 'rm -rf "$TMPOUT1_DIR"; rm -f "$TMPOUT2" "$TMPOUT4" "$TMPOUT4b"' EXIT
 
 (cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT4b")
 
@@ -216,7 +244,7 @@ echo "=== Test 6b: wrapper repo with child repos ==="
 mkdir -p "$FIXTURES_DIR/polyrepo/.git"
 
 TMPOUT6B=$(mktemp)
-trap 'rm -f "$TMPOUT1" "$TMPOUT2" "$TMPOUT4" "$TMPOUT4b" "$TMPOUT4_FILE" "$TMPOUT6B"; rm -rf "$FIXTURES_DIR/polyrepo/.git"; rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
+trap 'rm -rf "$TMPOUT1_DIR"; rm -f "$TMPOUT2" "$TMPOUT4" "$TMPOUT4b" "$TMPOUT4_FILE" "$TMPOUT6B"; rm -rf "$FIXTURES_DIR/polyrepo/.git"; rm -f "$FIXTURES_DIR/polyrepo/repo-b/.git"' EXIT
 
 (cd "$FIXTURES_DIR/polyrepo" && "$DISCOVER_SCRIPT" "$TMPOUT6B")
 

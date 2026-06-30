@@ -107,16 +107,24 @@ re:
 
 ### Step 1: Detect polyrepo mode
 
-Read the repos manifest to determine if this is a polyrepo:
+Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
+
+Read the workspace manifest first, falling back to the repos manifest, to determine if this is a polyrepo:
 
 ```bash
 RE_OUTPUT_DIR="${RE_OUTPUT_DIR:-runs/$(cat runs/.current 2>/dev/null)/re}"
 if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
   RE_OUTPUT_DIR=".specify/echelon/re"  # standalone fallback
 fi
-MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
+WORKSPACE_MANIFEST="$RE_OUTPUT_DIR/workspace-manifest.json"
+REPOS_MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
+MANIFEST="$REPOS_MANIFEST"
 export MANIFEST
-if [ -f "$MANIFEST" ]; then
+if [ -f "$WORKSPACE_MANIFEST" ]; then
+    MANIFEST="$WORKSPACE_MANIFEST"
+    export MANIFEST
+    MODE=$(jq -r 'if (.sources // [] | length) > 1 then "polyrepo" else "single" end' "$MANIFEST")
+elif [ -f "$MANIFEST" ]; then
     MODE=$(jq -r '.mode // (if (.repo_count // 0) > 1 then "polyrepo" else "single" end)' "$MANIFEST")
 else
     MODE="single"
@@ -145,8 +153,11 @@ with open(os.environ['MANIFEST']) as f:
 threshold = int('$THRESHOLD')
 overrides = {}
 
-for repo in manifest.get('repos', []):
-    name = repo['name']
+entries = manifest.get('sources') or manifest.get('repos') or []
+for repo in entries:
+    name = repo.get('id') or repo.get('name') or repo.get('path')
+    if not name:
+        continue
     count = repo.get('source_file_count', 0)
     if count <= threshold:
         overrides[name] = {
@@ -218,7 +229,7 @@ Use the Skill tool to invoke the echelon re-extract command. The Mode 1 config i
 speckit.echelon.re-extract
 ```
 
-When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. echelon's re-* commands will automatically read the local-config.yml overrides. In polyrepo mode, re-extract reads `repos-manifest.json` and handles the per-repo extraction loop internally.
+When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. echelon's re-* commands will automatically read the local-config.yml overrides. In polyrepo mode, re-extract writes and prefers `workspace-manifest.json` when present, while retaining `repos-manifest.json` as a compatibility fallback for older runs.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 3 with the generated artifacts
@@ -253,12 +264,15 @@ echelon_result:
     golddigger_status: complete
     golddigger_mode: polyrepo-survey
     golddigger_artifacts:
-      manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
+      manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"
+      repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
       cross_repo: "{RE_OUTPUT_DIR}/cross-repo.json"
       per_repo:
         - "{RE_OUTPUT_DIR}/<repo-name>/"
-      codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json"
       codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"
+      per_repo_codegraph:
+        - "{RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json"
+        - "{RE_OUTPUT_DIR}/<repo-name>/codegraph-analysis.json"
     golddigger_notes: []
 ```
 
@@ -409,8 +423,10 @@ Artifacts: {RE_OUTPUT_DIR}/analysis.json
 speckit-echelon-golddigger (GOLDDIGGER) POLYREPO SURVEY COMPLETE
 Status: <complete|partial|failed>
 Repos: <count>
-Manifest: {RE_OUTPUT_DIR}/repos-manifest.json
+Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json
 Cross-repo: {RE_OUTPUT_DIR}/cross-repo.json
+CodeGraph summary: {RE_OUTPUT_DIR}/codegraph-summary.json
+Per-source CodeGraph: {RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json
 ```
 
 **Mode 2:**

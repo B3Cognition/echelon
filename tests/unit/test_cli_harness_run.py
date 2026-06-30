@@ -11,8 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from harness.run_intent import parse_intent
+from echelon.workspace_model import WorkspaceInfo, WorkspaceManifest
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+from harness.run_intent import parse_intent
 
 
 VALID_PLAN = """# Implementation Plan: Demo
@@ -59,6 +60,11 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
         else:
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
+
+
+@pytest.fixture(autouse=True)
+def _git_backed_workspace(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
 
 
 @pytest.mark.unit
@@ -116,6 +122,29 @@ class TestHarnessRunArgParsing:
 
 @pytest.mark.unit
 class TestHarnessRunTaskFormatErrors:
+    def test_branchless_harness_run_blocks_with_full_rerun_command(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        (tmp_path / ".git").rmdir()
+        source = tmp_path / "og-platform"
+        source.mkdir()
+        (source / ".git").mkdir()
+        (source / "package.json").write_text("{}", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        from echelon.cli import _cmd_harness_run
+
+        with pytest.raises(SystemExit) as exc:
+            _cmd_harness_run(["003", "mode=banzai", "strategy=soar", "finish slice"])
+
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "workspace root is not a Git repo" in err
+        assert "echelon harness run 003 mode=banzai strategy=soar 'finish slice'" in err
+
     def test_harness_run_snapshots_spec_before_preflight_exit(
         self,
         tmp_path: Path,
@@ -137,7 +166,7 @@ class TestHarnessRunTaskFormatErrors:
         with pytest.raises(SystemExit) as exc:
             _cmd_harness_run(["003"])
 
-        assert exc.value.code == 1
+        assert exc.value.code == 2
         capsys.readouterr()
         snapshots = list((tmp_path / "runs" / "spec-snapshots").glob("003-test-*"))
         assert len(snapshots) == 1
@@ -155,6 +184,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -185,6 +215,42 @@ class TestHarnessRunTaskFormatErrors:
         assert "python -m harness migrate-tasks" in err
         assert "--write" in err
 
+    def test_old_task_format_preserves_full_rerun_command(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        spec_dir = tmp_path / "specs" / "003-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("### T-001: Legacy task\n", encoding="utf-8")
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
+            from echelon.cli import _cmd_harness_run
+
+            with pytest.raises(SystemExit):
+                _cmd_harness_run(["003", "mode=banzai", "strategy=soar", "finish slice"])
+
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "echelon harness run 003 mode=banzai strategy=soar 'finish slice'" in err
+
     def test_invalid_plan_format_exits_with_migration_guidance(
         self,
         tmp_path: Path,
@@ -194,6 +260,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -236,6 +303,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -279,6 +347,7 @@ class TestHarnessRunTaskFormatErrors:
         echelon_yml = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         echelon_yml.parent.mkdir(parents=True)
         echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
 
         mirror = tmp_path / "runs" / "mirror.git"
         mirror.mkdir(parents=True)
@@ -313,7 +382,22 @@ class TestHarnessRunTaskFormatErrors:
 
 @pytest.mark.unit
 class TestHarnessTargetPreflight:
-    def test_semi_mode_recommends_detected_target_and_stops(
+    def test_resolver_uses_single_source_root(self, tmp_path: Path) -> None:
+        source = tmp_path / "og-platform"
+        (source / ".git").mkdir(parents=True)
+        (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+        from echelon.cli import _resolve_harness_workspace_target
+
+        target = _resolve_harness_workspace_target(tmp_path, explicit_target=None)
+
+        assert target.workspace_root == tmp_path.resolve()
+        assert target.workspace_git_role == "orchestration"
+        assert target.source_root == source.resolve()
+        assert target.source_id == "og-platform"
+        assert target.source_git_role == "source"
+
+    def test_semi_mode_blocks_multiple_workspace_source_roots(
         self,
         tmp_path: Path,
         monkeypatch,
@@ -349,12 +433,13 @@ class TestHarnessTargetPreflight:
         with pytest.raises(SystemExit) as exc:
             _cmd_harness_run(["001", "mode=semi"])
 
-        assert exc.value.code == 1
+        assert exc.value.code == 2
         err = capsys.readouterr().err
-        assert "Recommended implementation target: rbf-opta-points" in err
-        assert "echelon spec target 001-opta-points-perf-fix rbf-opta-points" in err
+        assert "Multiple source roots found" in err
+        assert "rbf-opta-points" in err
+        assert "qag-load-testing-framework" in err
 
-    def test_banzai_mode_writes_detected_target_and_dispatches(
+    def test_harness_run_uses_single_source_root(
         self,
         tmp_path: Path,
         monkeypatch,
@@ -364,32 +449,138 @@ class TestHarnessTargetPreflight:
         _write_phase_a_build_inputs(spec_dir)
         (spec_dir / "spec.md").write_text("# OptaPoints\n", encoding="utf-8")
         (spec_dir / "tasks.md").write_text(
-            "Fix `src/lib/sdapi/services/shared-promise.ts`\n",
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
             encoding="utf-8",
         )
 
-        target = root / "rbf-opta-points"
+        target = root / "og-platform"
         (target / ".git").mkdir(parents=True)
         yml = target / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         yml.parent.mkdir(parents=True)
         yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
-        (target / "src/lib/sdapi/services").mkdir(parents=True)
-        (target / "src/lib/sdapi/services/shared-promise.ts").write_text(
-            "export {}\n",
-            encoding="utf-8",
-        )
-
-        other = root / "qag-load-testing-framework"
-        (other / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
 
         monkeypatch.chdir(root)
         from echelon.cli import _cmd_harness_run
+        with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001", "mode=semi"])
+
+        assert exc.value.code == 0
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[1] == [target.resolve()]
+
+    def test_existing_target_id_is_canonicalized_to_source_path_before_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n- api\n---\n# Feature\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        target = root / "services" / "api"
+        (target / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
+
+        monkeypatch.chdir(root)
+        from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
         from harness.spec_frontmatter import read_frontmatter
 
+        def fake_resolve(project_root, explicit_target, **kwargs):
+            assert explicit_target == "api"
+            return HarnessWorkspaceTarget(
+                workspace_root=root.resolve(),
+                workspace_git_role="orchestration",
+                source_root=target.resolve(),
+                source_id="api",
+                source_git_role="source",
+            )
+
+        monkeypatch.setattr("echelon.cli._resolve_harness_workspace_target", fake_resolve)
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001", "mode=banzai"])
 
         assert exc.value.code == 0
-        assert read_frontmatter(spec_dir)["targets"] == ["rbf-opta-points"]
-        mock_run.assert_called_once()
+        assert read_frontmatter(spec_dir)["targets"] == ["services/api"]
+        dispatched_targets = mock_run.call_args.args[1]
+        assert dispatched_targets == [target.resolve()]
+
+    def test_multiple_workspace_source_roots_stop_before_workspace_config(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        root = tmp_path
+        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        for name in ["og-platform", "pbg-api"]:
+            source = root / name
+            (source / ".git").mkdir(parents=True)
+            (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+        monkeypatch.chdir(root)
+        from echelon.cli import _cmd_harness_run
+
+        with patch("harness.config.load_config") as mock_load_config:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001", "mode=banzai"])
+
+        assert exc.value.code == 2
+        mock_load_config.assert_not_called()
+        err = capsys.readouterr().err
+        assert "Multiple source roots found" in err
+        assert "og-platform" in err
+        assert "pbg-api" in err
+        assert "echelon spec target 001-feature <source-path>" in err
+
+    def test_no_workspace_source_roots_stop_before_workspace_config(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        root = tmp_path
+        echelon_yml = root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+        echelon_yml.parent.mkdir(parents=True)
+        echelon_yml.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+
+        spec_dir = root / "specs" / "001-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.chdir(root)
+        from echelon.cli import _cmd_harness_run
+
+        with patch("harness.config.load_config") as mock_load_config:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001"])
+
+        assert exc.value.code == 2
+        mock_load_config.assert_not_called()
+        err = capsys.readouterr().err
+        assert "No source roots found" in err

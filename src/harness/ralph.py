@@ -1940,6 +1940,11 @@ class RalphController:
         spec_dir = self._find_spec_dir(worktree_path)
         spec_artifacts_mode = self._spec_artifacts_mode()
         state = self._state_store.read()
+        workspace_root = state.get("workspace_root") or str(orchestration_root)
+        workspace_git_role = state.get("workspace_git_role") or "unknown"
+        source_root = state.get("source_root") or worktree_path
+        source_id = state.get("source_id") or Path(str(source_root)).name
+        source_git_role = state.get("source_git_role") or "source"
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
         spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
         tasks_file_text = str(spec_dir / "tasks.md" if spec_dir is not None else "MISSING")
@@ -1960,6 +1965,11 @@ class RalphController:
             f"worktree: {worktree_path}\n"
             f"target_repo_worktree: {worktree_path}\n"
             f"orchestration_root: {orchestration_root}\n"
+            f"workspace_root: {workspace_root}\n"
+            f"workspace_git_role: {workspace_git_role}\n"
+            f"source_root: {source_root}\n"
+            f"source_id: {source_id}\n"
+            f"source_git_role: {source_git_role}\n"
             f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"
             f"spec_file: {spec_file_text}\n"
@@ -1969,6 +1979,9 @@ class RalphController:
             f"state_file: {self._state_store.state_file}\n"
             f"state_dir: {self._state_store.state_dir}\n"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
+            "Use `source_root` only as source identity/context; implementation edits must stay in `worktree`.\n"
+            "Do not search for the application repo; it is named here and mirrored by `worktree`.\n"
+            "Use `workspace_root` only for Echelon/spec orchestration unless `source_root` is the same path.\n"
             "Use `spec_dir`, `spec_file`, and `tasks_file` for spec artifacts and progress/report updates.\n"
             "Do not search for harness source, Ralph code, or ralph.py. If harness internals are needed, read files under `harness_source_dir` directly.\n"
             "When `spec_artifacts_mode` is `worktree`, spec artifact writes must stay under `worktree`.\n"

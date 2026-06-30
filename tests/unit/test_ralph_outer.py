@@ -406,6 +406,30 @@ class TestOuterLoopConvergence:
         assert f"tasks_file: {tasks_file}" in prompt
         assert "spec_dir: MISSING" not in prompt
 
+    def test_harness_context_names_workspace_and_source_roots(self, tmp_path: Path) -> None:
+        """Build prompts must distinguish orchestration workspace from source root."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        source = workspace / "og-platform"
+        source.mkdir(parents=True)
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["workspace_git_role"] = "orchestration"
+        state["source_root"] = str(source)
+        state["source_id"] = "og-platform"
+        state["source_git_role"] = "source"
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(source))
+
+        assert f"workspace_root: {workspace}" in prompt
+        assert "workspace_git_role: orchestration" in prompt
+        assert f"source_root: {source}" in prompt
+        assert "source_id: og-platform" in prompt
+        assert "source_git_role: source" in prompt
+        assert "Do not search for the application repo" in prompt
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(

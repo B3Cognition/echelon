@@ -18,12 +18,233 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR="${1:-$(re_dir)}"
 MANIFEST_PATH="${2:-}"
 
+resolve_workspace_manifest() {
+    local repos_manifest="$1"
+    local candidate
+
+    if [[ -z "$repos_manifest" ]]; then
+        printf '%s\n' ""
+        return 0
+    fi
+
+    candidate="$(dirname "$repos_manifest")/workspace-manifest.json"
+    if [[ -f "$candidate" ]]; then
+        printf '%s\n' "$candidate"
+    else
+        printf '%s\n' ""
+    fi
+}
+
+manifest_source_count() {
+    local manifest_path="$1"
+    local workspace_manifest="$2"
+
+    if [[ -n "$workspace_manifest" ]]; then
+        jq '.sources | length' "$workspace_manifest" 2>/dev/null || echo 0
+    else
+        jq '.repos | length' "$manifest_path" 2>/dev/null || echo 0
+    fi
+}
+
+manifest_source_name() {
+    local manifest_path="$1"
+    local workspace_manifest="$2"
+    local index="$3"
+    local source_id
+    local source_path
+    local workspace_root
+
+    if [[ -n "$workspace_manifest" ]]; then
+        source_id="$(jq -r ".sources[$index].id // empty" "$workspace_manifest")"
+        source_path="$(jq -r ".sources[$index].path // empty" "$workspace_manifest")"
+        if [[ -n "$source_id" && "$source_id" != "." ]]; then
+            printf '%s\n' "$source_id"
+        elif [[ -n "$source_path" && "$source_path" != "." ]]; then
+            basename "$source_path"
+        else
+            workspace_root="$(jq -r ".workspace.root // empty" "$workspace_manifest")"
+            basename "$workspace_root"
+        fi
+    else
+        jq -r ".repos[$index].name" "$manifest_path"
+    fi
+}
+
+manifest_source_path() {
+    local manifest_path="$1"
+    local workspace_manifest="$2"
+    local index="$3"
+    local source_path
+    local workspace_root
+
+    if [[ -n "$workspace_manifest" ]]; then
+        source_path="$(jq -r ".sources[$index].path // empty" "$workspace_manifest")"
+        workspace_root="$(jq -r ".workspace.root // empty" "$workspace_manifest")"
+        if [[ "$source_path" = /* ]]; then
+            printf '%s\n' "$source_path"
+        elif [[ -n "$workspace_root" ]]; then
+            printf '%s\n' "$workspace_root/$source_path"
+        else
+            printf '%s\n' "$source_path"
+        fi
+    else
+        jq -r ".repos[$index].path" "$manifest_path"
+    fi
+}
+
+copy_manifest_artifacts() {
+    local repos_manifest="$1"
+    local workspace_manifest="$2"
+
+    if [[ -n "$repos_manifest" && -f "$repos_manifest" && "$repos_manifest" != "$OUTPUT_DIR/repos-manifest.json" ]]; then
+        cp "$repos_manifest" "$OUTPUT_DIR/repos-manifest.json"
+    fi
+    if [[ -n "$workspace_manifest" && -f "$workspace_manifest" && "$workspace_manifest" != "$OUTPUT_DIR/workspace-manifest.json" ]]; then
+        cp "$workspace_manifest" "$OUTPUT_DIR/workspace-manifest.json"
+    fi
+}
+
+write_workspace_compat_repos_manifest() {
+    local workspace_manifest="$1"
+    local legacy_repos_manifest="$2"
+    local output_path="$3"
+    local legacy_json="{}"
+
+    if [[ -n "$legacy_repos_manifest" && -f "$legacy_repos_manifest" ]]; then
+        legacy_json="$(cat "$legacy_repos_manifest")"
+    fi
+
+    jq -n \
+        --slurpfile workspace "$workspace_manifest" \
+        --argjson legacy "$legacy_json" \
+        --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        '
+        def basename_path:
+            split("/") | map(select(. != "")) | last;
+
+        ($workspace[0]) as $wm
+        | ($wm.workspace.root // "") as $root
+        | [
+            ($wm.sources // [])[]
+            | . as $source
+            | (
+                if (($source.id // "") != "" and ($source.id // "") != ".") then
+                    $source.id
+                elif (($source.path // "") != "" and ($source.path // "") != ".") then
+                    ($source.path | basename_path)
+                else
+                    ($root | basename_path)
+                end
+              ) as $name
+            | (
+                if (($source.path // "") | startswith("/")) then
+                    $source.path
+                elif (($source.path // "") == "." or ($source.path // "") == "") then
+                    $root
+                else
+                    ($root + "/" + $source.path)
+                end
+              ) as $abs_path
+            | (
+                ($legacy.repos // [])
+                | map(select(.name == $name or .path == $abs_path or (.path | endswith("/" + $name))))
+                | first
+              ) as $legacy_repo
+            | {
+                name: $name,
+                path: $abs_path,
+                has_git: ($source.git_present // false),
+                markers: ($source.project_markers // []),
+                source_file_count: ($source.source_file_count // 0),
+                pkg_identifiers: (($legacy_repo.pkg_identifiers // []))
+              }
+          ] as $repos
+        | {
+            discovered_at: $generated_at,
+            root: $root,
+            mode: (if ($repos | length) > 1 then "polyrepo" else "single" end),
+            repo_count: ($repos | length),
+            repos: $repos
+          }
+        ' > "$output_path"
+
+    local repo_count
+    local i
+    local repo_path
+    local pkg_identifiers
+    local npm_name
+    local go_module
+    local py_name
+    local tmp_path
+
+    repo_count=$(jq '.repos | length' "$output_path")
+    for (( i=0; i<repo_count; i++ )); do
+        repo_path=$(jq -r ".repos[$i].path" "$output_path")
+        pkg_identifiers=$(jq -c ".repos[$i].pkg_identifiers // []" "$output_path")
+
+        if [[ -f "$repo_path/package.json" ]]; then
+            npm_name=$(jq -r '.name // empty' "$repo_path/package.json" 2>/dev/null || true)
+            if [[ -n "$npm_name" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$npm_name" --arg type "npm" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        fi
+
+        if [[ -f "$repo_path/go.mod" ]]; then
+            go_module=$(head -1 "$repo_path/go.mod" | sed -n 's/^module //p' | tr -d '\r' || true)
+            if [[ -n "$go_module" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$go_module" --arg type "go" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        fi
+
+        if [[ -f "$repo_path/pyproject.toml" ]] && command -v python3 >/dev/null 2>&1; then
+            py_name=$(python3 - "$repo_path/pyproject.toml" 2>/dev/null <<'PY' || true
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        sys.exit(0)
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except Exception:
+    sys.exit(0)
+
+name = data.get("project", {}).get("name")
+if not name:
+    name = data.get("tool", {}).get("poetry", {}).get("name")
+if isinstance(name, str):
+    print(name)
+PY
+)
+            if [[ -n "$py_name" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$py_name" --arg type "pip" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        elif [[ -f "$repo_path/setup.py" ]]; then
+            py_name=$(grep -E 'name[[:space:]]*=' "$repo_path/setup.py" 2>/dev/null | head -1 | sed 's/.*name[ ]*=[ ]*["'"'"']\([^"'"'"']*\)["'"'"'].*/\1/' || true)
+            if [[ -n "$py_name" ]]; then
+                pkg_identifiers=$(echo "$pkg_identifiers" | jq --arg id "$py_name" --arg type "pip" '. + [{id: $id, type: $type}] | unique_by(.id, .type)')
+            fi
+        fi
+
+        tmp_path="$output_path.tmp"
+        jq --argjson index "$i" --argjson pkg_identifiers "$pkg_identifiers" \
+            '.repos[$index].pkg_identifiers = $pkg_identifiers' \
+            "$output_path" > "$tmp_path"
+        mv "$tmp_path" "$output_path"
+    done
+}
+
 mkdir -p "$OUTPUT_DIR"
 # Resolve to absolute paths — required because polyrepo mode cd's into repo dirs
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
 if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
     MANIFEST_PATH="$(cd "$(dirname "$MANIFEST_PATH")" && pwd)/$(basename "$MANIFEST_PATH")"
 fi
+WORKSPACE_MANIFEST="$(resolve_workspace_manifest "$MANIFEST_PATH")"
 
 # ---------- Determine mode ----------
 # If manifest exists and has repos, use manifest-driven mode (cd into each repo)
@@ -31,7 +252,7 @@ fi
 
 USE_MANIFEST=false
 if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
-    REPO_COUNT=$(jq '.repos | length' "$MANIFEST_PATH" 2>/dev/null || echo 0)
+    REPO_COUNT=$(manifest_source_count "$MANIFEST_PATH" "$WORKSPACE_MANIFEST")
     if [[ "$REPO_COUNT" -gt 0 ]]; then
         USE_MANIFEST=true
     fi
@@ -100,6 +321,7 @@ write_codegraph_summary() {
 write_polyrepo_codegraph_summary() {
     local output_dir="$1"
     local manifest_path="$2"
+    local workspace_manifest="$3"
     local summary_path="$output_dir/codegraph-summary.json"
     local repo_summaries="[]"
     local repo_count
@@ -108,9 +330,9 @@ write_polyrepo_codegraph_summary() {
     local index_state
     local symbols
 
-    repo_count=$(jq '.repos | length' "$manifest_path" 2>/dev/null || echo 0)
+    repo_count=$(manifest_source_count "$manifest_path" "$workspace_manifest")
     for (( i=0; i<repo_count; i++ )); do
-        repo_name=$(jq -r ".repos[$i].name" "$manifest_path")
+        repo_name=$(manifest_source_name "$manifest_path" "$workspace_manifest" "$i")
         repo_summary="$output_dir/$repo_name/codegraph-summary.json"
         if [[ -f "$repo_summary" ]]; then
             index_state=$(jq -r '.index_state // "unknown"' "$repo_summary" 2>/dev/null || echo "unknown")
@@ -144,8 +366,20 @@ write_polyrepo_codegraph_summary() {
 # ---------- Manifest-driven mode (1 or more repos in subdirectories) ----------
 
 if [[ "$USE_MANIFEST" == "true" ]]; then
+    copy_manifest_artifacts "$MANIFEST_PATH" "$WORKSPACE_MANIFEST"
+    ANALYSIS_REPOS_MANIFEST="$MANIFEST_PATH"
+    if [[ -n "$WORKSPACE_MANIFEST" ]]; then
+        ANALYSIS_REPOS_MANIFEST="$OUTPUT_DIR/repos-manifest.json"
+        write_workspace_compat_repos_manifest "$WORKSPACE_MANIFEST" "$MANIFEST_PATH" "$ANALYSIS_REPOS_MANIFEST"
+    fi
+
     echo "Running reverse engineering analysis ($REPO_COUNT repo(s))..." >&2
     echo "Output directory: $OUTPUT_DIR" >&2
+    if [[ -n "$WORKSPACE_MANIFEST" ]]; then
+        echo "Manifest: workspace-manifest.json (preferred)" >&2
+    else
+        echo "Manifest: repos-manifest.json (compatibility fallback)" >&2
+    fi
     echo "" >&2
 
     RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
@@ -162,8 +396,8 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     fi
 
     for (( i=0; i<REPO_COUNT; i++ )); do
-        REPO_NAME=$(jq -r ".repos[$i].name" "$MANIFEST_PATH")
-        REPO_PATH=$(jq -r ".repos[$i].path" "$MANIFEST_PATH")
+        REPO_NAME=$(manifest_source_name "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$i")
+        REPO_PATH=$(manifest_source_path "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$i")
 
         # Remove trailing slash for clean cd
         REPO_PATH="${REPO_PATH%/}"
@@ -263,7 +497,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     # Cross-repo extraction only makes sense with multiple repos
     CROSS_REPO_PATH=""
     if [[ "$REPO_COUNT" -gt 1 ]]; then
-        "$SCRIPT_DIR/extract-cross-repo.sh" "$OUTPUT_DIR" "$MANIFEST_PATH"
+        "$SCRIPT_DIR/extract-cross-repo.sh" "$OUTPUT_DIR" "$ANALYSIS_REPOS_MANIFEST"
         CROSS_REPO_PATH="cross-repo.json"
     fi
 
@@ -277,9 +511,8 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     repo_analyses="[]"
 
     # Get repo names from manifest
-    REPO_NAMES=$(jq -r '.repos[].name' "$MANIFEST_PATH")
-
-    for REPO_NAME in $REPO_NAMES; do
+    for (( i=0; i<REPO_COUNT; i++ )); do
+        REPO_NAME=$(manifest_source_name "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$i")
         REPO_ANALYSIS="$OUTPUT_DIR/$REPO_NAME/analysis.json"
         if [[ -f "$REPO_ANALYSIS" ]]; then
             repo_files=$(jq -r '.metadata.total_files // 0' "$REPO_ANALYSIS" 2>/dev/null || echo 0)
@@ -291,6 +524,11 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     done
 
     # Write aggregate analysis.json (cross_repo_path only if multiple repos)
+    aggregate_manifest_path="repos-manifest.json"
+    if [[ -n "$WORKSPACE_MANIFEST" ]]; then
+        aggregate_manifest_path="workspace-manifest.json"
+    fi
+
     if [[ -n "$CROSS_REPO_PATH" ]]; then
         jq -n \
             --argjson repo_count "$REPO_COUNT" \
@@ -298,11 +536,12 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             --argjson total_lines "$total_lines" \
             --argjson repos "$repo_analyses" \
             --arg cross_repo "$CROSS_REPO_PATH" \
+            --arg manifest_path "$aggregate_manifest_path" \
             '{
                 metadata: { repo_count: $repo_count, total_files: $total_files, total_lines: $total_lines },
                 repos: $repos,
                 cross_repo_path: $cross_repo,
-                manifest_path: "repos-manifest.json"
+                manifest_path: $manifest_path
             }' > "$OUTPUT_DIR/analysis.json"
     else
         jq -n \
@@ -310,14 +549,15 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             --argjson total_files "$total_files" \
             --argjson total_lines "$total_lines" \
             --argjson repos "$repo_analyses" \
+            --arg manifest_path "$aggregate_manifest_path" \
             '{
                 metadata: { repo_count: $repo_count, total_files: $total_files, total_lines: $total_lines },
                 repos: $repos,
-                manifest_path: "repos-manifest.json"
+                manifest_path: $manifest_path
             }' > "$OUTPUT_DIR/analysis.json"
     fi
 
-    write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH"
+    write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST"
 
     echo "Analysis complete! ($REPO_COUNT repo(s))" >&2
     echo "Per-repo outputs in: $OUTPUT_DIR/{repo-name}/" >&2
