@@ -355,3 +355,7 @@ Every stage should be releasable independently. Do not merge the final hard bloc
 Use the workspace/source-roots model and make lightweight workspace Git the required normal mode. Keep branchless support only during migration warnings, then remove it as a supported operating mode.
 
 This is a bigger change than the local polyrepo patches, but it reduces the long-term surface area: Echelon stops guessing whether the current directory is "the app" and instead operates from an explicit workspace model.
+
+## Implementation Status
+
+Implemented on branch `workspace-source-roots-design`. Verification evidence is in `docs/superpowers/reports/2026-06-18-workspace-source-roots-verification.md`.
