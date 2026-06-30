@@ -42,6 +42,25 @@ def _make_echelon_yml(base: Path, verify_command: str = "") -> Path:
     return yml_dir / "echelon-config.yml"
 
 
+def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical_tasks: bool = True) -> Path:
+    """Create minimal published Phase A build inputs for harness preflight."""
+    spec_dir = base / "specs" / spec_dir_name
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    tasks = (
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
+        if canonical_tasks
+        else "- [ ] implement the thing\n"
+    )
+    (spec_dir / "tasks.md").write_text(tasks, encoding="utf-8")
+    (spec_dir / "constitution.md").write_text(
+        "# Constitution\n\nPrinciples are defined for this project.\n",
+        encoding="utf-8",
+    )
+    return spec_dir
+
+
 @pytest.mark.unit
 class TestCmdHarnessResume:
     """_cmd_harness_resume guards and banner."""
@@ -141,6 +160,67 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
+
+    def test_harness_error_retries_after_phase_a_repair_and_refreshes_spec_paths(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        spec_dir = _make_phase_a_spec(tmp_path)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "harness_error",
+            "harness_error": "no canonical task rows found",
+            "spec_dir": "/tmp/specs/001-wrong",
+            "spec_file": "/tmp/specs/001-wrong/spec.md",
+            "tasks_file": "/tmp/specs/001-wrong/tasks.md",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001", "mode=banzai"])
+
+        mock_run.assert_called_once()
+        user_message = mock_run.call_args.args[0]
+        assert "mode=banzai" in user_message
+        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        assert state["spec_dir"] == str(spec_dir)
+        assert state["spec_file"] == str(spec_dir / "spec.md")
+        assert state["tasks_file"] == str(spec_dir / "tasks.md")
+
+    def test_harness_error_stays_blocked_when_repair_preflight_fails(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path)
+        _make_phase_a_spec(tmp_path, canonical_tasks=False)
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "harness_error",
+            "harness_error": "no canonical task rows found",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_resume(["001"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "Resume preflight failed" in err
+        assert "tasks.md is not canonical" in err
+        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        assert state["termination_reason"] == "harness_error"
 
     @pytest.mark.parametrize("reason", ["build_incomplete", "publish_failed"])
     def test_recoverable_blocked_reason_recovers_and_calls_run(

@@ -953,6 +953,61 @@ def _print_harness_error_and_exit(
     sys.exit(1)
 
 
+def _refresh_harness_state_spec_paths(
+    *,
+    project_root: Path,
+    spec_id: str,
+    state: dict,
+    state_store: object,
+) -> tuple[dict, Path | None, bool]:
+    """Refresh persisted harness artifact paths from the current project.
+
+    Older or failed runs can retain stale paths in state. Resume must not trust
+    those paths when the project has a resolvable current spec directory.
+    """
+    from harness.spec_frontmatter import find_spec_dir
+
+    spec_dir = find_spec_dir(spec_id, project_root)
+    if spec_dir is None:
+        return state, None, False
+
+    updates = {
+        "spec_dir": str(spec_dir),
+        "spec_file": str(spec_dir / "spec.md"),
+        "tasks_file": str(spec_dir / "tasks.md"),
+    }
+    changed = any(str(state.get(key) or "") != value for key, value in updates.items())
+    if not changed:
+        return state, spec_dir, False
+
+    refreshed = dict(state)
+    refreshed.update(updates)
+    state_store.write(refreshed)  # type: ignore[attr-defined]
+    return refreshed, spec_dir, True
+
+
+def _harness_error_resume_blockers(*, project_root: Path, spec_id: str, spec_dir: Path | None) -> list[str]:
+    """Return blockers that make a previous harness_error unsafe to retry."""
+    if spec_dir is None:
+        return [f"no spec directory found for {spec_id!r}"]
+
+    blockers: list[str] = []
+    from harness.task_validation import TaskValidationError, count_tasks_for_spec
+
+    try:
+        task_count = count_tasks_for_spec(spec_id, project_root)
+    except TaskValidationError as exc:
+        task_count = 0
+        blockers.append(f"tasks.md is not canonical: {exc}")
+    if task_count <= 0 and not any("tasks.md" in blocker for blocker in blockers):
+        blockers.append("tasks.md has no canonical task rows")
+
+    readiness = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+    if not readiness.ready:
+        blockers.extend(readiness.blockers or ["Phase A build inputs are not ready"])
+    return blockers
+
+
 def _cmd_harness_resume(args: list[str]) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -1019,10 +1074,18 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         sys.exit(1)
 
+    state, resolved_spec_dir, spec_paths_refreshed = _refresh_harness_state_spec_paths(
+        project_root=cwd,
+        spec_id=spec_id,
+        state=state,
+        state_store=state_store,
+    )
+
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
     recoverable_reasons = {"build_incomplete", "publish_failed"}
     continuation_reasons = {"checkpoint_outer_cap"}
+    retryable_error_reasons = {"harness_error"}
 
     if current_status != "blocked" and termination_reason not in recoverable_reasons:
         print(
@@ -1032,7 +1095,12 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         sys.exit(1)
 
-    if termination_reason not in {"verify_command_needed", *recoverable_reasons, *continuation_reasons}:
+    if termination_reason not in {
+        "verify_command_needed",
+        *recoverable_reasons,
+        *continuation_reasons,
+        *retryable_error_reasons,
+    }:
         print(
             f"✗ Spec {spec_id!r} is blocked for a different reason: {termination_reason!r}.\n"
             "  Use 'echelon harness run <spec_id>' to resume.",
@@ -1041,6 +1109,66 @@ def _cmd_harness_resume(args: list[str]) -> None:
         sys.exit(1)
 
     gitops = GitOpsManager(config)
+
+    if termination_reason in retryable_error_reasons:
+        blockers = _harness_error_resume_blockers(
+            project_root=cwd,
+            spec_id=spec_id,
+            spec_dir=resolved_spec_dir,
+        )
+        if blockers:
+            print(
+                f"✗ Spec {spec_id!r} is still blocked after the previous harness error.\n"
+                "  Resume preflight failed:\n"
+                + "".join(f"  - {blocker}\n" for blocker in blockers)
+                + f"  Fix the blockers, then re-run: echelon harness resume {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        fields = [
+            ("Spec", spec_id),
+            ("Strategy", strategy),
+            ("Reason", termination_reason),
+        ]
+        if resolved_spec_dir is not None:
+            fields.append(("Spec dir", str(resolved_spec_dir)))
+        if spec_paths_refreshed:
+            fields.append(("State", "refreshed stale spec artifact paths"))
+        _banner("HARNESS RESUME — RETRYING", fields)
+
+        from harness.skills.run_skill import run
+        provider = DockerWorktreeProvider(
+            buffer_limit_bytes=config.buffer_limit_bytes,
+            container_cli=_container_runtime_cli(config),
+        )
+        user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
+        try:
+            run(user_message, provider, gitops)
+        except Exception as exc:
+            if _is_docker_unavailable_error(exc):
+                _mark_current_harness_state_blocked(
+                    cwd,
+                    spec_id,
+                    strategy,
+                    "docker_unavailable",
+                )
+                print(
+                    f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
+                    f"  Error: {exc}\n"
+                    f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
+                    f"       echelon harness resume {spec_id}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            _print_harness_error_and_exit(
+                project_root=cwd,
+                spec_id=spec_id,
+                strategy=strategy,
+                command="echelon harness resume",
+                exc=exc,
+            )
+        return
 
     if termination_reason in recoverable_reasons:
         from harness.recovery import HarnessRecoveryError, recover_blocked_run
