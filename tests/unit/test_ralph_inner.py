@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from harness.build_result import BuildResult
 from harness.config import HarnessConfig
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
@@ -242,3 +243,122 @@ class TestInnerLoopDeferredFulfillment:
         # Only one fixer was dispatched against the deferral.
         assert ctrl._exec_feedback.call_count == 1
         assert _is_fulfillment_refresh_deferred(result["final_verify"])
+
+
+@pytest.mark.unit
+class TestInnerLoopTaskProgress:
+    """Inner-loop task completion must be reconciled before fulfillment gating."""
+
+    def test_llm_feedback_preserves_completed_task_ids(self, tmp_path: Path) -> None:
+        class Runner:
+            def exec_feedback(self, worktree_path: str, prompt: str) -> BuildResult:
+                return BuildResult(
+                    exit_code=0,
+                    status="done",
+                    impasse_file=None,
+                    reason="implemented T-002",
+                    stdout="",
+                    stderr="",
+                    duration_ms=100,
+                    task_ids=["T-002"],
+                )
+
+        ctrl = _make_controller(tmp_path, [])
+        ctrl._llm_build_runner = Runner()
+
+        result = ctrl._exec_feedback(
+            handle=ctrl._provider.create(None),
+            verify_result=VerifyResult(passed=False),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path="/tmp/wt",
+            prompt="fix it",
+        )
+
+        assert result["build_status"] == "done"
+        assert result["build_reason"] == "implemented T-002"
+        assert result["task_ids"] == ["T-002"]
+
+    def test_completed_inner_task_exits_fulfillment_gap_loop(
+        self, tmp_path: Path
+    ) -> None:
+        ctrl = _make_controller(tmp_path, [])
+        initial_failure = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-gaps",
+                    "full spec still has unresolved gaps",
+                )
+            ],
+        )
+        post_fix_failure = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-gaps",
+                    "full spec still has unresolved gaps",
+                )
+            ],
+        )
+
+        def apply_progress(*, worktree_path: str, task_ids: object) -> list[str]:
+            state = ctrl._state_store.read()
+            state["build"] = {
+                "total_tasks": 24,
+                "completed_tasks": 2,
+                "tasks_completed_pct": 8,
+                "task_results": {
+                    "T-001": {"status": "DONE"},
+                    "T-002": {"status": "DONE"},
+                },
+            }
+            ctrl._state_store.write(state)
+            return ["T-002"]
+
+        ctrl._exec_feedback = MagicMock(
+            return_value={
+                "exit_code": 0,
+                "passed": True,
+                "build_status": "done",
+                "build_reason": "implemented T-002",
+                "duration_s": 0.0,
+                "tokens": 0,
+                "task_ids": ["T-002"],
+            }
+        )
+        ctrl._apply_build_task_progress = MagicMock(side_effect=apply_progress)
+        ctrl._try_checkpoint_progress_commit = MagicMock(
+            return_value={"commit": "abc123"}
+        )
+        ctrl._exec_verify = MagicMock(return_value=VerifyResult(passed=True))
+        ctrl._refresh_fulfillment_report = MagicMock(
+            side_effect=lambda verify, *_args, **_kwargs: verify
+        )
+        ctrl._apply_fulfillment_gate = MagicMock(return_value=post_fix_failure)
+
+        result = ctrl._run_inner_loop(
+            handle=ctrl._provider.create(None),
+            verify_result=initial_failure,
+            outer_iter=0,
+            max_inner=5,
+            tokens_used=0,
+            token_budget=None,
+            state=ctrl._state_store.read(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path="/tmp/wt",
+            build_prompt="build the next task",
+        )
+
+        assert result["inner_count"] == 1
+        assert result["converged"] is False
+        assert result["blocked"] is False
+        assert result["final_verify"] == post_fix_failure
+        assert ctrl._exec_feedback.call_count == 1
+        ctrl._apply_build_task_progress.assert_called_once()
+        ctrl._try_checkpoint_progress_commit.assert_called_once()
+        state = ctrl._state_store.read()
+        assert state["build"]["task_results"]["T-002"]["status"] == "DONE"

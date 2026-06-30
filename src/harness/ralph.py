@@ -953,7 +953,9 @@ class RalphController:
                     )
 
             # Run feedback (fix)
-            feedback_prompt = self._make_feedback_prompt(build_prompt, current_verify, inner_iter)
+            feedback_prompt = self._make_feedback_prompt(
+                build_prompt, current_verify, inner_iter
+            )
             before_fix_state = self._state_store.read()
             fix_result = self._exec_feedback(
                 handle, current_verify, build_command, strategy_context,
@@ -961,6 +963,38 @@ class RalphController:
                 prompt=feedback_prompt,
             )
             tokens_used += fix_result.get("tokens", 0)
+            self._enforce_completed_task_ids(fix_result, worktree_path)
+            scoped_completed_task_ids = _clean_task_ids(fix_result.get("task_ids"))
+            applied_task_ids = self._apply_build_task_progress(
+                worktree_path=worktree_path,
+                task_ids=fix_result.get("task_ids"),
+            )
+            if scoped_completed_task_ids and set(applied_task_ids) != set(
+                scoped_completed_task_ids
+            ):
+                missing_task_ids = sorted(
+                    set(scoped_completed_task_ids) - set(applied_task_ids)
+                )
+                current_verify = VerifyResult(
+                    passed=False,
+                    failures=[
+                        FailureEntry(
+                            FailureCategory.OTHER,
+                            "task-progress-update-failed",
+                            (
+                                "completed_task_ids could not be reconciled with "
+                                "canonical tasks.md: " + ", ".join(missing_task_ids)
+                            ),
+                        )
+                    ],
+                )
+                return {
+                    "converged": False,
+                    "blocked": True,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
 
             self._append_iteration_log(
                 state, outer_iter, inner_iter, "fix",
@@ -994,7 +1028,10 @@ class RalphController:
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
             current_verify = self._refresh_fulfillment_report(
-                current_verify, worktree_path
+                current_verify,
+                worktree_path,
+                completed_task_ids=scoped_completed_task_ids,
+                changed_files=self._changed_files_since_head(worktree_path),
             )
             current_verify = self._apply_fulfillment_gate(
                 current_verify, worktree_path
@@ -1016,6 +1053,20 @@ class RalphController:
             if current_verify.passed:
                 return {
                     "converged": True,
+                    "blocked": False,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
+            # Full-spec fulfillment gaps are expected while a build is still
+            # partial. If this fix completed canonical task IDs, stop the inner
+            # loop and let the outer loop checkpoint/commit progress before the
+            # next build slice, instead of escalating on the repeated aggregate
+            # fulfillment-gaps signature.
+            if applied_task_ids and _is_only_fulfillment_gaps(current_verify):
+                return {
+                    "converged": False,
                     "blocked": False,
                     "inner_count": inner_iter,
                     "tokens_used": tokens_used,
@@ -1903,10 +1954,13 @@ class RalphController:
             return {
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,
+                "build_status": result.status,
+                "build_reason": result.reason,
                 "duration_s": result.duration_ms / 1000.0,
                 "tokens": 0,
                 "impasse": result.is_impasse,
                 "impasse_file": result.impasse_file,
+                "task_ids": result.task_ids or [],
             }
         # Fallback: original sandbox path
         failures_json = json.dumps([
@@ -3002,6 +3056,15 @@ def _porcelain_path(line: str) -> str:
 
 def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
     return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
+
+
+def _is_only_fulfillment_gaps(verify_result: VerifyResult) -> bool:
+    return (
+        not verify_result.passed
+        and len(verify_result.failures) == 1
+        and verify_result.failures[0].category == FailureCategory.OTHER
+        and verify_result.failures[0].id == "fulfillment-gaps"
+    )
 
 
 def _clean_task_ids(value: object) -> List[str]:

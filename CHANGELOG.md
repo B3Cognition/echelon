@@ -144,6 +144,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   source metadata, branchless workspaces are blocked for new runs with legacy
   recovery only, and a one-time migration script initializes lightweight
   workspace Git without staging child implementation repositories.
+- **EGR-058/#80 harness inner-fix task progress** — Ralph now preserves
+  `completed_task_ids` from LLM feedback invocations, reconciles them into
+  canonical `tasks.md` and harness state before checkpointing, and treats a
+  sole remaining full-spec `fulfillment-gaps` failure after task progress as an
+  outer-loop continuation boundary instead of same-failure escalation.
 
 ### Changed
 
