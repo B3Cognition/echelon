@@ -116,33 +116,9 @@ grep -E '\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' \
   .specify/memory/constitution.md && echo "CONSTITUTION_PLACEHOLDERS_FOUND" || echo "CONSTITUTION_CLEAN"
 ```
 
-If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution was written without the skill. Apply the fix now before advancing to Phase 2, then return the protocol-violation journal entry in `echelon_result.journal_entries`; the harness writes it to `reasoning-journal.jsonl`.
+If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution is not usable governance output yet. Do not advance to Phase 2. Do not edit, patch, or shell-substitute `.specify/memory/constitution.md` here. Return to `phase1-constitution` so speckit-echelon-chief (CHIEF) can invoke `speckit.constitution` with concrete context.
 
-```bash
-TODAY=$(date +%Y-%m-%d)
-sed -i '' \
-  -e 's/\[CONSTITUTION_VERSION\]/1.0.0/g' \
-  -e "s/\[RATIFICATION_DATE\]/$TODAY/g" \
-  -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
-  .specify/memory/constitution.md
-echo "[CONSTITUTION] Placeholder fix applied at §4.3 catch — constitution.md was not created via speckit.constitution"
-```
-
-Return this journal entry with your phase result when the placeholder fix runs:
-
-```yaml
-echelon_result:
-  journal_entries:
-    - type: constitution_placeholder_fix
-      phase: phase1-what
-      agent: speckit-echelon-commander (COMMANDER)
-      data:
-        method: sed_fallback
-        version: 1.0.0
-        date: "{YYYY-MM-DD}"
-```
-
-Always resolve constitution placeholders before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+Always resolve constitution placeholders through CHIEF before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
 
 **Enhancement-only re-dispatch prompt:**
 

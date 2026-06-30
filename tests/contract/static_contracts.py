@@ -693,3 +693,131 @@ def validate_build_phase_constitution_preflight_contract(root: Path) -> list[str
             ),
         ]
     )
+
+
+def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
+    """Constitution is canonical in spec-kit memory and published as read-only snapshots."""
+
+    chief = root / "extension/agents/control/chief.md"
+    phase1_what = root / "extension/workflow/phases/phase1-what.md"
+    codegen_preamble = root / "extension/workflow/phases/codegen-A-preamble.md"
+    phase3_how = root / "extension/workflow/phases/phase3-how.md"
+    artifact_index = root / "src/echelon/artifact_index.py"
+    finalize = root / "extension/scripts/bash/finalize-run.sh"
+    journal_types = root / "extension/workflow/journal-entry-types.yaml"
+    flags = re.IGNORECASE | re.DOTALL
+
+    checks = [
+        PatternCheck(
+            "CHIEF forbids direct constitution edits",
+            chief,
+            r"NEVER write, edit, patch, or shell-substitute `constitution\.md` directly",
+        ),
+        PatternCheck(
+            "CHIEF retries through speckit constitution",
+            chief,
+            r"Invoke `speckit\.constitution` again",
+        ),
+        PatternCheck(
+            "CHIEF no longer uses sed fallback",
+            chief,
+            r"sed\s+-i.*constitution\.md",
+            flags,
+            should_match=False,
+        ),
+        PatternCheck(
+            "CHIEF journal data uses skill retry",
+            chief,
+            r"skill_retry_used",
+        ),
+        PatternCheck(
+            "CHIEF no longer emits placeholder_fix_applied",
+            chief,
+            r"placeholder_fix_applied",
+            should_match=False,
+        ),
+        PatternCheck(
+            "phase1 what routes placeholder constitution back to CHIEF",
+            phase1_what,
+            r"Return to `phase1-constitution`.*speckit-echelon-chief",
+            flags,
+        ),
+        PatternCheck(
+            "phase1 what forbids direct constitution edits",
+            phase1_what,
+            r"Do not edit, patch, or shell-substitute `\.specify/memory/constitution\.md`",
+        ),
+        PatternCheck(
+            "phase1 what no longer records placeholder fix event",
+            phase1_what,
+            r"constitution_placeholder_fix|sed_fallback",
+            should_match=False,
+        ),
+        PatternCheck(
+            "codegen treats constitution as published snapshot",
+            codegen_preamble,
+            r"constitution\.md is a published Phase A snapshot",
+        ),
+        PatternCheck(
+            "codegen no longer copies constitution from memory",
+            codegen_preamble,
+            r"cp\s+.*\.specify/memory/constitution\.md",
+            flags,
+            should_match=False,
+        ),
+        PatternCheck(
+            "codegen rejects constitution template markers",
+            codegen_preamble,
+            r"constitution\.md contains unresolved template markers",
+        ),
+        PatternCheck(
+            "phase3 how treats constitution as read-only",
+            phase3_how,
+            r"constitution\.md.*read-only published Phase A snapshot",
+        ),
+        PatternCheck(
+            "phase3 how forbids constitution output",
+            phase3_how,
+            r"do not edit, rewrite, append to, or output `constitution\.md`",
+        ),
+        PatternCheck(
+            "phase3 how uses amendment candidates",
+            phase3_how,
+            r"constitution-amendment-candidates\.md",
+        ),
+        PatternCheck(
+            "phase3 how no longer lists constitution.md as output",
+            phase3_how,
+            r"\| `constitution\.md` \|",
+            should_match=False,
+        ),
+        PatternCheck(
+            "artifact index marks constitution owner as CHIEF",
+            artifact_index,
+            r'"constitution\.md",\s*"Constitution snapshot",\s*"Published read-only snapshot.*?"Phase A",\s*"CHIEF"',
+            flags,
+        ),
+        PatternCheck(
+            "finalize validates canonical constitution before publishing",
+            finalize,
+            r"grep -qE .*CONSTITUTION_VERSION.*CONSTITUTION_SRC",
+            flags,
+        ),
+        PatternCheck(
+            "finalize publishes snapshot from canonical memory",
+            finalize,
+            r"constitution\.md snapshot published from \.specify/memory",
+        ),
+        PatternCheck(
+            "journal registry no longer allows COMMANDER placeholder fix",
+            journal_types,
+            r"constitution_placeholder_fix",
+            should_match=False,
+        ),
+        PatternCheck(
+            "journal registry uses skill retry field",
+            journal_types,
+            r"required_data_fields: \[mode, constitution_path, skill_retry_used\]",
+        ),
+    ]
+    return _run_checks(checks)

@@ -251,12 +251,7 @@ types:
   constitution_created:
     description: "speckit-echelon-chief (CHIEF) created or amended the project constitution"
     agents: [speckit-echelon-chief]
-    required_data_fields: [mode, constitution_path, placeholder_fix_applied]
-
-  constitution_placeholder_fix:
-    description: "speckit-echelon-commander (COMMANDER) repaired constitution placeholder text during Phase 1 WHAT"
-    agents: [speckit-echelon-commander]
-    required_data_fields: [method, version, date]
+    required_data_fields: [mode, constitution_path, skill_retry_used]
 
   # --- Learning ---
   calibration_update:

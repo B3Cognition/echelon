@@ -10,7 +10,7 @@
 Read and include in the subagent prompt:
 
 - `spec.md` + `feasibility.md` + `prioritization.md`
-- `constitution.md` (if exists from prior run or user provided)
+- `constitution.md` (read-only published Phase A snapshot)
 - All specialist outputs (threat-model.md, performance-requirements.md, etc.)
 - `extension/templates/plan-template.md`
 - `extension/templates/architecture-research-template.md`
@@ -27,12 +27,12 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include spec.md, feasibility.md, prioritization.md, constitution.md if available, all specialist outputs, architecture output templates, reasoning-journal.jsonl]
+  [include spec.md, feasibility.md, prioritization.md, read-only constitution.md snapshot, all specialist outputs, architecture output templates, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are ARCHITECT. Read agents/solution/architect.md for your complete protocol.
-  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Produce `plan.md`, `research.md`, `data-model.md`, and `contracts/` using the provided templates. Keep required sections and add domain-specific sections only when useful. Return journal entries in `echelon_result.journal_entries`.
+  Select technology stack with explicit rationale. Design system structure (data model, API contracts, component architecture). Define cross-cutting concerns as architectural decisions. Produce `plan.md`, `research.md`, `data-model.md`, and `contracts/` using the provided templates. Treat `constitution.md` as read-only governance context: do not edit, rewrite, append to, or output `constitution.md`. If architecture work reveals a new governance principle, write it to `constitution-amendment-candidates.md` as a proposed amendment for later CHIEF/spec-kit handling. Keep required sections and add domain-specific sections only when useful. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -48,7 +48,7 @@ speckit-echelon-architect (ARCHITECT) produces these files in `{spec_dir}/`. Mis
 | `research.md` | ADR rationale, technology comparisons, references. |
 | `data-model.md` | Entity definitions, relationships, validation rules. |
 | `contracts/` | API / interface specifications directory. At minimum one file per external boundary. |
-| `constitution.md` | Only if new technical principles were added; append-only to existing file. |
+| `constitution-amendment-candidates.md` | Optional. Proposed governance amendments only; do not edit or output `constitution.md`. |
 
 **Post-dispatch verification (MANDATORY — run before transitioning to phase3-sentinel):**
 

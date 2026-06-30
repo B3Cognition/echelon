@@ -12,6 +12,7 @@ from tests.contract.static_contracts import (
     validate_commander_loading_contract,
     validate_commander_routing_mandate_contract,
     validate_commander_token_tracking_contract,
+    validate_constitution_source_of_truth_contract,
     validate_guardian_always_on_contract,
     validate_implementer_eval_protocol_contract,
     validate_sage_contradiction_types_contract,
@@ -48,6 +49,10 @@ def test_lexicon_derived_spec_contract() -> None:
 
 def test_build_phase_constitution_preflight_contract() -> None:
     assert validate_build_phase_constitution_preflight_contract(ROOT) == []
+
+
+def test_constitution_source_of_truth_contract() -> None:
+    assert validate_constitution_source_of_truth_contract(ROOT) == []
 
 
 def test_cartographer_tool_usage_contract() -> None:

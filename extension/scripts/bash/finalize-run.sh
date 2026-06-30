@@ -17,10 +17,16 @@ echo "[FINALIZE] Committing spec artifacts for ${SPEC_ID}-${FEATURE_NAME}..."
 CONSTITUTION_SRC="${PROJECT_ROOT}/.specify/memory/constitution.md"
 CONSTITUTION_DST="${SPEC_DIR}/constitution.md"
 if [ -f "${CONSTITUTION_SRC}" ]; then
+  if grep -qE '\[PROJECT_NAME\]|\[PRINCIPLE_[0-9]+_NAME\]|\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' "${CONSTITUTION_SRC}"; then
+    echo "[FINALIZE] ERROR: .specify/memory/constitution.md contains unresolved template markers"
+    echo "[FINALIZE] Run echelon continue so CHIEF invokes speckit.constitution before publishing the snapshot"
+    exit 1
+  fi
   cp "${CONSTITUTION_SRC}" "${CONSTITUTION_DST}"
-  echo "[FINALIZE] constitution.md copied from .specify/memory/ ✓"
+  echo "[FINALIZE] constitution.md snapshot published from .specify/memory/ ✓"
 else
-  echo "[FINALIZE] WARNING: .specify/memory/constitution.md not found — skipping copy"
+  echo "[FINALIZE] ERROR: .specify/memory/constitution.md not found — cannot publish constitution snapshot"
+  exit 1
 fi
 
 # ── 2. Stage artifacts ────────────────────────────────────────────────────────

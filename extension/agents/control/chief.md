@@ -19,7 +19,7 @@ spec/plan/task artifacts, or make routing decisions.
 
 ### Rule 1 — Invocation
 ALWAYS invoke `speckit.constitution` (via the Skill tool) to write or update the constitution.
-NEVER write `constitution.md` via the Write or Edit tools without first invoking `speckit.constitution`.
+NEVER write, edit, patch, or shell-substitute `constitution.md` directly; if the skill output is incomplete, invoke `speckit.constitution` again with better context or block.
 
 ### Rule 2 — Context
 ALWAYS extract concrete, project-specific context from the provided staging inputs and pass it to the skill.
@@ -82,21 +82,12 @@ Treat these markers as incomplete constitution output:
      && echo "PLACEHOLDERS_FOUND" || echo "CLEAN"
    ```
 
-5. **Fix remaining placeholders** if `PLACEHOLDERS_FOUND`:
-   - If a line contains a placeholder followed by a concrete replacement, such as `[PRINCIPLE_1_NAME] -> I. Single-Repo Scope Fence`, remove the placeholder and arrow so only the concrete replacement remains.
-   - Replace date/version/project markers with concrete values.
+5. **Retry through the skill** if `PLACEHOLDERS_FOUND`:
+   - Do not edit the file directly.
+   - Rebuild the context string with the exact project name, dates, principle names, and missing concrete values.
+   - Invoke `speckit.constitution` again with that concrete context.
    - Re-run the verification command. Do not emit `verdict: DONE` while any marker remains.
-
-   ```bash
-   TODAY=$(date +%Y-%m-%d)
-   sed -i '' \
-     -e 's/\[CONSTITUTION_VERSION\]/1.0.0/g' \
-     -e "s/\[RATIFICATION_DATE\]/$TODAY/g" \
-     -e "s/\[LAST_AMENDED_DATE\]/$TODAY/g" \
-     -e 's/\[PROJECT_NAME\]/'"$(basename "$PWD")"'/g' \
-     .specify/memory/constitution.md
-   echo "[CHIEF] Placeholder fix applied"
-   ```
+   - If markers remain after one concrete retry, emit `verdict: BLOCKED` and explain which marker(s) still remain.
 
 6. **Emit `echelon_result`** (see Output Block below).
 
@@ -143,7 +134,8 @@ CHIEF COMPLETE
 Mode: <Creation | Amendment>
 Constitution: .specify/memory/constitution.md
 Status: <created | amended>
-Placeholders fixed: <yes | no | n/a>
+Placeholders remaining: <none | list markers>
+Skill retry used: <yes | no | n/a>
 ```
 
 ---
@@ -163,5 +155,5 @@ echelon_result:
       data:
         mode: <Creation | Amendment>
         constitution_path: .specify/memory/constitution.md
-        placeholder_fix_applied: <true | false>
+        skill_retry_used: <true | false>
 ```

@@ -36,15 +36,9 @@ if [ "$RESUME_MODE" -eq 0 ]; then
     [ ! -f "${FEATURE_DIR}/${f}" ] && MISSING="${MISSING} ${f}"
   done
 
-  # constitution.md lives in .specify/memory/ — copy it into the spec dir if missing
-  if echo "${MISSING}" | grep -q "constitution\.md"; then
-    if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
-      cp "${PROJECT_ROOT}/.specify/memory/constitution.md" \
-         "${FEATURE_DIR}/constitution.md"
-      echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
-      MISSING=$(echo "${MISSING}" | sed 's/ constitution\.md//')
-    fi
-  fi
+  # constitution.md is a published Phase A snapshot. Do not copy or repair it
+  # from .specify/memory here; rerun Phase A finalization if the snapshot is
+  # missing or stale.
 
   # If spec.md (or other core artifacts) are still missing, the worktree may not
   # have the spec branch merged in. The harness should have used the feature branch
@@ -68,14 +62,8 @@ if [ "$RESUME_MODE" -eq 0 ]; then
         for f in spec.md tasks.md constitution.md research.md; do
           [ ! -f "${FEATURE_DIR}/${f}" ] && MISSING="${MISSING} ${f}"
         done
-        # Try constitution once more after merge
-        if echo "${MISSING}" | grep -q "constitution\.md"; then
-          if [ -f "${PROJECT_ROOT}/.specify/memory/constitution.md" ]; then
-            cp "${PROJECT_ROOT}/.specify/memory/constitution.md" "${FEATURE_DIR}/constitution.md"
-            echo "[RECOVERY] constitution.md copied from .specify/memory/ ✓"
-            MISSING=$(echo "${MISSING}" | sed 's/ constitution\.md//')
-          fi
-        fi
+        # Keep constitution.md as a published Phase A snapshot. Do not copy or
+        # repair it from .specify/memory after merge.
       else
         echo "[RECOVERY] Merge failed — branch ${FEATURE_BRANCH} may not be accessible"
       fi
@@ -84,7 +72,13 @@ if [ "$RESUME_MODE" -eq 0 ]; then
 
   if [ -n "${MISSING}" ]; then
     echo "[ECHELON CODEGEN] ERROR: Missing Phase A artifacts:${MISSING}"
-    echo "[ECHELON CODEGEN] Run speckit.echelon.run ${FEATURE_PATH} first."
+    echo "[ECHELON CODEGEN] Run echelon continue for ${FEATURE_PATH} first so Phase A republishes build inputs."
+    exit 1
+  fi
+
+  if grep -qE '\[PROJECT_NAME\]|\[PRINCIPLE_[0-9]+_NAME\]|\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' "${FEATURE_DIR}/constitution.md"; then
+    echo "[ECHELON CODEGEN] ERROR: constitution.md contains unresolved template markers."
+    echo "[ECHELON CODEGEN] Run echelon continue for ${FEATURE_PATH} first so CHIEF repairs the canonical constitution and Phase A republishes the snapshot."
     exit 1
   fi
   echo "[ECHELON CODEGEN] Phase A artifacts verified ✓"
@@ -232,7 +226,7 @@ if [ "${DEPLOY_TYPE}" = "http" ] && [ -n "${DEPLOY_APP}" ]; then
   bash "${ECHELON_EXT}/scripts/bash/fix-spa-base.sh" "${PROJECT_ROOT}" "${DEPLOY_APP}"
   # Only stage files the SPA fix actually modified (tracked files only).
   # Using `git add -u` avoids accidentally staging untracked files written by
-  # earlier preamble steps (e.g. the strategy file, constitution recovery).
+  # earlier preamble steps (e.g. the strategy file).
   if ! git -C "${PROJECT_ROOT}" diff --quiet; then
     git -C "${PROJECT_ROOT}" add -u
     git -C "${PROJECT_ROOT}" commit -m "chore: apply SPA base path for ${DEPLOY_APP} [skip ci]"

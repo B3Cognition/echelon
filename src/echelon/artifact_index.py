@@ -110,10 +110,10 @@ _ARTIFACTS = (
     ArtifactDefinition(
         "constitution.md",
         "Constitution snapshot",
-        "Records applicable project principles.",
+        "Published read-only snapshot of `.specify/memory/constitution.md`.",
         "Phase A",
-        "Planner",
-        "Updated when constraints are captured.",
+        "CHIEF",
+        "Republished after CHIEF/spec-kit constitution creation or amendment.",
         "Spec readers",
     ),
     ArtifactDefinition(

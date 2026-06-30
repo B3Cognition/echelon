@@ -550,18 +550,7 @@
       "required_data_fields": [
         "mode",
         "constitution_path",
-        "placeholder_fix_applied"
-      ]
-    },
-    "constitution_placeholder_fix": {
-      "description": "speckit-echelon-commander (COMMANDER) repaired constitution placeholder text during Phase 1 WHAT",
-      "agents": [
-        "speckit-echelon-commander"
-      ],
-      "required_data_fields": [
-        "method",
-        "version",
-        "date"
+        "skill_retry_used"
       ]
     },
     "calibration_update": {
