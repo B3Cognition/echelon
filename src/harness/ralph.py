@@ -799,7 +799,12 @@ class RalphController:
                     # No-progress guard: if the LLM made no file changes on a
                     # failed iteration, increment the stuck counter and escalate
                     # after _NO_PROGRESS_THRESHOLD consecutive stuck iterations.
-                    if fulfillment_refresh_deferred:
+                    fulfillment_gaps_after_checkpoint = bool(
+                        final_verify
+                        and _is_only_fulfillment_gaps(final_verify)
+                        and self._last_checkpoint_has_task_progress()
+                    )
+                    if fulfillment_refresh_deferred or fulfillment_gaps_after_checkpoint:
                         no_progress_count = 0
                     elif self._has_file_changes(worktree_path):
                         no_progress_count = 0
@@ -884,9 +889,17 @@ class RalphController:
         # progress exists and the correct next step is continuation, not failure.
         if (
             final_verify is not None
-            and _is_fulfillment_refresh_deferred(final_verify)
-            and self._last_fulfillment_refresh_reason()
-            == _BANZAI_MILESTONE_DEFER_REASON
+            and (
+                (
+                    _is_fulfillment_refresh_deferred(final_verify)
+                    and self._last_fulfillment_refresh_reason()
+                    == _BANZAI_MILESTONE_DEFER_REASON
+                )
+                or (
+                    _is_only_fulfillment_gaps(final_verify)
+                    and self._last_checkpoint_has_task_progress()
+                )
+            )
         ):
             return self._finalize(
                 status="blocked",
@@ -1705,6 +1718,24 @@ class RalphController:
         if not isinstance(refresh, dict):
             return ""
         return str(refresh.get("reason") or "")
+
+    def _last_checkpoint_has_task_progress(self) -> bool:
+        state = self._state_store.read()
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(checkpoints, list) or not checkpoints:
+            return False
+        checkpoint = checkpoints[-1]
+        if not isinstance(checkpoint, dict):
+            return False
+        task_ids = checkpoint.get("task_ids")
+        if isinstance(task_ids, list) and any(str(task_id).strip() for task_id in task_ids):
+            return True
+        try:
+            before = int(checkpoint.get("completed_tasks_before") or 0)
+            after = int(checkpoint.get("completed_tasks_after") or 0)
+        except (TypeError, ValueError):
+            return False
+        return after > before
 
     def _print_fulfillment_refresh_decision(self, *, status: str, reason: str) -> None:
         print(f"fulfillment refresh: {status} ({reason})", file=sys.stderr)

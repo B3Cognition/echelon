@@ -2377,6 +2377,121 @@ class TestOuterLoopConvergence:
             check=True,
         ).stdout == ""
 
+    def test_inner_task_progress_with_remaining_fulfillment_gaps_checkpoints_outer_cap(
+        self, tmp_path: Path
+    ) -> None:
+        """Task progress plus aggregate gaps is continuation, not failed convergence."""
+        from harness.build_result import BuildResult
+        from harness.verify_result import FailureCategory, FailureEntry
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=demo req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=demo req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=worktree, check=True)
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=[],
+        )
+        llm_build_runner.exec_feedback.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            reason="implemented T-002",
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=["T-002"],
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        def commit_worktree(_path: str, message: str) -> str:
+            subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Echelon Harness",
+                    "-c",
+                    "user.email=echelon-harness@example.invalid",
+                    "commit",
+                    "-m",
+                    message,
+                    "--allow-empty",
+                ],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        gitops.commit.side_effect = commit_worktree
+        gaps = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-gaps",
+                    "full spec still has unresolved gaps",
+                )
+            ],
+        )
+
+        with patch.object(
+            controller,
+            "_exec_verify",
+            return_value=VerifyResult(passed=True, failures=[]),
+        ), patch.object(
+            controller,
+            "_refresh_fulfillment_report",
+            return_value=gaps,
+        ), patch.object(
+            controller,
+            "_apply_fulfillment_gate",
+            side_effect=lambda verify, _worktree: verify,
+        ):
+            result = controller.run_loop(
+                max_outer=1,
+                max_inner=3,
+                build_prompt="continue implementation",
+            )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "checkpoint_outer_cap"
+        assert result.final_verify is gaps
+        state = state_store.read()
+        assert state["build"]["task_results"]["T-002"]["status"] == "DONE"
+        assert state["checkpoint_commits"][0]["task_ids"] == ["T-002"]
+        assert not state.get("escalation_file")
+
     def test_converges_second_outer_iteration(self, tmp_path: Path) -> None:
         """Verify fails first outer, passes on second outer -> converged."""
         # First outer: verify fails, inner loop fails (different errors to avoid same-failure)
