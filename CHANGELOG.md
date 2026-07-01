@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-064 / #86 harness recovery idempotence** — `echelon harness
+  resume` no longer requires a clean current checkout when the selected
+  checkpoint/salvage commit is already contained in the resolved target feature
+  branch. Recovery now reports the commit as already present and continues
+  without checkout/cherry-pick; dirty-tree blocking remains for commits that
+  still need to be applied.
 - **EGR-062 / #84 verify-spec provider-session recovery** — provider
   session limits during fulfillment refresh now stop Ralph as a first-class
   checkpoint block instead of becoming ordinary `verify-spec-failed`
