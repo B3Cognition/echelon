@@ -273,6 +273,7 @@ def _get_merged_config(project_root: Path) -> Dict[str, Any]:
         full = mgr.get_config()
         if isinstance(full.get("harness"), dict):
             harness = dict(full["harness"])
+            harness = _inherit_top_level_harness_defaults(full, harness)
             if "verify_command" in full and "verify_command" not in harness:
                 harness["verify_command"] = full["verify_command"]
             return harness
@@ -288,6 +289,8 @@ def _get_merged_config(project_root: Path) -> Dict[str, Any]:
     # Layer 2: project config — harness: section of echelon-config.yml
     raw = _load_yaml_file(ext_dir / "echelon-config.yml")
     config = _merge(config, raw.get("harness", raw))
+    if isinstance(raw.get("harness"), dict):
+        config = _inherit_top_level_harness_defaults(raw, config)
     if "verify_command" in raw and "verify_command" not in config:
         config["verify_command"] = raw["verify_command"]
 
@@ -299,6 +302,28 @@ def _get_merged_config(project_root: Path) -> Dict[str, Any]:
     config = _merge(config, _env_config())
 
     return config
+
+
+def _inherit_top_level_harness_defaults(
+    raw: Dict[str, Any],
+    harness: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Merge compatible top-level defaults into a nested harness config.
+
+    Existing projects can contain top-level ``llm`` settings from earlier
+    unified-config usage. When a ``harness:`` section is present, spec-kit's
+    ConfigManager returns that section for harness loading, so top-level LLM
+    tool policy would otherwise be silently ignored. Treat top-level ``llm`` as
+    a lower-precedence default and let ``harness.llm`` override it.
+    """
+    merged = dict(harness)
+    top_llm = raw.get("llm")
+    if isinstance(top_llm, dict):
+        harness_llm = merged.get("llm")
+        if not isinstance(harness_llm, dict):
+            harness_llm = {}
+        merged["llm"] = _merge(top_llm, harness_llm)
+    return merged
 
 
 # ---------------------------------------------------------------------------

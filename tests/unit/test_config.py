@@ -448,3 +448,51 @@ def test_llm_tool_policy_config_override_accepts_approved_unsafe_mode() -> None:
 
     assert config.llm.tool_policy.allow_unsafe_host_execution is True
     assert "disposable worktree" in config.llm.tool_policy.approval_reason
+
+
+def test_load_config_inherits_top_level_llm_defaults_into_harness_section(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "llm:\n"
+        "  tool_policy:\n"
+        "    allow_unsafe_host_execution: true\n"
+        "    approval_reason: Operator approved disposable harness worktree.\n"
+        "harness:\n"
+        "  target_repo: .\n"
+        "  target_default_branch: main\n"
+        "  provider: docker\n"
+        "  llm:\n"
+        "    cli: claude\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(tmp_path)
+
+    assert config.llm.cli == "claude"
+    assert config.llm.tool_policy.allow_unsafe_host_execution is True
+    assert "disposable harness worktree" in config.llm.tool_policy.approval_reason
+
+
+def test_load_config_harness_llm_overrides_top_level_llm_defaults(tmp_path: Path) -> None:
+    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "llm:\n"
+        "  cli: claude\n"
+        "  timeout_ms: 600000\n"
+        "harness:\n"
+        "  target_repo: .\n"
+        "  target_default_branch: main\n"
+        "  provider: docker\n"
+        "  llm:\n"
+        "    cli: codex\n",
+        encoding="utf-8",
+    )
+
+    config = load_config(tmp_path)
+
+    assert config.llm.cli == "codex"
+    assert config.llm.timeout_ms == 600_000

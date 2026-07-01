@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-061 / #83 harness LLM tool-policy inheritance** — harness config
+  loading now treats top-level `llm` as lower-precedence compatibility
+  defaults for `harness.llm`, so approved `llm.tool_policy` settings are no
+  longer silently ignored when a nested `harness:` section exists. Nested
+  `harness.llm` values still override top-level defaults.
 - **EGR-060 / #82 missing verify-command recovery UX** — `echelon harness init`
   now stops suggesting `harness run` as the next step when verify-command
   detection declined, and `echelon harness resume` uses persisted detection
