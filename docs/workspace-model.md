@@ -33,6 +33,15 @@ When running from an Echelon source checkout instead of an installed workspace e
 python scripts/python/migrate_workspace_git.py /path/to/workspace --write
 ```
 
+For an existing single Git repository that mixes Echelon orchestration artifacts and implementation source files at the root, use the source split migration:
+
+```bash
+python scripts/python/split_workspace_source_repo.py /path/to/workspace --source-dir source          # dry-run plan
+python scripts/python/split_workspace_source_repo.py /path/to/workspace --source-dir source --write  # move source files, create source/.git, stage root split
+```
+
+The splitter keeps `.specify`, `specs`, `runs`, and root `.gitignore` at the workspace root. It moves implementation files into the child source directory, initializes a child Git repository there, copies the original `.gitignore` into that child repository, and stages the root repository deletions plus `/source/` ignore entry. Commit the root workspace after verifying the child source repo builds.
+
 Do not use a branchless workspace for new runs. Echelon only allows branchless workspaces for legacy recovery.
 
 When a workspace has multiple source roots, select the implementation target before harness build:

@@ -2711,6 +2711,32 @@ class TestVerifyLocallyUnknownProjectType:
 class TestVerifyCommandNeeded:
     """local-verify-skipped escalates to blocked, not silent failure."""
 
+    def test_verify_command_runs_from_worktree_not_workspace_root(
+        self, tmp_path: Path
+    ) -> None:
+        """Configured verification must exercise the candidate worktree."""
+        controller, _, gitops, _ = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = tmp_path / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        workspace.mkdir()
+        script = worktree / "scripts" / "verify-cwd.sh"
+        script.parent.mkdir(parents=True)
+        marker = tmp_path / "verify-cwd.txt"
+        script.write_text(f"pwd > {marker}\n", encoding="utf-8")
+        script.chmod(0o755)
+        gitops.base_dir = workspace
+        controller._config = HarnessConfig(
+            **{
+                **controller._config.__dict__,
+                "verify_command": "bash scripts/verify-cwd.sh",
+            }
+        )
+
+        result = controller._exec_verify_locally(str(worktree))
+
+        assert result.passed is True
+        assert marker.read_text(encoding="utf-8").strip() == str(worktree)
+
     def test_banner_printed_to_stderr(self, tmp_path: Path, capsys) -> None:
         """Unknown project type → escalation banner printed to stderr."""
         from harness.llm_build_runner import LlmBuildRunner
