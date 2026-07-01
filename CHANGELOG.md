@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-062 / #84 verify-spec provider-session recovery** — provider
+  session limits during fulfillment refresh now stop Ralph as a first-class
+  checkpoint block instead of becoming ordinary `verify-spec-failed`
+  verification failures that can trigger more LLM feedback work. When an older
+  fulfillment report exists, the failure reason now includes the report's
+  verified commit and the current HEAD so stale evidence is not mistaken for
+  current fulfillment status.
 - **EGR-061 / #83 harness LLM tool-policy inheritance** — harness config
   loading now treats top-level `llm` as lower-precedence compatibility
   defaults for `harness.llm`, so approved `llm.tool_policy` settings are no

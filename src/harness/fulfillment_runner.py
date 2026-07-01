@@ -178,6 +178,20 @@ class FulfillmentRunner:
 
         prompt = build_skill_prompt(skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+        provider_limit_reason = _provider_session_limit_reason(
+            self._prompt_executor,
+            existing_report=report,
+            current_commit=commit,
+        )
+        if exit_code != 0 and provider_limit_reason:
+            return FulfillmentRefreshResult(
+                status="provider_session_limit",
+                exit_code=exit_code,
+                scope="full",
+                reason=provider_limit_reason,
+                cache_key=cache_key,
+                report_path=report_path,
+            )
         if exit_code == 0:
             if not _latest_report_matches_latest_audit(
                 worktree,
@@ -302,6 +316,19 @@ class FulfillmentRunner:
                 encoding="utf-8",
             )
             exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+            provider_limit_reason = _provider_session_limit_reason(
+                self._prompt_executor,
+                existing_report=report,
+                current_commit=commit,
+            )
+            if exit_code != 0 and provider_limit_reason:
+                return FulfillmentRefreshResult(
+                    status="provider_session_limit",
+                    exit_code=exit_code,
+                    scope="scoped",
+                    reason=provider_limit_reason,
+                    report_path=report_path,
+                )
             if exit_code != 0:
                 return FulfillmentRefreshResult(
                     status="failed",
@@ -510,6 +537,74 @@ def _verify_cache_key(
     digest.update(b"\0")
     digest.update(implementation_input_hash.encode("utf-8"))
     return digest.hexdigest()
+
+
+def _provider_session_limit_reason(
+    prompt_executor: PromptExecutor,
+    *,
+    existing_report: Path | None,
+    current_commit: str | None,
+) -> str:
+    text = _provider_limit_text(prompt_executor)
+    if not _is_provider_session_limit_text(text):
+        return ""
+
+    reason = text or "LLM provider session limit reached during verify-spec"
+    stale_detail = _existing_report_stale_detail(
+        existing_report=existing_report,
+        current_commit=current_commit,
+    )
+    if stale_detail:
+        reason = f"{reason}; {stale_detail}"
+    return reason
+
+
+def _provider_limit_text(prompt_executor: PromptExecutor) -> str:
+    parts = [
+        str(getattr(prompt_executor, "last_stdout", "") or ""),
+        str(getattr(prompt_executor, "last_stderr", "") or ""),
+    ]
+    return "\n".join(part for part in parts if part).strip()
+
+
+def _is_provider_session_limit_text(text: str) -> bool:
+    lowered = text.lower()
+    if not lowered:
+        return False
+    return any(
+        needle in lowered
+        for needle in (
+            "session limit",
+            "usage limit",
+            "rate limit",
+            "quota exceeded",
+            "resets ",
+            "reset window",
+        )
+    )
+
+
+def _existing_report_stale_detail(
+    *,
+    existing_report: Path | None,
+    current_commit: str | None,
+) -> str:
+    if existing_report is None or current_commit is None:
+        return ""
+    metadata = read_fulfillment_metadata(existing_report)
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        return (
+            f"existing fulfillment report {existing_report} has no "
+            f"verified_commit for current HEAD {current_commit}"
+        )
+    if verified_commit == current_commit:
+        return ""
+    return (
+        f"existing fulfillment report {existing_report} was verified at "
+        f"{verified_commit}, current HEAD is {current_commit}; do not use it "
+        "as current fulfillment evidence"
+    )
 
 
 def _latest_report_matches_latest_audit(

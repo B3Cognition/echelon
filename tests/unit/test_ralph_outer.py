@@ -2175,6 +2175,112 @@ class TestOuterLoopConvergence:
         state = state_store.read()
         assert state["checkpoint_commits"][0]["task_ids"] == ["T-001"]
 
+    def test_verify_spec_session_limit_blocks_without_feedback_loop(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Provider limits during verify-spec are checkpoint blocks, not fix prompts."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=worktree, check=True)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+
+        def complete_one_task(_worktree_path: str, _prompt: str):
+            (worktree / "src").mkdir(exist_ok=True)
+            (worktree / "src" / "generated.py").write_text("print('ok')\n", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="done",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1000,
+                task_ids=["T-001"],
+            )
+
+        llm_build_runner.exec_build.side_effect = complete_one_task
+        llm_build_runner.exec_feedback = MagicMock()
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="provider_session_limit",
+            exit_code=1,
+            scope="full",
+            reason=(
+                "You've hit your session limit · resets 1:30pm; existing "
+                "fulfillment report was verified at old123, current HEAD is new456"
+            ),
+            report_path=str(spec_dir / "fulfillment-report.md"),
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        def commit_worktree(_path: str, message: str) -> str:
+            subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Echelon Harness",
+                    "-c",
+                    "user.email=echelon-harness@example.invalid",
+                    "commit",
+                    "-m",
+                    message,
+                    "--allow-empty",
+                ],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=worktree,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+
+        gitops.commit.side_effect = commit_worktree
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=3,
+            build_prompt="implement one task",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        state = state_store.read()
+        assert state["build_status"] == "provider_session_limit"
+        assert state["build_reason"] == "verify-spec provider session limit"
+        assert state["fulfillment_refresh"]["status"] == "provider_session_limit"
+        assert state["checkpoint_commits"][0]["task_ids"] == ["T-001"]
+        assert "salvage_commit" not in state
+        llm_build_runner.exec_feedback.assert_not_called()
+        captured = capsys.readouterr()
+        assert "HARNESS — PROVIDER SESSION LIMIT" in captured.err
+        assert "verify-spec fulfillment refresh" in captured.err
+
     def test_clean_markerless_build_keeps_checkpoint_then_verifies(
         self, tmp_path: Path
     ) -> None:

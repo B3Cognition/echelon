@@ -602,6 +602,29 @@ class RalphController:
                     )
                     tokens_used += verify_result.token_usage
 
+                    if _is_provider_session_limit_verify_result(verify_result):
+                        _print_verify_spec_provider_session_limit_banner(
+                            self._spec_id,
+                            self._strategy_id,
+                            verify_result,
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason="build_incomplete",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=verify_result,
+                            extra_state={
+                                "build_status": "provider_session_limit",
+                                "build_reason": "verify-spec provider session limit",
+                                "provider_limit_message": _provider_session_limit_failure_text(
+                                    verify_result
+                                ),
+                            },
+                        )
+
                     # Hard-stop: unknown project type cannot be fixed by the LLM.
                     # Block immediately and ask the human to configure verify_command.
                     if any(f.id == "local-verify-skipped" for f in verify_result.failures):
@@ -693,6 +716,28 @@ class RalphController:
                     total_inner_iterations += inner_result["inner_count"]
 
                     final_verify = inner_result.get("final_verify")
+                    if final_verify and _is_provider_session_limit_verify_result(final_verify):
+                        _print_verify_spec_provider_session_limit_banner(
+                            self._spec_id,
+                            self._strategy_id,
+                            final_verify,
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason="build_incomplete",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=final_verify,
+                            extra_state={
+                                "build_status": "provider_session_limit",
+                                "build_reason": "verify-spec provider session limit",
+                                "provider_limit_message": _provider_session_limit_failure_text(
+                                    final_verify
+                                ),
+                            },
+                        )
                     fulfillment_refresh_deferred = bool(
                         final_verify and _is_fulfillment_refresh_deferred(final_verify)
                     )
@@ -1053,6 +1098,15 @@ class RalphController:
             if current_verify.passed:
                 return {
                     "converged": True,
+                    "blocked": False,
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
+            if _is_provider_session_limit_verify_result(current_verify):
+                return {
+                    "converged": False,
                     "blocked": False,
                     "inner_count": inner_iter,
                     "tokens_used": tokens_used,
@@ -1529,6 +1583,22 @@ class RalphController:
         )
         if exit_code == 0:
             return verify_result
+
+        if getattr(refresh_result, "status", "") == "provider_session_limit":
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="fulfillment-refresh-provider-session-limit",
+                error=(
+                    "verify-spec fulfillment refresh hit the LLM provider "
+                    f"session limit: {getattr(refresh_result, 'reason', '')}"
+                ),
+            )
+            return VerifyResult(
+                passed=False,
+                failures=[failure],
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+            )
 
         failure = FailureEntry(
             category=FailureCategory.OTHER,
@@ -3060,6 +3130,45 @@ def _porcelain_path(line: str) -> str:
 
 def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
     return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
+
+
+def _is_provider_session_limit_verify_result(verify_result: VerifyResult) -> bool:
+    return any(
+        f.id == "fulfillment-refresh-provider-session-limit"
+        for f in verify_result.failures
+    )
+
+
+def _provider_session_limit_failure_text(verify_result: VerifyResult) -> str:
+    for failure in verify_result.failures:
+        if failure.id == "fulfillment-refresh-provider-session-limit":
+            return failure.error
+    return ""
+
+
+def _print_verify_spec_provider_session_limit_banner(
+    spec_id: str,
+    strategy_id: str,
+    verify_result: VerifyResult,
+) -> None:
+    from echelon.ui import banner as _ui_banner
+
+    message = _provider_session_limit_failure_text(verify_result)
+    _ui_banner(
+        "HARNESS — PROVIDER SESSION LIMIT",
+        [
+            ("spec", spec_id),
+            ("strategy", strategy_id),
+            ("why", "LLM provider session limit reached during verify-spec fulfillment refresh"),
+            ("provider", message),
+            (
+                "meaning",
+                "Implementation progress was checkpointed, but full fulfillment evidence could not be refreshed.",
+            ),
+            ("next", f"echelon harness resume {spec_id}  (retry verification after provider reset)"),
+        ],
+        file=sys.stderr,
+    )
 
 
 def _is_only_fulfillment_gaps(verify_result: VerifyResult) -> bool:
