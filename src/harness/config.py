@@ -1,13 +1,13 @@
 """Config loading and validation for the harness execution substrate.
 
-Reads the ``harness:`` section of the unified echelon config file.
-Implements the spec-kit 4-level config cascade by delegating to
-``specify_cli.extensions.ConfigManager`` when available:
+Reads the ``harness:`` section of the unified Echelon config file.
+Implements Echelon's migration config cascade:
 
-  1. Defaults   — extension.yml ``config.defaults``                   (bundled)
-  2. Project    — ``.specify/extensions/echelon/echelon-config.yml``         (committed)
-  3. Local      — ``.specify/extensions/echelon/local-config.yml``    (gitignored)
-  4. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                 (CI/secrets)
+  1. Defaults   — dataclass defaults / extension defaults              (bundled)
+  2. Project    — ``.echelon/config.yml``                              (committed)
+  3. Legacy     — ``.specify/extensions/echelon/echelon-config.yml``    (fallback)
+  4. Local      — ``.echelon/local.yml`` or legacy ``local-config.yml`` (gitignored)
+  5. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                  (CI/secrets)
 
 Layers are deep-merged in precedence order; required fields
 (``target_repo``, ``target_default_branch``, ``provider``) must be
@@ -34,12 +34,6 @@ try:
     import yaml
 except ImportError:
     yaml = None  # type: ignore[assignment]
-
-try:
-    from specify_cli.extensions import ConfigManager as _SpecKitConfigManager
-except ImportError:
-    _SpecKitConfigManager = None  # type: ignore[assignment, misc]
-
 
 # ---------------------------------------------------------------------------
 # Validation error
@@ -97,6 +91,11 @@ VALID_FULFILLMENT_REFRESH_POLICIES = {
 SEMVER_RANGE_PATTERN = re.compile(
     r"^[\^~>=<!\s\d.*xX|,-]+$"
 )
+
+CANONICAL_CONFIG_PATH = Path(".echelon/config.yml")
+CANONICAL_LOCAL_CONFIG_PATH = Path(".echelon/local.yml")
+LEGACY_CONFIG_PATH = Path(".specify/extensions/echelon/echelon-config.yml")
+LEGACY_LOCAL_CONFIG_PATH = Path(".specify/extensions/echelon/local-config.yml")
 
 
 # ---------------------------------------------------------------------------
@@ -266,42 +265,53 @@ def _env_config() -> Dict[str, Any]:
     return result
 
 
+def _project_config(project_root: Path) -> Dict[str, Any]:
+    """Load the committed project config, preferring the canonical path."""
+    canonical = project_root / CANONICAL_CONFIG_PATH
+    if canonical.exists():
+        return _load_yaml_file(canonical)
+    return _load_yaml_file(project_root / LEGACY_CONFIG_PATH)
+
+
+def _local_config(project_root: Path) -> Dict[str, Any]:
+    """Load ignored local overrides from legacy and canonical locations."""
+    local: Dict[str, Any] = {}
+    # Preserve legacy local-config.yml as a compatibility input, but let the
+    # canonical local override win when both are present.
+    local = _merge(local, _load_yaml_file(project_root / LEGACY_LOCAL_CONFIG_PATH))
+    local = _merge(local, _load_yaml_file(project_root / CANONICAL_LOCAL_CONFIG_PATH))
+    return local
+
+
+def _extract_harness_config(full: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract harness config while preserving compatible top-level defaults."""
+    raw = full.get("harness", full)
+    harness = dict(raw) if isinstance(raw, dict) else {}
+    if isinstance(full.get("harness"), dict):
+        harness = _inherit_top_level_harness_defaults(full, harness)
+    if "verify_command" in full and "verify_command" not in harness:
+        harness["verify_command"] = full["verify_command"]
+    return harness
+
+
+def _get_full_merged_config(project_root: Path) -> Dict[str, Any]:
+    """Return the full merged config dict for Echelon's migration cascade."""
+    full: Dict[str, Any] = {}
+    full = _merge(full, _project_config(project_root))
+    full = _merge(full, _local_config(project_root))
+    env_harness = _env_config()
+    if env_harness:
+        existing_harness = full.get("harness")
+        if isinstance(existing_harness, dict):
+            full["harness"] = _merge(existing_harness, env_harness)
+        else:
+            full = _merge(full, env_harness)
+    return full
+
+
 def _get_merged_config(project_root: Path) -> Dict[str, Any]:
-    """Return the fully merged config dict using ConfigManager if available."""
-    if _SpecKitConfigManager is not None:
-        mgr = _SpecKitConfigManager(project_root=project_root, extension_id="echelon")
-        full = mgr.get_config()
-        if isinstance(full.get("harness"), dict):
-            harness = dict(full["harness"])
-            harness = _inherit_top_level_harness_defaults(full, harness)
-            if "verify_command" in full and "verify_command" not in harness:
-                harness["verify_command"] = full["verify_command"]
-            return harness
-        return full
-
-    # Inline fallback — same 4-layer logic as ConfigManager.
-    # Layer 1 (extension.yml defaults) is not read here: extension.yml is not
-    # installed alongside the project configs, so dataclass field defaults are
-    # the effective layer 1, identical to ConfigManager behaviour in practice.
-    ext_dir = project_root / ".specify" / "extensions" / "echelon"
-    config: Dict[str, Any] = {}
-
-    # Layer 2: project config — harness: section of echelon-config.yml
-    raw = _load_yaml_file(ext_dir / "echelon-config.yml")
-    config = _merge(config, raw.get("harness", raw))
-    if isinstance(raw.get("harness"), dict):
-        config = _inherit_top_level_harness_defaults(raw, config)
-    if "verify_command" in raw and "verify_command" not in config:
-        config["verify_command"] = raw["verify_command"]
-
-    # Layer 3: local config (gitignored)
-    raw_local = _load_yaml_file(ext_dir / "local-config.yml")
-    config = _merge(config, raw_local.get("harness", raw_local))
-
-    # Layer 4: environment variables
-    config = _merge(config, _env_config())
-
-    return config
+    """Return the merged harness config dict."""
+    return _extract_harness_config(_get_full_merged_config(project_root))
 
 
 def _inherit_top_level_harness_defaults(
@@ -600,10 +610,7 @@ def load_config(
     project_root: Optional[Path] = None,
     squad_only: bool = False,
 ) -> HarnessConfig:
-    """Load and validate harness configuration using the spec-kit 4-level cascade.
-
-    Delegates to ``specify_cli.extensions.ConfigManager`` when available;
-    falls back to an inline implementation of the same merge logic.
+    """Load and validate harness configuration using Echelon's config cascade.
 
     Args:
         project_root: Root of the spec-kit project. Defaults to ``Path.cwd()``.
@@ -628,19 +635,10 @@ def get_full_resolved_config(project_root: Optional[Path] = None) -> Dict[str, A
     """Return the full resolved config dict for all sections (not just harness:).
 
     Use this when you need access to non-harness sections such as ``analysis:``
-    or ``endocrine:``.  Goes through the same 4-level cascade as ``load_config``:
-    ConfigManager (spec-kit) when available, otherwise inline file merge.
+    or ``endocrine:``. Goes through the same canonical-first migration cascade
+    as ``load_config``.
     """
     if project_root is None:
         project_root = Path.cwd()
 
-    if _SpecKitConfigManager is not None:
-        mgr = _SpecKitConfigManager(project_root=project_root, extension_id="echelon")
-        return mgr.get_config()
-
-    # Inline fallback: merge echelon-config.yml + local-config.yml (full dicts).
-    ext_dir = project_root / ".specify" / "extensions" / "echelon"
-    full: Dict[str, Any] = {}
-    full = _merge(full, _load_yaml_file(ext_dir / "echelon-config.yml"))
-    full = _merge(full, _load_yaml_file(ext_dir / "local-config.yml"))
-    return full
+    return _get_full_merged_config(project_root)

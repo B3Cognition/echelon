@@ -1,4 +1,5 @@
 *-config.local.yml
+.echelon/local.yml
 .venv/
 __pycache__/
 *.py[cod]

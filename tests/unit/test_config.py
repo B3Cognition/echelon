@@ -32,6 +32,7 @@ from harness.config import (
     HarnessConfig,
     ValidationError,
     _parse_config,
+    get_full_resolved_config,
     load_config,
 )
 
@@ -84,6 +85,12 @@ def test_config_template_schema_comment_uses_workspace_specs_path() -> None:
 
 def _ext_dir(project_root: Path) -> Path:
     d = project_root / ".specify" / "extensions" / "echelon"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _echelon_dir(project_root: Path) -> Path:
+    d = project_root / ".echelon"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -214,12 +221,6 @@ class TestConfigDefaults:
 
 @pytest.mark.unit
 class TestLoadConfigCascade:
-    @pytest.fixture(autouse=True)
-    def _force_fallback_config_loader(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # ConfigManager.get_config() reads the globally registered extension config,
-        # not the project-level file under tmp_path — force the inline fallback so
-        # these unit tests exercise the real merge logic against the temp fixtures.
-        monkeypatch.setattr("harness.config._SpecKitConfigManager", None)
     def test_project_config_applied(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)
         _write_yaml(ext / "echelon-config.yml", {"harness": {
@@ -262,6 +263,60 @@ class TestLoadConfigCascade:
         monkeypatch.chdir(tmp_path)
         config = load_config()  # no project_root — falls back to cwd
         assert config.target_repo == MINIMAL["target_repo"]
+
+    def test_canonical_project_config_applied(self, tmp_path: Path) -> None:
+        cfg_dir = _echelon_dir(tmp_path)
+        _write_yaml(cfg_dir / "config.yml", {"harness": {
+            **MINIMAL,
+            "resource_limits": {"memory": "6g"},
+        }})
+
+        config = load_config(tmp_path)
+
+        assert config.target_repo == MINIMAL["target_repo"]
+        assert config.resource_limits.memory == "6g"
+
+    def test_canonical_project_config_wins_over_legacy(self, tmp_path: Path) -> None:
+        ext = _ext_dir(tmp_path)
+        cfg_dir = _echelon_dir(tmp_path)
+        _write_yaml(ext / "echelon-config.yml", {"harness": {
+            **MINIMAL,
+            "provider": "e2b",
+        }})
+        _write_yaml(cfg_dir / "config.yml", {"harness": {
+            **MINIMAL,
+            "provider": "docker",
+        }})
+
+        config = load_config(tmp_path)
+
+        assert config.provider == "docker"
+
+    def test_canonical_local_config_overrides_canonical_project(self, tmp_path: Path) -> None:
+        cfg_dir = _echelon_dir(tmp_path)
+        _write_yaml(cfg_dir / "config.yml", {"harness": {
+            **MINIMAL,
+            "buffer_limit_bytes": 5_000_000,
+        }})
+        _write_yaml(cfg_dir / "local.yml", {"harness": {
+            "buffer_limit_bytes": 1_000_000,
+        }})
+
+        config = load_config(tmp_path)
+
+        assert config.buffer_limit_bytes == 1_000_000
+
+    def test_full_resolved_config_uses_canonical_config(self, tmp_path: Path) -> None:
+        cfg_dir = _echelon_dir(tmp_path)
+        _write_yaml(cfg_dir / "config.yml", {
+            "analysis": {"enabled": True},
+            "harness": MINIMAL,
+        })
+
+        config = get_full_resolved_config(tmp_path)
+
+        assert config["analysis"]["enabled"] is True
+        assert config["harness"]["target_repo"] == MINIMAL["target_repo"]
 
 
 @pytest.mark.unit
