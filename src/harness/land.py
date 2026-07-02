@@ -538,6 +538,17 @@ def land(
         )
         return False
 
+    if _default_branch_already_contains_feature(project_dir, gitops, feature_branch):
+        if not _checkout_default_for_landing_cleanup(spec_id, project_dir, gitops):
+            return False
+        return _finish_landing(
+            spec_id,
+            feature_branch,
+            project_dir,
+            gitops,
+            spec_project_dir=wrapper_project_dir,
+        )
+
     prepare_result = _prepare_for_land(
         spec_id=spec_id,
         feature_branch=feature_branch,
@@ -641,6 +652,51 @@ def _tracked_dirty_files(project_dir: Path) -> list[str]:
 
 def _is_known_land_generated_drift(path: str) -> bool:
     return path in _LAND_GENERATED_DRIFT_EXACT
+
+
+def _default_branch_already_contains_feature(
+    project_dir: Path,
+    gitops: Any,
+    feature_branch: str,
+) -> bool:
+    default_branch = _land_default_branch(gitops)
+    result = _run_git(
+        ["merge-base", "--is-ancestor", feature_branch, default_branch],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _checkout_default_for_landing_cleanup(
+    spec_id: str,
+    project_dir: Path,
+    gitops: Any,
+) -> bool:
+    if not _clean_generated_drift_before_direct_merge(spec_id, project_dir):
+        return False
+    default_branch = _land_default_branch(gitops)
+    current_branch = _run_git(
+        ["branch", "--show-current"],
+        cwd=str(project_dir),
+        check=False,
+    ).stdout.strip()
+    if current_branch == default_branch:
+        return True
+    checkout = _run_git(["checkout", default_branch], cwd=str(project_dir), check=False)
+    if checkout.returncode == 0:
+        return True
+    _banner(
+        "LAND — DEFAULT CHECKOUT FAILED",
+        [
+            ("spec", spec_id),
+            ("branch", default_branch),
+            ("problem", "feature branch is already merged, but Echelon could not switch to the default branch for cleanup"),
+            ("next step", f"fix the checkout problem, then re-run: echelon land {spec_id} --continue"),
+        ],
+        subtitle="Echelon stopped before deleting the local feature branch.",
+    )
+    return False
 
 
 def _check_ready_before_land(
@@ -1124,7 +1180,12 @@ def _finish_landing(
     spec_project_dir = spec_project_dir or project_dir
     default_branch = _land_default_branch(gitops)
 
-    remote_head = _remote_head_branch(project_dir)
+    origin_url = _origin_remote_url(project_dir)
+    remote_cleanup_required = bool(
+        origin_url and not _is_local_remote_url(project_dir, origin_url)
+    )
+
+    remote_head = _remote_head_branch(project_dir) if remote_cleanup_required else None
     if remote_head == feature_branch:
         _banner(
             "LAND — REMOTE DEFAULT BRANCH BLOCKED",
@@ -1138,7 +1199,10 @@ def _finish_landing(
         )
         return False
 
-    if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
+    if remote_cleanup_required and not gitops.delete_remote_branch(
+        feature_branch,
+        project_dir=str(project_dir),
+    ):
         _banner(
             "LAND — REMOTE BRANCH CLEANUP BLOCKED",
             [
@@ -1150,6 +1214,8 @@ def _finish_landing(
             subtitle="Echelon stopped before local cleanup and status mutation.",
         )
         return False
+    if not remote_cleanup_required:
+        logger.info("Skipping remote feature branch cleanup: no non-local origin remote")
     _delete_local_branch(feature_branch, str(project_dir))
     _cleanup_worktrees(spec_id, project_dir, gitops)
     _delete_harness_branches(spec_id, project_dir)

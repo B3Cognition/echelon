@@ -9,6 +9,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+class _NonInteractiveStdin:
+    def isatty(self) -> bool:
+        return False
+
+
+class _InteractiveStdin:
+    def isatty(self) -> bool:
+        return True
+
+
 @pytest.mark.unit
 class TestCmdLand:
     """Verify _cmd_land wires arguments correctly and exits with proper codes."""
@@ -135,6 +145,51 @@ class TestCmdLand:
             _cmd_land(["042", "--strategy", "rebase"])
 
         assert mock_land.call_args.kwargs["options"].strategy == "rebase"
+
+    def test_archive_squad_run_skips_when_stdin_is_noninteractive(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from echelon.cli import _archive_squad_run
+
+        run_dir = tmp_path / "runs" / "spec-1"
+        run_dir.mkdir(parents=True)
+        (tmp_path / "runs" / ".current").write_text(str(run_dir), encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+        with patch("sys.stdin", _NonInteractiveStdin()):
+            _archive_squad_run(tmp_path, "001")
+
+        assert run_dir.exists()
+        assert not (spec_dir / "run").exists()
+        assert "non-interactive stdin" in capsys.readouterr().out
+
+    def test_archive_squad_run_skips_on_eof(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from echelon.cli import _archive_squad_run
+
+        run_dir = tmp_path / "runs" / "spec-1"
+        run_dir.mkdir(parents=True)
+        (tmp_path / "runs" / ".current").write_text(str(run_dir), encoding="utf-8")
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+        with (
+            patch("sys.stdin", _InteractiveStdin()),
+            patch("builtins.input", side_effect=EOFError),
+        ):
+            _archive_squad_run(tmp_path, "001")
+
+        assert run_dir.exists()
+        assert not (spec_dir / "run").exists()
+        assert "no input available" in capsys.readouterr().out
 
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")

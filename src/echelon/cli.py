@@ -368,7 +368,14 @@ def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
         f"\nArchive spec run {run_id!r} into "
         f"{spec_rel}/run/ ?"
     )
-    choice = input("  [Y]es archive / [n]o keep in runs/ / [s]kip: ").strip().lower()
+    if not sys.stdin.isatty():
+        print("  Spec run archive skipped — non-interactive stdin.", flush=True)
+        return
+    try:
+        choice = input("  [Y]es archive / [n]o keep in runs/ / [s]kip: ").strip().lower()
+    except EOFError:
+        print("  Spec run archive skipped — no input available.", flush=True)
+        return
 
     if choice in ("", "y", "yes"):
         shutil.move(str(run_dir), str(archive_dest))
