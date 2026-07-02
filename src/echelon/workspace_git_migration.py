@@ -138,6 +138,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.echelon/local.yml",
         "/.echelon/runtime/",
         "/.echelon/cache/",
+        "/.echelon/recovery-backups/",
     )
     stage_paths = _existing_stage_paths(root)
 
@@ -278,25 +279,39 @@ def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
             )
         )
 
-    if not _git_ignored(root, ".specify"):
-        findings.append(
-            WorkspaceDoctorFinding(
-                "error",
-                "runtime_not_ignored",
-                ".specify/ must be ignored by workspace Git",
-                ".specify",
+    runtime_paths = (
+        (".specify", ".specify/ must be ignored by workspace Git"),
+        ("runs", "runs/ must be ignored by workspace Git"),
+        (".claude", ".claude/ must be ignored by workspace Git"),
+        (".echelon/local.yml", ".echelon/local.yml must be ignored by workspace Git"),
+        (".echelon/runtime", ".echelon/runtime/ must be ignored by workspace Git"),
+        (".echelon/cache", ".echelon/cache/ must be ignored by workspace Git"),
+        (
+            ".echelon/recovery-backups",
+            ".echelon/recovery-backups/ must be ignored by workspace Git",
+        ),
+    )
+    for runtime_path, message in runtime_paths:
+        path_obj = root / runtime_path
+        if path_obj.exists() and not _git_ignored(root, runtime_path):
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "runtime_not_ignored",
+                    message,
+                    runtime_path,
+                )
             )
-        )
-    tracked_runtime = _tracked_paths(root, ".specify") if _has_git_marker(root) else ()
-    if tracked_runtime:
-        findings.append(
-            WorkspaceDoctorFinding(
-                "error",
-                "runtime_tracked",
-                ".specify/ contains tracked runtime files",
-                ".specify",
+        tracked_runtime = _tracked_paths(root, runtime_path) if _has_git_marker(root) else ()
+        if tracked_runtime:
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "runtime_tracked",
+                    f"{runtime_path} contains tracked runtime files",
+                    runtime_path,
+                )
             )
-        )
 
     specs = root / "specs"
     if not specs.exists():
@@ -374,7 +389,15 @@ def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
 
 def _untrack_runtime_paths(root: Path) -> tuple[str, ...]:
     untracked: list[str] = []
-    for pathspec in (".specify", "runs", ".claude", ".echelon/runtime", ".echelon/cache"):
+    for pathspec in (
+        ".specify",
+        "runs",
+        ".claude",
+        ".echelon/local.yml",
+        ".echelon/runtime",
+        ".echelon/cache",
+        ".echelon/recovery-backups",
+    ):
         tracked = _tracked_paths(root, pathspec)
         if not tracked:
             continue

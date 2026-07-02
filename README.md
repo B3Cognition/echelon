@@ -85,9 +85,9 @@ Both `echelon init` and `echelon harness init` are pure Python — no AI session
 
 Echelon expects a Git-backed workspace with a committed `.echelon/config.yml`.
 Runtime state is local: `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
-`.echelon/cache/`, and `.echelon/local.yml` should be ignored. Spec artifacts
-under `specs/<id>-*/` are the tracked handoff between Phase A, harness build,
-and land.
+`.echelon/cache/`, `.echelon/recovery-backups/`, and `.echelon/local.yml`
+should be ignored. Spec artifacts under `specs/<id>-*/` are the tracked
+handoff between Phase A, harness build, and land.
 
 Declare implementation source roots explicitly in `.echelon/config.yml`:
 

@@ -9,9 +9,9 @@ Echelon treats every project as a workspace with zero or more source roots.
 The workspace root owns project-visible `specs/` artifacts and local Echelon
 runtime state. `.echelon/config.yml` is the committed project contract.
 `.echelon/local.yml`, `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
-and `.echelon/cache/` are runtime/local directories and should be gitignored in
-generated workspaces; published spec artifacts under `specs/` are the tracked
-handoff.
+`.echelon/cache/`, and `.echelon/recovery-backups/` are runtime/local
+directories and should be gitignored in generated workspaces; published spec
+artifacts under `specs/` are the tracked handoff.
 
 For polyrepo work, initialize a lightweight workspace Git repo:
 
@@ -27,7 +27,7 @@ sources:
   - id: pbg-api
     path: pbg-api
 YAML
-printf "/og-platform/\n/pbg-api/\n/.specify/\n/runs/\n/.claude/\n/.echelon/runtime/\n/.echelon/cache/\n" >> .gitignore
+printf "/og-platform/\n/pbg-api/\n/.specify/\n/runs/\n/.claude/\n/.echelon/runtime/\n/.echelon/cache/\n/.echelon/recovery-backups/\n" >> .gitignore
 git add .gitignore .echelon/config.yml specs
 git commit -m "chore: initialize echelon workspace"
 ```
@@ -44,9 +44,10 @@ echelon workspace migrate --commit # also commit staged workspace files
 
 The migration stages only workspace-contract files: `.gitignore`,
 `.echelon/config.yml`, and `specs/`. Detected source roots, `.specify/`,
-`runs/`, `.claude/`, `.echelon/runtime/`, and `.echelon/cache/` are added to
-`.gitignore` before staging so runtime state and implementation repositories
-are not committed into the lightweight workspace Git repo. If legacy
+`runs/`, `.claude/`, `.echelon/runtime/`, `.echelon/cache/`, and
+`.echelon/recovery-backups/` are added to `.gitignore` before staging so runtime
+state and implementation repositories are not committed into the lightweight
+workspace Git repo. If legacy
 `.specify/extensions/echelon/echelon-config.yml` exists and `.echelon/config.yml`
 does not, migration copies it to the canonical path.
 

@@ -2,6 +2,7 @@
 .echelon/local.yml
 .echelon/runtime/
 .echelon/cache/
+.echelon/recovery-backups/
 .venv/
 __pycache__/
 *.py[cod]
