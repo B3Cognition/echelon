@@ -72,7 +72,7 @@ When a workspace has multiple source roots, select the implementation target bef
 
 ```bash
 echelon spec target 001-feature og-platform
-echelon harness run 001-feature
+echelon delivery run 001-feature
 ```
 
 Use the source path in `echelon spec target`. A source id may be displayed for readability, but the stored target is the path relative to the workspace root.

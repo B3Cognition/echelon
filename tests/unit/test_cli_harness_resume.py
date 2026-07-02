@@ -134,7 +134,7 @@ class TestCmdHarnessResume:
         assert rc == 1
         err = capsys.readouterr().err
         assert "verify_command" in err
-        assert "echelon harness init" in err
+        assert "echelon delivery init" in err
         assert "echelon cicd" not in err
 
     def test_resume_accepts_canonical_workspace_config(self, tmp_path: Path, capsys) -> None:
@@ -173,8 +173,8 @@ class TestCmdHarnessResume:
         assert "Auto-detection already ran" in err
         assert "no high-confidence test runner detected" in err
         assert "Add a top-level verify_command" in err
-        assert "echelon harness init" not in err
-        assert "echelon harness resume 001" in err
+        assert "echelon delivery init" not in err
+        assert "echelon delivery resume 001" in err
 
     def test_valid_resume_prints_banner_and_calls_run(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")

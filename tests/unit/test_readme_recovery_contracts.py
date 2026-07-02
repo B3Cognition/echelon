@@ -11,10 +11,10 @@ def _readme() -> str:
 def test_readme_documents_rewind_continue_recovery() -> None:
     text = _readme()
 
-    assert "echelon rewind <phase-id>" in text
+    assert "echelon spec rewind <phase-id>" in text
     assert "missing_echelon_result" in text
     assert "missing_phase_outputs" in text
-    assert "echelon continue" in text
+    assert "echelon spec continue" in text
 
 
 def test_readme_documents_active_run_artifact_contract() -> None:
@@ -56,7 +56,7 @@ def test_readme_documents_podman_harness_runtime() -> None:
     text = _readme()
 
     assert "### Container Runtime" in text
-    assert "ECHELON_CONTAINER_CLI=podman echelon harness init" in text
+    assert "ECHELON_CONTAINER_CLI=podman echelon delivery init" in text
     assert "harness.container_cli" in text
     assert "podman machine start" in text
 

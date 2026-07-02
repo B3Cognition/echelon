@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_readme_documents_polyrepo_target_preflight() -> None:
     text = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "echelon harness run 001 mode=semi" in text
-    assert "echelon harness run 001 mode=banzai" in text
+    assert "echelon delivery run 001 mode=semi" in text
+    assert "echelon delivery run 001 mode=banzai" in text
     assert "source root" in text
     assert "lands the target repo branch" in text
 
