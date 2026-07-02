@@ -184,6 +184,58 @@ def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_uses_salvage_commit_despite_later_generated_dirt(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    recovered = _commit_file(
+        worktree,
+        "docs/perf/perf-metrics.json",
+        '{"throughput_fps": 1000.0}\n',
+        "harness-salvage: 001-feature default iter-0",
+    )
+    (worktree / "docs" / "perf" / "perf-metrics.json").write_text(
+        '{"throughput_fps": 1001.0}\n',
+        encoding="utf-8",
+    )
+
+    _git(project, "checkout", "001-feature")
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "salvage_commit": recovered,
+            "salvage_branch": "001-feature",
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.source == "worktree"
+    assert result.commit == recovered
+    assert result.applied is True
+    assert (
+        project / "docs" / "perf" / "perf-metrics.json"
+    ).read_text(encoding="utf-8") == '{"throughput_fps": 1000.0}\n'
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_clears_identical_untracked_collision(
     tmp_path: Path,
 ) -> None:

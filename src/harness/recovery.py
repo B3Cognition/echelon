@@ -148,16 +148,6 @@ def _find_preserved_worktree_source(
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return None
 
-    dirty = _run_git(
-        ["status", "--porcelain", "--untracked-files=no"],
-        cwd=str(worktree_path),
-        check=False,
-    )
-    if dirty.stdout.strip():
-        raise HarnessRecoveryError(
-            f"Preserved worktree has uncommitted tracked changes: {worktree_path}"
-        )
-
     checkpoint_commit = _latest_existing_checkpoint_commit(
         worktree_path,
         checkpoint_commits,
@@ -173,6 +163,16 @@ def _find_preserved_worktree_source(
         )
         if exists.returncode == 0:
             return worktree_path, salvage_commit
+
+    dirty = _run_git(
+        ["status", "--porcelain", "--untracked-files=no"],
+        cwd=str(worktree_path),
+        check=False,
+    )
+    if dirty.stdout.strip():
+        raise HarnessRecoveryError(
+            f"Preserved worktree has uncommitted tracked changes: {worktree_path}"
+        )
 
     commit = _find_strategy_commit(
         repo=worktree_path,

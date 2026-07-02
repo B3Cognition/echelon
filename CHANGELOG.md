@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-069 harness resume salvage recovery** — `echelon harness resume` now
+  recovers from a state-recorded salvage/checkpoint commit even when later
+  generated verification artifacts leave the preserved worktree with tracked
+  modifications. Dirty preserved worktrees still block only when recovery has
+  to infer an unrecorded commit.
 - **EGR-068 verify-spec CodeGraph confidence mapping** — verify-spec now rejects
   stale CodeGraph exports whose `repo_path` does not match the current project
   root before summary/map generation, falling back to a fresh bridge export when
