@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-068 verify-spec CodeGraph confidence mapping** — verify-spec now rejects
+  stale CodeGraph exports whose `repo_path` does not match the current project
+  root before summary/map generation, falling back to a fresh bridge export when
+  available. The deterministic evidence mapper also uses CodeGraph call edges
+  from requirement-anchored tests to lift directly called implementation symbols,
+  reducing low-confidence fallback when source/test relationships are already
+  present structurally.
 - **EGR-066 build quality gate sequencing contract** — `echelon.build` and the
   build task phase now explicitly require SPEC GUARD, CODE REVIEWER, and TEST
   GUARDIAN to run as sequential hard gates, not one parallel batch. CODE

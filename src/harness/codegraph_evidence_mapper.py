@@ -134,6 +134,8 @@ def write_codegraph_evidence_map(
     )
     analysis = json.loads(codegraph_analysis_path.read_text(encoding="utf-8"))
     symbols = _parse_symbols(analysis)
+    call_edges = _parse_call_edges(analysis)
+    symbols_by_key = _index_symbols(symbols)
     task_index = _parse_task_requirements(
         tasks_path.read_text(encoding="utf-8", errors="replace")
     )
@@ -142,7 +144,14 @@ def write_codegraph_evidence_map(
         coverage_text = coverage_map_path.read_text(encoding="utf-8", errors="replace")
 
     entries = [
-        _map_requirement(row, symbols, task_index.get(row.id, []), coverage_text)
+        _map_requirement(
+            row,
+            symbols,
+            task_index.get(row.id, []),
+            coverage_text,
+            call_edges,
+            symbols_by_key,
+        )
         for row in requirements
     ]
     counts = Counter(str(entry["confidence"]) for entry in entries)
@@ -249,11 +258,37 @@ def _parse_symbols(analysis: dict[str, Any]) -> list[SymbolRecord]:
     return symbols
 
 
+def _parse_call_edges(analysis: dict[str, Any]) -> dict[str, set[str]]:
+    raw_edges = analysis.get("call_graph")
+    if not isinstance(raw_edges, list):
+        return {}
+    by_caller: dict[str, set[str]] = defaultdict(set)
+    for raw in raw_edges:
+        if not isinstance(raw, dict):
+            continue
+        caller = str(raw.get("caller") or "").strip()
+        callee = str(raw.get("callee") or "").strip()
+        if caller and callee:
+            by_caller[caller].add(callee)
+    return by_caller
+
+
+def _index_symbols(symbols: list[SymbolRecord]) -> dict[str, list[SymbolRecord]]:
+    by_key: dict[str, list[SymbolRecord]] = defaultdict(list)
+    for symbol in symbols:
+        for key in {symbol.symbol, symbol.name}:
+            if key:
+                by_key[key].append(symbol)
+    return by_key
+
+
 def _map_requirement(
     row: RequirementRow,
     symbols: list[SymbolRecord],
     task_ids: list[str],
     coverage_text: str,
+    call_edges: dict[str, set[str]],
+    symbols_by_key: dict[str, list[SymbolRecord]],
 ) -> dict[str, Any]:
     id_variants = _requirement_id_variants(row.id)
     query_text = " ".join([row.id, row.requirement, row.acceptance_signal])
@@ -277,6 +312,7 @@ def _map_requirement(
         else:
             implementation.append(evidence)
 
+    implementation.extend(_called_implementation_evidence(tests, call_edges, symbols_by_key))
     implementation = _dedupe_evidence(implementation)[:8]
     tests = _dedupe_evidence(tests)[:8]
     runtime_threshold = _is_runtime_threshold(row)
@@ -311,6 +347,29 @@ def _map_requirement(
         "confidence": confidence,
         "notes": notes,
     }
+
+
+def _called_implementation_evidence(
+    tests: list[dict[str, Any]],
+    call_edges: dict[str, set[str]],
+    symbols_by_key: dict[str, list[SymbolRecord]],
+) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    for test in tests:
+        test_symbol = str(test.get("symbol") or "")
+        if not test_symbol:
+            continue
+        for callee in sorted(call_edges.get(test_symbol, set())):
+            for symbol in symbols_by_key.get(callee, []):
+                if symbol.is_test:
+                    continue
+                evidence.append(
+                    _symbol_evidence(
+                        symbol,
+                        reasons=[f"call_graph_from_test:{test_symbol}"],
+                    )
+                )
+    return evidence
 
 
 def _confidence(
@@ -499,15 +558,19 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str, int | None]] = set()
-    deduped = []
+    by_key: dict[tuple[str, str, int | None], dict[str, Any]] = {}
     for item in sorted(items, key=_evidence_sort_key):
         key = (str(item["symbol"]), str(item["file"]), item.get("line_start"))
-        if key in seen:
+        if key in by_key:
+            existing = by_key[key]
+            reasons = list(existing.get("reasons") or [])
+            for reason in item.get("reasons") or []:
+                if reason not in reasons:
+                    reasons.append(reason)
+            existing["reasons"] = reasons
             continue
-        seen.add(key)
-        deduped.append(item)
-    return deduped
+        by_key[key] = dict(item)
+    return list(by_key.values())
 
 
 def _evidence_sort_key(item: dict[str, Any]) -> tuple[int, str]:

@@ -272,6 +272,84 @@ def test_term_match_only_source_and_test_stays_in_fallback_queue(tmp_path: Path)
     assert entry["id"] in payload["summary"]["fallback_requirement_ids"]
 
 
+def test_requirement_anchored_test_lifts_called_implementation_symbol(tmp_path: Path):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "\n".join(
+            [
+                "# Requirement Audit",
+                "",
+                "| ID | Category | Source | Requirement | Acceptance Signal |",
+                "| --- | --- | --- | --- | --- |",
+                "| FR-021 | functional | spec.md#requirements | Piped input duration remains deterministic. | `tests/test_cli.py::test_FR021_piped_duration` exercises replay timing. |",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text(
+        json.dumps(
+            {
+                "symbols": [
+                    {
+                        "kind": "method",
+                        "qualified_name": "asciianim.engine.Engine::run",
+                        "name": "run",
+                        "file_path": "src/asciianim/engine.py",
+                    },
+                    {
+                        "kind": "function",
+                        "qualified_name": "tests.test_cli::test_FR021_piped_duration",
+                        "name": "test_FR021_piped_duration",
+                        "file_path": "tests/test_cli.py",
+                    },
+                ],
+                "call_graph": [
+                    {
+                        "caller": "tests.test_cli::test_FR021_piped_duration",
+                        "callee": "asciianim.engine.Engine::run",
+                    }
+                ],
+                "impact_radius": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text(
+        "- [ ] T-021 complexity=standard phase=runtime req=FR-021 depends=none\n",
+        encoding="utf-8",
+    )
+    coverage = tmp_path / "coverage-map.md"
+    coverage.write_text(
+        "| ID | Test Evidence |\n"
+        "| --- | --- |\n"
+        "| FR-021 | tests/test_cli.py::test_FR021_piped_duration |\n",
+        encoding="utf-8",
+    )
+
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+    write_codegraph_evidence_map(
+        requirement_audit_path=audit,
+        codegraph_analysis_path=analysis,
+        tasks_path=tasks,
+        out_json_path=out_json,
+        out_md_path=out_md,
+        coverage_map_path=coverage,
+    )
+
+    entry = json.loads(out_json.read_text(encoding="utf-8"))["requirements"][0]
+    assert entry["confidence"] == "medium"
+    assert entry["evidence_kind"] == "source_and_test"
+    assert entry["implementation_evidence"][0]["symbol"] == "asciianim.engine.Engine::run"
+    assert entry["implementation_evidence"][0]["reasons"] == [
+        "call_graph_from_test:tests.test_cli::test_FR021_piped_duration"
+    ]
+
+
 def test_runtime_threshold_assertion_only_evidence_is_not_high_confidence(tmp_path: Path):
     audit = tmp_path / "requirement-audit.md"
     audit.write_text(
