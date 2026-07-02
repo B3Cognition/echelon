@@ -156,7 +156,7 @@ def test_init_persists_container_cli_from_env(tmp_path, monkeypatch):
 
         config = init_harness(str(tmp_path), base_dir=str(tmp_path))
 
-    config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = tmp_path / ".echelon" / "config.yml"
     raw = yaml.safe_load(config_file.read_text(encoding="utf-8"))
     assert config.container_cli == "podman"
     assert raw["harness"]["container_cli"] == "podman"

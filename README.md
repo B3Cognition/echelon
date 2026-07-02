@@ -75,8 +75,8 @@ specify extension add --dev ~/echelon/extension
 specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
-echelon init    # bootstrap echelon-config.yml, set up Docker/Traefik or CLI wrapper, install git hook
-echelon harness init    # write harness: section into echelon-config.yml, mirror-clone target repo, detect language + image
+echelon init    # bootstrap .echelon/config.yml, set up Docker/Traefik or CLI wrapper, install git hook
+echelon harness init    # write harness: section into .echelon/config.yml, mirror-clone target repo, detect language + image
 ```
 
 Both `echelon init` and `echelon harness init` are pure Python — no AI session required.
@@ -222,7 +222,7 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
 4. Injects the effective host tool-policy preamble and invokes the LLM CLI subprocess (`claude -p <prompt>`, `codex exec <prompt>`, `copilot -p <prompt>`, or `opencode run <prompt>`)
 
-This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon-config.yml`) selects the provider.
+This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `.echelon/config.yml`) selects the provider.
 
 By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 
@@ -249,7 +249,7 @@ ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
 
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
 
-The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon-config.yml` (`harness.llm.cli`).
+The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `.echelon/config.yml` (`harness.llm.cli`).
 
 ## Harness
 
