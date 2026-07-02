@@ -241,7 +241,7 @@ ASSESS2 can flag issues but has restricted blocking power:
 **Activation — read the flag yourself.** Before finalising `feasibility.md`, run:
 
 ```bash
-python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('governance') or {}; a=(g.get('artifacts') or {}).get('feasibility') or {}; print('STRUCT_GATE=on' if (g.get('enabled') and a.get('tier')=='structural') else 'STRUCT_GATE=off'); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "STRUCT_GATE=off"
+python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); g=((yaml.safe_load(p.read_text()) or {}) if p.exists() else {}).get('governance') or {}; a=(g.get('artifacts') or {}).get('feasibility') or {}; print('STRUCT_GATE=on' if (g.get('enabled') and a.get('tier')=='structural') else 'STRUCT_GATE=off'); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "STRUCT_GATE=off"
 ```
 
 If `STRUCT_GATE=off` (or the key is absent) this section is INERT — author `feasibility.md` per the standard protocol above. If on, self-validate and repair:

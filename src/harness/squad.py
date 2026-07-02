@@ -216,6 +216,12 @@ class SquadController:
         self._cancelled = False
         signal.signal(signal.SIGINT, self._handle_sigint)
 
+    def _project_config_path(self) -> Path:
+        canonical = self._project_root / ".echelon" / "config.yml"
+        if canonical.exists():
+            return canonical
+        return self._ext_dir / "echelon-config.yml"
+
     def _detect_project_mode(self, requested_mode: str) -> str:
         """Return the project type stored in state.mode.
 
@@ -323,7 +329,7 @@ class SquadController:
                 )
             else:
                 from echelon.ui import banner as _banner
-                config_path = self._project_root / ".specify/extensions/echelon/echelon-config.yml"
+                config_path = self._project_config_path()
                 _banner(
                     "SQUAD — TOKEN BUDGET EXHAUSTED",
                     [
@@ -1199,7 +1205,7 @@ class SquadController:
         cfg: dict = {}
         try:
             import yaml
-            data = yaml.safe_load((self._ext_dir / "echelon-config.yml").read_text()) or {}
+            data = yaml.safe_load(self._project_config_path().read_text()) or {}
             block = data.get("lexicon_gate")
             if isinstance(block, dict):
                 cfg = {"lexicon_gate": block}
@@ -1246,7 +1252,7 @@ class SquadController:
         cfg: dict = {}
         try:
             import yaml
-            data = yaml.safe_load((self._ext_dir / "echelon-config.yml").read_text()) or {}
+            data = yaml.safe_load(self._project_config_path().read_text()) or {}
             block = data.get("governance")
             if isinstance(block, dict):
                 cfg = {"governance": block}

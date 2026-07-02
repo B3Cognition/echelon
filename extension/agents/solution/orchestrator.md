@@ -350,7 +350,7 @@ echelon_result:
 **Activation — read the flag yourself.** Before authoring `tasks.md`, run:
 
 ```bash
-python3 -c "import yaml; g=(yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','requirements.lexicon.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
+python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); g=((yaml.safe_load(p.read_text()) or {}) if p.exists() else {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','requirements.lexicon.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
 ```
 
 If the output is `TASKS_GATE=off` (or the file/key is absent), this entire section is INERT —

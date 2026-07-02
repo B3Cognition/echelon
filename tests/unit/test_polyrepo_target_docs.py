@@ -39,7 +39,7 @@ def test_workspace_model_docs_define_single_repo_as_one_source_root() -> None:
     assert "sources: [.]" in text
     assert "lightweight workspace Git repo" in text
     assert "branchless workspace" in text
-    assert ".specify/extensions/echelon/scripts/python/migrate_workspace_git.py" in text
+    assert "echelon workspace migrate" in text
     assert "echelon spec target" in text
 
     assert (ROOT / "extension/scripts/python/migrate_workspace_git.py").exists()

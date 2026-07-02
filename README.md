@@ -81,6 +81,28 @@ echelon harness init    # write harness: section into .echelon/config.yml, mirro
 
 Both `echelon init` and `echelon harness init` are pure Python — no AI session required.
 
+### Workspace contract
+
+Echelon expects a Git-backed workspace with a committed `.echelon/config.yml`.
+Runtime state is local: `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
+`.echelon/cache/`, and `.echelon/local.yml` should be ignored. Spec artifacts
+under `specs/<id>-*/` are the tracked handoff between Phase A, harness build,
+and land.
+
+Declare implementation source roots explicitly in `.echelon/config.yml`:
+
+```yaml
+workspace:
+  git_role: orchestration
+sources:
+  - id: app
+    path: app
+```
+
+Use `sources: []` for a planning-only workspace. Run `echelon workspace doctor`
+to validate the contract, or `echelon workspace migrate --write` to copy legacy
+config, ignore runtime state, and stage the canonical workspace files.
+
 ### Typical workflow
 
 ```bash

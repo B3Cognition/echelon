@@ -54,14 +54,14 @@ directly — do NOT search the filesystem. Key files: `ralph.py` (outer/inner lo
 ## Step 1: Check Initialized
 
 ```bash
-test -f .specify/extensions/echelon/echelon-config.yml && echo "ok" || echo "missing"
+test -f .echelon/config.yml || test -f .specify/extensions/echelon/echelon-config.yml && echo "ok" || echo "missing"
 ```
 
 If the output is `missing`, report:
 
 **"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop immediately.
 
-**ABSOLUTE RULE: Always stop with the message above when config is absent.** Do NOT create, recreate, or bootstrap `echelon-config.yml` (harness: section) yourself. Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The config is owned by `harness.init` — any other path corrupts harness state.
+**ABSOLUTE RULE: Always stop with the message above when config is absent.** Do NOT create, recreate, or bootstrap `.echelon/config.yml` (harness: section) yourself. Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The config is owned by `harness.init` — any other path corrupts harness state.
 
 ---
 
@@ -245,7 +245,7 @@ Track the outer iteration count (`outer_iter`, starting at 0). After each build,
 ## Step 6: Verify (in Docker)
 
 Determine the Docker image to use:
-- Read `detected_image` from `.specify/extensions/echelon/echelon-config.yml`
+- Read `detected_image` from `.echelon/config.yml` (legacy fallback: `.specify/extensions/echelon/echelon-config.yml`)
 - Fallback: `ubuntu:24.04`
 
 ```bash

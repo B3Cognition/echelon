@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+import yaml
+
+from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
+
 GitRole = Literal["orchestration", "source"]
 
 SOURCE_MARKERS = (
@@ -164,8 +168,78 @@ def _child_source_roots(root: Path) -> tuple[SourceRoot, ...]:
     return tuple(sources)
 
 
+def _configured_workspace(root: Path) -> WorkspaceManifest | None:
+    config_path = root / CANONICAL_CONFIG_PATH
+    if not config_path.exists():
+        config_path = root / LEGACY_CONFIG_PATH
+    if not config_path.exists():
+        return None
+
+    raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        return None
+
+    workspace_raw = raw.get("workspace") or {}
+    if not isinstance(workspace_raw, dict):
+        workspace_raw = {}
+
+    if "sources" in raw:
+        sources_raw = raw.get("sources") or []
+    else:
+        sources_raw = workspace_raw.get("sources")
+    if sources_raw is None:
+        return None
+    if not isinstance(sources_raw, list):
+        return None
+
+    git_role = str(workspace_raw.get("git_role") or "orchestration")
+    if git_role not in ("orchestration", "source"):
+        git_role = "orchestration"
+
+    sources: list[SourceRoot] = []
+    for index, item in enumerate(sources_raw):
+        if isinstance(item, str):
+            source_id = item
+            source_path = item
+            source_git_role: GitRole = "source"
+        elif isinstance(item, dict):
+            source_path = str(item.get("path") or item.get("repo") or "").strip()
+            source_id = str(item.get("id") or source_path or f"source-{index + 1}").strip()
+            source_git_role = "source" if item.get("git_role") != "orchestration" else "orchestration"
+        else:
+            continue
+
+        if not source_path:
+            continue
+        resolved_source = root if source_path == "." else (root / source_path)
+        sources.append(
+            SourceRoot(
+                id=source_id,
+                path=source_path,
+                git_present=has_git_marker(resolved_source),
+                git_role=source_git_role,
+                project_markers=project_markers(resolved_source) if resolved_source.exists() else (),
+                source_file_count=count_source_files(resolved_source) if resolved_source.exists() else 0,
+            )
+        )
+
+    return WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(
+            root=root,
+            git_role=git_role,  # type: ignore[arg-type]
+            git_present=has_git_marker(root),
+        ),
+        sources=tuple(sources),
+    )
+
+
 def discover_workspace(root: Path) -> WorkspaceManifest:
     resolved = root.resolve()
+    configured = _configured_workspace(resolved)
+    if configured is not None:
+        return configured
+
     workspace_git_present = has_git_marker(resolved)
     child_sources = _child_source_roots(resolved)
     root_markers = project_markers(resolved)

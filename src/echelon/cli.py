@@ -108,6 +108,8 @@ Commands:
   harness run    <spec_id> [strategy=<s>]   Run build→verify→PR loop
   harness resume <spec_id> [strategy=<s>]   Resume a blocked harness run
   spec target    <spec_id> <repo> [repo...] Set target repos in spec frontmatter
+  workspace doctor                         Check workspace/source/runtime contract
+  workspace migrate [--write] [--commit]   Migrate legacy workspace layout
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
@@ -269,16 +271,24 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
 
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
-    echelon_cfg = ext_dir / "echelon-config.yml"
+    legacy_cfg = ext_dir / "echelon-config.yml"
+    echelon_cfg = project_dir / ".echelon" / "config.yml"
 
-    # Step 1: Confirm project config exists (created by `specify extension add echelon`)
+    # Step 1: Confirm project config exists. New workspaces commit .echelon/config.yml;
+    # legacy extension-local config remains a migration/template source.
     if not echelon_cfg.exists():
-        print(
-            f"✗ Project config not found: {echelon_cfg}\n"
-            "  Run: specify extension add echelon",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        if legacy_cfg.exists():
+            echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy_cfg, echelon_cfg)
+            print(f"✓ Project config created: {echelon_cfg}")
+        else:
+            print(
+                f"✗ Project config not found: {echelon_cfg}\n"
+                f"  Legacy template also missing: {legacy_cfg}\n"
+                "  Run: specify extension add echelon",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     print(f"✓ Project config found: {echelon_cfg}")
 
     # Step 2: Validate deploy config
@@ -728,7 +738,7 @@ def _cmd_cicd(args: list[str]) -> None:
         "  For harness verification, run:\n"
         "    echelon harness init\n\n"
         "  If auto-detection cannot make a high-confidence choice, add a top-level\n"
-        "  verify_command to .specify/extensions/echelon/echelon-config.yml, for example:\n"
+        "  verify_command to .echelon/config.yml, for example:\n"
         "    verify_command: pytest\n"
         "    verify_command: npm test\n"
         "    verify_command: go test ./...",
@@ -4683,6 +4693,44 @@ def _cmd_spec_target(args: list[str]) -> None:
         print(f"    - {r}")
 
 
+def _cmd_workspace(args: list[str]) -> None:
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon workspace <subcommand> [args...]\n\n"
+            "  doctor                    Validate workspace/source/runtime contract\n"
+            "  migrate [--write]         Copy legacy config, ignore runtime state, stage fixes\n"
+            "          [--commit]        Apply and commit migration changes\n",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+    subcmd = args[0]
+    if subcmd == "doctor":
+        from echelon.workspace_git_migration import doctor_workspace
+
+        result = doctor_workspace(Path.cwd())
+        print(f"Workspace: {result.workspace_root}")
+        print(f"Buildable: {'yes' if result.buildable else 'no'}")
+        if not result.findings:
+            print("Findings: none")
+        else:
+            print("Findings:")
+            for finding in result.findings:
+                path = f" [{finding.path}]" if finding.path else ""
+                print(f"  {finding.severity.upper()} {finding.code}{path}: {finding.message}")
+        if result.has_errors:
+            sys.exit(1)
+        return
+
+    if subcmd == "migrate":
+        from echelon.workspace_git_migration import main as migrate_main
+
+        raise SystemExit(migrate_main([".", *args[1:]]))
+
+    print(f"echelon workspace: unknown subcommand '{subcmd}'\n", file=sys.stderr)
+    sys.exit(1)
+
+
 def _cmd_artifacts(args: list[str]) -> None:
     if not args:
         print("echelon artifacts: missing spec_id", file=sys.stderr)
@@ -4732,6 +4780,10 @@ def main() -> None:
         _cmd_spec(args[1:])
         return
 
+    if command == "workspace":
+        _cmd_workspace(args[1:])
+        return
+
     if command == "artifacts":
         _cmd_artifacts(args[1:])
         return
@@ -4771,7 +4823,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        cfg_file = ext_dir / "echelon-config.yml"
+        cfg_file = _project_echelon_config(project_root)
         if not cfg_file.exists():
             print(
                 f"✗ Project not initialized — config not found: {cfg_file}\n"
@@ -4820,7 +4872,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        cfg_file = ext_dir / "echelon-config.yml"
+        cfg_file = _project_echelon_config(project_root)
         if not cfg_file.exists():
             print(
                 f"✗ Project not initialized — config not found: {cfg_file}\n"
