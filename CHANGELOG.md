@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-072 / #89 autonomous land runtime-state conflict resolution** —
+  `echelon land` now autoresolves the legacy transition where a feature branch
+  still tracks `.specify/*` runtime files while the default branch ignores
+  `.specify/`. Land keeps a unioned `.gitignore`, removes `.specify/*` from the
+  Git index, and applies the same resolver when recovering with
+  `echelon land <id> --continue`; source/spec artifact conflicts still block.
 - **EGR-071 / #88 spec-kit runtime gitignore contract** — workspace Git initialization
   guidance and migration now treat `.specify/` as local spec-kit/Echelon runtime
   state, add it to `.gitignore`, and stage only `.gitignore` plus `specs/`.

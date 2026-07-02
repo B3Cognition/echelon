@@ -1128,6 +1128,123 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
+def test_prepare_feature_branch_autoresolves_specify_runtime_removal(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\n[PROJECT_NAME]\n",
+        "track legacy spec-kit constitution",
+    )
+    _commit(repo, ".specify/templates/spec-template.md", "# Template\n", "track templates")
+
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, ".gitignore", "__pycache__/\n.pytest_cache/\n", "feature gitignore")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\nReal project rules.\n",
+        "feature constitution update",
+    )
+
+    _git(repo, "checkout", "main")
+    _git(repo, "rm", "-r", ".specify")
+    (repo / ".gitignore").write_text("/.specify/\n/runs/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore spec-kit runtime state")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.push_prepared_branch.return_value = None
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert result.branch == "001-feature"
+    assert ".gitignore" in result.autoresolved_files
+    assert ".specify/memory/constitution.md" in result.autoresolved_files
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
+    assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
+    assert "/.specify/" in (repo / ".gitignore").read_text(encoding="utf-8")
+    assert "__pycache__/" in (repo / ".gitignore").read_text(encoding="utf-8")
+    gitops.push_prepared_branch.assert_called_once_with(
+        str(repo), "001-feature", force_with_lease=False
+    )
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_continue_autoresolves_specify_runtime_removal(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\n[PROJECT_NAME]\n",
+        "track legacy spec-kit constitution",
+    )
+
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, ".gitignore", "__pycache__/\n", "feature gitignore")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\nReal project rules.\n",
+        "feature constitution update",
+    )
+
+    _git(repo, "checkout", "main")
+    _git(repo, "rm", "-r", ".specify")
+    (repo / ".gitignore").write_text("/.specify/\n/runs/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore spec-kit runtime state")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.push_prepared_branch.return_value = None
+
+    blocked = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(autoresolve=False),
+    )
+    assert blocked.status == "blocked"
+    assert blocked.conflicted_files == [".gitignore", ".specify/memory/constitution.md"]
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(continue_existing=True),
+    )
+
+    assert result.status == "prepared"
+    assert ".gitignore" in result.autoresolved_files
+    assert ".specify/memory/constitution.md" in result.autoresolved_files
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
+    assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
+
+
+@pytest.mark.unit
 def test_prepare_feature_branch_respects_no_autoresolve_for_gitignore(
     tmp_path: Path,
 ) -> None:

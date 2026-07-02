@@ -64,6 +64,7 @@ _IMPLEMENTATION_INPUT_FILES = {
     "Makefile",
 }
 _FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
+_RUNTIME_STATE_CONFLICT_PREFIXES = (".specify/",)
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,7 @@ def prepare_feature_branch(
             feature_branch=feature_branch,
             project_dir=project_dir,
             gitops=gitops,
+            options=options,
         )
 
     dirty = _run_git(
@@ -149,8 +151,8 @@ def prepare_feature_branch(
 
     conflicted = _list_unmerged_files(project_dir)
     autoresolved: list[str] = []
-    if options.autoresolve and conflicted == [".gitignore"] and _autoresolve_gitignore(project_dir):
-        autoresolved.append(".gitignore")
+    if options.autoresolve:
+        autoresolved = _autoresolve_known_land_conflicts(project_dir, conflicted)
         conflicted = _list_unmerged_files(project_dir)
         if not conflicted:
             _run_git(["commit", "--no-edit"], cwd=str(project_dir))
@@ -180,6 +182,7 @@ def _continue_feature_branch_preparation(
     feature_branch: str,
     project_dir: Path,
     gitops: Any,
+    options: LandOptions,
 ) -> LandPrepareResult:
     current_branch = _run_git(
         ["branch", "--show-current"],
@@ -190,11 +193,16 @@ def _continue_feature_branch_preparation(
         _run_git(["checkout", feature_branch], cwd=str(project_dir))
 
     conflicted = _list_unmerged_files(project_dir)
+    autoresolved: list[str] = []
+    if conflicted and options.autoresolve:
+        autoresolved = _autoresolve_known_land_conflicts(project_dir, conflicted)
+        conflicted = _list_unmerged_files(project_dir)
     if conflicted:
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
             conflicted_files=conflicted,
+            autoresolved_files=autoresolved,
             message="conflicts remain",
         )
 
@@ -218,6 +226,7 @@ def _continue_feature_branch_preparation(
         branch=feature_branch,
         prepared_commit=commit,
         pushed=True,
+        autoresolved_files=autoresolved,
     )
 
 
@@ -228,6 +237,48 @@ def _list_unmerged_files(project_dir: Path) -> list[str]:
         check=False,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _autoresolve_known_land_conflicts(project_dir: Path, conflicted: list[str]) -> list[str]:
+    """Resolve conflicts whose desired landing semantics are deterministic.
+
+    This is deliberately narrow. It only handles generated/runtime state that
+    Echelon owns, plus add/add .gitignore union conflicts. Source or spec
+    artifact conflicts still block for human review.
+    """
+    unresolved = set(conflicted)
+    autoresolved: list[str] = []
+
+    if ".gitignore" in unresolved and _autoresolve_gitignore(project_dir):
+        autoresolved.append(".gitignore")
+        unresolved.discard(".gitignore")
+
+    runtime_conflicts = sorted(
+        path
+        for path in unresolved
+        if any(path.startswith(prefix) for prefix in _RUNTIME_STATE_CONFLICT_PREFIXES)
+    )
+    if runtime_conflicts and len(runtime_conflicts) == len(unresolved):
+        if _autoresolve_runtime_state_removal(project_dir, runtime_conflicts):
+            autoresolved.extend(runtime_conflicts)
+
+    return autoresolved
+
+
+def _autoresolve_runtime_state_removal(project_dir: Path, paths: list[str]) -> bool:
+    if not paths:
+        return False
+
+    rm = _run_git(
+        ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", *paths],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if rm.returncode != 0:
+        return False
+
+    still_unmerged = set(_list_unmerged_files(project_dir))
+    return not any(path in still_unmerged for path in paths)
 
 
 def _autoresolve_gitignore(project_dir: Path) -> bool:
