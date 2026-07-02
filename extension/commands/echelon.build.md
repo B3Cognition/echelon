@@ -67,6 +67,19 @@ progress identities. Expand them to exact canonical IDs such as
 
 **AXIOM-3:** Unverified requirements are unshipped. Full-spec BUILD_DONE is forbidden while any `coverage-map.md` entry has `coverage_type: manual|none` without explicit `deferred_risky_accepted` signed off by user. Harness `{"status":"done"}` still means the current invocation completed useful verified progress.
 
+### Harness Build Quality Gate Sequencing
+
+When running under `echelon harness run`, follow build gate workflow transitions sequentially.
+SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN are hard gates, not a parallel
+review batch. Run SPEC GUARD first; only after it passes, run CODE REVIEWER;
+only after CODE REVIEWER approves, run TEST GUARDIAN.
+
+NEVER dispatch SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN in one parallel batch.
+NEVER skip CODE REVIEWER or TEST GUARDIAN by vacuity. A gate may be skipped only
+when `workflow/definition.yaml` or a phase spec declares an explicit
+workflow-approved skip condition, and the skip rationale must be recorded in
+`echelon_result.journal_entries`.
+
 ---
 
 ## Execution Continuity — MANDATORY

@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-066 build quality gate sequencing contract** — `echelon.build` and the
+  build task phase now explicitly require SPEC GUARD, CODE REVIEWER, and TEST
+  GUARDIAN to run as sequential hard gates, not one parallel batch. CODE
+  REVIEWER and TEST GUARDIAN may no longer be skipped by vacuity; any skip
+  needs a workflow-approved condition and journaled rationale, while the generic
+  COMMANDER prompt remains judge/governance-oriented.
 - **EGR-067 Ruff formatting evidence in Python language rules** — CODE
   REVIEWER's Python language rule now requires both `ruff check` and
   `ruff format --check` before reporting Python style, lint, or formatting as
