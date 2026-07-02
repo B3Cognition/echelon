@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-067 Ruff formatting evidence in Python language rules** — CODE
+  REVIEWER's Python language rule now requires both `ruff check` and
+  `ruff format --check` before reporting Python style, lint, or formatting as
+  clean, preventing lint-only evidence from masking formatter failures while
+  keeping the generic code-reviewer prompt language-neutral.
+- **EGR-065 provider-limit salvage task-progress reconciliation** — Ralph now
+  reapplies completed task statuses from Python-owned harness state after
+  syncing Phase A inputs into a build worktree. Stale project-visible
+  `tasks.md` copies can no longer erase checked task rows before readiness
+  validation or provider-limit salvage.
 - **EGR-064 / #86 harness recovery idempotence** — `echelon harness
   resume` no longer requires a clean current checkout when the selected
   checkpoint/salvage commit is already contained in the resolved target feature
