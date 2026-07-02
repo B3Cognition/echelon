@@ -233,6 +233,59 @@ class TestLand:
         fields = dict(banner.call_args.args[1])
         assert "ready_to_land" in fields["problem"]
 
+    def test_land_uses_feature_branch_readiness_when_current_checkout_is_stale(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        _commit(repo, "README.md", "base\n", "base")
+        _commit(
+            repo,
+            "specs/042-demo/spec.md",
+            "# Demo\n\n**Status**: Planned\n",
+            "stale spec on main",
+        )
+        _git(repo, "checkout", "-b", "042-demo")
+        verified = _commit(
+            repo,
+            "src/app.py",
+            "print('ok')\n",
+            "implementation checkpoint",
+        )
+        (repo / "specs/042-demo/spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Demo\n\n**Status**: ready_to_land\n",
+            encoding="utf-8",
+        )
+        (repo / "specs/042-demo/fulfillment-report.md").write_text(
+            "---\n"
+            f"verified_commit: {verified}\n"
+            "verify_scope: full\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/app.py | high | ok |\n",
+            encoding="utf-8",
+        )
+        _git(repo, "add", "specs/042-demo/spec.md", "specs/042-demo/fulfillment-report.md")
+        _git(repo, "commit", "-m", "mark ready to land")
+        _git(repo, "checkout", "main")
+
+        gitops = _make_gitops(feature_branch="042-demo")
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._verify_before_land", return_value=True),
+            patch("harness.land._finish_landing", return_value=True) as finish_landing,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-demo")
+
+            result = land("042", project_dir=repo, gitops=gitops)
+
+        assert result is True
+        prepare.assert_called_once()
+        finish_landing.assert_called_once()
+        assert not banner.called
+
     def test_land_status_warning_accepts_ready_to_land(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-demo"
         spec_dir.mkdir(parents=True)

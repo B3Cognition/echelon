@@ -1,14 +1,16 @@
 """Land — idempotent spec completion: merge PR, delete branch, clean worktrees, mark done."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
 import logging
+import re
 import shlex
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from echelon.ui import banner as _banner
 
@@ -24,6 +26,44 @@ from kernel.fulfillment import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TEXT_SNAPSHOT_SUFFIXES = {".md", ".json", ".yml", ".yaml"}
+_SPEC_INPUT_FILENAMES = {
+    "spec.md",
+    "plan.md",
+    "tasks.md",
+    "coverage-map.md",
+    "user-clarifications.md",
+}
+_IMPLEMENTATION_INPUT_DIRS = (
+    "src",
+    "app",
+    "apps",
+    "lib",
+    "packages",
+    "tests",
+    "test",
+)
+_IMPLEMENTATION_INPUT_FILES = {
+    "pyproject.toml",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "poetry.lock",
+    "uv.lock",
+    "Cargo.toml",
+    "Cargo.lock",
+    "go.mod",
+    "go.sum",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Makefile",
+}
+_FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
 
 
 @dataclass(frozen=True)
@@ -294,7 +334,12 @@ def land(
     else:
         pr_url = _find_pr_url_all_builds(spec_id, wrapper_project_dir)
 
-    if not options.prepare_only and not _check_ready_before_land(spec_id, wrapper_project_dir, options):
+    if not options.prepare_only and not _check_ready_before_land(
+        spec_id,
+        wrapper_project_dir,
+        options,
+        ref=feature_branch,
+    ):
         return False
 
     if options.prepare_only:
@@ -407,8 +452,36 @@ def _check_ready_before_land(
     spec_id: str,
     project_dir: Path,
     options: LandOptions,
+    ref: str | None = None,
 ) -> bool:
     status_warning = _land_status_warning(spec_id, project_dir)
+    fulfillment_warning: str | None = None
+    if status_warning is None:
+        fulfillment_warning = _fulfillment_warning(
+            spec_id,
+            project_dir,
+            strict=False,
+        )
+
+    if (
+        (status_warning or fulfillment_warning)
+        and ref is not None
+        and _find_spec_dir_rel_in_ref(project_dir, spec_id, ref) is not None
+    ):
+        ref_status_warning = _land_status_warning(spec_id, project_dir, ref=ref)
+        if ref_status_warning is None:
+            ref_fulfillment_warning = _fulfillment_warning(
+                spec_id,
+                project_dir,
+                strict=False,
+                ref=ref,
+            )
+            if ref_fulfillment_warning is None:
+                return True
+            fulfillment_warning = ref_fulfillment_warning
+        elif status_warning is None:
+            status_warning = ref_status_warning
+
     if status_warning:
         _banner(
             "LAND — SPEC NOT READY",
@@ -421,15 +494,24 @@ def _check_ready_before_land(
         )
         return False
 
-    return _check_fulfillment_before_land(spec_id, project_dir, options)
+    return _check_fulfillment_before_land(
+        spec_id,
+        project_dir,
+        options,
+        warning=fulfillment_warning,
+    )
 
 
-def _land_status_warning(spec_id: str, project_dir: Path) -> str | None:
-    spec_dir = find_spec_dir(spec_id, project_dir)
-    if spec_dir is None or not (spec_dir / "spec.md").exists():
-        return None
+def _land_status_warning(
+    spec_id: str,
+    project_dir: Path,
+    ref: str | None = None,
+) -> str | None:
+    with _land_spec_dir(spec_id, project_dir, ref=ref) as spec_dir:
+        if spec_dir is None or not (spec_dir / "spec.md").exists():
+            return None
 
-    status = read_frontmatter(spec_dir).get("status")
+        status = read_frontmatter(spec_dir).get("status")
     if status in {"ready_to_land", "landed"}:
         return None
     return f"spec status must be ready_to_land before landing; current status is {status or '(missing)'}"
@@ -492,8 +574,17 @@ def _check_fulfillment_before_land(
     spec_id: str,
     project_dir: Path,
     options: LandOptions,
+    ref: str | None = None,
+    warning: str | None = None,
 ) -> bool:
-    fulfillment_warning = _fulfillment_warning(spec_id, project_dir, strict=False)
+    fulfillment_warning = warning
+    if fulfillment_warning is None:
+        fulfillment_warning = _fulfillment_warning(
+            spec_id,
+            project_dir,
+            strict=False,
+            ref=ref,
+        )
     if not fulfillment_warning:
         return True
 
@@ -525,46 +616,222 @@ def _fulfillment_warning(
     spec_id: str,
     project_dir: Path,
     strict: bool = False,
+    ref: str | None = None,
 ) -> str | None:
-    spec_dir = find_spec_dir(spec_id, project_dir)
-    if spec_dir is None:
-        return None
+    with _land_spec_dir(spec_id, project_dir, ref=ref) as spec_dir:
+        if spec_dir is None:
+            return None
 
-    report = latest_fulfillment_report(spec_dir)
-    if report is None:
-        if (spec_dir / "spec.md").exists():
-            return (
-                f"no fulfillment report found for {spec_dir}. "
-                f"Rerun `echelon verify-spec {spec_id}` before landing."
+        report = latest_fulfillment_report(spec_dir)
+        if report is None:
+            if (spec_dir / "spec.md").exists():
+                return (
+                    f"no fulfillment report found for {spec_dir}. "
+                    f"Rerun `echelon verify-spec {spec_id}` before landing."
+                )
+            return None
+
+        if ref is None:
+            current_commit = _current_git_commit(project_dir)
+            current = bool(
+                current_commit
+                and fulfillment_report_is_current(report, current_commit=current_commit)
             )
-        return None
+        else:
+            current_commit = _ref_git_commit(project_dir, ref)
+            current = _fulfillment_report_covers_ref(
+                report=report,
+                project_dir=project_dir,
+                spec_id=spec_id,
+                ref=ref,
+                current_commit=current_commit,
+            )
+        if current_commit and not current:
+            metadata = read_fulfillment_metadata(report)
+            verified_commit = metadata.get("verified_commit") or "(missing)"
+            return (
+                f"fulfillment report is stale for current HEAD {current_commit}: {report} "
+                f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
+            )
 
-    current_commit = _current_git_commit(project_dir)
-    if current_commit and not fulfillment_report_is_current(
-        report, current_commit=current_commit
-    ):
         metadata = read_fulfillment_metadata(report)
-        verified_commit = metadata.get("verified_commit") or "(missing)"
-        return (
-            f"fulfillment report is stale for current HEAD {current_commit}: {report} "
-            f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
-        )
+        if metadata.get("verify_scope") == "scoped":
+            return (
+                f"latest fulfillment report is a scoped fulfillment report: {report}. "
+                f"Run full `echelon verify-spec {spec_id}` before landing."
+            )
 
-    metadata = read_fulfillment_metadata(report)
-    if metadata.get("verify_scope") == "scoped":
-        return (
-            f"latest fulfillment report is a scoped fulfillment report: {report}. "
-            f"Run full `echelon verify-spec {spec_id}` before landing."
-        )
-
-    if not fulfillment_has_blocking_gaps(report, strict=strict):
-        return None
+        if not fulfillment_has_blocking_gaps(report, strict=strict):
+            return None
 
     statuses = ", ".join(sorted(blocking_statuses(strict)))
     return (
         f"fulfillment report has unresolved statuses ({statuses}): {report}. "
         f"Run `echelon reopen {spec_id}` or rerun `echelon verify-spec {spec_id}`."
     )
+
+
+@contextmanager
+def _land_spec_dir(
+    spec_id: str,
+    project_dir: Path,
+    ref: str | None = None,
+) -> Iterator[Path | None]:
+    if ref is None:
+        yield find_spec_dir(spec_id, project_dir)
+        return
+
+    spec_rel = _find_spec_dir_rel_in_ref(project_dir, spec_id, ref)
+    if spec_rel is None:
+        yield None
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        for relpath in _list_ref_files(project_dir, ref, prefix=f"{spec_rel}/"):
+            if Path(relpath).suffix not in _TEXT_SNAPSHOT_SUFFIXES:
+                continue
+            content = _show_ref_file(project_dir, ref, relpath)
+            if content is None:
+                continue
+            target = tmp_root / relpath
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        yield tmp_root / spec_rel
+
+
+def _find_spec_dir_rel_in_ref(project_dir: Path, spec_id: str, ref: str) -> str | None:
+    candidates: list[str] = []
+    for relpath in _list_ref_files(project_dir, ref, prefix="specs/"):
+        path = Path(relpath)
+        if path.name != "spec.md" or len(path.parts) < 3:
+            continue
+        spec_name = path.parts[1]
+        if spec_name == spec_id or spec_name.startswith(f"{spec_id}-"):
+            candidates.append(str(path.parent))
+    return sorted(candidates)[0] if candidates else None
+
+
+def _list_ref_files(project_dir: Path, ref: str, prefix: str = "") -> list[str]:
+    args = ["ls-tree", "-r", "--name-only", ref]
+    if prefix:
+        args.extend(["--", prefix])
+    result = _run_git(args, cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _show_ref_file(project_dir: Path, ref: str, relpath: str) -> str | None:
+    result = _run_git(["show", f"{ref}:{relpath}"], cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _ref_git_commit(project_dir: Path, ref: str) -> str | None:
+    result = _run_git(["rev-parse", ref], cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _fulfillment_report_covers_ref(
+    *,
+    report: Path,
+    project_dir: Path,
+    spec_id: str,
+    ref: str,
+    current_commit: str | None,
+) -> bool:
+    if not current_commit:
+        return False
+
+    metadata = read_fulfillment_metadata(report)
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        return False
+    if verified_commit == current_commit:
+        return True
+
+    ancestor = _run_git(
+        ["merge-base", "--is-ancestor", verified_commit, current_commit],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        return False
+    return not _ref_changes_fulfillment_inputs(
+        project_dir=project_dir,
+        spec_id=spec_id,
+        ref=ref,
+        verified_commit=verified_commit,
+        current_commit=current_commit,
+    )
+
+
+def _ref_changes_fulfillment_inputs(
+    *,
+    project_dir: Path,
+    spec_id: str,
+    ref: str,
+    verified_commit: str,
+    current_commit: str,
+) -> bool:
+    spec_rel = _find_spec_dir_rel_in_ref(project_dir, spec_id, ref)
+    result = _run_git(
+        ["diff", "--name-only", verified_commit, current_commit],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode != 0:
+        return True
+
+    for relpath in [line.strip() for line in result.stdout.splitlines() if line.strip()]:
+        if _is_implementation_input_path(relpath):
+            return True
+        if spec_rel and _is_spec_input_path(relpath, spec_rel):
+            if relpath == f"{spec_rel}/spec.md" and _spec_change_is_status_only(
+                project_dir,
+                verified_commit,
+                current_commit,
+                relpath,
+            ):
+                continue
+            return True
+    return False
+
+
+def _is_implementation_input_path(relpath: str) -> bool:
+    if relpath in _IMPLEMENTATION_INPUT_FILES:
+        return True
+    return any(relpath == dirname or relpath.startswith(f"{dirname}/") for dirname in _IMPLEMENTATION_INPUT_DIRS)
+
+
+def _is_spec_input_path(relpath: str, spec_rel: str) -> bool:
+    prefix = f"{spec_rel}/"
+    if not relpath.startswith(prefix):
+        return False
+    return relpath.removeprefix(prefix) in _SPEC_INPUT_FILENAMES
+
+
+def _spec_change_is_status_only(
+    project_dir: Path,
+    old_ref: str,
+    new_ref: str,
+    relpath: str,
+) -> bool:
+    old = _show_ref_file(project_dir, old_ref, relpath)
+    new = _show_ref_file(project_dir, new_ref, relpath)
+    if old is None or new is None:
+        return False
+    return _without_spec_status(old) == _without_spec_status(new)
+
+
+def _without_spec_status(text: str) -> str:
+    text = _FRONTMATTER_RE.sub("", text, count=1)
+    return re.sub(r"^\*\*Status\*\*:\s*.*(?:\n|$)", "", text, count=1, flags=re.MULTILINE)
 
 
 def _current_git_commit(project_dir: Path) -> str | None:

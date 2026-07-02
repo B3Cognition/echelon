@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-070 / #87 land feature-branch readiness** — `echelon land`
+  now falls back to the resolved feature branch for readiness and fulfillment
+  preflight when the current checkout has stale spec artifacts. Fulfillment
+  reports verified at an ancestor commit are accepted only when later feature
+  branch commits changed landing/verification artifacts without touching
+  implementation inputs or semantic spec inputs.
 - **EGR-069 harness resume salvage recovery** — `echelon harness resume` now
   recovers from a state-recorded salvage/checkpoint commit even when later
   generated verification artifacts leave the preserved worktree with tracked
