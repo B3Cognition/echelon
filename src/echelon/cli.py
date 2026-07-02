@@ -540,7 +540,7 @@ def _cmd_harness_init(args: list[str]) -> None:
         print(f"✗ echelon harness init failed: {e}", file=sys.stderr)
         sys.exit(1)
 
-    config_file = Path(base_dir) / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = _project_echelon_config(Path(base_dir))
     from harness.paths import mirror_path as _mirror_path_fn
     mirror_dir = _mirror_path_fn(Path(base_dir))
 
@@ -1080,12 +1080,13 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.plan_validation import PlanValidationError, validate_plan_file
     from harness.task_validation import TaskValidationError
 
-    # Single-repo mode: require local echelon-config.yml (harness config).
-    echelon_yml = config_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    # Single-repo mode: require local Echelon harness config.
+    echelon_yml = _project_echelon_config(config_root)
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
+            f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon harness init' first, or add 'targets:' to your spec.",
             file=sys.stderr,
         )
@@ -1408,11 +1409,12 @@ def _cmd_harness_resume(args: list[str]) -> None:
     from harness.paths import build_dir, current_build_marker, runs_dir
     from harness.state import StateStore
 
-    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_yml = _project_echelon_config(Path.cwd())
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
+            f"  Legacy fallback: {Path.cwd() / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon harness init' first.",
             file=sys.stderr,
         )
@@ -2934,6 +2936,9 @@ class ProjectConfigCompatibilityIssue:
 
 
 def _project_echelon_config(project_root: Path) -> Path:
+    canonical = project_root / ".echelon" / "config.yml"
+    if canonical.exists():
+        return canonical
     return project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
 
 
