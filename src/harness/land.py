@@ -65,6 +65,10 @@ _IMPLEMENTATION_INPUT_FILES = {
 }
 _FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
 _RUNTIME_STATE_CONFLICT_PREFIXES = (".specify/",)
+_LAND_GENERATED_DRIFT_EXACT = {
+    "docs/perf/perf-metrics.json",
+    "docs/perf/perf-metrics-pty.json",
+}
 
 
 @dataclass(frozen=True)
@@ -208,11 +212,11 @@ def _continue_feature_branch_preparation(
         check=False,
     )
     if merge_head.returncode != 0:
-        dirty = _run_git(
-            ["status", "--porcelain", "--untracked-files=no"],
-            cwd=str(project_dir),
-            check=False,
-        ).stdout.strip()
+        dirty = _tracked_dirty_files(project_dir)
+        if dirty:
+            generated, unsafe = _discard_known_generated_land_drift(project_dir)
+            if generated and not unsafe:
+                dirty = _tracked_dirty_files(project_dir)
         if not dirty and _branch_contains_default_branch(project_dir, gitops):
             commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
             pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
@@ -222,6 +226,12 @@ def _continue_feature_branch_preparation(
                 prepared_commit=commit,
                 pushed=pushed,
                 message="feature branch is already prepared",
+            )
+        if dirty:
+            return LandPrepareResult(
+                status="blocked",
+                branch=feature_branch,
+                message="working tree has tracked changes: " + ", ".join(dirty),
             )
         return LandPrepareResult(
             status="blocked",
@@ -257,6 +267,21 @@ def _push_prepared_branch_if_remote(gitops: Any, project_dir: Path, feature_bran
         return False
     gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
     return True
+
+
+def _push_landed_default_branch_if_remote(
+    gitops: Any,
+    project_dir: Path,
+    default_branch: str,
+) -> bool:
+    origin_url = _origin_remote_url(project_dir)
+    if not origin_url:
+        logger.info("Skipping landed default branch push: no origin remote")
+        return True
+    if _is_local_remote_url(project_dir, origin_url):
+        logger.info("Skipping landed default branch push: origin is local (%s)", origin_url)
+        return True
+    return bool(gitops.push_landed_default_branch(str(project_dir), default_branch))
 
 
 def _origin_remote_url(project_dir: Path) -> str | None:
@@ -524,6 +549,8 @@ def land(
         return False
     if not _verify_before_land(spec_id, project_dir, gitops, options):
         return False
+    if not _clean_generated_drift_before_direct_merge(spec_id, project_dir):
+        return False
 
     # No PR URL — gh/glab not configured. Merge directly into the default branch.
     merged = gitops.merge_branch_into_default(feature_branch, str(project_dir))
@@ -541,7 +568,7 @@ def land(
         return False
 
     default_branch = _land_default_branch(gitops)
-    if not gitops.push_landed_default_branch(str(project_dir), default_branch):
+    if not _push_landed_default_branch_if_remote(gitops, project_dir, default_branch):
         _banner(
             "LAND — DEFAULT PUSH FAILED",
             [
@@ -561,6 +588,59 @@ def land(
         gitops,
         spec_project_dir=wrapper_project_dir,
     )
+
+
+def _clean_generated_drift_before_direct_merge(spec_id: str, project_dir: Path) -> bool:
+    """Discard known generated verification drift before checking out default.
+
+    `land` verifies on the prepared feature branch, then directly checks out the
+    default branch when no PR host is configured. Some project verify commands
+    update tracked generated metrics. Those edits are not user source changes and
+    should not make the final default-branch checkout unrecoverable.
+    """
+    generated, unsafe = _discard_known_generated_land_drift(project_dir)
+    if unsafe:
+        _banner(
+            "LAND — DIRTY WORKTREE",
+            [
+                ("spec", spec_id),
+                ("problem", "tracked changes remain after verification"),
+                ("files", "\n".join(unsafe)),
+                ("next step", f"commit or stash these files, then re-run: echelon land {spec_id}"),
+            ],
+            subtitle="Echelon will only discard known generated verification drift.",
+        )
+        return False
+
+    return True
+
+
+def _discard_known_generated_land_drift(project_dir: Path) -> tuple[list[str], list[str]]:
+    dirty = _tracked_dirty_files(project_dir)
+    if not dirty:
+        return [], []
+
+    generated = [path for path in dirty if _is_known_land_generated_drift(path)]
+    unsafe = [path for path in dirty if path not in generated]
+    if unsafe or not generated:
+        return generated, unsafe
+
+    _run_git(["checkout", "--", *generated], cwd=str(project_dir))
+    logger.info("Discarded generated land drift: %s", ", ".join(generated))
+    return generated, []
+
+
+def _tracked_dirty_files(project_dir: Path) -> list[str]:
+    result = _run_git(
+        ["diff", "--name-only", "HEAD", "--"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _is_known_land_generated_drift(path: str) -> bool:
+    return path in _LAND_GENERATED_DRIFT_EXACT
 
 
 def _check_ready_before_land(
@@ -648,15 +728,33 @@ def _prepare_for_land(
         options=options,
     )
     if prepare_result.status == "blocked":
+        has_conflicts = bool(prepare_result.conflicted_files)
+        detail_label = "conflicts" if has_conflicts else "problem"
+        detail_value = (
+            "\n".join(prepare_result.conflicted_files)
+            if has_conflicts
+            else prepare_result.message or "(none)"
+        )
         _banner(
-            "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION",
+            "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION"
+            if has_conflicts
+            else "LAND — FEATURE BRANCH NOT READY",
             [
                 ("spec", spec_id),
                 ("branch", feature_branch),
-                ("conflicts", "\n".join(prepare_result.conflicted_files) or "(none)"),
-                ("next step", f"resolve conflicts, then run: echelon land {spec_id} --continue"),
+                (detail_label, detail_value),
+                (
+                    "next step",
+                    f"resolve conflicts, then run: echelon land {spec_id} --continue"
+                    if has_conflicts
+                    else f"resolve the reported problem, then run: echelon land {spec_id} --continue",
+                ),
             ],
-            subtitle="Echelon stopped on semantic conflicts.",
+            subtitle=(
+                "Echelon stopped on semantic conflicts."
+                if has_conflicts
+                else "Echelon stopped before mutating the default branch."
+            ),
         )
         return None
     return prepare_result

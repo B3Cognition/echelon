@@ -493,7 +493,10 @@ class TestLand:
 
     def test_skips_merge_when_no_pr_url(self, tmp_path: Path) -> None:
         gitops = _make_gitops()
-        with patch("harness.land.prepare_feature_branch") as prepare:
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"),
+        ):
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
             result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is True
@@ -510,6 +513,7 @@ class TestLand:
             patch("harness.land.prepare_feature_branch") as prepare,
             patch("harness.land._finish_landing") as finish_landing,
             patch("harness.land._banner") as banner,
+            patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"),
         ):
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
             result = land("042", project_dir=tmp_path, gitops=gitops)
@@ -850,12 +854,16 @@ class TestDeleteHarnessBranches:
     def test_deletes_legacy_harness_branches(self, tmp_path: Path) -> None:
         """Simulate two harness/* branches existing for spec 042."""
         gitops = _make_gitops()
+        clean_result = MagicMock(returncode=0, stdout="")
+        no_origin_result = MagicMock(returncode=1, stdout="")
         list_result = MagicMock(returncode=0, stdout="  harness/042/codegen/iter-0\n  harness/042/codegen/iter-1\n")
         delete_result = MagicMock(returncode=0, stdout="")
         remote_head_result = MagicMock(returncode=1, stdout="")
         with patch("harness.land.subprocess.run") as mock_run:
-            # 5 calls: remote HEAD guard, local branch delete, --list, then 2x -D.
+            # 7 calls: dirty probe, origin probe, remote HEAD guard, local branch delete, --list, then 2x -D.
             mock_run.side_effect = [
+                clean_result,
+                no_origin_result,
                 remote_head_result,
                 delete_result,
                 list_result,
@@ -865,16 +873,20 @@ class TestDeleteHarnessBranches:
             with patch("harness.land.prepare_feature_branch") as prepare:
                 prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
                 land("042", project_dir=tmp_path, gitops=gitops)
-        head_call = mock_run.call_args_list[0]
+        dirty_call = mock_run.call_args_list[0]
+        assert dirty_call[0][0] == ["git", "diff", "--name-only", "HEAD", "--"]
+        origin_call = mock_run.call_args_list[1]
+        assert origin_call[0][0] == ["git", "remote", "get-url", "origin"]
+        head_call = mock_run.call_args_list[2]
         assert head_call[0][0] == ["git", "ls-remote", "--symref", "origin", "HEAD"]
-        # Second call: git branch -d <feature-branch> (safe local cleanup)
-        local_delete_call = mock_run.call_args_list[1]
+        # Fourth call: git branch -d <feature-branch> (safe local cleanup)
+        local_delete_call = mock_run.call_args_list[3]
         assert local_delete_call[0][0] == ["git", "branch", "-d", "042-my-feature"]
-        # Third call: git branch --list harness/042/*
-        list_call = mock_run.call_args_list[2]
+        # Fifth call: git branch --list harness/042/*
+        list_call = mock_run.call_args_list[4]
         assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
         # Remaining calls: git branch -D <harness-branch>
-        delete_calls = mock_run.call_args_list[3:]
+        delete_calls = mock_run.call_args_list[5:]
         deleted_branches = [c[0][0][3] for c in delete_calls]
         assert "harness/042/codegen/iter-0" in deleted_branches
         assert "harness/042/codegen/iter-1" in deleted_branches
@@ -955,6 +967,95 @@ def test_land_prepares_feature_branch_before_direct_merge(tmp_path: Path) -> Non
         _git(repo, "merge-base", "--is-ancestor", main_commit, "001-feature", check=False).returncode
         == 0
     )
+
+
+@pytest.mark.unit
+def test_land_discards_generated_verify_drift_before_direct_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, "docs/perf/perf-metrics.json", '{"metrics": {}}\n', "base metrics")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    main_commit = _commit(repo, "main.txt", "main\n", "main")
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+    gitops.delete_remote_branch.return_value = True
+    gitops.push_landed_default_branch.return_value = True
+
+    def verify_writes_generated_metrics(
+        spec_id: str,
+        project_dir: Path,
+        gitops_arg: MagicMock,
+        options: LandOptions,
+    ) -> bool:
+        assert spec_id == "001"
+        (project_dir / "docs/perf/perf-metrics.json").write_text(
+            '{"metrics": {"rerun": true}}\n',
+            encoding="utf-8",
+        )
+        return True
+
+    def direct_merge(branch: str, project_dir: str) -> bool:
+        target = Path(project_dir)
+        assert _git(target, "diff", "--name-only", "HEAD", "--").stdout.strip() == ""
+        assert (
+            _git(target, "merge-base", "--is-ancestor", main_commit, branch, check=False).returncode
+            == 0
+        )
+        _git(target, "checkout", "main")
+        _git(target, "merge", "--no-ff", branch, "-m", "land feature")
+        return True
+
+    gitops.merge_branch_into_default.side_effect = direct_merge
+
+    with (
+        patch("harness.land._verify_before_land", side_effect=verify_writes_generated_metrics),
+        patch("harness.land._delete_local_branch"),
+    ):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is True
+    gitops.merge_branch_into_default.assert_called_once_with("001-feature", str(repo))
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+
+
+@pytest.mark.unit
+def test_land_blocks_unknown_verify_drift_before_direct_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main")
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+
+    def verify_writes_source_file(
+        spec_id: str,
+        project_dir: Path,
+        gitops_arg: MagicMock,
+        options: LandOptions,
+    ) -> bool:
+        (project_dir / "feature.txt").write_text("changed after verify\n", encoding="utf-8")
+        return True
+
+    with (
+        patch("harness.land._verify_before_land", side_effect=verify_writes_source_file),
+        patch("harness.land._banner") as banner,
+    ):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is False
+    gitops.merge_branch_into_default.assert_not_called()
+    assert banner.call_args.args[0] == "LAND — DIRTY WORKTREE"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
 
 
 @pytest.mark.unit
@@ -1419,12 +1520,17 @@ def test_prepare_feature_branch_continue_recovers_after_push_only_failure(
     repo = tmp_path / "repo"
     _init_repo(repo)
     _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, "docs/perf/perf-metrics.json", '{"metrics": {}}\n', "base metrics")
     _git(repo, "checkout", "-b", "001-feature")
     _commit(repo, "feature.txt", "feature\n", "feature work")
     _git(repo, "checkout", "main")
     _commit(repo, "main.txt", "main\n", "main work")
     _git(repo, "checkout", "001-feature")
     _git(repo, "merge", "--no-ff", "main", "-m", "Merge main into 001-feature")
+    (repo / "docs/perf/perf-metrics.json").write_text(
+        '{"metrics": {"rerun": true}}\n',
+        encoding="utf-8",
+    )
 
     gitops = MagicMock()
     gitops.get_default_branch.return_value = "main"
@@ -1442,6 +1548,7 @@ def test_prepare_feature_branch_continue_recovers_after_push_only_failure(
     assert result.pushed is False
     assert result.message == "feature branch is already prepared"
     gitops.push_prepared_branch.assert_not_called()
+    assert _git(repo, "diff", "--name-only", "HEAD", "--").stdout.strip() == ""
     assert (
         _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
         == 0
