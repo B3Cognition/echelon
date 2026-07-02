@@ -57,7 +57,7 @@ def _is_echelon_workspace(root: Path) -> bool:
 
 def _existing_stage_paths(root: Path) -> tuple[str, ...]:
     paths = [".gitignore"]
-    paths.extend(path for path in (".specify", "specs") if (root / path).exists())
+    paths.extend(path for path in ("specs",) if (root / path).exists())
     return tuple(paths)
 
 
@@ -80,7 +80,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         for source in manifest.sources
         if source.path != "."
     )
-    runtime_ignore_entries = ("/runs/",)
+    runtime_ignore_entries = ("/.specify/", "/runs/")
     stage_paths = _existing_stage_paths(root)
 
     return WorkspaceGitMigrationPlan(

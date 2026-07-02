@@ -125,15 +125,17 @@ def _workspace_git_preflight(project_root: Path, *, command_name: str) -> None:
         return
 
     source_paths = [source.path for source in manifest.sources if source.path != "."]
-    ignore_lines = "\n".join(f"/{path}/" for path in source_paths) or "/source-repo/"
+    ignore_entries = [f"/{path}/" for path in source_paths] or ["/source-repo/"]
+    ignore_entries.extend(["/.specify/", "/runs/"])
+    ignore_lines = "\n".join(ignore_entries)
     print(
         "✗ Echelon workspace root is not a Git repo.\n\n"
         "Echelon requires workspace Git so specs, run state, and recovery metadata "
         "have durable version history.\n\n"
         "Fix:\n"
         "  git init\n"
-        f"  printf \"{ignore_lines}\\n/runs/build-*/\\n/runs/verify-*/\\n\" >> .gitignore\n"
-        "  git add .gitignore .specify specs\n"
+        f"  printf \"{ignore_lines}\\n\" >> .gitignore\n"
+        "  git add .gitignore specs\n"
         "  git commit -m \"chore: initialize echelon workspace\"\n\n"
         "Then rerun:\n"
         f"  {command_name}",

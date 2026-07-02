@@ -30,8 +30,8 @@ def test_migration_plan_ignores_child_source_roots(tmp_path: Path) -> None:
 
     assert plan.workspace_root == tmp_path.resolve()
     assert plan.source_ignore_entries == ("/og-platform/",)
-    assert plan.runtime_ignore_entries == ("/runs/",)
-    assert plan.stage_paths == (".gitignore", ".specify", "specs")
+    assert plan.runtime_ignore_entries == ("/.specify/", "/runs/")
+    assert plan.stage_paths == (".gitignore", "specs")
     assert plan.already_git_backed is False
 
 
@@ -51,6 +51,7 @@ def test_migration_write_initializes_git_and_stages_only_workspace_files(
     assert (tmp_path / ".git").exists()
     gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/og-platform/" in gitignore
+    assert "/.specify/" in gitignore
     assert "/runs/" in gitignore
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
@@ -88,16 +89,16 @@ def test_existing_git_workspace_migration_only_stages_gitignore(tmp_path: Path) 
 
 
 @pytest.mark.unit
-def test_existing_gitignore_runs_entry_satisfies_runtime_ignore(tmp_path: Path) -> None:
+def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
-    (tmp_path / ".gitignore").write_text("runs\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".specify\nruns\n", encoding="utf-8")
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
 
     result = migrate_workspace(tmp_path, write=True, commit=False)
 
     assert result.gitignore_updated is False
     assert result.staged_paths == ()
-    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == "runs\n"
+    assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == ".specify\nruns\n"
 
 
 @pytest.mark.unit

@@ -6,14 +6,17 @@ Echelon treats every project as a workspace with zero or more source roots.
 - Polyrepo: `sources: [repo-a, repo-b]`
 - Planning-only workspace: `sources: []`
 
-The workspace root owns `.specify/`, `specs/`, `runs/`, and Echelon state. Source roots own implementation files.
+The workspace root owns project-visible `specs/` artifacts and local Echelon
+runtime state. `.specify/` and `runs/` are runtime directories and should be
+gitignored in generated workspaces; published spec artifacts under `specs/`
+are the tracked handoff.
 
 For polyrepo work, initialize a lightweight workspace Git repo:
 
 ```bash
 git init
-printf "/og-platform/\n/pbg-api/\n/runs/\n" >> .gitignore
-git add .gitignore .specify specs
+printf "/og-platform/\n/pbg-api/\n/.specify/\n/runs/\n" >> .gitignore
+git add .gitignore specs
 git commit -m "chore: initialize echelon workspace"
 ```
 
@@ -21,11 +24,14 @@ For an existing branchless workspace, use the one-time migration script from the
 
 ```bash
 python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py          # dry-run plan
-python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --write  # git init, update .gitignore, stage workspace files
+python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --write  # git init, update .gitignore, stage specs
 python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --commit # also commit staged workspace files
 ```
 
-The script stages only `.gitignore`, `.specify`, and `specs`. Detected source roots are added to `.gitignore` before staging so implementation repositories are not committed into the lightweight workspace Git repo.
+The script stages only `.gitignore` and `specs`. Detected source roots,
+`.specify/`, and `runs/` are added to `.gitignore` before staging so runtime
+state and implementation repositories are not committed into the lightweight
+workspace Git repo.
 
 When running from an Echelon source checkout instead of an installed workspace extension, pass the target workspace explicitly:
 

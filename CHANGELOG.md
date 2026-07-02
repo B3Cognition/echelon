@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-071 / #88 spec-kit runtime gitignore contract** — workspace Git initialization
+  guidance and migration now treat `.specify/` as local spec-kit/Echelon runtime
+  state, add it to `.gitignore`, and stage only `.gitignore` plus `specs/`.
+  The tracked constitution handoff remains the published
+  `specs/<id>-*/constitution.md` snapshot rather than
+  `.specify/memory/constitution.md`.
 - **EGR-070 / #87 land feature-branch readiness** — `echelon land`
   now falls back to the resolved feature branch for readiness and fulfillment
   preflight when the current checkout has stale spec artifacts. Fulfillment

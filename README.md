@@ -134,6 +134,9 @@ Harness fulfillment refreshes are controlled from the repo config under
 `harness.fulfillment.refresh_policy`. Set this in
 `.specify/extensions/echelon/echelon-config.yml` for a committed project default,
 or in `.specify/extensions/echelon/local-config.yml` for a local override.
+For normal generated projects, `.specify/` is local spec-kit/Echelon runtime
+state and should be gitignored; the tracked governance handoff is the published
+`specs/<id>-*/constitution.md` snapshot.
 
 ```yaml
 harness:
@@ -296,8 +299,9 @@ my-project/
     001-feature/           ← echelon Phase A artifacts
       spec.md
       tasks.md
+      constitution.md      ← published snapshot from spec-kit memory
   .specify/
-    extensions/
+    extensions/            ← local runtime/config, usually gitignored
       echelon/             ← echelon config
       harness/
         config.yml         ← target_repo: "."
