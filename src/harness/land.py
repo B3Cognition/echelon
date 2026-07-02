@@ -139,14 +139,12 @@ def prepare_feature_branch(
     )
     if result.returncode == 0:
         commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
-        gitops.push_prepared_branch(
-            str(project_dir), feature_branch, force_with_lease=False
-        )
+        pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
         return LandPrepareResult(
             status="prepared",
             branch=feature_branch,
             prepared_commit=commit,
-            pushed=True,
+            pushed=pushed,
         )
 
     conflicted = _list_unmerged_files(project_dir)
@@ -157,14 +155,12 @@ def prepare_feature_branch(
         if not conflicted:
             _run_git(["commit", "--no-edit"], cwd=str(project_dir))
             commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
-            gitops.push_prepared_branch(
-                str(project_dir), feature_branch, force_with_lease=False
-            )
+            pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
             return LandPrepareResult(
                 status="prepared",
                 branch=feature_branch,
                 prepared_commit=commit,
-                pushed=True,
+                pushed=pushed,
                 autoresolved_files=autoresolved,
             )
 
@@ -212,6 +208,21 @@ def _continue_feature_branch_preparation(
         check=False,
     )
     if merge_head.returncode != 0:
+        dirty = _run_git(
+            ["status", "--porcelain", "--untracked-files=no"],
+            cwd=str(project_dir),
+            check=False,
+        ).stdout.strip()
+        if not dirty and _branch_contains_default_branch(project_dir, gitops):
+            commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+            pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
+            return LandPrepareResult(
+                status="prepared",
+                branch=feature_branch,
+                prepared_commit=commit,
+                pushed=pushed,
+                message="feature branch is already prepared",
+            )
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
@@ -220,14 +231,67 @@ def _continue_feature_branch_preparation(
 
     _run_git(["commit", "--no-edit"], cwd=str(project_dir))
     commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
-    gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
+    pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
     return LandPrepareResult(
         status="prepared",
         branch=feature_branch,
         prepared_commit=commit,
-        pushed=True,
+        pushed=pushed,
         autoresolved_files=autoresolved,
     )
+
+
+def _push_prepared_branch_if_remote(gitops: Any, project_dir: Path, feature_branch: str) -> bool:
+    """Push prepared branches only when the project has a non-local origin.
+
+    Local Echelon sandboxes and toy projects frequently have no remote. Land must
+    still be able to finish there because the important invariant is the local
+    default-branch merge, not publishing an unavailable feature branch.
+    """
+    origin_url = _origin_remote_url(project_dir)
+    if not origin_url:
+        logger.info("Skipping prepared branch push: no origin remote")
+        return False
+    if _is_local_remote_url(project_dir, origin_url):
+        logger.info("Skipping prepared branch push: origin is local (%s)", origin_url)
+        return False
+    gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
+    return True
+
+
+def _origin_remote_url(project_dir: Path) -> str | None:
+    result = _run_git(
+        ["remote", "get-url", "origin"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    return url or None
+
+
+def _is_local_remote_url(project_dir: Path, url: str) -> bool:
+    if url.startswith("file://"):
+        return True
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        return False
+    if re.match(r"^[^@/:]+@[^:]+:.+", url):
+        return False
+    remote_path = Path(url).expanduser()
+    if not remote_path.is_absolute():
+        remote_path = project_dir / remote_path
+    return True
+
+
+def _branch_contains_default_branch(project_dir: Path, gitops: Any) -> bool:
+    default_branch = gitops.get_default_branch()
+    result = _run_git(
+        ["merge-base", "--is-ancestor", default_branch, "HEAD"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _list_unmerged_files(project_dir: Path) -> list[str]:

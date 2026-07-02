@@ -973,13 +973,14 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
     gitops.get_default_branch.return_value = "main"
     gitops.push_prepared_branch.return_value = None
 
-    result = prepare_feature_branch(
-        spec_id="001",
-        feature_branch="001-feature",
-        project_dir=repo,
-        gitops=gitops,
-        options=LandOptions(),
-    )
+    with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+        result = prepare_feature_branch(
+            spec_id="001",
+            feature_branch="001-feature",
+            project_dir=repo,
+            gitops=gitops,
+            options=LandOptions(),
+        )
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
@@ -992,6 +993,34 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
         _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
         == 0
     )
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_skips_push_without_origin(tmp_path: Path) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main work")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert result.pushed is False
+    gitops.push_prepared_branch.assert_not_called()
 
 
 @pytest.mark.unit
@@ -1114,10 +1143,8 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
-    gitops.push_prepared_branch.assert_called_once_with(
-        str(repo), "001-feature", force_with_lease=False
-    )
-    assert result.pushed is True
+    gitops.push_prepared_branch.assert_not_called()
+    assert result.pushed is False
     assert result.autoresolved_files == [".gitignore"]
     assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
     assert (repo / ".gitignore").read_text(encoding="utf-8").splitlines() == [
@@ -1179,9 +1206,7 @@ def test_prepare_feature_branch_autoresolves_specify_runtime_removal(
     assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
     assert "/.specify/" in (repo / ".gitignore").read_text(encoding="utf-8")
     assert "__pycache__/" in (repo / ".gitignore").read_text(encoding="utf-8")
-    gitops.push_prepared_branch.assert_called_once_with(
-        str(repo), "001-feature", force_with_lease=False
-    )
+    gitops.push_prepared_branch.assert_not_called()
 
 
 @pytest.mark.unit
@@ -1229,13 +1254,14 @@ def test_prepare_feature_branch_continue_autoresolves_specify_runtime_removal(
     assert blocked.status == "blocked"
     assert blocked.conflicted_files == [".gitignore", ".specify/memory/constitution.md"]
 
-    result = prepare_feature_branch(
-        spec_id="001",
-        feature_branch="001-feature",
-        project_dir=repo,
-        gitops=gitops,
-        options=LandOptions(continue_existing=True),
-    )
+    with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+        result = prepare_feature_branch(
+            spec_id="001",
+            feature_branch="001-feature",
+            project_dir=repo,
+            gitops=gitops,
+            options=LandOptions(continue_existing=True),
+        )
 
     assert result.status == "prepared"
     assert ".gitignore" in result.autoresolved_files
@@ -1363,13 +1389,14 @@ def test_prepare_feature_branch_continue_commits_resolved_merge_and_pushes(
     _git(repo, "add", "src/app.swift")
     gitops.reset_mock()
 
-    result = prepare_feature_branch(
-        spec_id="001",
-        feature_branch="001-feature",
-        project_dir=repo,
-        gitops=gitops,
-        options=LandOptions(continue_existing=True),
-    )
+    with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+        result = prepare_feature_branch(
+            spec_id="001",
+            feature_branch="001-feature",
+            project_dir=repo,
+            gitops=gitops,
+            options=LandOptions(continue_existing=True),
+        )
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
@@ -1381,6 +1408,44 @@ def test_prepare_feature_branch_continue_commits_resolved_merge_and_pushes(
     gitops.get_default_branch.assert_not_called()
     assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
     assert _git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode != 0
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_continue_recovers_after_push_only_failure(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main work")
+    _git(repo, "checkout", "001-feature")
+    _git(repo, "merge", "--no-ff", "main", "-m", "Merge main into 001-feature")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(continue_existing=True),
+    )
+
+    assert result.status == "prepared"
+    assert result.branch == "001-feature"
+    assert result.pushed is False
+    assert result.message == "feature branch is already prepared"
+    gitops.push_prepared_branch.assert_not_called()
+    assert (
+        _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
+        == 0
+    )
 
 
 @pytest.mark.unit
