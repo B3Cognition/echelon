@@ -36,6 +36,9 @@ def test_migration_plan_ignores_child_source_roots(tmp_path: Path) -> None:
         "/.specify/",
         "/runs/",
         "/.claude/",
+        "!/.echelon/",
+        "!/.echelon/config.yml",
+        "/.echelon/local.yml",
         "/.echelon/runtime/",
         "/.echelon/cache/",
     )
@@ -123,6 +126,64 @@ def test_migration_copies_legacy_config_to_canonical(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_migration_repairs_broad_echelon_ignore_before_staging_config(
+    tmp_path: Path,
+) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n/.echelon/\n/.claude/\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text("verify_command: pytest\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = migrate_workspace(tmp_path, write=True, commit=False)
+
+    assert result.canonical_config_copied is True
+    gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "!/.echelon/" in gitignore
+    assert "!/.echelon/config.yml" in gitignore
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert ".echelon/config.yml" in staged
+
+
+@pytest.mark.unit
+def test_migration_stages_existing_canonical_config_after_ignore_repair(
+    tmp_path: Path,
+) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n/.echelon/\n/.claude/\n",
+        encoding="utf-8",
+    )
+    canonical = tmp_path / ".echelon" / "config.yml"
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    canonical.write_text("verify_command: pytest\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = migrate_workspace(tmp_path, write=True, commit=False)
+
+    assert result.gitignore_updated is True
+    assert ".echelon/config.yml" in result.staged_paths
+    staged = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert ".echelon/config.yml" in staged
+
+
+@pytest.mark.unit
 def test_migration_untracks_legacy_runtime_state(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     legacy = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
@@ -151,7 +212,7 @@ def test_migration_untracks_legacy_runtime_state(tmp_path: Path) -> None:
 def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Path) -> None:
     _write_workspace(tmp_path)
     (tmp_path / ".gitignore").write_text(
-        ".specify\nruns\n.claude\n.echelon/runtime\n.echelon/cache\n",
+        ".specify\nruns\n.claude\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n",
         encoding="utf-8",
     )
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
@@ -161,7 +222,7 @@ def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Pat
     assert result.gitignore_updated is False
     assert result.staged_paths == ()
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == (
-        ".specify\nruns\n.claude\n.echelon/runtime\n.echelon/cache\n"
+        ".specify\nruns\n.claude\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n"
     )
 
 
@@ -232,6 +293,23 @@ def test_workspace_doctor_accepts_configured_source_root(tmp_path: Path) -> None
     assert result.has_errors is False
     assert result.buildable is True
     assert {finding.code for finding in result.findings} == set()
+
+
+@pytest.mark.unit
+def test_workspace_doctor_reports_ignored_canonical_config(tmp_path: Path) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text("/.specify/\n/runs/\n/.echelon/\n", encoding="utf-8")
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  git_role: orchestration\nsources: []\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = doctor_workspace(tmp_path)
+
+    assert result.has_errors is True
+    assert "canonical_config_ignored" in {finding.code for finding in result.findings}
 
 
 @pytest.mark.unit

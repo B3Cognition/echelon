@@ -133,6 +133,9 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.specify/",
         "/runs/",
         "/.claude/",
+        "!/.echelon/",
+        "!/.echelon/config.yml",
+        "/.echelon/local.yml",
         "/.echelon/runtime/",
         "/.echelon/cache/",
     )
@@ -203,6 +206,10 @@ def _tracked_paths(root: Path, pathspec: str) -> tuple[str, ...]:
     return tuple(line for line in result.stdout.splitlines() if line)
 
 
+def _is_tracked(root: Path, pathspec: str) -> bool:
+    return bool(_tracked_paths(root, pathspec))
+
+
 def _is_submodule_like(path: Path) -> bool:
     marker = path / ".git"
     return marker.is_file()
@@ -259,6 +266,15 @@ def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
                 ".echelon/config.yml is missing"
                 + ("; migrate legacy echelon-config.yml" if legacy.exists() else ""),
                 str(canonical),
+            )
+        )
+    elif _git_ignored(root, ".echelon/config.yml"):
+        findings.append(
+            WorkspaceDoctorFinding(
+                "error",
+                "canonical_config_ignored",
+                ".echelon/config.yml exists but is ignored by workspace Git",
+                ".echelon/config.yml",
             )
         )
 
@@ -402,7 +418,10 @@ def migrate_workspace(
         stage_paths_list: list[str] = []
         if gitignore_updated:
             stage_paths_list.append(".gitignore")
-        if canonical_config_copied:
+        if canonical_config_copied or (
+            plan.canonical_config.exists()
+            and (gitignore_updated or not _is_tracked(plan.workspace_root, ".echelon/config.yml"))
+        ):
             stage_paths_list.append(".echelon/config.yml")
         stage_paths = tuple(stage_paths_list)
     else:
