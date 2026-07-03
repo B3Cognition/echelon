@@ -4,6 +4,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **EGR-080 / #97 TECH WRITER documentation gate** — added a build-phase TECH
+  WRITER agent plus a deterministic Ralph gate so completed Echelon
+  implementation work records documentation impact and updates `README.md` and
+  Keep a Changelog-style `CHANGELOG.md` when user-facing, API, setup,
+  configuration, operational, or significant performance behavior changes.
+
 ### Fixed
 
 - **EGR-072 / #89 autonomous land runtime-state conflict resolution** —

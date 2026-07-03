@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 from echelon.artifact_index import write_artifact_index
 from harness.build_result import BUILD_STATUS_FILENAME
 from harness.config import HarnessConfig
+from harness.documentation_gate import evaluate_documentation_gate
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
@@ -600,6 +601,9 @@ class RalphController:
                     verify_result = self._apply_fulfillment_gate(
                         verify_result, worktree_path
                     )
+                    verify_result = self._apply_documentation_gate(
+                        verify_result, worktree_path
+                    )
                     tokens_used += verify_result.token_usage
 
                     if _is_provider_session_limit_verify_result(verify_result):
@@ -1094,6 +1098,9 @@ class RalphController:
             current_verify = self._apply_fulfillment_gate(
                 current_verify, worktree_path
             )
+            current_verify = self._apply_documentation_gate(
+                current_verify, worktree_path
+            )
             tokens_used += current_verify.token_usage
 
             self._append_iteration_log(
@@ -1363,6 +1370,31 @@ class RalphController:
         return VerifyResult(
             passed=False,
             failures=[failure],
+            duration_s=verify_result.duration_s,
+            token_usage=verify_result.token_usage,
+        )
+
+    def _apply_documentation_gate(
+        self,
+        verify_result: VerifyResult,
+        worktree_path: str,
+    ) -> VerifyResult:
+        """Treat stale or missing README/CHANGELOG decisions as verification failures."""
+        if not verify_result.passed or not worktree_path:
+            return verify_result
+
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return verify_result
+
+        gate = evaluate_documentation_gate(Path(worktree_path), spec_dir)
+        if gate.passed:
+            return verify_result
+
+        assert gate.failure is not None
+        return VerifyResult(
+            passed=False,
+            failures=[gate.failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
         )

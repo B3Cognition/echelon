@@ -474,6 +474,14 @@ provides:
         capability: strong
         tools: write         # writes workflow-compliance-report.md
         color: red
+    - name: "speckit.echelon.tech-writer"
+      file: "agents/build/tech-writer.md"
+      description: "TECH WRITER - keeps README and Keep a Changelog release history current after implementation"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes README.md, CHANGELOG.md, documentation-impact-report.md
+        color: red
     - name: "speckit.echelon.integrator"
       file: "agents/build/integrator.md"
       description: "INTEGRATOR — verifies system integration after each build phase"

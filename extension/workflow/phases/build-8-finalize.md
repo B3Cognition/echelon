@@ -12,7 +12,7 @@ Run speckit-echelon-integrator (INTEGRATOR) one last time against the complete c
 
 ### 8.1b Engineering Manager Sign-Off
 
-Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MANAGER) with:
+Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MANAGER) with the TECH WRITER documentation output:
 
 - `tasks.md`
 - `spec.md`
@@ -21,6 +21,9 @@ Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MAN
 - `process-metrics.md`
 - `integration-report.md`
 - `progress-report.md`
+- `documentation-impact-report.md`
+- repo-root `README.md`
+- repo-root `CHANGELOG.md`
 - all build gate reports
 - `state.json`
 - `reasoning-journal.jsonl`
@@ -32,7 +35,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, all build gate reports, state.json, reasoning-journal.jsonl]
+  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, documentation-impact-report.md, README.md, CHANGELOG.md, all build gate reports, state.json, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -49,6 +52,7 @@ speckit-echelon-engineering-manager (ENGINEERING MANAGER) must confirm:
 2. Task status, state tracking, and reports are internally consistent.
 3. The build is ready for full speckit-echelon-verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
+5. **Documentation Currency Gate passed**: `documentation-impact-report.md` exists; when docs are required, `README.md` and `CHANGELOG.md` were updated and `CHANGELOG.md` follows Keep a Changelog-style `[Unreleased]` entries.
 
 If any of these fail, always route to rework first. Do not proceed to BUILD_DONE.
 
@@ -132,6 +136,7 @@ Verify all report files are populated:
 - `test-quality-report.md` — One section per task
 - `integration-report.md` — One section per phase checkpoint + final
 - `progress-report.md` — One section per task + summary
+- `documentation-impact-report.md` — README/CHANGELOG impact decision and update evidence
 - `gap-report.md` — Verification coverage and gaps
 - `verification-summary.md` — Final PASS / FAIL completion verdict
 
