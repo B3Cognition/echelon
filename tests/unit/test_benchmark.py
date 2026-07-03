@@ -13,6 +13,7 @@ from echelon.benchmark import (
     summarize_records,
     write_summary,
 )
+from echelon.cli import _cmd_benchmark
 
 
 def test_lists_tiny_notes_fixture() -> None:
@@ -120,3 +121,32 @@ def test_write_summary_outputs_json_and_markdown(tmp_path: Path) -> None:
 
     assert json.loads(json_path.read_text(encoding="utf-8"))["best_variant"] == "baseline"
     assert "| baseline | complete | 8 | 2 | 1 | 2 | 3 | 600.0 |" in md_path.read_text(encoding="utf-8")
+
+
+def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> None:
+    _cmd_benchmark(["list"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "tiny-notes" in out
+    assert "constitution-tasks-adrs" in out
+
+
+def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
+    _cmd_benchmark(
+        ["run", "tiny-notes", "--variant", "constitution-tasks", "--dry-run"],
+        project_root=tmp_path,
+    )
+
+    out = capsys.readouterr().out
+    assert "echelon run" in out
+    assert "phase-exp-constitution-quality" in out
+    assert "phase-exp-tasks-quality" in out
+    assert "echelon harness run RESOLVE_SPEC_ID_FROM_CURRENT_RUN" in out
+
+
+def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_benchmark(["run", "tiny-notes", "--variant", "missing"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    assert "Unknown benchmark variant" in capsys.readouterr().err

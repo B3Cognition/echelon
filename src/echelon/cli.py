@@ -87,6 +87,10 @@ Commands:
   phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
                                             Run one explicit phase through COMMANDER contracts.
 
+  benchmark list                            List experimental benchmark fixtures and variants.
+  benchmark run <fixture> --variant <id> [--dry-run]
+                                            Run or print an artifact-quality benchmark variant.
+
   delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
   delivery run <spec_id> [strategy=<s>]      Run build→verify→PR loop.
   delivery resume <spec_id> [strategy=<s>]   Resume a blocked delivery run.
@@ -4213,6 +4217,66 @@ def _cmd_rewind(
     _banner("REWIND PREPARED", details)
 
 
+def _cmd_benchmark(args: list[str], project_root: Path) -> None:
+    from echelon.benchmark import list_fixtures, list_variants, plan_variant_commands
+
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage:\n"
+            "  echelon benchmark list\n"
+            "  echelon benchmark run <fixture> --variant <id> [--dry-run]",
+            flush=True,
+        )
+        return
+
+    if args[0] == "list":
+        _banner(
+            "BENCHMARKS",
+            [(fixture.id, fixture.name) for fixture in list_fixtures()]
+            + [(f"variant:{variant.id}", variant.label) for variant in list_variants()],
+            subtitle="Experimental artifact-quality benchmark fixtures and variants",
+        )
+        return
+
+    if args[0] != "run" or len(args) < 2:
+        print("✗ Usage: echelon benchmark run <fixture> --variant <id> [--dry-run]", file=sys.stderr)
+        sys.exit(1)
+
+    fixture_id = args[1]
+    variant_id = "baseline"
+    dry_run = False
+    i = 2
+    while i < len(args):
+        if args[i] == "--variant" and i + 1 < len(args):
+            variant_id = args[i + 1]
+            i += 2
+        elif args[i] == "--dry-run":
+            dry_run = True
+            i += 1
+        else:
+            print(f"✗ Unknown benchmark argument: {args[i]}", file=sys.stderr)
+            sys.exit(1)
+
+    try:
+        plan = plan_variant_commands(fixture_id, variant_id)
+    except ValueError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if dry_run:
+        _banner(
+            "BENCHMARK DRY RUN",
+            [("fixture", plan.fixture_id), ("variant", plan.variant_id)],
+            subtitle="Commands that would run",
+        )
+        for command in plan.commands:
+            print(" ".join(command))
+        return
+
+    print("✗ Benchmark execution is not implemented yet; use --dry-run.", file=sys.stderr)
+    sys.exit(1)
+
+
 def _cmd_phase(
     args: list[str],
     project_root: Path,
@@ -5031,6 +5095,10 @@ def main() -> None:
 
     if command == "workspace":
         _cmd_workspace(args[1:])
+        return
+
+    if command == "benchmark":
+        _cmd_benchmark(args[1:], project_root=Path.cwd())
         return
 
     if command == "artifacts":
