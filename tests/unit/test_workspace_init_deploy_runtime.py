@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 
 import pytest
 import yaml
@@ -107,6 +108,53 @@ def test_workspace_init_skips_deploy_when_disabled(tmp_path, monkeypatch, capsys
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
     assert "skipped (deploy.enabled=false)" in captured.out
+
+
+def test_workspace_init_flag_writes_local_unsafe_host_execution_policy(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: http\n  blue_port: 18080\n  green_port: 18081\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_workspace(["init", "--allow-unsafe-host-execution"])
+
+    captured = capsys.readouterr()
+    assert "host tool execution approval written" in captured.out
+    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
+    policy = local["harness"]["llm"]["tool_policy"]
+    assert policy["allow_unsafe_host_execution"] is True
+    assert "workspace init" in policy["approval_reason"]
+    assert "/.echelon/local.yml" in (tmp_path / ".gitignore").read_text(encoding="utf-8")
+
+
+def test_workspace_init_interactive_yes_writes_local_unsafe_host_execution_policy(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: http\n  blue_port: 18080\n  green_port: 18081\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "y")
+
+    cli._cmd_workspace(["init"])
+
+    captured = capsys.readouterr()
+    assert "host tool execution approval written" in captured.out
+    local = yaml.safe_load((tmp_path / ".echelon" / "local.yml").read_text(encoding="utf-8"))
+    policy = local["harness"]["llm"]["tool_policy"]
+    assert policy["allow_unsafe_host_execution"] is True
 
 
 def test_http_deploy_preflight_accepts_ready_docker() -> None:

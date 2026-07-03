@@ -65,7 +65,8 @@ echelon {CLI_VERSION}
 Usage: echelon <command> [args...]
 
 Commands:
-  workspace init                            One-time project setup (no LLM)
+  workspace init [--allow-unsafe-host-execution]
+                                            One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
   workspace migrate [--write] [--commit]    Migrate legacy workspace layout
 
@@ -341,7 +342,62 @@ def _preflight_deploy_runtime(
     return True
 
 
-def _cmd_init(project_dir: Path) -> None:
+UNSAFE_HOST_EXECUTION_APPROVAL_REASON = (
+    "Operator approved echelon workspace init to allow local AI CLI host tool execution."
+)
+
+
+def _wants_unsafe_host_execution_interactively() -> bool:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return False
+    answer = input(
+        "Allow local AI CLI subprocesses to bypass host tool approvals for this workspace? [y/N] "
+    ).strip().lower()
+    return answer in {"y", "yes"}
+
+
+def _ensure_local_config_ignored(project_dir: Path) -> None:
+    gitignore = project_dir / ".gitignore"
+    entry = "/.echelon/local.yml"
+    existing = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    normalized = {line.strip().strip("/") for line in existing.splitlines()}
+    if ".echelon/local.yml" in normalized:
+        return
+    suffix = "" if not existing or existing.endswith("\n") else "\n"
+    gitignore.write_text(f"{existing}{suffix}{entry}\n", encoding="utf-8")
+
+
+def _write_unsafe_host_execution_local_override(project_dir: Path, yaml_module) -> Path:
+    local_cfg = project_dir / ".echelon" / "local.yml"
+    local_cfg.parent.mkdir(parents=True, exist_ok=True)
+    if local_cfg.exists():
+        loaded = yaml_module.safe_load(local_cfg.read_text(encoding="utf-8")) or {}
+        if not isinstance(loaded, dict):
+            raise ValueError(f"local config must be a mapping: {local_cfg}")
+    else:
+        loaded = {}
+
+    harness = loaded.setdefault("harness", {})
+    if not isinstance(harness, dict):
+        raise ValueError("local config harness section must be a mapping")
+    llm = harness.setdefault("llm", {})
+    if not isinstance(llm, dict):
+        raise ValueError("local config harness.llm section must be a mapping")
+    tool_policy = llm.setdefault("tool_policy", {})
+    if not isinstance(tool_policy, dict):
+        raise ValueError("local config harness.llm.tool_policy section must be a mapping")
+
+    tool_policy["allow_unsafe_host_execution"] = True
+    tool_policy["approval_reason"] = UNSAFE_HOST_EXECUTION_APPROVAL_REASON
+    local_cfg.write_text(
+        yaml_module.dump(loaded, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    _ensure_local_config_ignored(project_dir)
+    return local_cfg
+
+
+def _cmd_init(project_dir: Path, *, allow_unsafe_host_execution: bool = False) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
     legacy_cfg = ext_dir / "echelon-config.yml"
     echelon_cfg = project_dir / ".echelon" / "config.yml"
@@ -400,6 +456,14 @@ def _cmd_init(project_dir: Path) -> None:
         echelon_cfg.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
         deploy_enabled = False
         print("✓ deploy.enabled=false written to .echelon/config.yml")
+
+    if allow_unsafe_host_execution:
+        try:
+            local_cfg = _write_unsafe_host_execution_local_override(project_dir, yaml)
+        except Exception as e:
+            print(f"✗ Cannot write local host tool policy approval: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"✓ host tool execution approval written to {local_cfg}")
 
     # Step 2b: Provision MemPalace wing
     print("\n▶ Configuring MemPalace wing...")
@@ -5009,7 +5073,9 @@ def _cmd_workspace(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon workspace <subcommand> [args...]\n\n"
-            "  init                      One-time project setup (no LLM)\n"
+            "  init [--allow-unsafe-host-execution]\n"
+            "                            One-time project setup (no LLM)\n"
+            "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
             "  migrate [--write]         Copy legacy config, ignore runtime state, stage fixes\n"
             "          [--commit]        Apply and commit migration changes\n",
@@ -5019,7 +5085,44 @@ def _cmd_workspace(args: list[str]) -> None:
 
     subcmd = args[0]
     if subcmd == "init":
-        _cmd_init(Path.cwd())
+        init_args = args[1:]
+        if any(arg in {"-h", "--help"} for arg in init_args):
+            print(
+                "Usage: echelon workspace init "
+                "[--allow-unsafe-host-execution|--no-unsafe-host-execution]\n\n"
+                "  --allow-unsafe-host-execution  Write local approval for AI CLI "
+                "permission-bypass flags\n"
+                "  --no-unsafe-host-execution     Do not prompt or write local approval",
+                file=sys.stderr,
+            )
+            sys.exit(0)
+        allowed = {
+            "--allow-unsafe-host-execution",
+            "--no-unsafe-host-execution",
+        }
+        unknown = [arg for arg in init_args if arg not in allowed]
+        if unknown:
+            print(f"echelon workspace init: unknown option '{unknown[0]}'\n", file=sys.stderr)
+            print(
+                "Usage: echelon workspace init "
+                "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if (
+            "--allow-unsafe-host-execution" in init_args
+            and "--no-unsafe-host-execution" in init_args
+        ):
+            print(
+                "echelon workspace init: choose only one of "
+                "--allow-unsafe-host-execution or --no-unsafe-host-execution",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        allow_unsafe = "--allow-unsafe-host-execution" in init_args
+        if "--no-unsafe-host-execution" not in init_args and not allow_unsafe:
+            allow_unsafe = _wants_unsafe_host_execution_interactively()
+        _cmd_init(Path.cwd(), allow_unsafe_host_execution=allow_unsafe)
         return
 
     if subcmd == "doctor":

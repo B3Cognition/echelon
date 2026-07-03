@@ -75,7 +75,8 @@ specify extension add --dev ~/echelon/extension
 specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
-echelon workspace init    # bootstrap .echelon/config.yml; local deploy infra is best-effort/skippable
+echelon workspace init    # bootstrap .echelon/config.yml; prompts for local host-tool approval on a TTY
+# or: echelon workspace init --allow-unsafe-host-execution
 echelon delivery init    # write harness: section into .echelon/config.yml, mirror-clone target repo, detect language + image
 ```
 
@@ -246,7 +247,7 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 
 This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `.echelon/config.yml`) selects the provider.
 
-By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
+By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. `echelon workspace init` prompts for this local approval on an interactive TTY, and `echelon workspace init --allow-unsafe-host-execution` writes the same approval non-interactively to `.echelon/local.yml`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 
 The two paths share the same skill content but are otherwise fully independent — changes to one do not affect the other.
 
@@ -593,7 +594,7 @@ This keeps commands readable and makes individual phases independently editable 
 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
-| `echelon workspace init` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, deploy infra, git hook |
+| `echelon workspace init [--allow-unsafe-host-execution]` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
 | `echelon spec run "<description>"` | `speckit.echelon.run` | Phase A: full squad run → spec.md, tasks.md, feature branch |
 | `echelon spec bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |

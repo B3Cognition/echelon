@@ -1206,6 +1206,8 @@ harness:
   #     allow_unsafe_host_execution: false
   #     # Required when allow_unsafe_host_execution is true. This re-enables
   #     # CLI permission-bypass flags such as --dangerously-skip-permissions.
+  #     # `echelon workspace init --allow-unsafe-host-execution` writes this as
+  #     # a local override in .echelon/local.yml.
   #     approval_reason: null
 
   # --- Resource Limits ---
