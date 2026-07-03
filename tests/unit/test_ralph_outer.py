@@ -165,6 +165,20 @@ def _make_controller(
     return controller, provider, gitops, state_store
 
 
+def _init_git_repo(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"], cwd=path, check=True
+    )
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=path, check=True)
+
+
+def _commit_all(path: Path, message: str = "base") -> None:
+    subprocess.run(["git", "add", "."], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True)
+
+
 @pytest.mark.unit
 class TestOuterLoopConvergence:
     """Test outer loop converges on first iteration."""
@@ -632,6 +646,59 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "fulfillment-gaps"
         assert str(spec_dir / "fulfillment-report.md") in result.failures[0].error
 
+    def test_documentation_gate_blocks_convergence_when_required_docs_missing(
+        self, tmp_path: Path
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (worktree / "README.md").write_text("# Demo\n", encoding="utf-8")
+        (worktree / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+        (spec_dir / "documentation-impact-report.md").write_text(
+            "---\n"
+            "docs_required: true\n"
+            "readme_updated: true\n"
+            "changelog_updated: true\n"
+            "changelog_format: keep_a_changelog\n"
+            'not_applicable_reason: ""\n'
+            "---\n"
+            "# Documentation Impact Report\n",
+            encoding="utf-8",
+        )
+        _commit_all(worktree)
+        verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
+
+        result = controller._apply_documentation_gate(verify, str(worktree))
+
+        assert not result.passed
+        assert result.failures[0].id == "documentation-required-without-doc-changes"
+
+    def test_documentation_gate_accepts_not_applicable_report_in_ralph(
+        self, tmp_path: Path
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "documentation-impact-report.md").write_text(
+            "---\n"
+            "docs_required: false\n"
+            "readme_updated: false\n"
+            "changelog_updated: false\n"
+            "changelog_format: not_required\n"
+            'not_applicable_reason: "No user-visible, API, setup, config, operations, or significant performance changes."\n'
+            "---\n"
+            "# Documentation Impact Report\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
+
+        result = controller._apply_documentation_gate(verify, str(worktree))
+
+        assert result.passed
+
     def test_task_progress_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Ralph does not converge when state progress disagrees with tasks.md."""
         controller, provider, gitops, state_store = _make_controller(
@@ -993,6 +1060,17 @@ class TestOuterLoopConvergence:
             "| ID | Status | Evidence | Confidence | Notes |\n"
             "|---|---|---|---|---|\n"
             "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "documentation-impact-report.md").write_text(
+            "---\n"
+            "docs_required: false\n"
+            "readme_updated: false\n"
+            "changelog_updated: false\n"
+            "changelog_format: not_required\n"
+            'not_applicable_reason: "Fixture build has no user-visible documentation impact."\n'
+            "---\n"
+            "# Documentation Impact Report\n",
             encoding="utf-8",
         )
 
