@@ -1001,6 +1001,86 @@ phases:
         condition: always
 
   # --------------------------------------------------------------------------
+  - id: phase-exp-constitution-quality
+    label: "Experimental Constitution Quality"
+    spec_file: workflow/phases/phase-exp-constitution-quality.md
+    type: agent
+    agent: speckit-echelon-chief
+    tier: experimental
+    context_pack:
+      - .specify/memory/constitution.md
+      - constitution.md
+      - spec.md
+      - plan.md
+      - .specify/squad/reasoning-journal.jsonl
+    outputs:
+      - constitution-quality-report.md
+      - constitution_quality_pass -> state.json
+    allowed_state_updates:
+      - constitution_quality_pass
+      - constitution_quality_attempts
+      - constitution_quality_findings
+      - blocked_reason
+      - status
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase-exp-tasks-quality
+    label: "Experimental Tasks Quality"
+    spec_file: workflow/phases/phase-exp-tasks-quality.md
+    type: agent
+    agent: speckit-echelon-orchestrator
+    tier: experimental
+    context_pack:
+      - spec.md
+      - plan.md
+      - tasks.md
+      - requirements.lexicon.md
+      - test-strategy.md
+      - .specify/squad/reasoning-journal.jsonl
+    outputs:
+      - tasks.md
+      - tasks-quality-report.md
+      - tasks_quality_pass -> state.json
+    allowed_state_updates:
+      - tasks_quality_pass
+      - tasks_quality_attempts
+      - tasks_quality_findings
+      - blocked_reason
+      - status
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase-exp-adr-quality
+    label: "Experimental ADR Quality"
+    spec_file: workflow/phases/phase-exp-adr-quality.md
+    type: agent
+    agent: speckit-echelon-architect
+    tier: experimental
+    context_pack:
+      - plan.md
+      - architecture.md
+      - adr/ADR-*.md
+      - tasks.md
+      - .specify/squad/reasoning-journal.jsonl
+    outputs:
+      - adr-quality-report.md
+      - adr_quality_pass -> state.json
+    allowed_state_updates:
+      - adr_quality_pass
+      - adr_quality_attempts
+      - adr_quality_findings
+      - blocked_reason
+      - status
+    transitions:
+      - to: done
+        condition: always
+
+  # --------------------------------------------------------------------------
   - id: done
     label: "Run Complete"
     type: terminal

@@ -221,3 +221,47 @@ phases:
         "quality_scores",
         "golddigger_requests",
     ]
+
+
+def test_experimental_artifact_quality_phases_are_registered():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    expected = {
+        "phase-exp-constitution-quality": {
+            "agent": "speckit-echelon-chief",
+            "updates": {
+                "constitution_quality_pass",
+                "constitution_quality_attempts",
+                "constitution_quality_findings",
+                "blocked_reason",
+                "status",
+            },
+        },
+        "phase-exp-tasks-quality": {
+            "agent": "speckit-echelon-orchestrator",
+            "updates": {
+                "tasks_quality_pass",
+                "tasks_quality_attempts",
+                "tasks_quality_findings",
+                "blocked_reason",
+                "status",
+            },
+        },
+        "phase-exp-adr-quality": {
+            "agent": "speckit-echelon-architect",
+            "updates": {
+                "adr_quality_pass",
+                "adr_quality_attempts",
+                "adr_quality_findings",
+                "blocked_reason",
+                "status",
+            },
+        },
+    }
+
+    for phase_id, contract in expected.items():
+        node = graph.get(phase_id)
+        assert node.type == "agent"
+        assert node.agent == contract["agent"]
+        assert set(node.allowed_state_updates or []) == contract["updates"]
+        assert node.transitions == [{"to": "done", "condition": "always"}]
