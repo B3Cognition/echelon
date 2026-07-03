@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+import yaml
 
 from echelon import cli
 
@@ -27,6 +28,7 @@ def test_http_deploy_preflight_skips_when_docker_missing(capsys) -> None:
     assert "HTTP deploy initialization skipped" in captured.err
     assert "docker command not found on PATH" in captured.err
     assert "workspace init will continue" in captured.err
+    assert "deploy.enabled: false" in captured.err
     assert "ECHELON_CONTAINER_CLI=podman echelon delivery init" in captured.err
     assert "Traefik setup currently expects Docker" in captured.err
 
@@ -81,8 +83,11 @@ def test_workspace_init_continues_when_http_deploy_runtime_unavailable(
 
     captured = capsys.readouterr()
     assert "ECHELON INIT — COMPLETE" in captured.out
-    assert "skipped (Docker unavailable)" in captured.out
+    assert "deploy.enabled=false written" in captured.out
+    assert "skipped (deploy.enabled=false)" in captured.out
     assert "deploy-init.sh not found" not in captured.err
+    config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
+    assert config["deploy"]["enabled"] is False
 
 
 def test_workspace_init_skips_deploy_when_disabled(tmp_path, monkeypatch, capsys) -> None:

@@ -274,6 +274,7 @@ def _print_http_deploy_runtime_warning(
     print(
         "\n"
         "  workspace init will continue without provisioning local HTTP deploy infra.\n"
+        "  Echelon will set deploy.enabled: false in .echelon/config.yml for this workspace.\n"
         "\n"
         "  next\n"
         "  ────\n"
@@ -389,6 +390,12 @@ def _cmd_init(project_dir: Path) -> None:
     print(f"✓ deploy config valid (type={deploy_type})")
     deploy_enabled = deploy.get("enabled", True) is not False
     deploy_runtime_ready = _preflight_deploy_runtime(deploy) if deploy_enabled else False
+    if deploy_enabled and not deploy_runtime_ready:
+        deploy["enabled"] = False
+        config["deploy"] = deploy
+        echelon_cfg.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
+        deploy_enabled = False
+        print("✓ deploy.enabled=false written to .echelon/config.yml")
 
     # Step 2b: Provision MemPalace wing
     print("\n▶ Configuring MemPalace wing...")

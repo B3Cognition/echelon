@@ -813,7 +813,7 @@ See `config-template.yml` for full reference with guidance comments.
 
 Echelon includes built-in local continuous delivery. After `harness.run` merges a feature branch to main, it calls `deploy.sh` directly. Set `deploy.enabled: false` in `.echelon/config.yml` to skip all deploy infrastructure checks and the post-merge deploy step — useful for projects that manage their own CD pipeline.
 
-`echelon workspace init` does not require Docker to complete workspace bootstrap. If `deploy.type: http` is configured and Docker is missing or stopped, Echelon skips HTTP deploy provisioning with an actionable warning; install/start Docker and rerun `echelon workspace init` later if local HTTP deploy is needed.
+`echelon workspace init` does not require Docker to complete workspace bootstrap. If `deploy.type: http` is configured and Docker is missing or stopped, Echelon writes `deploy.enabled: false`, skips HTTP deploy provisioning with an actionable warning, and completes initialization. Install/start Docker, set `deploy.enabled: true`, and rerun `echelon workspace init` later if local HTTP deploy is needed.
 
 **Both UI and CLI apps use blue/green deployment.** Two image slots (blue/green) are maintained. Each deploy builds to the inactive slot, health-checks it, then flips the active pointer — keeping the previous slot available for instant rollback. Everything runs in Docker to keep the dev machine clean.
 
