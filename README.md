@@ -453,7 +453,8 @@ The loop polls for blocking inline comments, invokes `echelon.review` (DEBUGGER 
 │ PHASE 4: BUILD (optional)                                               │
 │                                                                         │
 │   Per task: IMPLEMENTER → SPEC GUARD → CODE REVIEWER → TEST GUARDIAN    │
-│   Per phase: ENGINEERING MANAGER + INTEGRATOR + VISUAL VALIDATOR        │
+│   Per phase: ENGINEERING MANAGER + INTEGRATOR + TECH WRITER + VISUAL    │
+│              VALIDATOR                                                  │
 │   Debug: DEBUGGER (root cause analysis on non-obvious failures)         │
 │   Final: VERIFICATION (100% spec coverage check)                        │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -543,7 +544,7 @@ File: agents/exploration/scout.md
 | **VETERAN** | GLOBAL-MEMORY | Cross-project knowledge — promotes validated patterns to ~/.specify/squad-global/ |
 | **CONSOLIDATOR** | CONSOLIDATE | Transforms episodic experience into generalized schemas across projects |
 
-#### Build Layer (11 agents, Phase 4)
+#### Build Layer (12 agents, Phase 4)
 | Agent | Purpose |
 |-------|---------|
 | **IMPLEMENTER** | Writes code following TDD |
@@ -551,6 +552,7 @@ File: agents/exploration/scout.md
 | **CODE REVIEWER** | Reviews quality, ADR compliance |
 | **TEST GUARDIAN** | Validates test quality |
 | **ENGINEERING MANAGER** | Phase gates, rework decisions, verification loop |
+| **TECH WRITER** | Keeps README and Keep a Changelog release history current |
 | **INTEGRATOR** | System integration checks |
 | **PROGRESS TRACKER** | Effort tracking, drift detection |
 | **CHANGE CONTROLLER** | Handles mid-build spec changes |
@@ -973,7 +975,15 @@ Scripts for managing the knowledge base with concurrent write protection:
 | Spec compliance | SPEC GUARD | All requirements implemented |
 | Code quality | CODE REVIEWER | No violations, ADR-compliant |
 | Test quality | TEST GUARDIAN | Min tests per component |
+| Documentation currency | TECH WRITER | `documentation-impact-report.md`; README/CHANGELOG updated when required |
 | Verification | VERIFICATION | 100% spec coverage |
+
+After implementation phase groups complete, the build routes through TECH WRITER
+before finalization. TECH WRITER writes `documentation-impact-report.md` every
+time and updates repo-root `README.md` plus Keep a Changelog-style
+`CHANGELOG.md` when the work changes user-visible behavior, public APIs,
+install/run instructions, configuration, operations, or significant performance
+characteristics. Ralph enforces this report before publish.
 
 ## Validation
 
@@ -1110,7 +1120,7 @@ Each layer has a distinct color in the Claude Code UI task list:
 | Feasibility | `orange` | GATEKEEPER, VALIDATOR |
 | Solution | `purple` | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | `cyan` | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
-| Build | `red` | IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, ENGINEERING MANAGER, INTEGRATOR, PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
+| Build | `red` | IMPLEMENTER, SPEC GUARD, CODE REVIEWER, TEST GUARDIAN, ENGINEERING MANAGER, TECH WRITER, INTEGRATOR, PROGRESS TRACKER, CHANGE CONTROLLER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
 | Learning | `yellow` | AUDITOR, INTERNALIZER, ADAPTIVE, REALIST, MIRROR, MONITOR, VETERAN, CONSOLIDATOR |
 
 The `understanding` extension commands also use `green` — they are invoked by SAGE during the exploration phase (WHY2/WHY3).
