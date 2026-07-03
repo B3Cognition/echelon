@@ -134,11 +134,21 @@ def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> 
 
 def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
     _cmd_benchmark(
-        ["run", "tiny-notes", "--variant", "constitution-tasks", "--dry-run"],
+        [
+            "run",
+            "tiny-notes",
+            "--variant",
+            "constitution-tasks",
+            "--baseline-ref",
+            "baseline-artifacts",
+            "--dry-run",
+        ],
         project_root=tmp_path,
     )
 
     out = capsys.readouterr().out
+    assert "git reset --hard baseline-artifacts" in out
+    assert "git clean -fd -e runs/benchmarks/" in out
     assert "echelon run" in out
     assert "phase-exp-constitution-quality" in out
     assert "phase-exp-tasks-quality" in out
@@ -153,6 +163,14 @@ def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
     assert "Unknown benchmark variant" in capsys.readouterr().err
 
 
+def test_benchmark_real_run_requires_baseline_ref(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_benchmark(["run", "tiny-notes", "--variant", "baseline"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    assert "--baseline-ref" in capsys.readouterr().err
+
+
 def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Path) -> None:
     commands: list[tuple[str, ...]] = []
 
@@ -164,12 +182,48 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
         tmp_path,
         "tiny-notes",
         "constitution",
+        baseline_ref="baseline-artifacts",
         runner=runner,
         timestamp="20260701-120000",
     )
 
     assert output_dir == tmp_path / "runs" / "benchmarks" / "20260701-120000-tiny-notes" / "constitution"
-    assert commands[0][:2] == ("echelon", "run")
+    assert commands[:2] == [
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
+    ]
+    assert commands[2][:2] == ("echelon", "run")
     assert ("echelon", "phase", "run", "phase-exp-constitution-quality") in commands
+    assert commands[-2:] == [
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
+    ]
     assert (output_dir / "summary.json").exists()
     assert (output_dir / "summary.md").exists()
+
+
+def test_run_benchmark_variant_resets_after_failed_variant(tmp_path: Path) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        if command[:2] == ("echelon", "run"):
+            return 9
+        return 0
+
+    output_dir = run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "constitution",
+        baseline_ref="baseline-artifacts",
+        runner=runner,
+        timestamp="20260701-120000",
+    )
+
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert summary["variants"]["constitution"]["status"] == "failed"
+    assert commands[-2:] == [
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
+    ]

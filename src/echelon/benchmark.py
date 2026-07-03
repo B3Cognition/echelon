@@ -171,27 +171,48 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
 
+def baseline_reset_commands(baseline_ref: str) -> tuple[tuple[str, ...], ...]:
+    return (
+        ("git", "reset", "--hard", baseline_ref),
+        ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
+    )
+
+
+def variant_execution_commands(
+    plan: BenchmarkCommandPlan,
+    baseline_ref: str,
+) -> tuple[tuple[str, ...], ...]:
+    reset_commands = baseline_reset_commands(baseline_ref)
+    return reset_commands + plan.commands + reset_commands
+
+
 def run_benchmark_variant(
     project_root: Path,
     fixture_id: str,
     variant_id: str,
     *,
+    baseline_ref: str | None = None,
     runner: CommandRunner | None = None,
     timestamp: str | None = None,
 ) -> Path:
     plan = plan_variant_commands(fixture_id, variant_id)
     run = runner or _default_runner
-    output_dir = project_root / "runs" / "benchmarks" / f"{timestamp or _timestamp()}-{fixture_id}" / variant_id
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     status = "complete"
     retries = 0
-    for command in plan.commands:
+    commands = variant_execution_commands(plan, baseline_ref) if baseline_ref else plan.commands
+    for command in commands:
         exit_code = run(command)
         if exit_code != 0:
             status = "failed"
             retries += 1
+            if baseline_ref and command not in baseline_reset_commands(baseline_ref):
+                for reset_command in baseline_reset_commands(baseline_ref):
+                    run(reset_command)
             break
+
+    output_dir = project_root / "runs" / "benchmarks" / f"{timestamp or _timestamp()}-{fixture_id}" / variant_id
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     record = BenchmarkRunRecord(
         variant_id=variant_id,

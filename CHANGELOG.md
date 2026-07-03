@@ -19,6 +19,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-082 / #105 benchmark baseline reset discipline** — experimental
+  artifact-quality benchmark runs now require an explicit `--baseline-ref`
+  for real execution and wrap each variant with `git reset --hard <ref>` plus
+  `git clean -fd -e runs/benchmarks/`, so cleanse variants do not inherit
+  mutations from prior variants.
 - **EGR-072 / #89 autonomous land runtime-state conflict resolution** —
   `echelon land` now autoresolves the legacy transition where a feature branch
   still tracks `.specify/*` runtime files while the default branch ignores

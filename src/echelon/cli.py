@@ -4287,13 +4287,14 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         list_variants,
         plan_variant_commands,
         run_benchmark_variant,
+        variant_execution_commands,
     )
 
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage:\n"
             "  echelon benchmark list\n"
-            "  echelon benchmark run <fixture> --variant <id> [--dry-run]",
+            "  echelon benchmark run <fixture> --variant <id> --baseline-ref <ref> [--dry-run]",
             flush=True,
         )
         return
@@ -4308,16 +4309,23 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         return
 
     if args[0] != "run" or len(args) < 2:
-        print("✗ Usage: echelon benchmark run <fixture> --variant <id> [--dry-run]", file=sys.stderr)
+        print(
+            "✗ Usage: echelon benchmark run <fixture> --variant <id> --baseline-ref <ref> [--dry-run]",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     fixture_id = args[1]
     variant_id = "baseline"
+    baseline_ref = ""
     dry_run = False
     i = 2
     while i < len(args):
         if args[i] == "--variant" and i + 1 < len(args):
             variant_id = args[i + 1]
+            i += 2
+        elif args[i] == "--baseline-ref" and i + 1 < len(args):
+            baseline_ref = args[i + 1]
             i += 2
         elif args[i] == "--dry-run":
             dry_run = True
@@ -4333,16 +4341,25 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         sys.exit(1)
 
     if dry_run:
+        commands = variant_execution_commands(plan, baseline_ref) if baseline_ref else plan.commands
         _banner(
             "BENCHMARK DRY RUN",
             [("fixture", plan.fixture_id), ("variant", plan.variant_id)],
             subtitle="Commands that would run",
         )
-        for command in plan.commands:
+        for command in commands:
             print(" ".join(command))
         return
 
-    output_dir = run_benchmark_variant(project_root, fixture_id, variant_id)
+    if not baseline_ref:
+        print(
+            "✗ echelon benchmark run requires --baseline-ref <ref>.\n"
+            "  Commit Phase A baseline artifacts first, then pass that commit/ref.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    output_dir = run_benchmark_variant(project_root, fixture_id, variant_id, baseline_ref=baseline_ref)
     _banner(
         "BENCHMARK COMPLETE",
         [("fixture", fixture_id), ("variant", variant_id), ("output", str(output_dir))],
