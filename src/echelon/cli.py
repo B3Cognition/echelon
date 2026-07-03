@@ -259,13 +259,13 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
     return chosen
 
 
-def _print_http_deploy_runtime_help(
+def _print_http_deploy_runtime_warning(
     *,
     reason: str,
     detail: str | None = None,
 ) -> None:
     print(
-        "✗ Docker is required for HTTP deploy initialization, but it is not ready.\n"
+        "⚠ HTTP deploy initialization skipped because Docker is not ready.\n"
         f"  reason   {reason}",
         file=sys.stderr,
     )
@@ -273,16 +273,22 @@ def _print_http_deploy_runtime_help(
         print(f"  detail   {detail}", file=sys.stderr)
     print(
         "\n"
-        "  options\n"
-        "  ───────\n"
-        "  1. Install/start Docker, then rerun: echelon workspace init\n"
-        "  2. If this project does not need HTTP deploy, set deploy.type: cli in .echelon/config.yml\n"
-        "  3. For delivery sandboxing with Podman, use:\n"
-        "     ECHELON_CONTAINER_CLI=podman echelon delivery init\n"
+        "  workspace init will continue without provisioning local HTTP deploy infra.\n"
+        "\n"
+        "  next\n"
+        "  ────\n"
+        "  To enable HTTP deploy later, install/start Docker and rerun:\n"
+        "    echelon workspace init\n"
+        "\n"
+        "  To disable local deploy for this project, set in .echelon/config.yml:\n"
+        "    deploy.enabled: false\n"
+        "\n"
+        "  To initialize delivery sandboxing with Podman after workspace init:\n"
+        "    ECHELON_CONTAINER_CLI=podman echelon delivery init\n"
         "\n"
         "  note\n"
         "  ────\n"
-        "  Podman is supported for Echelon delivery sandboxing. The legacy HTTP deploy\n"
+        "  Podman is supported for Echelon delivery sandboxing. The HTTP deploy\n"
         "  Traefik setup currently expects Docker and the Docker socket.",
         file=sys.stderr,
     )
@@ -293,14 +299,14 @@ def _preflight_deploy_runtime(
     *,
     which=shutil.which,
     run=subprocess.run,
-) -> None:
+) -> bool:
     if deploy.get("type", "http") != "http":
-        return
+        return True
 
     docker_bin = which("docker")
     if not docker_bin:
-        _print_http_deploy_runtime_help(reason="docker command not found on PATH")
-        sys.exit(1)
+        _print_http_deploy_runtime_warning(reason="docker command not found on PATH")
+        return False
 
     try:
         result = run(
@@ -310,22 +316,24 @@ def _preflight_deploy_runtime(
             timeout=10,
         )
     except subprocess.TimeoutExpired:
-        _print_http_deploy_runtime_help(reason="docker info timed out")
-        sys.exit(1)
+        _print_http_deploy_runtime_warning(reason="docker info timed out")
+        return False
     except OSError as exc:
-        _print_http_deploy_runtime_help(
+        _print_http_deploy_runtime_warning(
             reason="docker info could not run",
             detail=str(exc),
         )
-        sys.exit(1)
+        return False
 
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
-        _print_http_deploy_runtime_help(
+        _print_http_deploy_runtime_warning(
             reason="Docker CLI found, but the Docker daemon is not reachable",
             detail=detail or None,
         )
-        sys.exit(1)
+        return False
+
+    return True
 
 
 def _cmd_init(project_dir: Path) -> None:
@@ -379,7 +387,8 @@ def _cmd_init(project_dir: Path) -> None:
             )
             sys.exit(1)
     print(f"✓ deploy config valid (type={deploy_type})")
-    _preflight_deploy_runtime(deploy)
+    deploy_enabled = deploy.get("enabled", True) is not False
+    deploy_runtime_ready = _preflight_deploy_runtime(deploy) if deploy_enabled else False
 
     # Step 2b: Provision MemPalace wing
     print("\n▶ Configuring MemPalace wing...")
@@ -387,7 +396,12 @@ def _cmd_init(project_dir: Path) -> None:
 
     # Step 3: Run deploy-init.sh
     init_script = ext_dir / "scripts" / "bash" / "deploy-init.sh"
-    if not init_script.exists():
+    deploy_state_label = str(project_dir / ".specify" / "squad" / "deploy-state.json")
+    if not deploy_enabled:
+        deploy_state_label = "skipped (deploy.enabled=false)"
+    elif not deploy_runtime_ready:
+        deploy_state_label = "skipped (Docker unavailable)"
+    elif not init_script.exists():
         print(
             f"✗ deploy-init.sh not found at {init_script}\n"
             "  Ensure the echelon extension is deployed via spec-kit.",
@@ -395,18 +409,18 @@ def _cmd_init(project_dir: Path) -> None:
         )
         sys.exit(1)
 
-    result = subprocess.run(
-        ["bash", str(init_script), str(project_dir), str(echelon_cfg)],
-        cwd=str(project_dir),
-    )
-    if result.returncode != 0:
-        sys.exit(result.returncode)
+    else:
+        result = subprocess.run(
+            ["bash", str(init_script), str(project_dir), str(echelon_cfg)],
+            cwd=str(project_dir),
+        )
+        if result.returncode != 0:
+            sys.exit(result.returncode)
 
     # Step 4: Confirm
-    state_file = project_dir / ".specify" / "squad" / "deploy-state.json"
     _banner("ECHELON INIT — COMPLETE", [
         ("Config",       str(echelon_cfg)),
-        ("Deploy state", str(state_file)),
+        ("Deploy state", deploy_state_label),
         ("Next step",    "echelon run <description>"),
     ])
 
