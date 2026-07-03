@@ -2259,6 +2259,7 @@ class RalphController:
         dest = worktree / "specs" / source.name
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, dest, dirs_exist_ok=True)
+        self._reconcile_synced_task_progress(dest)
 
         source_constitution = self._orchestration_root(worktree) / ".specify" / "memory" / "constitution.md"
         if source_constitution.exists():
@@ -2270,6 +2271,39 @@ class RalphController:
         if readiness.ready:
             return []
         return readiness.blockers or ["Phase A build inputs are not ready"]
+
+    def _reconcile_synced_task_progress(self, spec_dir: Path) -> None:
+        """Reapply Python-owned task progress after copying Phase A inputs."""
+        tasks_path = spec_dir / "tasks.md"
+        if not tasks_path.exists():
+            return
+
+        state = self._state_store.read()
+        build = state.get("build")
+        if not isinstance(build, dict):
+            return
+        task_results = build.get("task_results")
+        if not isinstance(task_results, dict):
+            return
+
+        markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+        changed = False
+        for task_id, result in sorted(task_results.items()):
+            if not isinstance(result, dict):
+                continue
+            status = str(result.get("status") or "").strip().upper()
+            if status not in {"DONE", "DONE_WITH_CONCERNS", "DEGRADED"}:
+                continue
+            try:
+                updated = update_task_progress_markdown(markdown, str(task_id), status)
+            except TaskProgressError as exc:
+                logger.warning("Could not reconcile synced task progress for %s: %s", task_id, exc)
+                continue
+            changed = changed or updated != markdown
+            markdown = updated
+
+        if changed:
+            tasks_path.write_text(markdown, encoding="utf-8")
 
     def _source_phase_a_spec_dir(self, worktree: Path) -> Path | None:
         state = self._state_store.read()

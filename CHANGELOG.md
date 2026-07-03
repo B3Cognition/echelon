@@ -6,6 +6,58 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-072 / #89 autonomous land runtime-state conflict resolution** —
+  `echelon land` now autoresolves the legacy transition where a feature branch
+  still tracks `.specify/*` runtime files while the default branch ignores
+  `.specify/`. Land keeps a unioned `.gitignore`, removes `.specify/*` from the
+  Git index, and applies the same resolver when recovering with
+  `echelon land <id> --continue`; source/spec artifact conflicts still block.
+- **EGR-071 / #88 spec-kit runtime gitignore contract** — workspace Git initialization
+  guidance and migration now treat `.specify/` as local spec-kit/Echelon runtime
+  state, add it to `.gitignore`, and stage only `.gitignore` plus `specs/`.
+  The tracked constitution handoff remains the published
+  `specs/<id>-*/constitution.md` snapshot rather than
+  `.specify/memory/constitution.md`.
+- **EGR-070 / #87 land feature-branch readiness** — `echelon land`
+  now falls back to the resolved feature branch for readiness and fulfillment
+  preflight when the current checkout has stale spec artifacts. Fulfillment
+  reports verified at an ancestor commit are accepted only when later feature
+  branch commits changed landing/verification artifacts without touching
+  implementation inputs or semantic spec inputs.
+- **EGR-069 harness resume salvage recovery** — `echelon harness resume` now
+  recovers from a state-recorded salvage/checkpoint commit even when later
+  generated verification artifacts leave the preserved worktree with tracked
+  modifications. Dirty preserved worktrees still block only when recovery has
+  to infer an unrecorded commit.
+- **EGR-068 verify-spec CodeGraph confidence mapping** — verify-spec now rejects
+  stale CodeGraph exports whose `repo_path` does not match the current project
+  root before summary/map generation, falling back to a fresh bridge export when
+  available. The deterministic evidence mapper also uses CodeGraph call edges
+  from requirement-anchored tests to lift directly called implementation symbols,
+  reducing low-confidence fallback when source/test relationships are already
+  present structurally.
+- **EGR-066 build quality gate sequencing contract** — `echelon.build` and the
+  build task phase now explicitly require SPEC GUARD, CODE REVIEWER, and TEST
+  GUARDIAN to run as sequential hard gates, not one parallel batch. CODE
+  REVIEWER and TEST GUARDIAN may no longer be skipped by vacuity; any skip
+  needs a workflow-approved condition and journaled rationale, while the generic
+  COMMANDER prompt remains judge/governance-oriented.
+- **EGR-067 Ruff formatting evidence in Python language rules** — CODE
+  REVIEWER's Python language rule now requires both `ruff check` and
+  `ruff format --check` before reporting Python style, lint, or formatting as
+  clean, preventing lint-only evidence from masking formatter failures while
+  keeping the generic code-reviewer prompt language-neutral.
+- **EGR-065 provider-limit salvage task-progress reconciliation** — Ralph now
+  reapplies completed task statuses from Python-owned harness state after
+  syncing Phase A inputs into a build worktree. Stale project-visible
+  `tasks.md` copies can no longer erase checked task rows before readiness
+  validation or provider-limit salvage.
+- **EGR-064 / #86 harness recovery idempotence** — `echelon harness
+  resume` no longer requires a clean current checkout when the selected
+  checkpoint/salvage commit is already contained in the resolved target feature
+  branch. Recovery now reports the commit as already present and continues
+  without checkout/cherry-pick; dirty-tree blocking remains for commits that
+  still need to be applied.
 - **EGR-062 / #84 verify-spec provider-session recovery** — provider
   session limits during fulfillment refresh now stop Ralph as a first-class
   checkpoint block instead of becoming ordinary `verify-spec-failed`

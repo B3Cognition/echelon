@@ -6,26 +6,50 @@ Echelon treats every project as a workspace with zero or more source roots.
 - Polyrepo: `sources: [repo-a, repo-b]`
 - Planning-only workspace: `sources: []`
 
-The workspace root owns `.specify/`, `specs/`, `runs/`, and Echelon state. Source roots own implementation files.
+The workspace root owns project-visible `specs/` artifacts and local Echelon
+runtime state. `.echelon/config.yml` is the committed project contract.
+`.echelon/local.yml`, `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
+`.echelon/cache/`, and `.echelon/recovery-backups/` are runtime/local
+directories and should be gitignored in generated workspaces; published spec
+artifacts under `specs/` are the tracked handoff.
 
 For polyrepo work, initialize a lightweight workspace Git repo:
 
 ```bash
 git init
-printf "/og-platform/\n/pbg-api/\n/runs/\n" >> .gitignore
-git add .gitignore .specify specs
+mkdir -p .echelon specs
+cat > .echelon/config.yml <<'YAML'
+workspace:
+  git_role: orchestration
+sources:
+  - id: og-platform
+    path: og-platform
+  - id: pbg-api
+    path: pbg-api
+YAML
+printf "/og-platform/\n/pbg-api/\n/.specify/\n/runs/\n/.claude/\n/.echelon/runtime/\n/.echelon/cache/\n/.echelon/recovery-backups/\n" >> .gitignore
+git add .gitignore .echelon/config.yml specs
 git commit -m "chore: initialize echelon workspace"
 ```
 
-For an existing branchless workspace, use the one-time migration script from the workspace root:
+For an existing branchless or legacy-config workspace, use the workspace command
+from the workspace root:
 
 ```bash
-python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py          # dry-run plan
-python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --write  # git init, update .gitignore, stage workspace files
-python .specify/extensions/echelon/scripts/python/migrate_workspace_git.py --commit # also commit staged workspace files
+echelon workspace doctor
+echelon workspace migrate          # dry-run plan
+echelon workspace migrate --write  # git init, copy legacy config, update .gitignore, stage specs/config
+echelon workspace migrate --commit # also commit staged workspace files
 ```
 
-The script stages only `.gitignore`, `.specify`, and `specs`. Detected source roots are added to `.gitignore` before staging so implementation repositories are not committed into the lightweight workspace Git repo.
+The migration stages only workspace-contract files: `.gitignore`,
+`.echelon/config.yml`, and `specs/`. Detected source roots, `.specify/`,
+`runs/`, `.claude/`, `.echelon/runtime/`, `.echelon/cache/`, and
+`.echelon/recovery-backups/` are added to `.gitignore` before staging so runtime
+state and implementation repositories are not committed into the lightweight
+workspace Git repo. If legacy
+`.specify/extensions/echelon/echelon-config.yml` exists and `.echelon/config.yml`
+does not, migration copies it to the canonical path.
 
 When running from an Echelon source checkout instead of an installed workspace extension, pass the target workspace explicitly:
 
@@ -48,7 +72,7 @@ When a workspace has multiple source roots, select the implementation target bef
 
 ```bash
 echelon spec target 001-feature og-platform
-echelon harness run 001-feature
+echelon delivery run 001-feature
 ```
 
 Use the source path in `echelon spec target`. A source id may be displayed for readability, but the stored target is the path relative to the workspace root.

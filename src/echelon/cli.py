@@ -65,49 +65,41 @@ echelon {CLI_VERSION}
 Usage: echelon <command> [args...]
 
 Commands:
-  init                                      One-time project setup (no LLM)
-  run     <description> [--mode semi|banzai|guided] [--reset]
-                        [--next-phase <phase-id>]
-                                            Run echelon squad. Resumes if a run is in
-                                            progress with the same task; starts fresh if
-                                            task differs or run is complete.
-                                            --reset            force fresh start
-                                            --next-phase <id>  recover from invalid-phase block
-  status                                    Show current run state, staging artifacts, open
-                                            issues, cost, and next action — orient after a
-                                            break without reading files manually.
-  continue [--mode semi|banzai|guided]      Run the next no-input recovery action for the
-                                            last run. Retries running/interrupted runs,
-                                            retries recoverable failed dispatches, or
-                                            advances completed-but-incomplete Phase A work.
-                                            If human input is needed, prints `resume`.
-  rewind  <phase-id>                        Rewind the active squad run to a safe checkpoint
-                                            phase and prepare it for `echelon continue`.
+  workspace init                            One-time project setup (no LLM)
+  workspace doctor                          Check workspace/source/runtime contract
+  workspace migrate [--write] [--commit]    Migrate legacy workspace layout
+
+  spec run <description> [--mode semi|banzai|guided] [--reset]
+                                            Run Phase A squad spec authoring.
+  spec status                               Show current run state, artifacts, cost, and next action.
+  spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
+  spec resume "<answers>"                   Answer escalation questions from a blocked run.
+  spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
+  spec target <spec_id> <repo> [repo...]     Set target repos in spec frontmatter.
+  spec artifacts <spec_id>                  Generate specs/<id>/ARTIFACTS.md.
+  spec verify <spec_id> [--reconcile] [--dry-run]
+                                            Audit implementation against spec.
+  spec reopen <spec_id> [from=<report>]      Reopen spec from fulfillment gaps.
+  spec bugfix <spec_id> <description>        Diagnose and plan a bugfix.
+  spec change <spec_id> <description>        Plan a scope change.
+
   phase list                                List workflow phases available for manual replay.
   phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
-                                            Run one explicit phase, write artifacts to the
-                                            target spec directory when resolvable, record
-                                            state/journal through COMMANDER contracts, then stop.
-  resume  "<answers>"                       Answer escalation questions from a blocked run.
-                                            Use only when the run asked for human input;
-                                            after recording the answer, Echelon continues.
-  bugfix  <spec_id> <description>           Diagnose and plan a bugfix
-  verify-spec <spec_id> [strict=true] [--reconcile] [--dry-run]
-                                            Audit implementation against spec
-  reopen  <spec_id> [from=<report>]          Reopen spec from fulfillment gaps
-  build   <spec_id>                         Build implementation for a spec
-  review  <spec_id> [pr_url=<url>]          Triage PR review comments
-  change  <spec_id> <description>           Plan a scope change
-  codegen <spec_id>                         Run SOAR codegen pipeline
-  cicd                                      Retired; use 'echelon harness init'
-  artifacts <spec_id>                       Generate specs/<id>/ARTIFACTS.md
-  land    <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
+                                            Run one explicit phase through COMMANDER contracts.
+
+  delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
+  delivery run <spec_id> [strategy=<s>]      Run build→verify→PR loop.
+  delivery resume <spec_id> [strategy=<s>]   Resume a blocked delivery run.
+  delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
-                                            Land a spec: merge PR, clean up
-  harness init   [<target_repo>]            Initialize harness (no LLM)
-  harness run    <spec_id> [strategy=<s>]   Run build→verify→PR loop
-  harness resume <spec_id> [strategy=<s>]   Resume a blocked harness run
-  spec target    <spec_id> <repo> [repo...] Set target repos in spec frontmatter
+                                            Land a spec: merge PR/branch, clean up.
+
+Compatibility aliases:
+  init, run, status, continue, resume, rewind
+  bugfix, verify-spec, reopen, build, review, change, codegen, artifacts
+  harness init|run|resume                    Alias for delivery init|run|resume.
+  land <spec_id> [...]                       Alias for delivery land.
+  cicd                                      Retired; use 'echelon delivery init'.
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
@@ -125,15 +117,17 @@ def _workspace_git_preflight(project_root: Path, *, command_name: str) -> None:
         return
 
     source_paths = [source.path for source in manifest.sources if source.path != "."]
-    ignore_lines = "\n".join(f"/{path}/" for path in source_paths) or "/source-repo/"
+    ignore_entries = [f"/{path}/" for path in source_paths] or ["/source-repo/"]
+    ignore_entries.extend(["/.specify/", "/runs/"])
+    ignore_lines = "\n".join(ignore_entries)
     print(
         "✗ Echelon workspace root is not a Git repo.\n\n"
         "Echelon requires workspace Git so specs, run state, and recovery metadata "
         "have durable version history.\n\n"
         "Fix:\n"
         "  git init\n"
-        f"  printf \"{ignore_lines}\\n/runs/build-*/\\n/runs/verify-*/\\n\" >> .gitignore\n"
-        "  git add .gitignore .specify specs\n"
+        f"  printf \"{ignore_lines}\\n\" >> .gitignore\n"
+        "  git add .gitignore specs\n"
         "  git commit -m \"chore: initialize echelon workspace\"\n\n"
         "Then rerun:\n"
         f"  {command_name}",
@@ -267,16 +261,24 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
 
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
-    echelon_cfg = ext_dir / "echelon-config.yml"
+    legacy_cfg = ext_dir / "echelon-config.yml"
+    echelon_cfg = project_dir / ".echelon" / "config.yml"
 
-    # Step 1: Confirm project config exists (created by `specify extension add echelon`)
+    # Step 1: Confirm project config exists. New workspaces commit .echelon/config.yml;
+    # legacy extension-local config remains a migration/template source.
     if not echelon_cfg.exists():
-        print(
-            f"✗ Project config not found: {echelon_cfg}\n"
-            "  Run: specify extension add echelon",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+        if legacy_cfg.exists():
+            echelon_cfg.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(legacy_cfg, echelon_cfg)
+            print(f"✓ Project config created: {echelon_cfg}")
+        else:
+            print(
+                f"✗ Project config not found: {echelon_cfg}\n"
+                f"  Legacy template also missing: {legacy_cfg}\n"
+                "  Run: specify extension add echelon",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     print(f"✓ Project config found: {echelon_cfg}")
 
     # Step 2: Validate deploy config
@@ -366,7 +368,14 @@ def _archive_squad_run(project_dir: Path, spec_id: str) -> None:
         f"\nArchive spec run {run_id!r} into "
         f"{spec_rel}/run/ ?"
     )
-    choice = input("  [Y]es archive / [n]o keep in runs/ / [s]kip: ").strip().lower()
+    if not sys.stdin.isatty():
+        print("  Spec run archive skipped — non-interactive stdin.", flush=True)
+        return
+    try:
+        choice = input("  [Y]es archive / [n]o keep in runs/ / [s]kip: ").strip().lower()
+    except EOFError:
+        print("  Spec run archive skipped — no input available.", flush=True)
+        return
 
     if choice in ("", "y", "yes"):
         shutil.move(str(run_dir), str(archive_dest))
@@ -482,20 +491,21 @@ def _cmd_land(args: list[str]) -> None:
 def _cmd_harness(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
-            "Usage: echelon harness <subcommand> [args...]\n\n"
+            "Usage: echelon harness <subcommand> [args...]\n"
+            "Compatibility alias for: echelon delivery <subcommand> [args...]\n\n"
             "Subcommands:\n"
-            "  init   [<target_repo>]             Initialize harness — config, mirror clone, image fingerprint\n"
+            "  init   [<target_repo>]             Initialize delivery environment — config, mirror, verify\n"
             "  run    <spec_id> [strategy=<s>]    Run build→verify→PR loop\n"
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
             "                                     mode:     semi (default) | banzai | guided\n"
             "  resume <spec_id>                   Resume a blocked run after answering/fixing its blocker\n\n"
             "Examples:\n"
-            "  echelon harness init\n"
-            "  echelon harness init https://github.com/org/repo\n"
-            "  echelon harness run 001\n"
-            "  echelon harness run 001 strategy=codegen\n"
-            "  echelon harness run 001 strategy=default mode=banzai\n"
-            "  echelon harness resume 001\n"
+            "  echelon delivery init\n"
+            "  echelon delivery init https://github.com/org/repo\n"
+            "  echelon delivery run 001\n"
+            "  echelon delivery run 001 strategy=codegen\n"
+            "  echelon delivery run 001 strategy=default mode=banzai\n"
+            "  echelon delivery resume 001\n"
         )
         return
 
@@ -508,6 +518,44 @@ def _cmd_harness(args: list[str]) -> None:
         _cmd_harness_resume(args[1:])
     else:
         print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
+        sys.exit(1)
+
+
+def _cmd_delivery(args: list[str]) -> None:
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon delivery <subcommand> [args...]\n\n"
+            "Delivery is Echelon Phase B: build, verify, recover, review, and land a completed spec.\n\n"
+            "Subcommands:\n"
+            "  init   [<target_repo>]             Initialize delivery environment — sandbox, mirror, verify\n"
+            "  run    <spec_id> [strategy=<s>]    Run build→verify→PR loop\n"
+            "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
+            "                                     mode:     semi (default) | banzai | guided\n"
+            "  resume <spec_id> [strategy=<s>]    Resume a blocked delivery run\n"
+            "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
+            "Compatibility aliases:\n"
+            "  echelon harness init|run|resume\n"
+            "  echelon land <spec_id> [options...]\n\n"
+            "Examples:\n"
+            "  echelon delivery init\n"
+            "  echelon delivery run 001\n"
+            "  echelon delivery run 001 strategy=codegen\n"
+            "  echelon delivery resume 001\n"
+            "  echelon delivery land 001\n"
+        )
+        return
+
+    subcmd = args[0]
+    if subcmd == "init":
+        _cmd_harness_init(args[1:])
+    elif subcmd == "run":
+        _cmd_harness_run(args[1:])
+    elif subcmd == "resume":
+        _cmd_harness_resume(args[1:])
+    elif subcmd == "land":
+        _cmd_land(args[1:])
+    else:
+        print(f"echelon delivery: unknown subcommand '{subcmd}'\n", file=sys.stderr)
         sys.exit(1)
 
 
@@ -531,7 +579,7 @@ def _cmd_harness_init(args: list[str]) -> None:
         print(f"✗ echelon harness init failed: {e}", file=sys.stderr)
         sys.exit(1)
 
-    config_file = Path(base_dir) / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = _project_echelon_config(Path(base_dir))
     from harness.paths import mirror_path as _mirror_path_fn
     mirror_dir = _mirror_path_fn(Path(base_dir))
 
@@ -591,30 +639,30 @@ def _harness_verify_status(config_file: Path) -> tuple[str, str, str]:
 
 
 def _harness_init_next_step(config_file: Path) -> str:
-    """Return the init banner next step without suggesting an invalid harness run."""
+    """Return the init banner next step without suggesting an invalid delivery run."""
     verify_command, verify_detection, verify_reason = _harness_verify_status(config_file)
     if verify_command:
-        return "echelon run \"<feature>\"\n  echelon harness run <spec_id>"
+        return "echelon spec run \"<feature>\"\n  echelon delivery run <spec_id>"
 
     if verify_detection or verify_reason:
         detail = verify_detection or "none"
         if verify_reason:
             detail += f": {verify_reason}"
         return (
-            "set top-level verify_command before harness build\n"
+            "set top-level verify_command before delivery build\n"
             f"  detection: {detail}\n"
             "  examples:\n"
             "    verify_command: pytest\n"
             "    verify_command: npm test\n"
             "    verify_command: go test ./...\n"
-            "  then: echelon harness resume <spec_id>  # if recovering a blocked run\n"
-            "        echelon harness run <spec_id>     # for a new build"
+            "  then: echelon delivery resume <spec_id>  # if recovering a blocked run\n"
+            "        echelon delivery run <spec_id>     # for a new build"
         )
 
     return (
-        "echelon run \"<feature>\"\n"
-        "  echelon harness run <spec_id>\n"
-        "  if verification blocks: echelon harness init or set verify_command manually"
+        "echelon spec run \"<feature>\"\n"
+        "  echelon delivery run <spec_id>\n"
+        "  if verification blocks: echelon delivery init or set verify_command manually"
     )
 
 
@@ -698,15 +746,15 @@ def _format_missing_verify_command_resume_message(config_file: Path, spec_id: st
             f"  detection: {detail}\n\n"
             f"  Add a top-level verify_command to {config_file}, for example:\n"
             f"{examples}\n\n"
-            f"  Then re-run:  echelon harness resume {spec_id}"
+            f"  Then re-run:  echelon delivery resume {spec_id}"
         )
 
     return (
         "✗ verify_command is still not set in echelon-config.yml.\n\n"
-        "  Option 1 — auto-detect once:  echelon harness init\n"
+        "  Option 1 — auto-detect once:  echelon delivery init\n"
         "  Option 2 — manual:            add a top-level verify_command to echelon-config.yml:\n"
         f"{examples}\n\n"
-        f"  Then re-run:  echelon harness resume {spec_id}"
+        f"  Then re-run:  echelon delivery resume {spec_id}"
     )
 
 
@@ -716,10 +764,10 @@ def _cmd_cicd(args: list[str]) -> None:
         "✗ echelon cicd is retired.\n\n"
         "  The old command launched a full LLM squad and could create new specs or\n"
         "  mutate Docker/deploy/CI files when the harness only needed verification.\n\n"
-        "  For harness verification, run:\n"
-        "    echelon harness init\n\n"
+        "  For delivery verification, run:\n"
+        "    echelon delivery init\n\n"
         "  If auto-detection cannot make a high-confidence choice, add a top-level\n"
-        "  verify_command to .specify/extensions/echelon/echelon-config.yml, for example:\n"
+        "  verify_command to .echelon/config.yml, for example:\n"
         "    verify_command: pytest\n"
         "    verify_command: npm test\n"
         "    verify_command: go test ./...",
@@ -1071,12 +1119,13 @@ def _cmd_harness_run(args: list[str]) -> None:
     from harness.plan_validation import PlanValidationError, validate_plan_file
     from harness.task_validation import TaskValidationError
 
-    # Single-repo mode: require local echelon-config.yml (harness config).
-    echelon_yml = config_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    # Single-repo mode: require local Echelon harness config.
+    echelon_yml = _project_echelon_config(config_root)
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
+            f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon harness init' first, or add 'targets:' to your spec.",
             file=sys.stderr,
         )
@@ -1399,11 +1448,12 @@ def _cmd_harness_resume(args: list[str]) -> None:
     from harness.paths import build_dir, current_build_marker, runs_dir
     from harness.state import StateStore
 
-    echelon_yml = Path.cwd() / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    echelon_yml = _project_echelon_config(Path.cwd())
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
+            f"  Legacy fallback: {Path.cwd() / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon harness init' first.",
             file=sys.stderr,
         )
@@ -2925,6 +2975,9 @@ class ProjectConfigCompatibilityIssue:
 
 
 def _project_echelon_config(project_root: Path) -> Path:
+    canonical = project_root / ".echelon" / "config.yml"
+    if canonical.exists():
+        return canonical
     return project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
 
 
@@ -4606,22 +4659,142 @@ def _skill_not_found_msg(skill_base: str, project_dir: Path, cli: str) -> str:
     )
 
 
+def _dispatch_skill_command(command: str, args: list[str]) -> None:
+    skill_base = SKILL_MAP[command]
+    arguments = " ".join(args)
+
+    if not arguments:
+        print(f"echelon {command}: missing arguments\n", file=sys.stderr)
+        print(USAGE)
+        sys.exit(1)
+
+    project_dir = Path.cwd()
+    cli = os.environ.get("ECHELON_LLM", "claude")
+    try:
+        tool_policy = _load_cli_tool_policy(project_dir)
+    except Exception as exc:
+        print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    skill_path = _find_skill(skill_base, project_dir, cli)
+    if skill_path is None:
+        print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
+        sys.exit(1)
+
+    bin_ = shutil.which(cli) or cli
+    if cli == "opencode":
+        cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
+        result = subprocess.run(cmd, cwd=str(project_dir))
+    elif cli in {"copilot", "codex"}:
+        prompt = _build_prompt(skill_path, arguments)
+        cmd = build_llm_cli_command(cli, bin_, prompt, tool_policy)
+        result = subprocess.run(cmd, cwd=str(project_dir))
+    else:
+        # claude: use stream-json for live tool-call progress in the terminal
+        prompt = _build_prompt(skill_path, arguments)
+        _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
+        return  # _run_claude_streaming calls sys.exit
+    sys.exit(result.returncode)
+
+
 # ── spec subcommands ──────────────────────────────────────────────────────────
 
 def _cmd_spec(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon spec <subcommand> [args...]\n\n"
-            "  target <spec_id> <repo> [repo...]   Set targets: in spec frontmatter\n",
+            "  run <description> [--mode semi|banzai|guided] [--reset]\n"
+            "                                      Run Phase A squad spec authoring\n"
+            "  status                              Show current run state and next action\n"
+            "  continue [--mode semi|banzai|guided]\n"
+            "                                      Run the next no-input Phase A recovery action\n"
+            "  resume <answers>                    Answer escalation questions from a blocked run\n"
+            "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  target <spec_id> <repo> [repo...]   Set targets: in spec frontmatter\n"
+            "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
+            "  verify <spec_id> [--reconcile] [--dry-run]\n"
+            "                                      Audit implementation against spec\n"
+            "  reopen <spec_id> [from=<report>]    Reopen spec from fulfillment gaps\n"
+            "  bugfix <spec_id> <description>      Diagnose and plan a bugfix\n"
+            "  change <spec_id> <description>      Plan a scope change\n",
             file=sys.stderr,
         )
         sys.exit(0)
     subcmd = args[0]
     if subcmd == "target":
         _cmd_spec_target(args[1:])
+    elif subcmd == "run":
+        _cmd_spec_run(args[1:])
+    elif subcmd == "status":
+        _cmd_status(Path.cwd())
+    elif subcmd == "continue":
+        _cmd_spec_continue(args[1:])
+    elif subcmd == "resume":
+        _cmd_spec_resume(args[1:])
+    elif subcmd == "rewind":
+        _cmd_rewind(args[1:], project_root=Path.cwd())
+    elif subcmd == "artifacts":
+        _cmd_artifacts(args[1:])
+    elif subcmd == "verify":
+        _dispatch_skill_command("verify-spec", args[1:])
+    elif subcmd in {"bugfix", "change", "reopen"}:
+        _dispatch_skill_command(subcmd, args[1:])
     else:
         print(f"echelon spec: unknown subcommand '{subcmd}'\n", file=sys.stderr)
         sys.exit(1)
+
+
+def _installed_extension_or_exit(project_root: Path) -> Path:
+    ext_dir = project_root / ".specify" / "extensions" / "echelon"
+    if not ext_dir.exists():
+        print(
+            f"✗ Echelon extension not installed: {ext_dir}\n"
+            "  Run: specify extension add echelon",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return ext_dir
+
+
+def _cmd_spec_run(args: list[str]) -> None:
+    if os.environ.get("ECHELON_SQUAD_ACTIVE"):
+        print(
+            "✗ echelon spec run: refusing nested invocation — already inside a squad "
+            "agent dispatch (ECHELON_SQUAD_ACTIVE is set).\n"
+            "  Squad agents must not call 'echelon spec run'. "
+            "Return echelon_result: from your agent instead.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    project_root = Path.cwd()
+    ext_dir = _installed_extension_or_exit(project_root)
+    cfg_file = _project_echelon_config(project_root)
+    if not cfg_file.exists():
+        print(
+            f"✗ Project not initialized — config not found: {cfg_file}\n"
+            "  Run: echelon workspace init",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
+
+
+def _cmd_spec_continue(args: list[str]) -> None:
+    project_root = Path.cwd()
+    ext_dir = _installed_extension_or_exit(project_root)
+    _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
+
+
+def _cmd_spec_resume(args: list[str]) -> None:
+    if os.environ.get("ECHELON_SQUAD_ACTIVE"):
+        print(
+            "✗ echelon spec resume: refusing nested invocation (ECHELON_SQUAD_ACTIVE is set).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    project_root = Path.cwd()
+    ext_dir = _installed_extension_or_exit(project_root)
+    _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
 
 
 def _cmd_spec_target(args: list[str]) -> None:
@@ -4669,6 +4842,49 @@ def _cmd_spec_target(args: list[str]) -> None:
         print(f"    - {r}")
 
 
+def _cmd_workspace(args: list[str]) -> None:
+    if not args or args[0] in ("-h", "--help"):
+        print(
+            "Usage: echelon workspace <subcommand> [args...]\n\n"
+            "  init                      One-time project setup (no LLM)\n"
+            "  doctor                    Validate workspace/source/runtime contract\n"
+            "  migrate [--write]         Copy legacy config, ignore runtime state, stage fixes\n"
+            "          [--commit]        Apply and commit migration changes\n",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+    subcmd = args[0]
+    if subcmd == "init":
+        _cmd_init(Path.cwd())
+        return
+
+    if subcmd == "doctor":
+        from echelon.workspace_git_migration import doctor_workspace
+
+        result = doctor_workspace(Path.cwd())
+        print(f"Workspace: {result.workspace_root}")
+        print(f"Buildable: {'yes' if result.buildable else 'no'}")
+        if not result.findings:
+            print("Findings: none")
+        else:
+            print("Findings:")
+            for finding in result.findings:
+                path = f" [{finding.path}]" if finding.path else ""
+                print(f"  {finding.severity.upper()} {finding.code}{path}: {finding.message}")
+        if result.has_errors:
+            sys.exit(1)
+        return
+
+    if subcmd == "migrate":
+        from echelon.workspace_git_migration import main as migrate_main
+
+        raise SystemExit(migrate_main([".", *args[1:]]))
+
+    print(f"echelon workspace: unknown subcommand '{subcmd}'\n", file=sys.stderr)
+    sys.exit(1)
+
+
 def _cmd_artifacts(args: list[str]) -> None:
     if not args:
         print("echelon artifacts: missing spec_id", file=sys.stderr)
@@ -4692,7 +4908,7 @@ def _cmd_artifacts(args: list[str]) -> None:
 def main() -> None:
     args = sys.argv[1:]
 
-    if not args or args[0] in ("-h", "--help"):
+    if not args or args[0] in ("-h", "--help", "help"):
         print(USAGE)
         sys.exit(0)
 
@@ -4710,12 +4926,20 @@ def main() -> None:
         _cmd_harness(args[1:])
         return
 
+    if command == "delivery":
+        _cmd_delivery(args[1:])
+        return
+
     if command == "cicd":
         _cmd_cicd(args[1:])
         return
 
     if command == "spec":
         _cmd_spec(args[1:])
+        return
+
+    if command == "workspace":
+        _cmd_workspace(args[1:])
         return
 
     if command == "artifacts":
@@ -4757,7 +4981,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        cfg_file = ext_dir / "echelon-config.yml"
+        cfg_file = _project_echelon_config(project_root)
         if not cfg_file.exists():
             print(
                 f"✗ Project not initialized — config not found: {cfg_file}\n"
@@ -4806,7 +5030,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        cfg_file = ext_dir / "echelon-config.yml"
+        cfg_file = _project_echelon_config(project_root)
         if not cfg_file.exists():
             print(
                 f"✗ Project not initialized — config not found: {cfg_file}\n"
@@ -4822,38 +5046,4 @@ def main() -> None:
         print(USAGE)
         sys.exit(1)
 
-    skill_base = SKILL_MAP[command]
-    arguments = " ".join(args[1:])
-
-    if not arguments:
-        print(f"echelon {command}: missing arguments\n", file=sys.stderr)
-        print(USAGE)
-        sys.exit(1)
-
-    project_dir = Path.cwd()
-    cli = os.environ.get("ECHELON_LLM", "claude")
-    try:
-        tool_policy = _load_cli_tool_policy(project_dir)
-    except Exception as exc:
-        print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    skill_path = _find_skill(skill_base, project_dir, cli)
-    if skill_path is None:
-        print(_skill_not_found_msg(skill_base, project_dir, cli), file=sys.stderr)
-        sys.exit(1)
-
-    bin_ = shutil.which(cli) or cli
-    if cli == "opencode":
-        cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
-        result = subprocess.run(cmd, cwd=str(project_dir))
-    elif cli in {"copilot", "codex"}:
-        prompt = _build_prompt(skill_path, arguments)
-        cmd = build_llm_cli_command(cli, bin_, prompt, tool_policy)
-        result = subprocess.run(cmd, cwd=str(project_dir))
-    else:
-        # claude: use stream-json for live tool-call progress in the terminal
-        prompt = _build_prompt(skill_path, arguments)
-        _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
-        return  # _run_claude_streaming calls sys.exit
-    sys.exit(result.returncode)
+    _dispatch_skill_command(command, args[1:])

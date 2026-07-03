@@ -213,6 +213,57 @@ class TestOuterLoopConvergence:
         assert "Real Constitution" in (stale / "constitution.md").read_text(encoding="utf-8")
         assert "[PROJECT_NAME]" not in stale_canonical.read_text(encoding="utf-8")
 
+    def test_sync_phase_a_inputs_reconciles_state_task_progress(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _provider, gitops, state_store = _make_controller(tmp_path)
+        project = tmp_path / "project"
+        gitops.base_dir = project
+        source = project / "specs" / "spec-001-demo"
+        source.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        (source / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
+            "\n"
+            "  **Acceptance Criteria:**\n"
+            "  - [ ] Gate passes\n"
+            "\n"
+            "- [ ] T-002 complexity=standard phase=core req=FR-001 depends=T-001\n",
+            encoding="utf-8",
+        )
+        (source / "constitution.md").write_text(
+            "# Real Constitution\n\nProject-specific governance.\n",
+            encoding="utf-8",
+        )
+        canonical = project / ".specify" / "memory" / "constitution.md"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("# Real Constitution\n", encoding="utf-8")
+
+        state = state_store.read()
+        state["spec_dir"] = str(source)
+        state["build"] = {
+            "total_tasks": 2,
+            "completed_tasks": 1,
+            "tasks_completed_pct": 50,
+            "task_results": {
+                "T-001": {"status": "DONE"},
+                "T-002": {"status": "PENDING"},
+            },
+        }
+        state_store.write(state)
+
+        worktree = tmp_path / "worktree"
+        blockers = controller._sync_phase_a_inputs_into_worktree(worktree)
+
+        assert blockers == []
+        synced_tasks = worktree / "specs" / "spec-001-demo" / "tasks.md"
+        text = synced_tasks.read_text(encoding="utf-8")
+        assert "- [x] T-001 complexity=standard phase=foundation req=INFRA depends=none" in text
+        assert "  **Status:** DONE" in text
+        assert "  - [x] Gate passes" in text
+        assert "- [ ] T-002 complexity=standard phase=core req=FR-001 depends=T-001" in text
+
     def test_sync_phase_a_inputs_blocks_invalid_worktree_copy(
         self, tmp_path: Path
     ) -> None:

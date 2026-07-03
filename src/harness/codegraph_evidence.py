@@ -49,7 +49,9 @@ def write_codegraph_evidence(
         codegraph = shutil.which("codegraph")
         if codegraph is not None:
             completed = _run_codegraph_cli(codegraph, project_root, analysis_path)
-            if completed.returncode == 0 and _analysis_is_usable(analysis_path):
+            if completed.returncode == 0 and _analysis_is_usable(
+                analysis_path, expected_repo_path=project_root
+            ):
                 _write_summary(analysis_path, summary_path)
                 _remove_if_exists(error_path)
                 return CodeGraphEvidenceResult(
@@ -58,9 +60,14 @@ def write_codegraph_evidence(
                     error_path=error_path,
                     ok=True,
                 )
+            cli_failure_title = (
+                "CodeGraph CLI produced stale or unusable output."
+                if completed.returncode == 0
+                else "CodeGraph CLI failed."
+            )
             diagnostics.append(
                 _provider_failure(
-                    "CodeGraph CLI failed.",
+                    cli_failure_title,
                     command=[
                         codegraph,
                         "export",
@@ -98,7 +105,9 @@ def write_codegraph_evidence(
             raise CodeGraphEvidenceError(str(error_path))
 
         completed = _run_vendored_bridge(node, bridge_path, project_root, analysis_path)
-        if completed.returncode != 0 or not analysis_path.is_file():
+        if completed.returncode != 0 or not _analysis_is_usable(
+            analysis_path, expected_repo_path=project_root
+        ):
             _write_error(
                 error_path,
                 "".join(diagnostics)
@@ -178,14 +187,28 @@ def _run_vendored_bridge(
     )
 
 
-def _analysis_is_usable(analysis_path: Path) -> bool:
+def _analysis_is_usable(
+    analysis_path: Path, *, expected_repo_path: Path | None = None
+) -> bool:
     if not analysis_path.is_file():
         return False
     try:
         data = json.loads(analysis_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return isinstance(data, dict) and isinstance(data.get("symbols"), list)
+    if not isinstance(data, dict) or not isinstance(data.get("symbols"), list):
+        return False
+    if expected_repo_path is None:
+        return True
+    repo_path = data.get("repo_path")
+    if not repo_path:
+        return True
+    try:
+        actual = Path(str(repo_path)).expanduser().resolve()
+        expected = expected_repo_path.expanduser().resolve()
+    except OSError:
+        return False
+    return actual == expected
 
 
 def _provider_failure(

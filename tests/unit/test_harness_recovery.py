@@ -184,6 +184,58 @@ def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_uses_salvage_commit_despite_later_generated_dirt(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    recovered = _commit_file(
+        worktree,
+        "docs/perf/perf-metrics.json",
+        '{"throughput_fps": 1000.0}\n',
+        "harness-salvage: 001-feature default iter-0",
+    )
+    (worktree / "docs" / "perf" / "perf-metrics.json").write_text(
+        '{"throughput_fps": 1001.0}\n',
+        encoding="utf-8",
+    )
+
+    _git(project, "checkout", "001-feature")
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "salvage_commit": recovered,
+            "salvage_branch": "001-feature",
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.source == "worktree"
+    assert result.commit == recovered
+    assert result.applied is True
+    assert (
+        project / "docs" / "perf" / "perf-metrics.json"
+    ).read_text(encoding="utf-8") == '{"throughput_fps": 1000.0}\n'
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_clears_identical_untracked_collision(
     tmp_path: Path,
 ) -> None:
@@ -339,6 +391,60 @@ def test_recover_blocked_run_prefers_checkpoint_commit_over_salvage(
     assert result.applied is True
     assert (project / "src" / "checkpoint.txt").read_text(encoding="utf-8") == "checkpoint\n"
     assert not (project / "src" / "salvage.txt").exists()
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_target_branch(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _commit_file(
+        project,
+        ".specify/memory/constitution.md",
+        "constitution v1\n",
+        "constitution",
+    )
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+    checkpoint = _commit_file(
+        project,
+        "src/checkpoint.txt",
+        "checkpoint\n",
+        "harness-checkpoint: 001-feature/default iter-0 build T-001",
+    )
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    _git(project, "checkout", "main")
+    (project / ".specify/memory/constitution.md").write_text(
+        "locally repaired constitution\n",
+        encoding="utf-8",
+    )
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "build_incomplete",
+            "branch": "001-feature",
+            "checkpoint_commits": [{"commit": checkpoint, "task_ids": ["T-001"]}],
+        },
+        gitops=_make_gitops(project),
+    )
+
+    assert result.source == "mirror"
+    assert result.commit == checkpoint
+    assert result.applied is False
+    assert _git(project, "branch", "--show-current") == "main"
+    assert (
+        _git(project, "status", "--porcelain", "--untracked-files=no")
+        == "M .specify/memory/constitution.md"
+    )
 
 
 @pytest.mark.unit

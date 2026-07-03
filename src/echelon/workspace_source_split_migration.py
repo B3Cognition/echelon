@@ -70,6 +70,14 @@ def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _init_child_git_repo(root: Path) -> None:
+    try:
+        _run_git(root, "init", "-b", "main")
+    except subprocess.CalledProcessError:
+        _run_git(root, "init")
+        _run_git(root, "branch", "-M", "main")
+
+
 def _has_git_marker(root: Path) -> bool:
     marker = root / ".git"
     return marker.is_dir() or marker.is_file()
@@ -208,7 +216,7 @@ def split_workspace_source_repo(
     if plan.original_gitignore and not (plan.source_dir / ".gitignore").exists():
         (plan.source_dir / ".gitignore").write_text(plan.original_gitignore, encoding="utf-8")
 
-    _run_git(plan.source_dir, "init")
+    _init_child_git_repo(plan.source_dir)
     _run_git(plan.source_dir, "add", ".")
     _run_git(
         plan.source_dir,

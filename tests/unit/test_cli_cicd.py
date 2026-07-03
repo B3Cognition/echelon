@@ -17,5 +17,5 @@ def test_cicd_command_is_deprecated_and_does_not_start_llm(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "retired" in err
-    assert "echelon harness init" in err
+    assert "echelon delivery init" in err
     assert "verify_command" in err

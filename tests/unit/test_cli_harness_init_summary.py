@@ -91,7 +91,7 @@ class TestHarnessInitDetectionFields:
 
         next_step = _harness_init_next_step(config_file)
 
-        assert "set top-level verify_command before harness build" in next_step
+        assert "set top-level verify_command before delivery build" in next_step
         assert "no high-confidence test runner detected" in next_step
         assert "verify_command: pytest" in next_step
         assert not next_step.startswith("echelon run")
@@ -122,4 +122,4 @@ class TestHarnessInitDetectionFields:
 
         next_step = _harness_init_next_step(config_file)
 
-        assert next_step == 'echelon run "<feature>"\n  echelon harness run <spec_id>'
+        assert next_step == 'echelon spec run "<feature>"\n  echelon delivery run <spec_id>'

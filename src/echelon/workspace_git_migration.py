@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
 from echelon.workspace_model import discover_workspace
 
 
@@ -16,6 +18,9 @@ class MigrationError(RuntimeError):
 @dataclass(frozen=True)
 class WorkspaceGitMigrationPlan:
     workspace_root: Path
+    canonical_config: Path
+    legacy_config: Path
+    canonical_config_needed: bool
     source_ignore_entries: tuple[str, ...]
     runtime_ignore_entries: tuple[str, ...]
     stage_paths: tuple[str, ...]
@@ -31,9 +36,30 @@ class WorkspaceGitMigrationResult:
     plan: WorkspaceGitMigrationPlan
     write_requested: bool
     git_initialized: bool
+    canonical_config_copied: bool
     gitignore_updated: bool
+    untracked_runtime_paths: tuple[str, ...]
     staged_paths: tuple[str, ...]
     committed: bool
+
+
+@dataclass(frozen=True)
+class WorkspaceDoctorFinding:
+    severity: str
+    code: str
+    message: str
+    path: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkspaceDoctorResult:
+    workspace_root: Path
+    buildable: bool
+    findings: tuple[WorkspaceDoctorFinding, ...]
+
+    @property
+    def has_errors(self) -> bool:
+        return any(finding.severity == "error" for finding in self.findings)
 
 
 def _run_git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -51,13 +77,34 @@ def _has_git_marker(root: Path) -> bool:
     return marker.exists()
 
 
+def _git_ignored(root: Path, path: str) -> bool:
+    if not _has_git_marker(root):
+        gitignore = root / ".gitignore"
+        if not gitignore.exists():
+            return False
+        normalized = path.strip("/")
+        entries = {
+            _normalize_gitignore_entry(line)
+            for line in gitignore.read_text(encoding="utf-8").splitlines()
+        }
+        return normalized in entries
+    return subprocess.run(
+        ["git", "check-ignore", "-q", path],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    ).returncode == 0
+
+
 def _is_echelon_workspace(root: Path) -> bool:
     return (root / ".specify").exists() or (root / "specs").exists()
 
 
 def _existing_stage_paths(root: Path) -> tuple[str, ...]:
     paths = [".gitignore"]
-    paths.extend(path for path in (".specify", "specs") if (root / path).exists())
+    paths.extend(path for path in (".echelon/config.yml",) if (root / path).exists())
+    paths.extend(path for path in ("specs",) if (root / path).exists())
     return tuple(paths)
 
 
@@ -75,16 +122,31 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         )
 
     manifest = discover_workspace(root)
+    canonical_config = root / CANONICAL_CONFIG_PATH
+    legacy_config = root / LEGACY_CONFIG_PATH
     source_ignore_entries = tuple(
         _source_ignore_entry(source.path)
         for source in manifest.sources
         if source.path != "."
     )
-    runtime_ignore_entries = ("/runs/",)
+    runtime_ignore_entries = (
+        "/.specify/",
+        "/runs/",
+        "/.claude/",
+        "!/.echelon/",
+        "!/.echelon/config.yml",
+        "/.echelon/local.yml",
+        "/.echelon/runtime/",
+        "/.echelon/cache/",
+        "/.echelon/recovery-backups/",
+    )
     stage_paths = _existing_stage_paths(root)
 
     return WorkspaceGitMigrationPlan(
         workspace_root=root,
+        canonical_config=canonical_config,
+        legacy_config=legacy_config,
+        canonical_config_needed=(not canonical_config.exists() and legacy_config.exists()),
         source_ignore_entries=source_ignore_entries,
         runtime_ignore_entries=runtime_ignore_entries,
         stage_paths=stage_paths,
@@ -129,6 +191,221 @@ def _stage_workspace_files(root: Path, stage_paths: tuple[str, ...]) -> tuple[st
     return tuple(existing)
 
 
+def _copy_legacy_config_to_canonical(plan: WorkspaceGitMigrationPlan) -> bool:
+    if not plan.canonical_config_needed:
+        return False
+    plan.canonical_config.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(plan.legacy_config, plan.canonical_config)
+    return True
+
+
+def _tracked_paths(root: Path, pathspec: str) -> tuple[str, ...]:
+    try:
+        result = _run_git(root, "ls-files", pathspec)
+    except subprocess.CalledProcessError:
+        return ()
+    return tuple(line for line in result.stdout.splitlines() if line)
+
+
+def _is_tracked(root: Path, pathspec: str) -> bool:
+    return bool(_tracked_paths(root, pathspec))
+
+
+def _is_submodule_like(path: Path) -> bool:
+    marker = path / ".git"
+    return marker.is_file()
+
+
+def _inside_runtime_or_artifact(path: str) -> bool:
+    normalized = path.strip("/")
+    return (
+        normalized == ".specify"
+        or normalized.startswith(".specify/")
+        or normalized == "runs"
+        or normalized.startswith("runs/")
+        or normalized == "specs"
+        or normalized.startswith("specs/")
+    )
+
+
+def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
+    root = workspace_root.resolve()
+    findings: list[WorkspaceDoctorFinding] = []
+
+    if not root.exists() or not root.is_dir():
+        return WorkspaceDoctorResult(
+            workspace_root=root,
+            buildable=False,
+            findings=(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "workspace_missing",
+                    f"workspace root does not exist: {root}",
+                    str(root),
+                ),
+            ),
+        )
+
+    if not _has_git_marker(root):
+        findings.append(
+            WorkspaceDoctorFinding(
+                "error",
+                "workspace_not_git_backed",
+                "workspace root must be a Git repository",
+                str(root),
+            )
+        )
+
+    canonical = root / CANONICAL_CONFIG_PATH
+    legacy = root / LEGACY_CONFIG_PATH
+    if not canonical.exists():
+        severity = "error" if legacy.exists() else "warning"
+        findings.append(
+            WorkspaceDoctorFinding(
+                severity,
+                "canonical_config_missing",
+                ".echelon/config.yml is missing"
+                + ("; migrate legacy echelon-config.yml" if legacy.exists() else ""),
+                str(canonical),
+            )
+        )
+    elif _git_ignored(root, ".echelon/config.yml"):
+        findings.append(
+            WorkspaceDoctorFinding(
+                "error",
+                "canonical_config_ignored",
+                ".echelon/config.yml exists but is ignored by workspace Git",
+                ".echelon/config.yml",
+            )
+        )
+
+    runtime_paths = (
+        (".specify", ".specify/ must be ignored by workspace Git"),
+        ("runs", "runs/ must be ignored by workspace Git"),
+        (".claude", ".claude/ must be ignored by workspace Git"),
+        (".echelon/local.yml", ".echelon/local.yml must be ignored by workspace Git"),
+        (".echelon/runtime", ".echelon/runtime/ must be ignored by workspace Git"),
+        (".echelon/cache", ".echelon/cache/ must be ignored by workspace Git"),
+        (
+            ".echelon/recovery-backups",
+            ".echelon/recovery-backups/ must be ignored by workspace Git",
+        ),
+    )
+    for runtime_path, message in runtime_paths:
+        path_obj = root / runtime_path
+        if path_obj.exists() and not _git_ignored(root, runtime_path):
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "runtime_not_ignored",
+                    message,
+                    runtime_path,
+                )
+            )
+        tracked_runtime = _tracked_paths(root, runtime_path) if _has_git_marker(root) else ()
+        if tracked_runtime:
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "runtime_tracked",
+                    f"{runtime_path} contains tracked runtime files",
+                    runtime_path,
+                )
+            )
+
+    specs = root / "specs"
+    if not specs.exists():
+        findings.append(
+            WorkspaceDoctorFinding(
+                "warning",
+                "specs_missing",
+                "specs/ does not exist yet",
+                "specs",
+            )
+        )
+    elif _git_ignored(root, "specs"):
+        findings.append(
+            WorkspaceDoctorFinding(
+                "error",
+                "specs_ignored",
+                "specs/ must be tracked artifact surface, not ignored",
+                "specs",
+            )
+        )
+
+    manifest = discover_workspace(root)
+    if not manifest.sources:
+        findings.append(
+            WorkspaceDoctorFinding(
+                "warning",
+                "planning_only_workspace",
+                "no source roots configured; workspace is planning-only and not buildable",
+                str(canonical if canonical.exists() else root),
+            )
+        )
+
+    for source in manifest.sources:
+        source_root = root if source.path == "." else (root / source.path).resolve()
+        if _inside_runtime_or_artifact(source.path):
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "invalid_source_root",
+                    "source root must not be inside .specify/, runs/, or specs/",
+                    source.path,
+                )
+            )
+            continue
+        if not source_root.exists():
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "source_root_missing",
+                    "configured source root does not exist",
+                    source.path,
+                )
+            )
+            continue
+        if source.path != "." and manifest.workspace.git_role == "orchestration":
+            ignored = _git_ignored(root, source.path)
+            if not ignored and not _is_submodule_like(source_root):
+                findings.append(
+                    WorkspaceDoctorFinding(
+                        "warning",
+                        "source_root_not_ignored",
+                        "child source root should be ignored by orchestration Git unless it is a submodule",
+                        source.path,
+                    )
+                )
+
+    return WorkspaceDoctorResult(
+        workspace_root=root,
+        buildable=bool(manifest.sources) and not any(
+            finding.severity == "error" for finding in findings
+        ),
+        findings=tuple(findings),
+    )
+
+
+def _untrack_runtime_paths(root: Path) -> tuple[str, ...]:
+    untracked: list[str] = []
+    for pathspec in (
+        ".specify",
+        "runs",
+        ".claude",
+        ".echelon/local.yml",
+        ".echelon/runtime",
+        ".echelon/cache",
+        ".echelon/recovery-backups",
+    ):
+        tracked = _tracked_paths(root, pathspec)
+        if not tracked:
+            continue
+        _run_git(root, "rm", "-r", "--cached", "--ignore-unmatch", "--", pathspec)
+        untracked.extend(tracked)
+    return tuple(untracked)
+
+
 def migrate_workspace(
     workspace_root: Path,
     *,
@@ -142,7 +419,9 @@ def migrate_workspace(
             plan=plan,
             write_requested=False,
             git_initialized=False,
+            canonical_config_copied=False,
             gitignore_updated=False,
+            untracked_runtime_paths=(),
             staged_paths=(),
             committed=False,
         )
@@ -152,12 +431,22 @@ def migrate_workspace(
         _run_git(plan.workspace_root, "init")
         git_initialized = True
 
+    canonical_config_copied = _copy_legacy_config_to_canonical(plan)
     gitignore_updated = _append_missing_gitignore_entries(
         plan.workspace_root,
         plan.gitignore_entries,
     )
+    untracked_runtime_paths = _untrack_runtime_paths(plan.workspace_root)
     if plan.already_git_backed:
-        stage_paths = (".gitignore",) if gitignore_updated else ()
+        stage_paths_list: list[str] = []
+        if gitignore_updated:
+            stage_paths_list.append(".gitignore")
+        if canonical_config_copied or (
+            plan.canonical_config.exists()
+            and (gitignore_updated or not _is_tracked(plan.workspace_root, ".echelon/config.yml"))
+        ):
+            stage_paths_list.append(".echelon/config.yml")
+        stage_paths = tuple(stage_paths_list)
     else:
         stage_paths = _existing_stage_paths(plan.workspace_root)
     staged_paths = _stage_workspace_files(plan.workspace_root, stage_paths)
@@ -171,7 +460,9 @@ def migrate_workspace(
         plan=plan,
         write_requested=True,
         git_initialized=git_initialized,
+        canonical_config_copied=canonical_config_copied,
         gitignore_updated=gitignore_updated,
+        untracked_runtime_paths=untracked_runtime_paths,
         staged_paths=staged_paths,
         committed=committed,
     )
@@ -187,18 +478,24 @@ def _print_plan(result: WorkspaceGitMigrationResult) -> None:
     print("Stage paths:")
     for path in plan.stage_paths:
         print(f"  {path}")
+    if plan.canonical_config_needed:
+        print(f"Canonical config: copy {plan.legacy_config} -> {plan.canonical_config}")
     if not result.write_requested:
         print("Dry-run only. Re-run with --write to apply.")
     elif (
         not result.git_initialized
+        and not result.canonical_config_copied
         and not result.gitignore_updated
+        and not result.untracked_runtime_paths
         and not result.staged_paths
     ):
         print("No changes needed.")
     else:
         print("Applied:")
         print(f"  git_initialized: {result.git_initialized}")
+        print(f"  canonical_config_copied: {result.canonical_config_copied}")
         print(f"  gitignore_updated: {result.gitignore_updated}")
+        print(f"  untracked_runtime_paths: {', '.join(result.untracked_runtime_paths) or '(none)'}")
         print(f"  staged_paths: {', '.join(result.staged_paths) or '(none)'}")
         print(f"  committed: {result.committed}")
         if not result.committed:

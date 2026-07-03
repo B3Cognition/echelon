@@ -114,7 +114,7 @@ injected into your prompt. Before authoring, read it directly from the canonical
 config (the same path the `echelon` CLI uses). Run:
 
 ```bash
-python3 -c "import yaml; c=yaml.safe_load(open('.specify/extensions/echelon/echelon-config.yml')) or {}; g=(c.get('lexicon_gate') or {}); a=(g.get('artifacts') or {}).get('spec',{}); print('LEXICON_GATE=on' if (g.get('enabled') and a.get('enabled', True)) else 'LEXICON_GATE=off'); print('artifact_type='+str(a.get('type','spec'))); print('lexicon_path='+str(a.get('path','requirements.lexicon.md'))); print('source_ref='+str(a.get('source_ref','spec.md'))); print('mode='+str(a.get('mode','derived'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
+python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); c=(yaml.safe_load(p.read_text()) or {}) if p.exists() else {}; g=(c.get('lexicon_gate') or {}); a=(g.get('artifacts') or {}).get('spec',{}); print('LEXICON_GATE=on' if (g.get('enabled') and a.get('enabled', True)) else 'LEXICON_GATE=off'); print('artifact_type='+str(a.get('type','spec'))); print('lexicon_path='+str(a.get('path','requirements.lexicon.md'))); print('source_ref='+str(a.get('source_ref','spec.md'))); print('mode='+str(a.get('mode','derived'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
 ```
 
 If the output is `LEXICON_GATE=off` (or the file/key is absent), this entire section is INERT —
@@ -122,7 +122,7 @@ author the standard rich spec per "Spec Format Invariants" above. Only when it r
 `LEXICON_GATE=on` do you enter Lexicon mode using the `artifact_type` / `lexicon_path` /
 `source_ref` / `glossary_file` / `max_repair_attempts` values printed above.
 
-ALWAYS resolve the gate flag by reading `.specify/extensions/echelon/echelon-config.yml` yourself.
+ALWAYS resolve the gate flag by reading `.echelon/config.yml` yourself, with legacy fallback to `.specify/extensions/echelon/echelon-config.yml` only during migration.
 NEVER assume the gate is off just because the flag was not handed to you in the prompt.
 
 When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical rich spec-kit

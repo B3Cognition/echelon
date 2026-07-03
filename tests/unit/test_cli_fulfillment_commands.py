@@ -4,8 +4,7 @@ from pathlib import Path
 
 def test_verify_spec_command_registered():
     assert cli.SKILL_MAP["verify-spec"] == "echelon.verify-spec"
-    assert "verify-spec <spec_id>" in cli.USAGE
-    assert "verify-spec <spec_id> [strict=true] [--reconcile] [--dry-run]" in cli.USAGE
+    assert "spec verify <spec_id> [--reconcile] [--dry-run]" in cli.USAGE
 
 
 def test_verify_spec_reconciliation_documented_in_readme():
@@ -18,4 +17,4 @@ def test_verify_spec_reconciliation_documented_in_readme():
 
 def test_reopen_command_registered():
     assert cli.SKILL_MAP["reopen"] == "echelon.reopen"
-    assert "reopen  <spec_id>" in cli.USAGE
+    assert "spec reopen <spec_id>" in cli.USAGE

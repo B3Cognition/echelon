@@ -13,8 +13,8 @@
 #         ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_FLOOR=0.1
 #
 # Repo root is auto-detected by walking up from cwd until .specify/ is found.
-# Falls back to reading .specify/extensions/echelon/echelon-config.yml directly
-# when specify is unavailable.
+# Falls back to reading .echelon/config.yml directly when specify is unavailable;
+# legacy .specify/extensions/echelon/echelon-config.yml is read only during migration.
 #
 # Exit codes:
 #   0  key found and printed
@@ -91,10 +91,12 @@ _get_json() {
     fi
   fi
   # Fallback: read project config file directly (no layer merging).
-  # Prefer the deployed config, then fall through to the source config so
+  # Prefer committed workspace config, then legacy deployed config, then source config so
   # CI checkouts (where .specify/extensions/ is gitignored) still work.
   local cfg=""
-  if [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
+  if [[ -f "$REPO_ROOT/.echelon/config.yml" ]]; then
+    cfg="$REPO_ROOT/.echelon/config.yml"
+  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
     cfg="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
   elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
     cfg="$REPO_ROOT/extension/echelon-config.yml"

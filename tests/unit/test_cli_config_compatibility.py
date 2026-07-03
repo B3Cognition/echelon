@@ -14,8 +14,18 @@ from echelon.cli import (
 )
 
 
-def _write_config(project_root: Path, spec_ref: str, *, spec_path: str = "requirements.lexicon.md") -> Path:
-    cfg = project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+def _write_config(
+    project_root: Path,
+    spec_ref: str,
+    *,
+    spec_path: str = "requirements.lexicon.md",
+    canonical: bool = False,
+) -> Path:
+    cfg = (
+        project_root / ".echelon" / "config.yml"
+        if canonical
+        else project_root / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    )
     cfg.parent.mkdir(parents=True, exist_ok=True)
     cfg.write_text(
         "lexicon_gate:\n"
@@ -45,6 +55,16 @@ def test_detects_stale_lexicon_tasks_spec_ref(tmp_path: Path) -> None:
     assert issues[0].path == "lexicon_gate.artifacts.tasks.spec_ref"
     assert issues[0].current == "spec.md"
     assert issues[0].expected == "requirements.lexicon.md"
+
+
+def test_detects_stale_lexicon_tasks_spec_ref_in_canonical_config(tmp_path: Path) -> None:
+    cfg = _write_config(tmp_path, "spec.md", canonical=True)
+
+    issues = _project_config_compatibility_issues(tmp_path)
+
+    assert len(issues) == 1
+    assert issues[0].config_file == cfg
+    assert issues[0].path == "lexicon_gate.artifacts.tasks.spec_ref"
 
 
 def test_accepts_tasks_spec_ref_matching_custom_derived_spec_path(tmp_path: Path) -> None:

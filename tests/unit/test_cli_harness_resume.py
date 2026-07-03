@@ -37,10 +37,15 @@ def _make_echelon_yml(
     *,
     verify_detection: str = "",
     verify_reason: str = "",
+    canonical: bool = False,
 ) -> Path:
     """Write a minimal echelon-config.yml."""
-    yml_dir = base / ".specify" / "extensions" / "echelon"
-    yml_dir.mkdir(parents=True, exist_ok=True)
+    config_file = (
+        base / ".echelon" / "config.yml"
+        if canonical
+        else base / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    )
+    config_file.parent.mkdir(parents=True, exist_ok=True)
     content = "autonomy:\n  mode: banzai\ntarget_repo: .\ntarget_default_branch: main\nprovider: docker\n"
     if verify_command:
         content += f"verify_command: {verify_command}\n"
@@ -53,8 +58,8 @@ def _make_echelon_yml(
             content += f"  verify_command_detection: {verify_detection}\n"
         if verify_reason:
             content += f"  verify_command_reason: {verify_reason}\n"
-    (yml_dir / "echelon-config.yml").write_text(content)
-    return yml_dir / "echelon-config.yml"
+    config_file.write_text(content)
+    return config_file
 
 
 def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical_tasks: bool = True) -> Path:
@@ -129,8 +134,22 @@ class TestCmdHarnessResume:
         assert rc == 1
         err = capsys.readouterr().err
         assert "verify_command" in err
-        assert "echelon harness init" in err
+        assert "echelon delivery init" in err
         assert "echelon cicd" not in err
+
+    def test_resume_accepts_canonical_workspace_config(self, tmp_path: Path, capsys) -> None:
+        _make_echelon_yml(tmp_path, canonical=True)   # no verify_command
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "verify_command_needed",
+        })
+
+        rc = self._call(["001"], tmp_path)
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "verify_command" in err
+        assert "Harness not initialised" not in err
 
     def test_verify_command_missing_after_failed_detection_prioritizes_manual_config(
         self,
@@ -154,8 +173,8 @@ class TestCmdHarnessResume:
         assert "Auto-detection already ran" in err
         assert "no high-confidence test runner detected" in err
         assert "Add a top-level verify_command" in err
-        assert "echelon harness init" not in err
-        assert "echelon harness resume 001" in err
+        assert "echelon delivery init" not in err
+        assert "echelon delivery resume 001" in err
 
     def test_valid_resume_prints_banner_and_calls_run(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")

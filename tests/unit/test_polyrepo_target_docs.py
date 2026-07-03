@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_readme_documents_polyrepo_target_preflight() -> None:
     text = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "echelon harness run 001 mode=semi" in text
-    assert "echelon harness run 001 mode=banzai" in text
+    assert "echelon delivery run 001 mode=semi" in text
+    assert "echelon delivery run 001 mode=banzai" in text
     assert "source root" in text
     assert "lands the target repo branch" in text
 
@@ -39,7 +39,7 @@ def test_workspace_model_docs_define_single_repo_as_one_source_root() -> None:
     assert "sources: [.]" in text
     assert "lightweight workspace Git repo" in text
     assert "branchless workspace" in text
-    assert ".specify/extensions/echelon/scripts/python/migrate_workspace_git.py" in text
+    assert "echelon workspace migrate" in text
     assert "echelon spec target" in text
 
     assert (ROOT / "extension/scripts/python/migrate_workspace_git.py").exists()

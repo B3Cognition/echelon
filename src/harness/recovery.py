@@ -148,16 +148,6 @@ def _find_preserved_worktree_source(
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return None
 
-    dirty = _run_git(
-        ["status", "--porcelain", "--untracked-files=no"],
-        cwd=str(worktree_path),
-        check=False,
-    )
-    if dirty.stdout.strip():
-        raise HarnessRecoveryError(
-            f"Preserved worktree has uncommitted tracked changes: {worktree_path}"
-        )
-
     checkpoint_commit = _latest_existing_checkpoint_commit(
         worktree_path,
         checkpoint_commits,
@@ -173,6 +163,16 @@ def _find_preserved_worktree_source(
         )
         if exists.returncode == 0:
             return worktree_path, salvage_commit
+
+    dirty = _run_git(
+        ["status", "--porcelain", "--untracked-files=no"],
+        cwd=str(worktree_path),
+        check=False,
+    )
+    if dirty.stdout.strip():
+        raise HarnessRecoveryError(
+            f"Preserved worktree has uncommitted tracked changes: {worktree_path}"
+        )
 
     commit = _find_strategy_commit(
         repo=worktree_path,
@@ -293,6 +293,14 @@ def _apply_commit(
     commit: str,
     target_branch: str,
 ) -> RecoveryResult:
+    if _ref_contains_commit(project_dir, target_branch, commit):
+        return RecoveryResult(
+            source=source_label,
+            commit=commit,
+            target_branch=target_branch,
+            applied=False,
+        )
+
     dirty = _run_git(
         ["status", "--porcelain", "--untracked-files=no"],
         cwd=str(project_dir),
@@ -355,6 +363,37 @@ def _apply_commit(
         backed_up_untracked=backed_up_untracked,
         backup_dir=backup_dir,
     )
+
+
+def _ref_contains_commit(repo: Path, ref: str, commit: str) -> bool:
+    """Return whether ``ref`` already contains ``commit`` in ``repo``.
+
+    This intentionally runs before dirty-worktree validation. If recovery has
+    nothing to apply, a tracked edit in the user's current checkout should not
+    block resuming from an already-checkpointed feature branch.
+    """
+    exists = _run_git(
+        ["cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=str(repo),
+        check=False,
+    )
+    if exists.returncode != 0:
+        return False
+
+    ref_exists = _run_git(
+        ["rev-parse", "--verify", "--quiet", ref],
+        cwd=str(repo),
+        check=False,
+    )
+    if ref_exists.returncode != 0:
+        return False
+
+    contains = _run_git(
+        ["merge-base", "--is-ancestor", commit, ref],
+        cwd=str(repo),
+        check=False,
+    )
+    return contains.returncode == 0
 
 
 def _prepare_untracked_cherry_pick_collisions(

@@ -75,34 +75,56 @@ specify extension add --dev ~/echelon/extension
 specify init --integration opencode --here --offline
 specify extension add --dev ~/echelon/extension
 
-echelon init    # bootstrap echelon-config.yml, set up Docker/Traefik or CLI wrapper, install git hook
-echelon harness init    # write harness: section into echelon-config.yml, mirror-clone target repo, detect language + image
+echelon workspace init    # bootstrap .echelon/config.yml, set up Docker/Traefik or CLI wrapper, install git hook
+echelon delivery init    # write harness: section into .echelon/config.yml, mirror-clone target repo, detect language + image
 ```
 
-Both `echelon init` and `echelon harness init` are pure Python — no AI session required.
+Both `echelon workspace init` and `echelon delivery init` are pure Python — no AI session required.
+
+### Workspace contract
+
+Echelon expects a Git-backed workspace with a committed `.echelon/config.yml`.
+Runtime state is local: `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
+`.echelon/cache/`, `.echelon/recovery-backups/`, and `.echelon/local.yml`
+should be ignored. Spec artifacts under `specs/<id>-*/` are the tracked
+handoff between Phase A, harness build, and land.
+
+Declare implementation source roots explicitly in `.echelon/config.yml`:
+
+```yaml
+workspace:
+  git_role: orchestration
+sources:
+  - id: app
+    path: app
+```
+
+Use `sources: []` for a planning-only workspace. Run `echelon workspace doctor`
+to validate the contract, or `echelon workspace migrate --write` to copy legacy
+config, ignore runtime state, and stage the canonical workspace files.
 
 ### Typical workflow
 
 ```bash
 # Phase A — spec authoring (default: Claude)
-echelon run "Build a photo album app with sharing and tagging"
-echelon status                             # re-orient: run state, artifacts, cost, next step
-echelon artifacts 001                      # generate specs/001-*/ARTIFACTS.md
-echelon continue                           # run the next no-input recovery/phase action
-echelon resume "your clarification"        # answer a human-input block, then continue
-echelon rewind <phase-id>                  # recover a safe Phase 3 checkpoint, then continue
+echelon spec run "Build a photo album app with sharing and tagging"
+echelon spec status                        # re-orient: run state, artifacts, cost, next step
+echelon spec artifacts 001                 # generate specs/001-*/ARTIFACTS.md
+echelon spec continue                      # run the next no-input recovery/phase action
+echelon spec resume "your clarification"   # answer a human-input block, then continue
+echelon spec rewind <phase-id>             # recover a safe Phase 3 checkpoint, then continue
 
 # Phase B — build, verify in Docker, open PR
-echelon harness run 001                    # echelon squad build (default)
-echelon harness run 001 strategy=codegen   # SOAR pipeline build (alternative)
+echelon delivery run 001                    # echelon squad build (default)
+echelon delivery run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
 # Polyrepo/workspace: select the implementation source root before build when needed
 echelon spec target 001 og-platform            # explicit source path in spec frontmatter
-echelon harness run 001 mode=semi              # uses a single source root, blocks on multiple
-echelon harness run 001 mode=banzai            # same deterministic source-root selection
+echelon delivery run 001 mode=semi              # uses a single source root, blocks on multiple
+echelon delivery run 001 mode=banzai            # same deterministic source-root selection
 
 # After build converges, fulfillment passes, and PR is open
-echelon land 001                           # lands the target repo branch, then marks the spec landed
+echelon delivery land 001                  # lands the target repo branch, then marks the spec landed
 
 # After PR is open — review triage runs automatically via harness Phase 3
 # but can also be invoked directly:
@@ -124,7 +146,7 @@ compatibility contract.
 echelon change  001 "scope change description"   # mid-build spec change
 echelon codegen 001                              # SOAR pipeline directly (no harness)
 echelon build   001                              # agent-driven build (no harness)
-echelon harness init                            # auto-detect high-confidence verify_command, if possible
+echelon delivery init                            # auto-detect high-confidence verify_command, if possible
 # If init reports "not configured", set top-level verify_command manually before harness run/resume.
 ```
 
@@ -132,8 +154,11 @@ echelon harness init                            # auto-detect high-confidence ve
 
 Harness fulfillment refreshes are controlled from the repo config under
 `harness.fulfillment.refresh_policy`. Set this in
-`.specify/extensions/echelon/echelon-config.yml` for a committed project default,
-or in `.specify/extensions/echelon/local-config.yml` for a local override.
+`.echelon/config.yml` for a committed project default, or in
+`.echelon/local.yml` for a local override.
+For normal generated projects, `.specify/` is local spec-kit/Echelon runtime
+state and should be gitignored; the tracked governance handoff is the published
+`specs/<id>-*/constitution.md` snapshot.
 
 ```yaml
 harness:
@@ -219,7 +244,7 @@ When you run `echelon run "..."` from the terminal, the `echelon` CLI:
 3. Prepends an execution preamble ("You are COMMANDER running non-interactively…") so the model acts on the instructions rather than narrating them
 4. Injects the effective host tool-policy preamble and invokes the LLM CLI subprocess (`claude -p <prompt>`, `codex exec <prompt>`, `copilot -p <prompt>`, or `opencode run <prompt>`)
 
-This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `echelon-config.yml`) selects the provider.
+This path requires the `echelon` CLI to be installed (`scripts/install.sh`) and the target LLM CLI to be on your PATH. The `ECHELON_LLM` env var (or `harness.llm.cli` in `.echelon/config.yml`) selects the provider.
 
 By default, terminal CLI runs do **not** add dangerous permission-bypass flags to the underlying AI CLI. Unsafe host execution is fail-closed and must be explicitly configured under `harness.llm.tool_policy` with both `allow_unsafe_host_execution: true` and an `approval_reason`. When approved, Echelon re-enables the selected provider's equivalent bypass flag, such as Claude/Opencode `--dangerously-skip-permissions` or Codex `--dangerously-bypass-approvals-and-sandbox`. File, network, and individual tool-call isolation beyond those CLI flags still depends on the selected AI CLI runtime.
 
@@ -246,26 +271,31 @@ ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
 
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
 
-The `harness` build loop (`echelon harness run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `echelon-config.yml` (`harness.llm.cli`).
+The delivery build loop (`echelon delivery run`) also respects `ECHELON_LLM` — LLM-driven build steps, feedback loops, and the PR review skill all use the same provider. Set it in your CI environment or `.echelon/config.yml` (`harness.llm.cli`).
 
-## Harness
+## Delivery Harness
 
-The harness is the Phase B execution substrate: it takes echelon's Phase A output (spec.md, tasks.md, feature branch) and runs build → Docker verify → PR in an isolated sandbox. LLM reasoning stays on the host; deterministic work (build, test, verify) runs inside Docker.
+Delivery is Echelon's user-facing Phase B lifecycle: build, verify, recover,
+review, and land a completed spec. The harness is the internal execution
+substrate: it takes Echelon's Phase A output (spec.md, tasks.md, feature branch)
+and runs build → Docker verify → PR in an isolated sandbox. LLM reasoning stays
+on the host; deterministic work (build, test, verify) runs inside Docker.
 
 ### Container Runtime
 
-`echelon harness` uses a Docker-compatible container CLI for sandbox creation.
+`echelon delivery` uses a Docker-compatible container CLI for sandbox creation.
 Docker is the default, and Podman is supported by setting `harness.container_cli`
 to `podman`.
 
 Initialize a project with Podman:
 
 ```bash
-ECHELON_CONTAINER_CLI=podman echelon harness init
+ECHELON_CONTAINER_CLI=podman echelon delivery init
 ```
 
-`echelon harness init` persists the selected CLI in
-`.specify/extensions/echelon/echelon-config.yml`:
+`echelon delivery init` persists the selected CLI in the project config.
+New-layout workspaces use `.echelon/config.yml`; legacy workspaces can still
+read `.specify/extensions/echelon/echelon-config.yml` during migration:
 
 ```yaml
 harness:
@@ -280,7 +310,7 @@ podman machine start
 podman info
 ```
 
-Future `echelon harness run` and `echelon harness resume` commands read the
+Future `echelon delivery run` and `echelon delivery resume` commands read the
 persisted `harness.container_cli` value. If no value is configured, Echelon uses
 Docker.
 
@@ -296,8 +326,9 @@ my-project/
     001-feature/           ← echelon Phase A artifacts
       spec.md
       tasks.md
+      constitution.md      ← published snapshot from spec-kit memory
   .specify/
-    extensions/
+    extensions/            ← local runtime/config, usually gitignored
       echelon/             ← echelon config
       harness/
         config.yml         ← target_repo: "."
@@ -318,7 +349,7 @@ echelon artifacts <id>
 
 ### Build Strategies
 
-`echelon harness run` accepts a `strategy` argument that controls which build engine Phase 1 uses:
+`echelon delivery run` accepts a `strategy` argument that controls which build engine Phase 1 uses:
 
 | Strategy | Build engine | When to use |
 | -------- | ------------ | ----------- |
@@ -326,8 +357,8 @@ echelon artifacts <id>
 | `codegen` | `echelon.codegen` — SOAR CQ-ISC pipeline | Inviolable quality gates instead of agent review |
 
 ```bash
-echelon harness run 001                    # default — echelon squad build
-echelon harness run 001 strategy=codegen   # SOAR pipeline build
+echelon delivery run 001                    # default — echelon squad build
+echelon delivery run 001 strategy=codegen   # SOAR pipeline build
 ```
 
 Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
@@ -558,25 +589,25 @@ This keeps commands readable and makes individual phases independently editable 
 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
-| `echelon init` | `speckit.echelon.init` | One-time project setup — `echelon-config.yml`, deploy infra, git hook |
-| `echelon run "<description>"` | `speckit.echelon.run` | Phase A: full squad run → spec.md, tasks.md, feature branch |
-| `echelon bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
+| `echelon workspace init` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, deploy infra, git hook |
+| `echelon spec run "<description>"` | `speckit.echelon.run` | Phase A: full squad run → spec.md, tasks.md, feature branch |
+| `echelon spec bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
 | `echelon review <id> [pr_url=…]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
-| `echelon verify-spec <id> [strict=true] [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
-| `echelon reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
-| `echelon change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
-| `echelon cicd` | — | Retired; re-run `echelon harness init` to auto-detect high-confidence `verify_command` |
-| `echelon status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
-| `echelon artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
-| `echelon continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
-| `echelon resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
-| `echelon rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
+| `echelon spec verify <id> [strict=true] [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
+| `echelon spec reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
+| `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
+| `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
+| `echelon spec status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
+| `echelon spec artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
+| `echelon spec continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
+| `echelon spec resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
+| `echelon spec rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
 | `echelon phase list` | — | List deterministic workflow phase IDs available for targeted repair/replay |
 | `echelon phase run <phase-id> [--spec <id>]` | — | Run exactly one workflow phase through the normal COMMANDER/state/journal contracts, publish artifacts to the target spec directory when resolvable, then stop |
-| `echelon land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
-| `echelon land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
+| `echelon delivery land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
+| `echelon delivery land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
 | *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |
 | *(spec-kit only)* | `speckit.echelon.health` | Periodic health check (drift, KB freshness) |
 | *(spec-kit only)* | `speckit.echelon.investigate` | Trigger INVESTIGATOR |
@@ -585,15 +616,18 @@ This keeps commands readable and makes individual phases independently editable 
 | *(spec-kit only)* | `speckit.echelon.feedback` | Post-implementation feedback |
 | *(spec-kit only)* | `speckit.echelon.deploy` | Trigger deploy, check status, or rollback |
 
-### harness — build, verify, PR
+### delivery — build, verify, PR
 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
-| `echelon harness init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
-| `echelon harness run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
-| `echelon harness run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| `echelon harness resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked loop after answering/fixing its blocker, including escalation, missing `verify_command`, checkpoint recovery, or repaired harness errors; prints `HARNESS HISTORY` |
+| `echelon delivery init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
+| `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
+| `echelon delivery run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| `echelon delivery resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked loop after answering/fixing its blocker, including escalation, missing `verify_command`, checkpoint recovery, or repaired harness errors; prints `HARNESS HISTORY` |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
+
+`echelon harness init|run|resume` and `echelon land` remain compatibility
+aliases for existing scripts and documentation history.
 
 ## Codegen Pipeline
 
@@ -659,7 +693,7 @@ mempalace:
 
 #### Mine requirements into MemPalace
 
-**When using `echelon harness run strategy=codegen`, mining happens automatically.** The codegen pipeline always runs `codegen requirements mine` on the feature's `spec.md` and `research.md` at the start of every run — no manual step needed.
+**When using `echelon delivery run strategy=codegen`, mining happens automatically.** The codegen pipeline always runs `codegen requirements mine` on the feature's `spec.md` and `research.md` at the start of every run — no manual step needed.
 
 The manual command is only needed when you want to pre-populate MemPalace before running codegen, or to mine spec files outside the standard feature directory:
 
@@ -966,7 +1000,7 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 - **spec-kit** >= 0.4.2 (required)
 - **Claude CLI** (`claude`) — required for `echelon run`, `echelon bugfix`, and other LLM commands
 - **uv** (required — install via `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- **Docker** (required for `echelon harness run` — sandbox verification runs in Docker)
+- **Docker** (required for `echelon delivery run` — sandbox verification runs in Docker)
 - **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
 - **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
 - **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)

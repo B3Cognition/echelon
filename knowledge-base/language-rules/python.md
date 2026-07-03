@@ -32,6 +32,7 @@
 ## Code Style
 
 - **Follow PEP 8.** Line length 88 (Black default) or 79 (PEP 8 strict) — match project config.
+- **Formatter evidence is separate from lint evidence.** When Ruff is the project formatter, verify Python style claims with both `ruff check` and `ruff format --check`. Do not report Python style, lint, or formatting as clean from `ruff check` alone.
 - **Use `pathlib.Path`** instead of `os.path` for filesystem operations.
 - **Use list/dict/set comprehensions** over `map()`/`filter()` when they improve readability. Do not nest comprehensions deeper than 2 levels.
 - **No mutable default arguments.** `def f(items: list = None)` — use `None` and initialize inside the function.

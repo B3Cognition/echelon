@@ -233,6 +233,59 @@ class TestLand:
         fields = dict(banner.call_args.args[1])
         assert "ready_to_land" in fields["problem"]
 
+    def test_land_uses_feature_branch_readiness_when_current_checkout_is_stale(
+        self, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "repo"
+        _init_repo(repo)
+        _commit(repo, "README.md", "base\n", "base")
+        _commit(
+            repo,
+            "specs/042-demo/spec.md",
+            "# Demo\n\n**Status**: Planned\n",
+            "stale spec on main",
+        )
+        _git(repo, "checkout", "-b", "042-demo")
+        verified = _commit(
+            repo,
+            "src/app.py",
+            "print('ok')\n",
+            "implementation checkpoint",
+        )
+        (repo / "specs/042-demo/spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Demo\n\n**Status**: ready_to_land\n",
+            encoding="utf-8",
+        )
+        (repo / "specs/042-demo/fulfillment-report.md").write_text(
+            "---\n"
+            f"verified_commit: {verified}\n"
+            "verify_scope: full\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/app.py | high | ok |\n",
+            encoding="utf-8",
+        )
+        _git(repo, "add", "specs/042-demo/spec.md", "specs/042-demo/fulfillment-report.md")
+        _git(repo, "commit", "-m", "mark ready to land")
+        _git(repo, "checkout", "main")
+
+        gitops = _make_gitops(feature_branch="042-demo")
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._verify_before_land", return_value=True),
+            patch("harness.land._finish_landing", return_value=True) as finish_landing,
+            patch("harness.land._banner") as banner,
+        ):
+            prepare.return_value = LandPrepareResult(status="prepared", branch="042-demo")
+
+            result = land("042", project_dir=repo, gitops=gitops)
+
+        assert result is True
+        prepare.assert_called_once()
+        finish_landing.assert_called_once()
+        assert not banner.called
+
     def test_land_status_warning_accepts_ready_to_land(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-demo"
         spec_dir.mkdir(parents=True)
@@ -360,10 +413,34 @@ class TestLand:
         state_dir = tmp_path / "runs" / "build-test" / "state"
         _write_state(state_dir, "042", "default", "https://github.com/o/r/pull/7")
         gitops = _make_gitops()
-        land("042", project_dir=tmp_path, gitops=gitops)
+        with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+            land("042", project_dir=tmp_path, gitops=gitops)
         gitops.delete_remote_branch.assert_called_once_with(
             "042-my-feature", project_dir=str(tmp_path)
         )
+
+    def test_finish_landing_skips_remote_delete_without_origin(self, tmp_path: Path) -> None:
+        gitops = _make_gitops()
+
+        with (
+            patch("harness.land._origin_remote_url", return_value=None),
+            patch("harness.land._delete_local_branch") as delete_local,
+            patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
+            patch("harness.land.write_status") as write_status,
+        ):
+            result = _finish_landing(
+                "042",
+                "042-my-feature",
+                tmp_path,
+                gitops,
+                spec_project_dir=tmp_path,
+            )
+
+        assert result is True
+        gitops.delete_remote_branch.assert_not_called()
+        delete_local.assert_called_once_with("042-my-feature", str(tmp_path))
+        cleanup_worktrees.assert_called_once()
+        write_status.assert_not_called()
 
     def test_finish_landing_blocks_when_remote_head_is_feature_branch(
         self, tmp_path: Path
@@ -371,6 +448,7 @@ class TestLand:
         gitops = _make_gitops()
 
         with (
+            patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"),
             patch("harness.land._remote_head_branch", return_value="042-my-feature"),
             patch("harness.land._delete_local_branch") as delete_local,
             patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
@@ -401,6 +479,7 @@ class TestLand:
         gitops = _make_gitops(delete_result=False)
 
         with (
+            patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"),
             patch("harness.land._remote_head_branch", return_value="main"),
             patch("harness.land._delete_local_branch") as delete_local,
             patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
@@ -440,7 +519,10 @@ class TestLand:
 
     def test_skips_merge_when_no_pr_url(self, tmp_path: Path) -> None:
         gitops = _make_gitops()
-        with patch("harness.land.prepare_feature_branch") as prepare:
+        with (
+            patch("harness.land.prepare_feature_branch") as prepare,
+            patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"),
+        ):
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
             result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is True
@@ -457,6 +539,7 @@ class TestLand:
             patch("harness.land.prepare_feature_branch") as prepare,
             patch("harness.land._finish_landing") as finish_landing,
             patch("harness.land._banner") as banner,
+            patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"),
         ):
             prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
             result = land("042", project_dir=tmp_path, gitops=gitops)
@@ -797,31 +880,41 @@ class TestDeleteHarnessBranches:
     def test_deletes_legacy_harness_branches(self, tmp_path: Path) -> None:
         """Simulate two harness/* branches existing for spec 042."""
         gitops = _make_gitops()
+        clean_result = MagicMock(returncode=0, stdout="")
+        no_origin_result = MagicMock(returncode=1, stdout="")
         list_result = MagicMock(returncode=0, stdout="  harness/042/codegen/iter-0\n  harness/042/codegen/iter-1\n")
         delete_result = MagicMock(returncode=0, stdout="")
-        remote_head_result = MagicMock(returncode=1, stdout="")
         with patch("harness.land.subprocess.run") as mock_run:
-            # 5 calls: remote HEAD guard, local branch delete, --list, then 2x -D.
+            # 7 calls: dirty probe, two origin probes, local branch delete, --list, then 2x -D.
             mock_run.side_effect = [
-                remote_head_result,
+                clean_result,
+                no_origin_result,
+                no_origin_result,
                 delete_result,
                 list_result,
                 delete_result,
                 delete_result,
             ]
-            with patch("harness.land.prepare_feature_branch") as prepare:
+            with (
+                patch("harness.land._default_branch_already_contains_feature", return_value=False),
+                patch("harness.land.prepare_feature_branch") as prepare,
+            ):
                 prepare.return_value = LandPrepareResult(status="prepared", branch="042-my-feature")
                 land("042", project_dir=tmp_path, gitops=gitops)
-        head_call = mock_run.call_args_list[0]
-        assert head_call[0][0] == ["git", "ls-remote", "--symref", "origin", "HEAD"]
-        # Second call: git branch -d <feature-branch> (safe local cleanup)
-        local_delete_call = mock_run.call_args_list[1]
+        dirty_call = mock_run.call_args_list[0]
+        assert dirty_call[0][0] == ["git", "diff", "--name-only", "HEAD", "--"]
+        origin_call = mock_run.call_args_list[1]
+        assert origin_call[0][0] == ["git", "remote", "get-url", "origin"]
+        cleanup_origin_call = mock_run.call_args_list[2]
+        assert cleanup_origin_call[0][0] == ["git", "remote", "get-url", "origin"]
+        # Fourth call: git branch -d <feature-branch> (safe local cleanup)
+        local_delete_call = mock_run.call_args_list[3]
         assert local_delete_call[0][0] == ["git", "branch", "-d", "042-my-feature"]
-        # Third call: git branch --list harness/042/*
-        list_call = mock_run.call_args_list[2]
+        # Fifth call: git branch --list harness/042/*
+        list_call = mock_run.call_args_list[4]
         assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
         # Remaining calls: git branch -D <harness-branch>
-        delete_calls = mock_run.call_args_list[3:]
+        delete_calls = mock_run.call_args_list[5:]
         deleted_branches = [c[0][0][3] for c in delete_calls]
         assert "harness/042/codegen/iter-0" in deleted_branches
         assert "harness/042/codegen/iter-1" in deleted_branches
@@ -905,6 +998,146 @@ def test_land_prepares_feature_branch_before_direct_merge(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
+def test_land_discards_generated_verify_drift_before_direct_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, "docs/perf/perf-metrics.json", '{"metrics": {}}\n', "base metrics")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    main_commit = _commit(repo, "main.txt", "main\n", "main")
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+    gitops.delete_remote_branch.return_value = True
+    gitops.push_landed_default_branch.return_value = True
+
+    def verify_writes_generated_metrics(
+        spec_id: str,
+        project_dir: Path,
+        gitops_arg: MagicMock,
+        options: LandOptions,
+    ) -> bool:
+        assert spec_id == "001"
+        (project_dir / "docs/perf/perf-metrics.json").write_text(
+            '{"metrics": {"rerun": true}}\n',
+            encoding="utf-8",
+        )
+        return True
+
+    def direct_merge(branch: str, project_dir: str) -> bool:
+        target = Path(project_dir)
+        assert _git(target, "diff", "--name-only", "HEAD", "--").stdout.strip() == ""
+        assert (
+            _git(target, "merge-base", "--is-ancestor", main_commit, branch, check=False).returncode
+            == 0
+        )
+        _git(target, "checkout", "main")
+        _git(target, "merge", "--no-ff", branch, "-m", "land feature")
+        return True
+
+    gitops.merge_branch_into_default.side_effect = direct_merge
+
+    with (
+        patch("harness.land._verify_before_land", side_effect=verify_writes_generated_metrics),
+        patch("harness.land._delete_local_branch"),
+    ):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is True
+    gitops.merge_branch_into_default.assert_called_once_with("001-feature", str(repo))
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+
+
+@pytest.mark.unit
+def test_land_blocks_unknown_verify_drift_before_direct_merge(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main")
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+
+    def verify_writes_source_file(
+        spec_id: str,
+        project_dir: Path,
+        gitops_arg: MagicMock,
+        options: LandOptions,
+    ) -> bool:
+        (project_dir / "feature.txt").write_text("changed after verify\n", encoding="utf-8")
+        return True
+
+    with (
+        patch("harness.land._verify_before_land", side_effect=verify_writes_source_file),
+        patch("harness.land._banner") as banner,
+    ):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is False
+    gitops.merge_branch_into_default.assert_not_called()
+    assert banner.call_args.args[0] == "LAND — DIRTY WORKTREE"
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-feature"
+
+
+@pytest.mark.unit
+def test_land_finishes_cleanup_when_default_already_contains_feature(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature")
+    _git(repo, "checkout", "main")
+    _git(repo, "merge", "--no-ff", "001-feature", "-m", "land feature")
+    _git(repo, "checkout", "001-feature")
+
+    spec_dir = repo / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\nstatus: ready_to_land\n---\n# Spec\n",
+        encoding="utf-8",
+    )
+    head = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    (spec_dir / "fulfillment-report.md").write_text(
+        "---\n"
+        f"verified_commit: {head}\n"
+        "---\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | IMPLEMENTED | feature.txt | high | ok |\n",
+        encoding="utf-8",
+    )
+
+    gitops = MagicMock()
+    gitops.find_feature_branch.return_value = "001-feature"
+    gitops.get_default_branch.return_value = "main"
+    gitops.delete_remote_branch.return_value = True
+
+    with (
+        patch("harness.land._origin_remote_url", return_value=None),
+        patch("harness.land._cleanup_worktrees") as cleanup_worktrees,
+        patch("harness.land._delete_harness_branches") as delete_harness_branches,
+    ):
+        result = land("001", project_dir=repo, gitops=gitops, options=LandOptions())
+
+    assert result is True
+    gitops.delete_remote_branch.assert_not_called()
+    gitops.ensure_on_default_branch.assert_called_once_with(str(repo))
+    cleanup_worktrees.assert_called_once()
+    delete_harness_branches.assert_called_once()
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "main"
+    assert _git(repo, "branch", "--list", "001-feature").stdout.strip() == ""
+
+
+@pytest.mark.unit
 def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> None:
     from harness.land import LandOptions, prepare_feature_branch
 
@@ -920,13 +1153,14 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
     gitops.get_default_branch.return_value = "main"
     gitops.push_prepared_branch.return_value = None
 
-    result = prepare_feature_branch(
-        spec_id="001",
-        feature_branch="001-feature",
-        project_dir=repo,
-        gitops=gitops,
-        options=LandOptions(),
-    )
+    with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+        result = prepare_feature_branch(
+            spec_id="001",
+            feature_branch="001-feature",
+            project_dir=repo,
+            gitops=gitops,
+            options=LandOptions(),
+        )
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
@@ -939,6 +1173,34 @@ def test_prepare_feature_branch_merges_default_and_pushes(tmp_path: Path) -> Non
         _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
         == 0
     )
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_skips_push_without_origin(tmp_path: Path) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main work")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert result.pushed is False
+    gitops.push_prepared_branch.assert_not_called()
 
 
 @pytest.mark.unit
@@ -1061,10 +1323,8 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
-    gitops.push_prepared_branch.assert_called_once_with(
-        str(repo), "001-feature", force_with_lease=False
-    )
-    assert result.pushed is True
+    gitops.push_prepared_branch.assert_not_called()
+    assert result.pushed is False
     assert result.autoresolved_files == [".gitignore"]
     assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
     assert (repo / ".gitignore").read_text(encoding="utf-8").splitlines() == [
@@ -1072,6 +1332,122 @@ def test_prepare_feature_branch_autoresolves_gitignore_union(tmp_path: Path) -> 
         ".env",
         ".cache",
     ]
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_autoresolves_specify_runtime_removal(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\n[PROJECT_NAME]\n",
+        "track legacy spec-kit constitution",
+    )
+    _commit(repo, ".specify/templates/spec-template.md", "# Template\n", "track templates")
+
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, ".gitignore", "__pycache__/\n.pytest_cache/\n", "feature gitignore")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\nReal project rules.\n",
+        "feature constitution update",
+    )
+
+    _git(repo, "checkout", "main")
+    _git(repo, "rm", "-r", ".specify")
+    (repo / ".gitignore").write_text("/.specify/\n/runs/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore spec-kit runtime state")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.push_prepared_branch.return_value = None
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(),
+    )
+
+    assert result.status == "prepared"
+    assert result.branch == "001-feature"
+    assert ".gitignore" in result.autoresolved_files
+    assert ".specify/memory/constitution.md" in result.autoresolved_files
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
+    assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
+    assert "/.specify/" in (repo / ".gitignore").read_text(encoding="utf-8")
+    assert "__pycache__/" in (repo / ".gitignore").read_text(encoding="utf-8")
+    gitops.push_prepared_branch.assert_not_called()
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_continue_autoresolves_specify_runtime_removal(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\n[PROJECT_NAME]\n",
+        "track legacy spec-kit constitution",
+    )
+
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, ".gitignore", "__pycache__/\n", "feature gitignore")
+    _commit(
+        repo,
+        ".specify/memory/constitution.md",
+        "# Constitution\n\nReal project rules.\n",
+        "feature constitution update",
+    )
+
+    _git(repo, "checkout", "main")
+    _git(repo, "rm", "-r", ".specify")
+    (repo / ".gitignore").write_text("/.specify/\n/runs/\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore")
+    _git(repo, "commit", "-m", "ignore spec-kit runtime state")
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+    gitops.push_prepared_branch.return_value = None
+
+    blocked = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(autoresolve=False),
+    )
+    assert blocked.status == "blocked"
+    assert blocked.conflicted_files == [".gitignore", ".specify/memory/constitution.md"]
+
+    with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+        result = prepare_feature_branch(
+            spec_id="001",
+            feature_branch="001-feature",
+            project_dir=repo,
+            gitops=gitops,
+            options=LandOptions(continue_existing=True),
+        )
+
+    assert result.status == "prepared"
+    assert ".gitignore" in result.autoresolved_files
+    assert ".specify/memory/constitution.md" in result.autoresolved_files
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
+    assert _git(repo, "ls-files", ".specify").stdout.strip() == ""
 
 
 @pytest.mark.unit
@@ -1193,13 +1569,14 @@ def test_prepare_feature_branch_continue_commits_resolved_merge_and_pushes(
     _git(repo, "add", "src/app.swift")
     gitops.reset_mock()
 
-    result = prepare_feature_branch(
-        spec_id="001",
-        feature_branch="001-feature",
-        project_dir=repo,
-        gitops=gitops,
-        options=LandOptions(continue_existing=True),
-    )
+    with patch("harness.land._origin_remote_url", return_value="git@github.com:org/repo.git"):
+        result = prepare_feature_branch(
+            spec_id="001",
+            feature_branch="001-feature",
+            project_dir=repo,
+            gitops=gitops,
+            options=LandOptions(continue_existing=True),
+        )
 
     assert result.status == "prepared"
     assert result.branch == "001-feature"
@@ -1211,6 +1588,50 @@ def test_prepare_feature_branch_continue_commits_resolved_merge_and_pushes(
     gitops.get_default_branch.assert_not_called()
     assert _git(repo, "diff", "--name-only", "--diff-filter=U").stdout.strip() == ""
     assert _git(repo, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode != 0
+
+
+@pytest.mark.unit
+def test_prepare_feature_branch_continue_recovers_after_push_only_failure(
+    tmp_path: Path,
+) -> None:
+    from harness.land import LandOptions, prepare_feature_branch
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit(repo, "README.md", "base\n", "base")
+    _commit(repo, "docs/perf/perf-metrics.json", '{"metrics": {}}\n', "base metrics")
+    _git(repo, "checkout", "-b", "001-feature")
+    _commit(repo, "feature.txt", "feature\n", "feature work")
+    _git(repo, "checkout", "main")
+    _commit(repo, "main.txt", "main\n", "main work")
+    _git(repo, "checkout", "001-feature")
+    _git(repo, "merge", "--no-ff", "main", "-m", "Merge main into 001-feature")
+    (repo / "docs/perf/perf-metrics.json").write_text(
+        '{"metrics": {"rerun": true}}\n',
+        encoding="utf-8",
+    )
+
+    gitops = MagicMock()
+    gitops.get_default_branch.return_value = "main"
+
+    result = prepare_feature_branch(
+        spec_id="001",
+        feature_branch="001-feature",
+        project_dir=repo,
+        gitops=gitops,
+        options=LandOptions(continue_existing=True),
+    )
+
+    assert result.status == "prepared"
+    assert result.branch == "001-feature"
+    assert result.pushed is False
+    assert result.message == "feature branch is already prepared"
+    gitops.push_prepared_branch.assert_not_called()
+    assert _git(repo, "diff", "--name-only", "HEAD", "--").stdout.strip() == ""
+    assert (
+        _git(repo, "merge-base", "--is-ancestor", "main", "001-feature", check=False).returncode
+        == 0
+    )
 
 
 @pytest.mark.unit
@@ -1331,7 +1752,7 @@ class TestLandIntegration:
 
         assert result is True
         gitops.merge_pr.assert_called_once_with("https://github.com/o/r/pull/7")
-        gitops.delete_remote_branch.assert_called_once()
+        gitops.delete_remote_branch.assert_not_called()
         gitops.destroy_worktree.assert_called_once_with(worktree_dir, keep_branch=True)
         gitops.ensure_on_default_branch.assert_called_once_with(str(tmp_path))
 

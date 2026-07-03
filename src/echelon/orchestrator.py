@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Mapping, Optional
 
 
-_ECHELON_YML_REL = ".specify/extensions/echelon/echelon-config.yml"
+_ECHELON_YML_REL = ".echelon/config.yml"
 
 
 def validate_targets(

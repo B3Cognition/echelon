@@ -115,6 +115,29 @@ sys.exit(7)
     return _write_fake_executable(bin_dir / "codegraph", script)
 
 
+def _write_fake_stale_codegraph_cli(bin_dir: Path, stale_repo: Path) -> Path:
+    script = f"""
+#!/usr/bin/env python3
+import json
+import pathlib
+import sys
+
+args = sys.argv[1:]
+output = pathlib.Path(args[args.index("--output") + 1])
+output.parent.mkdir(parents=True, exist_ok=True)
+output.write_text(json.dumps({{
+    "version": "1.0.0",
+    "provider": "stale-codegraph-cli",
+    "repo_path": {str(stale_repo)!r},
+    "supported": True,
+    "index_stats": {{"index_state": "ready"}},
+    "symbols": [{{"kind": "function"}}],
+    "call_graph": []
+}}))
+""".lstrip()
+    return _write_fake_executable(bin_dir / "codegraph", script)
+
+
 def test_write_codegraph_evidence_cli_writes_analysis_and_summary(
     tmp_path: Path,
 ) -> None:
@@ -174,6 +197,36 @@ def test_write_codegraph_evidence_prefers_codegraph_cli_when_available(
     assert analysis["provider"] == "codegraph-cli"
     assert summary["top_callers"][0] == {"symbol": "CliA", "outgoing_calls": 1}
     assert not error_path.exists()
+
+
+def test_write_codegraph_evidence_rejects_stale_cli_repo_path_and_regenerates(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    stale_repo = tmp_path / "old-iter"
+    stale_repo.mkdir()
+    _write_fake_bridge(project_root)
+    _write_fake_stale_codegraph_cli(tmp_path / "bin", stale_repo)
+    _prepend_path(monkeypatch, tmp_path / "bin")
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    spec_dir = project_root / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    result = _run(
+        [
+            "write-codegraph-evidence",
+            str(project_root),
+            str(verify_run_dir),
+            str(spec_dir),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    analysis = json.loads((verify_run_dir / "codegraph-analysis.json").read_text())
+    summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
+    assert analysis.get("provider") != "stale-codegraph-cli"
+    assert Path(summary["repo_path"]) == project_root
 
 
 def test_write_codegraph_evidence_falls_back_to_bridge_when_cli_fails(

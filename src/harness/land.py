@@ -1,14 +1,16 @@
 """Land — idempotent spec completion: merge PR, delete branch, clean worktrees, mark done."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
 import logging
+import re
 import shlex
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
 
 from echelon.ui import banner as _banner
 
@@ -24,6 +26,49 @@ from kernel.fulfillment import (
 )
 
 logger = logging.getLogger(__name__)
+
+_TEXT_SNAPSHOT_SUFFIXES = {".md", ".json", ".yml", ".yaml"}
+_SPEC_INPUT_FILENAMES = {
+    "spec.md",
+    "plan.md",
+    "tasks.md",
+    "coverage-map.md",
+    "user-clarifications.md",
+}
+_IMPLEMENTATION_INPUT_DIRS = (
+    "src",
+    "app",
+    "apps",
+    "lib",
+    "packages",
+    "tests",
+    "test",
+)
+_IMPLEMENTATION_INPUT_FILES = {
+    "pyproject.toml",
+    "package.json",
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "requirements.txt",
+    "requirements-dev.txt",
+    "poetry.lock",
+    "uv.lock",
+    "Cargo.toml",
+    "Cargo.lock",
+    "go.mod",
+    "go.sum",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Makefile",
+}
+_FRONTMATTER_RE = re.compile(r"^---\n.*?\n---(?:\n|$)", re.DOTALL)
+_RUNTIME_STATE_CONFLICT_PREFIXES = (".specify/",)
+_LAND_GENERATED_DRIFT_EXACT = {
+    "docs/perf/perf-metrics.json",
+    "docs/perf/perf-metrics-pty.json",
+}
 
 
 @dataclass(frozen=True)
@@ -67,6 +112,7 @@ def prepare_feature_branch(
             feature_branch=feature_branch,
             project_dir=project_dir,
             gitops=gitops,
+            options=options,
         )
 
     dirty = _run_git(
@@ -97,32 +143,28 @@ def prepare_feature_branch(
     )
     if result.returncode == 0:
         commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
-        gitops.push_prepared_branch(
-            str(project_dir), feature_branch, force_with_lease=False
-        )
+        pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
         return LandPrepareResult(
             status="prepared",
             branch=feature_branch,
             prepared_commit=commit,
-            pushed=True,
+            pushed=pushed,
         )
 
     conflicted = _list_unmerged_files(project_dir)
     autoresolved: list[str] = []
-    if options.autoresolve and conflicted == [".gitignore"] and _autoresolve_gitignore(project_dir):
-        autoresolved.append(".gitignore")
+    if options.autoresolve:
+        autoresolved = _autoresolve_known_land_conflicts(project_dir, conflicted)
         conflicted = _list_unmerged_files(project_dir)
         if not conflicted:
             _run_git(["commit", "--no-edit"], cwd=str(project_dir))
             commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
-            gitops.push_prepared_branch(
-                str(project_dir), feature_branch, force_with_lease=False
-            )
+            pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
             return LandPrepareResult(
                 status="prepared",
                 branch=feature_branch,
                 prepared_commit=commit,
-                pushed=True,
+                pushed=pushed,
                 autoresolved_files=autoresolved,
             )
 
@@ -140,6 +182,7 @@ def _continue_feature_branch_preparation(
     feature_branch: str,
     project_dir: Path,
     gitops: Any,
+    options: LandOptions,
 ) -> LandPrepareResult:
     current_branch = _run_git(
         ["branch", "--show-current"],
@@ -150,11 +193,16 @@ def _continue_feature_branch_preparation(
         _run_git(["checkout", feature_branch], cwd=str(project_dir))
 
     conflicted = _list_unmerged_files(project_dir)
+    autoresolved: list[str] = []
+    if conflicted and options.autoresolve:
+        autoresolved = _autoresolve_known_land_conflicts(project_dir, conflicted)
+        conflicted = _list_unmerged_files(project_dir)
     if conflicted:
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
             conflicted_files=conflicted,
+            autoresolved_files=autoresolved,
             message="conflicts remain",
         )
 
@@ -164,6 +212,27 @@ def _continue_feature_branch_preparation(
         check=False,
     )
     if merge_head.returncode != 0:
+        dirty = _tracked_dirty_files(project_dir)
+        if dirty:
+            generated, unsafe = _discard_known_generated_land_drift(project_dir)
+            if generated and not unsafe:
+                dirty = _tracked_dirty_files(project_dir)
+        if not dirty and _branch_contains_default_branch(project_dir, gitops):
+            commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
+            pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
+            return LandPrepareResult(
+                status="prepared",
+                branch=feature_branch,
+                prepared_commit=commit,
+                pushed=pushed,
+                message="feature branch is already prepared",
+            )
+        if dirty:
+            return LandPrepareResult(
+                status="blocked",
+                branch=feature_branch,
+                message="working tree has tracked changes: " + ", ".join(dirty),
+            )
         return LandPrepareResult(
             status="blocked",
             branch=feature_branch,
@@ -172,13 +241,82 @@ def _continue_feature_branch_preparation(
 
     _run_git(["commit", "--no-edit"], cwd=str(project_dir))
     commit = _run_git(["rev-parse", "HEAD"], cwd=str(project_dir)).stdout.strip()
-    gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
+    pushed = _push_prepared_branch_if_remote(gitops, project_dir, feature_branch)
     return LandPrepareResult(
         status="prepared",
         branch=feature_branch,
         prepared_commit=commit,
-        pushed=True,
+        pushed=pushed,
+        autoresolved_files=autoresolved,
     )
+
+
+def _push_prepared_branch_if_remote(gitops: Any, project_dir: Path, feature_branch: str) -> bool:
+    """Push prepared branches only when the project has a non-local origin.
+
+    Local Echelon sandboxes and toy projects frequently have no remote. Land must
+    still be able to finish there because the important invariant is the local
+    default-branch merge, not publishing an unavailable feature branch.
+    """
+    origin_url = _origin_remote_url(project_dir)
+    if not origin_url:
+        logger.info("Skipping prepared branch push: no origin remote")
+        return False
+    if _is_local_remote_url(project_dir, origin_url):
+        logger.info("Skipping prepared branch push: origin is local (%s)", origin_url)
+        return False
+    gitops.push_prepared_branch(str(project_dir), feature_branch, force_with_lease=False)
+    return True
+
+
+def _push_landed_default_branch_if_remote(
+    gitops: Any,
+    project_dir: Path,
+    default_branch: str,
+) -> bool:
+    origin_url = _origin_remote_url(project_dir)
+    if not origin_url:
+        logger.info("Skipping landed default branch push: no origin remote")
+        return True
+    if _is_local_remote_url(project_dir, origin_url):
+        logger.info("Skipping landed default branch push: origin is local (%s)", origin_url)
+        return True
+    return bool(gitops.push_landed_default_branch(str(project_dir), default_branch))
+
+
+def _origin_remote_url(project_dir: Path) -> str | None:
+    result = _run_git(
+        ["remote", "get-url", "origin"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    url = result.stdout.strip()
+    return url or None
+
+
+def _is_local_remote_url(project_dir: Path, url: str) -> bool:
+    if url.startswith("file://"):
+        return True
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        return False
+    if re.match(r"^[^@/:]+@[^:]+:.+", url):
+        return False
+    remote_path = Path(url).expanduser()
+    if not remote_path.is_absolute():
+        remote_path = project_dir / remote_path
+    return True
+
+
+def _branch_contains_default_branch(project_dir: Path, gitops: Any) -> bool:
+    default_branch = gitops.get_default_branch()
+    result = _run_git(
+        ["merge-base", "--is-ancestor", default_branch, "HEAD"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def _list_unmerged_files(project_dir: Path) -> list[str]:
@@ -188,6 +326,48 @@ def _list_unmerged_files(project_dir: Path) -> list[str]:
         check=False,
     )
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _autoresolve_known_land_conflicts(project_dir: Path, conflicted: list[str]) -> list[str]:
+    """Resolve conflicts whose desired landing semantics are deterministic.
+
+    This is deliberately narrow. It only handles generated/runtime state that
+    Echelon owns, plus add/add .gitignore union conflicts. Source or spec
+    artifact conflicts still block for human review.
+    """
+    unresolved = set(conflicted)
+    autoresolved: list[str] = []
+
+    if ".gitignore" in unresolved and _autoresolve_gitignore(project_dir):
+        autoresolved.append(".gitignore")
+        unresolved.discard(".gitignore")
+
+    runtime_conflicts = sorted(
+        path
+        for path in unresolved
+        if any(path.startswith(prefix) for prefix in _RUNTIME_STATE_CONFLICT_PREFIXES)
+    )
+    if runtime_conflicts and len(runtime_conflicts) == len(unresolved):
+        if _autoresolve_runtime_state_removal(project_dir, runtime_conflicts):
+            autoresolved.extend(runtime_conflicts)
+
+    return autoresolved
+
+
+def _autoresolve_runtime_state_removal(project_dir: Path, paths: list[str]) -> bool:
+    if not paths:
+        return False
+
+    rm = _run_git(
+        ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", *paths],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if rm.returncode != 0:
+        return False
+
+    still_unmerged = set(_list_unmerged_files(project_dir))
+    return not any(path in still_unmerged for path in paths)
 
 
 def _autoresolve_gitignore(project_dir: Path) -> bool:
@@ -294,7 +474,12 @@ def land(
     else:
         pr_url = _find_pr_url_all_builds(spec_id, wrapper_project_dir)
 
-    if not options.prepare_only and not _check_ready_before_land(spec_id, wrapper_project_dir, options):
+    if not options.prepare_only and not _check_ready_before_land(
+        spec_id,
+        wrapper_project_dir,
+        options,
+        ref=feature_branch,
+    ):
         return False
 
     if options.prepare_only:
@@ -353,6 +538,17 @@ def land(
         )
         return False
 
+    if _default_branch_already_contains_feature(project_dir, gitops, feature_branch):
+        if not _checkout_default_for_landing_cleanup(spec_id, project_dir, gitops):
+            return False
+        return _finish_landing(
+            spec_id,
+            feature_branch,
+            project_dir,
+            gitops,
+            spec_project_dir=wrapper_project_dir,
+        )
+
     prepare_result = _prepare_for_land(
         spec_id=spec_id,
         feature_branch=feature_branch,
@@ -363,6 +559,8 @@ def land(
     if prepare_result is None:
         return False
     if not _verify_before_land(spec_id, project_dir, gitops, options):
+        return False
+    if not _clean_generated_drift_before_direct_merge(spec_id, project_dir):
         return False
 
     # No PR URL — gh/glab not configured. Merge directly into the default branch.
@@ -381,7 +579,7 @@ def land(
         return False
 
     default_branch = _land_default_branch(gitops)
-    if not gitops.push_landed_default_branch(str(project_dir), default_branch):
+    if not _push_landed_default_branch_if_remote(gitops, project_dir, default_branch):
         _banner(
             "LAND — DEFAULT PUSH FAILED",
             [
@@ -403,12 +601,138 @@ def land(
     )
 
 
+def _clean_generated_drift_before_direct_merge(spec_id: str, project_dir: Path) -> bool:
+    """Discard known generated verification drift before checking out default.
+
+    `land` verifies on the prepared feature branch, then directly checks out the
+    default branch when no PR host is configured. Some project verify commands
+    update tracked generated metrics. Those edits are not user source changes and
+    should not make the final default-branch checkout unrecoverable.
+    """
+    generated, unsafe = _discard_known_generated_land_drift(project_dir)
+    if unsafe:
+        _banner(
+            "LAND — DIRTY WORKTREE",
+            [
+                ("spec", spec_id),
+                ("problem", "tracked changes remain after verification"),
+                ("files", "\n".join(unsafe)),
+                ("next step", f"commit or stash these files, then re-run: echelon land {spec_id}"),
+            ],
+            subtitle="Echelon will only discard known generated verification drift.",
+        )
+        return False
+
+    return True
+
+
+def _discard_known_generated_land_drift(project_dir: Path) -> tuple[list[str], list[str]]:
+    dirty = _tracked_dirty_files(project_dir)
+    if not dirty:
+        return [], []
+
+    generated = [path for path in dirty if _is_known_land_generated_drift(path)]
+    unsafe = [path for path in dirty if path not in generated]
+    if unsafe or not generated:
+        return generated, unsafe
+
+    _run_git(["checkout", "--", *generated], cwd=str(project_dir))
+    logger.info("Discarded generated land drift: %s", ", ".join(generated))
+    return generated, []
+
+
+def _tracked_dirty_files(project_dir: Path) -> list[str]:
+    result = _run_git(
+        ["diff", "--name-only", "HEAD", "--"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _is_known_land_generated_drift(path: str) -> bool:
+    return path in _LAND_GENERATED_DRIFT_EXACT
+
+
+def _default_branch_already_contains_feature(
+    project_dir: Path,
+    gitops: Any,
+    feature_branch: str,
+) -> bool:
+    default_branch = _land_default_branch(gitops)
+    result = _run_git(
+        ["merge-base", "--is-ancestor", feature_branch, default_branch],
+        cwd=str(project_dir),
+        check=False,
+    )
+    return result.returncode == 0
+
+
+def _checkout_default_for_landing_cleanup(
+    spec_id: str,
+    project_dir: Path,
+    gitops: Any,
+) -> bool:
+    if not _clean_generated_drift_before_direct_merge(spec_id, project_dir):
+        return False
+    default_branch = _land_default_branch(gitops)
+    current_branch = _run_git(
+        ["branch", "--show-current"],
+        cwd=str(project_dir),
+        check=False,
+    ).stdout.strip()
+    if current_branch == default_branch:
+        return True
+    checkout = _run_git(["checkout", default_branch], cwd=str(project_dir), check=False)
+    if checkout.returncode == 0:
+        return True
+    _banner(
+        "LAND — DEFAULT CHECKOUT FAILED",
+        [
+            ("spec", spec_id),
+            ("branch", default_branch),
+            ("problem", "feature branch is already merged, but Echelon could not switch to the default branch for cleanup"),
+            ("next step", f"fix the checkout problem, then re-run: echelon land {spec_id} --continue"),
+        ],
+        subtitle="Echelon stopped before deleting the local feature branch.",
+    )
+    return False
+
+
 def _check_ready_before_land(
     spec_id: str,
     project_dir: Path,
     options: LandOptions,
+    ref: str | None = None,
 ) -> bool:
     status_warning = _land_status_warning(spec_id, project_dir)
+    fulfillment_warning: str | None = None
+    if status_warning is None:
+        fulfillment_warning = _fulfillment_warning(
+            spec_id,
+            project_dir,
+            strict=False,
+        )
+
+    if (
+        (status_warning or fulfillment_warning)
+        and ref is not None
+        and _find_spec_dir_rel_in_ref(project_dir, spec_id, ref) is not None
+    ):
+        ref_status_warning = _land_status_warning(spec_id, project_dir, ref=ref)
+        if ref_status_warning is None:
+            ref_fulfillment_warning = _fulfillment_warning(
+                spec_id,
+                project_dir,
+                strict=False,
+                ref=ref,
+            )
+            if ref_fulfillment_warning is None:
+                return True
+            fulfillment_warning = ref_fulfillment_warning
+        elif status_warning is None:
+            status_warning = ref_status_warning
+
     if status_warning:
         _banner(
             "LAND — SPEC NOT READY",
@@ -421,15 +745,24 @@ def _check_ready_before_land(
         )
         return False
 
-    return _check_fulfillment_before_land(spec_id, project_dir, options)
+    return _check_fulfillment_before_land(
+        spec_id,
+        project_dir,
+        options,
+        warning=fulfillment_warning,
+    )
 
 
-def _land_status_warning(spec_id: str, project_dir: Path) -> str | None:
-    spec_dir = find_spec_dir(spec_id, project_dir)
-    if spec_dir is None or not (spec_dir / "spec.md").exists():
-        return None
+def _land_status_warning(
+    spec_id: str,
+    project_dir: Path,
+    ref: str | None = None,
+) -> str | None:
+    with _land_spec_dir(spec_id, project_dir, ref=ref) as spec_dir:
+        if spec_dir is None or not (spec_dir / "spec.md").exists():
+            return None
 
-    status = read_frontmatter(spec_dir).get("status")
+        status = read_frontmatter(spec_dir).get("status")
     if status in {"ready_to_land", "landed"}:
         return None
     return f"spec status must be ready_to_land before landing; current status is {status or '(missing)'}"
@@ -451,15 +784,33 @@ def _prepare_for_land(
         options=options,
     )
     if prepare_result.status == "blocked":
+        has_conflicts = bool(prepare_result.conflicted_files)
+        detail_label = "conflicts" if has_conflicts else "problem"
+        detail_value = (
+            "\n".join(prepare_result.conflicted_files)
+            if has_conflicts
+            else prepare_result.message or "(none)"
+        )
         _banner(
-            "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION",
+            "LAND — FEATURE BRANCH NEEDS CONFLICT RESOLUTION"
+            if has_conflicts
+            else "LAND — FEATURE BRANCH NOT READY",
             [
                 ("spec", spec_id),
                 ("branch", feature_branch),
-                ("conflicts", "\n".join(prepare_result.conflicted_files) or "(none)"),
-                ("next step", f"resolve conflicts, then run: echelon land {spec_id} --continue"),
+                (detail_label, detail_value),
+                (
+                    "next step",
+                    f"resolve conflicts, then run: echelon land {spec_id} --continue"
+                    if has_conflicts
+                    else f"resolve the reported problem, then run: echelon land {spec_id} --continue",
+                ),
             ],
-            subtitle="Echelon stopped on semantic conflicts.",
+            subtitle=(
+                "Echelon stopped on semantic conflicts."
+                if has_conflicts
+                else "Echelon stopped before mutating the default branch."
+            ),
         )
         return None
     return prepare_result
@@ -492,8 +843,17 @@ def _check_fulfillment_before_land(
     spec_id: str,
     project_dir: Path,
     options: LandOptions,
+    ref: str | None = None,
+    warning: str | None = None,
 ) -> bool:
-    fulfillment_warning = _fulfillment_warning(spec_id, project_dir, strict=False)
+    fulfillment_warning = warning
+    if fulfillment_warning is None:
+        fulfillment_warning = _fulfillment_warning(
+            spec_id,
+            project_dir,
+            strict=False,
+            ref=ref,
+        )
     if not fulfillment_warning:
         return True
 
@@ -525,46 +885,222 @@ def _fulfillment_warning(
     spec_id: str,
     project_dir: Path,
     strict: bool = False,
+    ref: str | None = None,
 ) -> str | None:
-    spec_dir = find_spec_dir(spec_id, project_dir)
-    if spec_dir is None:
-        return None
+    with _land_spec_dir(spec_id, project_dir, ref=ref) as spec_dir:
+        if spec_dir is None:
+            return None
 
-    report = latest_fulfillment_report(spec_dir)
-    if report is None:
-        if (spec_dir / "spec.md").exists():
-            return (
-                f"no fulfillment report found for {spec_dir}. "
-                f"Rerun `echelon verify-spec {spec_id}` before landing."
+        report = latest_fulfillment_report(spec_dir)
+        if report is None:
+            if (spec_dir / "spec.md").exists():
+                return (
+                    f"no fulfillment report found for {spec_dir}. "
+                    f"Rerun `echelon verify-spec {spec_id}` before landing."
+                )
+            return None
+
+        if ref is None:
+            current_commit = _current_git_commit(project_dir)
+            current = bool(
+                current_commit
+                and fulfillment_report_is_current(report, current_commit=current_commit)
             )
-        return None
+        else:
+            current_commit = _ref_git_commit(project_dir, ref)
+            current = _fulfillment_report_covers_ref(
+                report=report,
+                project_dir=project_dir,
+                spec_id=spec_id,
+                ref=ref,
+                current_commit=current_commit,
+            )
+        if current_commit and not current:
+            metadata = read_fulfillment_metadata(report)
+            verified_commit = metadata.get("verified_commit") or "(missing)"
+            return (
+                f"fulfillment report is stale for current HEAD {current_commit}: {report} "
+                f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
+            )
 
-    current_commit = _current_git_commit(project_dir)
-    if current_commit and not fulfillment_report_is_current(
-        report, current_commit=current_commit
-    ):
         metadata = read_fulfillment_metadata(report)
-        verified_commit = metadata.get("verified_commit") or "(missing)"
-        return (
-            f"fulfillment report is stale for current HEAD {current_commit}: {report} "
-            f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
-        )
+        if metadata.get("verify_scope") == "scoped":
+            return (
+                f"latest fulfillment report is a scoped fulfillment report: {report}. "
+                f"Run full `echelon verify-spec {spec_id}` before landing."
+            )
 
-    metadata = read_fulfillment_metadata(report)
-    if metadata.get("verify_scope") == "scoped":
-        return (
-            f"latest fulfillment report is a scoped fulfillment report: {report}. "
-            f"Run full `echelon verify-spec {spec_id}` before landing."
-        )
-
-    if not fulfillment_has_blocking_gaps(report, strict=strict):
-        return None
+        if not fulfillment_has_blocking_gaps(report, strict=strict):
+            return None
 
     statuses = ", ".join(sorted(blocking_statuses(strict)))
     return (
         f"fulfillment report has unresolved statuses ({statuses}): {report}. "
         f"Run `echelon reopen {spec_id}` or rerun `echelon verify-spec {spec_id}`."
     )
+
+
+@contextmanager
+def _land_spec_dir(
+    spec_id: str,
+    project_dir: Path,
+    ref: str | None = None,
+) -> Iterator[Path | None]:
+    if ref is None:
+        yield find_spec_dir(spec_id, project_dir)
+        return
+
+    spec_rel = _find_spec_dir_rel_in_ref(project_dir, spec_id, ref)
+    if spec_rel is None:
+        yield None
+        return
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        for relpath in _list_ref_files(project_dir, ref, prefix=f"{spec_rel}/"):
+            if Path(relpath).suffix not in _TEXT_SNAPSHOT_SUFFIXES:
+                continue
+            content = _show_ref_file(project_dir, ref, relpath)
+            if content is None:
+                continue
+            target = tmp_root / relpath
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        yield tmp_root / spec_rel
+
+
+def _find_spec_dir_rel_in_ref(project_dir: Path, spec_id: str, ref: str) -> str | None:
+    candidates: list[str] = []
+    for relpath in _list_ref_files(project_dir, ref, prefix="specs/"):
+        path = Path(relpath)
+        if path.name != "spec.md" or len(path.parts) < 3:
+            continue
+        spec_name = path.parts[1]
+        if spec_name == spec_id or spec_name.startswith(f"{spec_id}-"):
+            candidates.append(str(path.parent))
+    return sorted(candidates)[0] if candidates else None
+
+
+def _list_ref_files(project_dir: Path, ref: str, prefix: str = "") -> list[str]:
+    args = ["ls-tree", "-r", "--name-only", ref]
+    if prefix:
+        args.extend(["--", prefix])
+    result = _run_git(args, cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def _show_ref_file(project_dir: Path, ref: str, relpath: str) -> str | None:
+    result = _run_git(["show", f"{ref}:{relpath}"], cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _ref_git_commit(project_dir: Path, ref: str) -> str | None:
+    result = _run_git(["rev-parse", ref], cwd=str(project_dir), check=False)
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _fulfillment_report_covers_ref(
+    *,
+    report: Path,
+    project_dir: Path,
+    spec_id: str,
+    ref: str,
+    current_commit: str | None,
+) -> bool:
+    if not current_commit:
+        return False
+
+    metadata = read_fulfillment_metadata(report)
+    verified_commit = metadata.get("verified_commit")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        return False
+    if verified_commit == current_commit:
+        return True
+
+    ancestor = _run_git(
+        ["merge-base", "--is-ancestor", verified_commit, current_commit],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if ancestor.returncode != 0:
+        return False
+    return not _ref_changes_fulfillment_inputs(
+        project_dir=project_dir,
+        spec_id=spec_id,
+        ref=ref,
+        verified_commit=verified_commit,
+        current_commit=current_commit,
+    )
+
+
+def _ref_changes_fulfillment_inputs(
+    *,
+    project_dir: Path,
+    spec_id: str,
+    ref: str,
+    verified_commit: str,
+    current_commit: str,
+) -> bool:
+    spec_rel = _find_spec_dir_rel_in_ref(project_dir, spec_id, ref)
+    result = _run_git(
+        ["diff", "--name-only", verified_commit, current_commit],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode != 0:
+        return True
+
+    for relpath in [line.strip() for line in result.stdout.splitlines() if line.strip()]:
+        if _is_implementation_input_path(relpath):
+            return True
+        if spec_rel and _is_spec_input_path(relpath, spec_rel):
+            if relpath == f"{spec_rel}/spec.md" and _spec_change_is_status_only(
+                project_dir,
+                verified_commit,
+                current_commit,
+                relpath,
+            ):
+                continue
+            return True
+    return False
+
+
+def _is_implementation_input_path(relpath: str) -> bool:
+    if relpath in _IMPLEMENTATION_INPUT_FILES:
+        return True
+    return any(relpath == dirname or relpath.startswith(f"{dirname}/") for dirname in _IMPLEMENTATION_INPUT_DIRS)
+
+
+def _is_spec_input_path(relpath: str, spec_rel: str) -> bool:
+    prefix = f"{spec_rel}/"
+    if not relpath.startswith(prefix):
+        return False
+    return relpath.removeprefix(prefix) in _SPEC_INPUT_FILENAMES
+
+
+def _spec_change_is_status_only(
+    project_dir: Path,
+    old_ref: str,
+    new_ref: str,
+    relpath: str,
+) -> bool:
+    old = _show_ref_file(project_dir, old_ref, relpath)
+    new = _show_ref_file(project_dir, new_ref, relpath)
+    if old is None or new is None:
+        return False
+    return _without_spec_status(old) == _without_spec_status(new)
+
+
+def _without_spec_status(text: str) -> str:
+    text = _FRONTMATTER_RE.sub("", text, count=1)
+    return re.sub(r"^\*\*Status\*\*:\s*.*(?:\n|$)", "", text, count=1, flags=re.MULTILINE)
 
 
 def _current_git_commit(project_dir: Path) -> str | None:
@@ -644,7 +1180,12 @@ def _finish_landing(
     spec_project_dir = spec_project_dir or project_dir
     default_branch = _land_default_branch(gitops)
 
-    remote_head = _remote_head_branch(project_dir)
+    origin_url = _origin_remote_url(project_dir)
+    remote_cleanup_required = bool(
+        origin_url and not _is_local_remote_url(project_dir, origin_url)
+    )
+
+    remote_head = _remote_head_branch(project_dir) if remote_cleanup_required else None
     if remote_head == feature_branch:
         _banner(
             "LAND — REMOTE DEFAULT BRANCH BLOCKED",
@@ -658,7 +1199,10 @@ def _finish_landing(
         )
         return False
 
-    if not gitops.delete_remote_branch(feature_branch, project_dir=str(project_dir)):
+    if remote_cleanup_required and not gitops.delete_remote_branch(
+        feature_branch,
+        project_dir=str(project_dir),
+    ):
         _banner(
             "LAND — REMOTE BRANCH CLEANUP BLOCKED",
             [
@@ -670,6 +1214,8 @@ def _finish_landing(
             subtitle="Echelon stopped before local cleanup and status mutation.",
         )
         return False
+    if not remote_cleanup_required:
+        logger.info("Skipping remote feature branch cleanup: no non-local origin remote")
     _delete_local_branch(feature_branch, str(project_dir))
     _cleanup_worktrees(spec_id, project_dir, gitops)
     _delete_harness_branches(spec_id, project_dir)

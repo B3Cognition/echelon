@@ -119,7 +119,7 @@ def detect_sandbox_suggestion(
         ),
         fallback_path=(
             "If approval is withheld or confidence is not high, review and edit "
-            ".specify/extensions/echelon/echelon-config.yml with explicit "
+            ".echelon/config.yml with explicit "
             "verify_command, base_image, and harness.app settings, then rerun "
             "echelon harness init."
         ),

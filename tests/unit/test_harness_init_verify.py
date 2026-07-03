@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from harness.config import load_config
-from harness.init import _apply_verify_command_detection
+from harness.init import _apply_verify_command_detection, _harness_config_file
 
 
 @pytest.mark.unit
@@ -91,3 +91,24 @@ def test_load_config_reads_top_level_verify_command_with_harness_section(tmp_pat
     config = load_config(tmp_path)
 
     assert config.verify_command == "pytest"
+
+
+@pytest.mark.unit
+def test_harness_init_uses_canonical_config_for_new_workspace(tmp_path: Path) -> None:
+    config_file = _harness_config_file(tmp_path)
+
+    assert config_file == tmp_path / ".echelon" / "config.yml"
+
+
+@pytest.mark.unit
+def test_harness_init_preserves_legacy_config_for_legacy_workspace(tmp_path: Path) -> None:
+    legacy = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+        encoding="utf-8",
+    )
+
+    config_file = _harness_config_file(tmp_path)
+
+    assert config_file == legacy

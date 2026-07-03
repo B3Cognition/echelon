@@ -24,7 +24,7 @@ Read-only command. Displays per-strategy status for all running, blocked, or rec
 
 ## Step 1: Check Initialized
 
-If `.specify/extensions/echelon/echelon-config.yml` does not exist, report:
+If neither `.echelon/config.yml` nor the legacy `.specify/extensions/echelon/echelon-config.yml` exists, report:
 
 **"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop.
 

@@ -83,6 +83,51 @@ def test_polyrepo_workspace_uses_child_source_roots(tmp_path: Path) -> None:
     assert all(source.git_present for source in manifest.sources)
 
 
+def test_configured_sources_override_auto_discovery(tmp_path: Path) -> None:
+    _git_dir(tmp_path)
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources:\n"
+        "  - id: app\n"
+        "    path: services/app\n",
+        encoding="utf-8",
+    )
+    auto = tmp_path / "auto-detected"
+    auto.mkdir()
+    (auto / "package.json").write_text("{}\n", encoding="utf-8")
+    configured = tmp_path / "services" / "app"
+    configured.mkdir(parents=True)
+    (configured / "pyproject.toml").write_text("[project]\nname='app'\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert manifest.workspace.git_role == "orchestration"
+    assert [source.id for source in manifest.sources] == ["app"]
+    assert [source.path for source in manifest.sources] == ["services/app"]
+    assert "pyproject.toml" in manifest.sources[0].project_markers
+
+
+def test_configured_empty_sources_means_planning_only(tmp_path: Path) -> None:
+    _git_dir(tmp_path)
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources: []\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "app"
+    source.mkdir()
+    (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert manifest.workspace.git_role == "orchestration"
+    assert manifest.sources == ()
+
+
 def test_planning_only_workspace_has_no_sources(tmp_path: Path) -> None:
     _git_dir(tmp_path)
     (tmp_path / ".specify").mkdir()

@@ -30,7 +30,12 @@ except ImportError:
     yaml = None  # type: ignore[assignment]
 
 from harness.app_runtime_detection import AppRuntimeDetectionResult, detect_app_runtime
-from harness.config import HarnessConfig, VALID_CONTAINER_CLIS
+from harness.config import (
+    CANONICAL_CONFIG_PATH,
+    LEGACY_CONFIG_PATH,
+    HarnessConfig,
+    VALID_CONTAINER_CLIS,
+)
 from harness.errors import GitOpsError, SandboxCreationError, SelfTargetError
 from harness.fingerprint import fingerprint_repo, detect_playwright
 from harness.gitops import GitOpsManager
@@ -48,6 +53,20 @@ logger = logging.getLogger(__name__)
 
 class InitError(Exception):
     """Raised when harness initialization fails."""
+
+
+def _harness_config_file(base: Path) -> Path:
+    """Return the project config file harness init should write.
+
+    New workspaces use the canonical committed config path. Existing legacy
+    workspaces keep their legacy file until migrated so init does not strand
+    old local configuration in an unread side path.
+    """
+    legacy = base / LEGACY_CONFIG_PATH
+    canonical = base / CANONICAL_CONFIG_PATH
+    if legacy.exists() and not canonical.exists():
+        return legacy
+    return canonical
 
 
 def _write_app_runtime_detection(
@@ -192,7 +211,7 @@ def _resolve_container_cli(base: Optional[Path] = None) -> str:
 def _read_existing_container_cli(base: Optional[Path]) -> Optional[str]:
     if base is None or yaml is None:
         return None
-    config_file = base / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
+    config_file = _harness_config_file(base)
     if not config_file.exists():
         return None
     try:
@@ -482,7 +501,7 @@ def init_harness(
             logger.warning(
                 "Could not detect a base image for this repo. "
                 "Falling back to ubuntu:22.04. "
-                "Set base_image in .specify/extensions/echelon/echelon-config.yml "
+                "Set base_image in .echelon/config.yml "
                 "once you know your stack."
             )
 
@@ -511,11 +530,9 @@ def init_harness(
     # Enable visual tests when Playwright is detected
     config.visual_tests.enabled = has_playwright
 
-    # Step 13: Write harness section into echelon-config.yml (unified config file).
-    # load_config() reads .specify/extensions/echelon/echelon-config.yml, harness: key.
-    config_dir = base / ".specify" / "extensions" / "echelon"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_file = config_dir / "echelon-config.yml"
+    # Step 13: Write harness section into the Echelon project config.
+    config_file = _harness_config_file(base)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
 
     harness_data = {
         "target_repo": config.target_repo,
