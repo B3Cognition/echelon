@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 
 @dataclass(frozen=True)
@@ -155,3 +158,47 @@ def write_summary(output_dir: Path, records: list[BenchmarkRunRecord]) -> tuple[
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, md_path
+
+
+CommandRunner = Callable[[tuple[str, ...]], int]
+
+
+def _default_runner(command: tuple[str, ...]) -> int:
+    return subprocess.run(command, check=False).returncode
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def run_benchmark_variant(
+    project_root: Path,
+    fixture_id: str,
+    variant_id: str,
+    *,
+    runner: CommandRunner | None = None,
+    timestamp: str | None = None,
+) -> Path:
+    plan = plan_variant_commands(fixture_id, variant_id)
+    run = runner or _default_runner
+    output_dir = project_root / "runs" / "benchmarks" / f"{timestamp or _timestamp()}-{fixture_id}" / variant_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    status = "complete"
+    retries = 0
+    for command in plan.commands:
+        exit_code = run(command)
+        if exit_code != 0:
+            status = "failed"
+            retries += 1
+            break
+
+    record = BenchmarkRunRecord(
+        variant_id=variant_id,
+        status=status,
+        build_dispatches=len(plan.commands),
+        retries=retries,
+        blocked_states=1 if status == "failed" else 0,
+    )
+    write_summary(output_dir, [record])
+    return output_dir

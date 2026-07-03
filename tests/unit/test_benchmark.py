@@ -10,6 +10,7 @@ from echelon.benchmark import (
     list_fixtures,
     list_variants,
     plan_variant_commands,
+    run_benchmark_variant,
     summarize_records,
     write_summary,
 )
@@ -150,3 +151,25 @@ def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
 
     assert exc.value.code == 1
     assert "Unknown benchmark variant" in capsys.readouterr().err
+
+
+def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Path) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        return 0
+
+    output_dir = run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "constitution",
+        runner=runner,
+        timestamp="20260701-120000",
+    )
+
+    assert output_dir == tmp_path / "runs" / "benchmarks" / "20260701-120000-tiny-notes" / "constitution"
+    assert commands[0][:2] == ("echelon", "run")
+    assert ("echelon", "phase", "run", "phase-exp-constitution-quality") in commands
+    assert (output_dir / "summary.json").exists()
+    assert (output_dir / "summary.md").exists()

@@ -4218,7 +4218,12 @@ def _cmd_rewind(
 
 
 def _cmd_benchmark(args: list[str], project_root: Path) -> None:
-    from echelon.benchmark import list_fixtures, list_variants, plan_variant_commands
+    from echelon.benchmark import (
+        list_fixtures,
+        list_variants,
+        plan_variant_commands,
+        run_benchmark_variant,
+    )
 
     if not args or args[0] in ("-h", "--help"):
         print(
@@ -4273,8 +4278,11 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
             print(" ".join(command))
         return
 
-    print("✗ Benchmark execution is not implemented yet; use --dry-run.", file=sys.stderr)
-    sys.exit(1)
+    output_dir = run_benchmark_variant(project_root, fixture_id, variant_id)
+    _banner(
+        "BENCHMARK COMPLETE",
+        [("fixture", fixture_id), ("variant", variant_id), ("output", str(output_dir))],
+    )
 
 
 def _cmd_phase(
