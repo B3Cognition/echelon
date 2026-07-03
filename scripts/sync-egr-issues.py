@@ -127,12 +127,10 @@ def find_issue(repo: str, egr_id: str) -> dict | None:
             repo,
             "--state",
             "all",
-            "--search",
-            f"{egr_id} in:title",
             "--json",
             "number,title,state,url,labels",
             "--limit",
-            "20",
+            "500",
         ]
     )
     for item in json.loads(raw or "[]"):
