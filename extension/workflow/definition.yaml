@@ -1284,7 +1284,7 @@ phases:
         condition: phase_group_complete
       - to: build-2-implement
         condition: more_tasks_in_phase_group
-      - to: build-8-finalize
+      - to: build-8-documentation
         condition: all_tasks_complete AND no_more_phase_checkpoints
 
   - id: build-7-integration
@@ -1310,14 +1310,43 @@ phases:
     transitions:
       - to: build-2-implement
         condition: verdict = PASS AND more_phase_groups
-      - to: build-8-finalize
+      - to: build-8-documentation
         condition: verdict = PASS AND all_phase_groups_complete
       - to: build-2-implement
         condition: verdict = FAIL AND fix_cycle < 2
-      - to: build-8-finalize
+      - to: build-8-documentation
         condition: verdict = FAIL AND fix_cycle >= 2
         state_update:
           phase_status: DEGRADED
+
+  - id: build-8-documentation
+    label: "Documentation Currency (TECH WRITER)"
+    spec_file: workflow/phases/build-8-documentation.md
+    type: agent
+    agent: speckit-echelon-tech-writer
+    tier: build
+    description: >
+      Updates README.md and Keep a Changelog-style CHANGELOG.md when the
+      completed implementation changes user-visible behavior, public APIs,
+      install/run instructions, configuration, operations, or significant
+      performance characteristics. Always writes documentation-impact-report.md.
+    context_pack:
+      - spec.md
+      - tasks.md
+      - verification-summary.md if present
+      - gap-report.md if present
+      - progress-report.md if present
+      - traceability-matrix.md if present
+      - README.md if present
+      - CHANGELOG.md if present
+      - changed files from the build worktree
+    outputs:
+      - documentation-impact-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-8-finalize
+        condition: always
 
   - id: build-8-finalize
     label: "Build Finalize"
