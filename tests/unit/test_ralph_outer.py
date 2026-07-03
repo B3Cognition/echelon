@@ -179,6 +179,21 @@ def _commit_all(path: Path, message: str = "base") -> None:
     subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True)
 
 
+def _write_no_impact_documentation_report(spec_dir: Path) -> None:
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: false\n"
+        "readme_updated: false\n"
+        "changelog_updated: false\n"
+        "changelog_format: not_required\n"
+        'not_applicable_reason: "Fixture build has no user-visible documentation impact."\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.mark.unit
 class TestOuterLoopConvergence:
     """Test outer loop converges on first iteration."""
@@ -859,6 +874,7 @@ class TestOuterLoopConvergence:
             "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
             encoding="utf-8",
         )
+        _write_no_impact_documentation_report(spec_dir)
         controller, provider, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
@@ -895,6 +911,7 @@ class TestOuterLoopConvergence:
             "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
             encoding="utf-8",
         )
+        _write_no_impact_documentation_report(spec_dir)
         controller, _provider, gitops, _state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
@@ -933,6 +950,7 @@ class TestOuterLoopConvergence:
             "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
             encoding="utf-8",
         )
+        _write_no_impact_documentation_report(spec_dir)
         controller, _, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
