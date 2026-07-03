@@ -15,8 +15,8 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Registered agent roles | 53 | `extension.yml` entries whose `file` is under `agents/` |
-| Active-routed manifest roles | 45 | Registered roles referenced by `definition.yaml` |
+| Registered agent roles | 54 | `extension.yml` entries whose `file` is under `agents/` |
+| Active-routed manifest roles | 46 | Registered roles referenced by `definition.yaml` |
 | Manifest-only roles | 8 | Registered roles not currently referenced by `definition.yaml` |
 | Workflow-only dispatch aliases | 1 | Dispatch identifiers in `definition.yaml` that are not separate manifest roles |
 | Support prompt files | 15 | Markdown appendices/templates under `extension/agents/` that are not agent entry points |
@@ -35,7 +35,7 @@ number of agent roles.
 | Solution | 3 | 3 | 0 |
 | Specialists | 6 | 6 | 0 |
 | Learning | 8 | 3 | 5 |
-| Build | 13 | 11 | 2 |
+| Build | 14 | 12 | 2 |
 | Reverse engineering | 9 | 9 | 0 |
 
 ## Active-Routed Manifest Roles
@@ -50,7 +50,7 @@ These registered roles are referenced by `extension/workflow/definition.yaml`.
 | Solution | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
 | Learning | AUDITOR, REALIST, MIRROR |
-| Build | IMPLEMENTER, SPEC GUARD, SPEC FULFILLMENT AUDITOR, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, INTEGRATOR, PROGRESS TRACKER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
+| Build | IMPLEMENTER, SPEC GUARD, SPEC FULFILLMENT AUDITOR, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
 | Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER |
 
 ## Manifest-Only Roles

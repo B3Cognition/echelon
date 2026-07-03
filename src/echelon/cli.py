@@ -259,6 +259,75 @@ def _provision_wing(project_dir: Path, echelon_yml: Path) -> str:
     return chosen
 
 
+def _print_http_deploy_runtime_help(
+    *,
+    reason: str,
+    detail: str | None = None,
+) -> None:
+    print(
+        "✗ Docker is required for HTTP deploy initialization, but it is not ready.\n"
+        f"  reason   {reason}",
+        file=sys.stderr,
+    )
+    if detail:
+        print(f"  detail   {detail}", file=sys.stderr)
+    print(
+        "\n"
+        "  options\n"
+        "  ───────\n"
+        "  1. Install/start Docker, then rerun: echelon workspace init\n"
+        "  2. If this project does not need HTTP deploy, set deploy.type: cli in .echelon/config.yml\n"
+        "  3. For delivery sandboxing with Podman, use:\n"
+        "     ECHELON_CONTAINER_CLI=podman echelon delivery init\n"
+        "\n"
+        "  note\n"
+        "  ────\n"
+        "  Podman is supported for Echelon delivery sandboxing. The legacy HTTP deploy\n"
+        "  Traefik setup currently expects Docker and the Docker socket.",
+        file=sys.stderr,
+    )
+
+
+def _preflight_deploy_runtime(
+    deploy: dict,
+    *,
+    which=shutil.which,
+    run=subprocess.run,
+) -> None:
+    if deploy.get("type", "http") != "http":
+        return
+
+    docker_bin = which("docker")
+    if not docker_bin:
+        _print_http_deploy_runtime_help(reason="docker command not found on PATH")
+        sys.exit(1)
+
+    try:
+        result = run(
+            [docker_bin, "info"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        _print_http_deploy_runtime_help(reason="docker info timed out")
+        sys.exit(1)
+    except OSError as exc:
+        _print_http_deploy_runtime_help(
+            reason="docker info could not run",
+            detail=str(exc),
+        )
+        sys.exit(1)
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        _print_http_deploy_runtime_help(
+            reason="Docker CLI found, but the Docker daemon is not reachable",
+            detail=detail or None,
+        )
+        sys.exit(1)
+
+
 def _cmd_init(project_dir: Path) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
     legacy_cfg = ext_dir / "echelon-config.yml"
@@ -310,6 +379,7 @@ def _cmd_init(project_dir: Path) -> None:
             )
             sys.exit(1)
     print(f"✓ deploy config valid (type={deploy_type})")
+    _preflight_deploy_runtime(deploy)
 
     # Step 2b: Provision MemPalace wing
     print("\n▶ Configuring MemPalace wing...")

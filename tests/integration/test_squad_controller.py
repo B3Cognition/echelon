@@ -1036,8 +1036,8 @@ class TestBuildPhaseRouting:
 
     # ── build-6-progress ────────────────────────────────────────────────────
 
-    def test_progress_all_done_routes_to_finalize(self, tmp_path):
-        """all_tasks_complete AND no_more_phase_checkpoints → build-8-finalize."""
+    def test_progress_all_done_routes_to_documentation(self, tmp_path):
+        """all_tasks_complete AND no_more_phase_checkpoints → build-8-documentation."""
         transitions = self._run_and_capture(
             tmp_path,
             start_phase="build-6-progress",
@@ -1046,7 +1046,7 @@ class TestBuildPhaseRouting:
                 [("DONE", {"all_tasks_complete": True, "no_more_phase_checkpoints": True})]
             ),
         )
-        assert transitions[0] == ("build-6-progress", "build-8-finalize")
+        assert transitions[0] == ("build-6-progress", "build-8-documentation")
 
     def test_progress_more_tasks_routes_to_implement(self, tmp_path):
         """more_tasks_in_phase_group → build-2-implement (next task)."""
@@ -1074,15 +1074,15 @@ class TestBuildPhaseRouting:
         )
         assert transitions[0] == ("build-7-integration", "build-2-implement")
 
-    def test_integration_fail_late_routes_to_finalize(self, tmp_path):
-        """FAIL AND fix_cycle >= 2 → build-8-finalize (DEGRADED)."""
+    def test_integration_fail_late_routes_to_documentation(self, tmp_path):
+        """FAIL AND fix_cycle >= 2 → build-8-documentation (DEGRADED)."""
         transitions = self._run_and_capture(
             tmp_path,
             start_phase="build-7-integration",
             initial_state={"fix_cycle": 2},
             provider=self._sequenced([("FAIL", {})]),
         )
-        assert transitions[0] == ("build-7-integration", "build-8-finalize")
+        assert transitions[0] == ("build-7-integration", "build-8-documentation")
 
     def test_integration_pass_more_groups_routes_to_implement(self, tmp_path):
         """PASS AND more_phase_groups → implement (next phase group)."""
@@ -1096,15 +1096,15 @@ class TestBuildPhaseRouting:
         )
         assert transitions[0] == ("build-7-integration", "build-2-implement")
 
-    def test_integration_pass_all_done_routes_to_finalize(self, tmp_path):
-        """PASS AND all_phase_groups_complete → build-8-finalize."""
+    def test_integration_pass_all_done_routes_to_documentation(self, tmp_path):
+        """PASS AND all_phase_groups_complete → build-8-documentation."""
         transitions = self._run_and_capture(
             tmp_path,
             start_phase="build-7-integration",
             initial_state={"all_phase_groups_complete": True},
             provider=self._sequenced([("PASS", {})]),
         )
-        assert transitions[0] == ("build-7-integration", "build-8-finalize")
+        assert transitions[0] == ("build-7-integration", "build-8-documentation")
 
     # ── build-2-implement (self-loop on NEEDS_CONTEXT) ──────────────────────
 
