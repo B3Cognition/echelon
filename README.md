@@ -610,6 +610,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
 | `echelon phase list` | — | List deterministic workflow phase IDs available for targeted repair/replay |
 | `echelon phase run <phase-id> [--spec <id>]` | — | Run exactly one workflow phase through the normal COMMANDER/state/journal contracts, publish artifacts to the target spec directory when resolvable, then stop |
+| `echelon benchmark list` / `echelon benchmark run <fixture> --variant <id>` | — | Experimental EGR-063 artifact-quality benchmark runner. Variants compare baseline Phase A/build behavior against opt-in constitution, tasks, and ADR cleanse phases |
 | `echelon delivery land <id>` | — | Merge PR, delete remote branch, clean worktrees, mark spec landed; uses `targets:` to land the target repo branch and blocks on unresolved fulfillment gaps |
 | `echelon delivery land <id> --allow-fulfillment-gaps` | — | Emergency override for knowingly landing despite fulfillment gaps |
 | *(spec-kit only)* | `speckit.echelon.verify` | Check 100% spec coverage |

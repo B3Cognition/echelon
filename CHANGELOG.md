@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-063 / #85 artifact-quality benchmark** — added an experimental
+  artifact-quality benchmark path. `echelon benchmark` can compare baseline
+  builds against opt-in constitution, tasks, and ADR cleanse variants;
+  experimental `phase-exp-*` workflow nodes are manually runnable through
+  `echelon phase run` and are not part of the default workflow.
 - **EGR-080 / #97 TECH WRITER documentation gate** — added a build-phase TECH
   WRITER agent plus a deterministic Ralph gate so completed Echelon
   implementation work records documentation impact and updates `README.md` and
