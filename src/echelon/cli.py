@@ -87,6 +87,7 @@ Commands:
   phase list                                List workflow phases available for manual replay.
   phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
                                             Run one explicit phase through COMMANDER contracts.
+  checkpoint list --spec <id>               List spec-scoped phase checkpoints.
 
   benchmark list                            List experimental benchmark fixtures and variants.
   benchmark run <fixture> --variant <id> [--dry-run]
@@ -5277,6 +5278,12 @@ def main() -> None:
             )
             sys.exit(1)
         _cmd_phase(args[1:], project_root=project_root, ext_dir=ext_dir)
+        return
+
+    if command == "checkpoint":
+        from echelon.checkpoint_cli import run_checkpoint_command
+
+        run_checkpoint_command(args[1:], project_root=Path.cwd())
         return
 
     if command == "resume":
