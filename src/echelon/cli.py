@@ -4360,27 +4360,60 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         variant_execution_commands,
     )
 
+    fixtures = list_fixtures()
+    variants = list_variants()
+    fixture_ids = {fixture.id for fixture in fixtures}
+    variant_ids = {variant.id for variant in variants}
+    usage = (
+        "Usage:\n"
+        "  echelon benchmark list\n"
+        "  echelon benchmark run <fixture-id> --variant <variant-id> "
+        "--baseline-ref <ref> [--dry-run]\n"
+        "\n"
+        "Example:\n"
+        "  echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>\n"
+    )
+
     if not args or args[0] in ("-h", "--help"):
-        print(
-            "Usage:\n"
-            "  echelon benchmark list\n"
-            "  echelon benchmark run <fixture> --variant <id> --baseline-ref <ref> [--dry-run]",
-            flush=True,
-        )
+        print(usage, flush=True)
         return
 
     if args[0] == "list":
         _banner(
             "BENCHMARKS",
-            [(fixture.id, fixture.name) for fixture in list_fixtures()]
-            + [(f"variant:{variant.id}", variant.label) for variant in list_variants()],
+            [("Fixtures", "benchmark prompts"), ("Variants", "pass with --variant <id>")],
             subtitle="Experimental artifact-quality benchmark fixtures and variants",
         )
+        print("Fixtures:")
+        for fixture in fixtures:
+            print(f"  {fixture.id:<30} {fixture.name}")
+        print("\nVariants (--variant <id>):")
+        for variant in variants:
+            print(f"  {variant.id:<30} {variant.label}")
+        print("\nExample:")
+        print("  echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>")
+        print("\nFor an existing spec, use: echelon harness run <spec-id>")
         return
 
     if args[0] != "run" or len(args) < 2:
+        if args[0] in fixture_ids:
+            print(
+                "✗ Missing benchmark subcommand: run\n"
+                f"  Did you mean: echelon benchmark run {args[0]} "
+                "--variant baseline --baseline-ref <ref>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if args[0].startswith("variant:"):
+            print(
+                "✗ Benchmark variants are passed after --variant.\n"
+                "  Example: echelon benchmark run tiny-notes --variant baseline "
+                "--baseline-ref <ref>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         print(
-            "✗ Usage: echelon benchmark run <fixture> --variant <id> --baseline-ref <ref> [--dry-run]",
+            "✗ " + usage.rstrip(),
             file=sys.stderr,
         )
         sys.exit(1)
@@ -4407,6 +4440,21 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     try:
         plan = plan_variant_commands(fixture_id, variant_id)
     except ValueError as exc:
+        if variant_id in fixture_ids and variant_id not in variant_ids:
+            print(
+                f"✗ {variant_id} is a fixture id, not a variant id.\n"
+                "  Use --variant baseline, constitution, constitution-tasks, "
+                "or constitution-tasks-adrs.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if variant_id.startswith("variant:"):
+            print(
+                f"✗ Use --variant {variant_id.removeprefix('variant:')}, "
+                f"not --variant {variant_id}.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         print(f"✗ {exc}", file=sys.stderr)
         sys.exit(1)
 

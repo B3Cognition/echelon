@@ -128,8 +128,12 @@ def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> 
     _cmd_benchmark(["list"], project_root=tmp_path)
 
     out = capsys.readouterr().out
+    assert "Fixtures:" in out
+    assert "Variants (--variant <id>):" in out
     assert "tiny-notes" in out
+    assert "baseline" in out
     assert "constitution-tasks-adrs" in out
+    assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in out
 
 
 def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
@@ -161,6 +165,26 @@ def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
 
     assert exc.value.code == 1
     assert "Unknown benchmark variant" in capsys.readouterr().err
+
+
+def test_benchmark_suggests_run_subcommand_for_fixture_argument(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_benchmark(["tiny-notes"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Missing benchmark subcommand: run" in err
+    assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in err
+
+
+def test_benchmark_explains_fixture_used_as_variant(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_benchmark(["run", "tiny-notes", "--variant", "tiny-notes"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "tiny-notes is a fixture id, not a variant id" in err
+    assert "Use --variant baseline" in err
 
 
 def test_benchmark_real_run_requires_baseline_ref(tmp_path: Path, capsys) -> None:
