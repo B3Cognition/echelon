@@ -10,6 +10,7 @@ SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
 RE_NODE_DIR="$ECHELON_DIR/extension/scripts/node/re"
+CTX7_NODE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -175,6 +176,21 @@ else
   echo "    ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh"
 fi
 
+# ── 3c. Context7 documentation tool dependencies ────────────────────────────
+echo "▶ Installing Context7 documentation tool dependencies..."
+if ! command -v node &>/dev/null; then
+  echo "  ⚠ Node.js not found; Context7 documentation lookups will be unavailable."
+  echo "    Install Node.js, then run: npm ci --prefix \"$CTX7_NODE_DIR\""
+elif ! command -v npm &>/dev/null; then
+  echo "  ⚠ npm not found; Context7 documentation lookups will be unavailable."
+  echo "    Install npm, then run: npm ci --prefix \"$CTX7_NODE_DIR\""
+elif [ ! -f "$CTX7_NODE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $CTX7_NODE_DIR; skipping Context7 deps."
+else
+  npm ci --prefix "$CTX7_NODE_DIR" --silent
+  echo "  ✓ Context7 CLI dependencies installed → $CTX7_NODE_DIR/node_modules"
+fi
+
 # ── 4. Memory directory ──────────────────────────────────────────────────────
 echo "▶ Setting up memory directory..."
 mkdir -p "$MEMORY_DIR"
@@ -217,6 +233,11 @@ if command -v codegraph &>/dev/null; then
   echo "  CodeGraph CLI    → $(command -v codegraph)"
 else
   echo "  CodeGraph CLI    → optional (ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh)"
+fi
+if [ -x "$CTX7_NODE_DIR/node_modules/.bin/ctx7" ]; then
+  echo "  Context7 CLI  → $CTX7_NODE_DIR/node_modules/.bin/ctx7"
+else
+  echo "  Context7 CLI  → not ready (run: npm ci --prefix \"$CTX7_NODE_DIR\")"
 fi
 echo "  Memory        → $MEMORY_DIR"
 echo ""

@@ -47,6 +47,9 @@ def _canonical_spec_dir_from_ref(project_root: Path, ref: str) -> Path | None:
     if not candidate.is_absolute():
         candidate = project_root / candidate
 
+    if candidate.is_dir():
+        return candidate
+
     parts = candidate.parts
     if "specs" in parts:
         idx = parts.index("specs")
@@ -55,7 +58,7 @@ def _canonical_spec_dir_from_ref(project_root: Path, ref: str) -> Path | None:
         if project_candidate.is_dir():
             return project_candidate
 
-    return candidate if candidate.is_dir() else None
+    return None
 
 
 def _active_spec_dir(project_root: Path) -> Path | None:
@@ -70,7 +73,7 @@ def _active_spec_dir(project_root: Path) -> Path | None:
     except json.JSONDecodeError:
         return None
 
-    for key in ("published_spec_dir", "spec_dir"):
+    for key in ("spec_dir", "published_spec_dir"):
         spec_dir = _canonical_spec_dir_from_ref(project_root, str(state.get(key) or "").strip())
         if spec_dir is not None:
             return spec_dir
@@ -93,7 +96,7 @@ def _active_spec_dir_matching(project_root: Path, spec: str) -> Path | None:
 
     state_spec_id = str(state.get("spec_id") or "").strip()
     if state_spec_id and (state_spec_id == spec or state_spec_id.startswith(f"{spec}-")):
-        for key in ("published_spec_dir", "spec_dir"):
+        for key in ("spec_dir", "published_spec_dir"):
             spec_dir = _canonical_spec_dir_from_ref(project_root, str(state.get(key) or "").strip())
             if spec_dir is not None:
                 return spec_dir

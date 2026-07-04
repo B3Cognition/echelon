@@ -88,6 +88,21 @@ understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tm
 Read JSON from the `--output` file. Do not parse stdout, because Rich/status output can mix with
 machine-readable content in some execution paths.
 
+The enhanced scan output file is a JSON **list**. Use the first element as the report object:
+
+```python
+import json
+from pathlib import Path
+
+payload = json.loads(Path("/tmp/cartographer-understanding.json").read_text())
+report = payload[0] if isinstance(payload, list) and payload else payload
+scores = {row["name"]: row["score"] for row in report.get("metrics", {}).get("scores", [])}
+categories = report.get("metrics", {}).get("category_scores", {})
+```
+
+ALWAYS normalize `/tmp/cartographer-understanding.json` with `report = payload[0] if isinstance(payload, list) and payload else payload` before reading `metrics`, `entity_analysis`, `behavioral_analysis`, or `depth_analysis`.
+NEVER call `.keys()`, `.get("metrics")`, or similar dict methods on the root `payload` until after this list-root normalization.
+
 ALWAYS run `understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json` when you need deterministic diagnostic scores during a repair/amendment pass.
 NEVER run `understanding validate`, `understanding "{spec_dir}/spec.md" --validate`, or guessed module commands from Bash; SAGE invokes the validation skill for formal gate decisions.
 NEVER read `src/understanding/*.py` to discover CLI command names during a live squad run; this protocol is the command contract.

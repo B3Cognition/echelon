@@ -23,6 +23,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-092 TECH WRITER endocrine registry drift** — TECH WRITER is now listed
+  in the endocrine `ALL_AGENTS` roster and explicitly mapped to the build
+  archetype, keeping the legacy hormone registry consistent with the agent files
+  added by EGR-080.
+- **EGR-091 Context7 CLI tool integration** — ARCHITECT no longer asks for
+  Context7 MCP tools. Echelon now ships a pinned extension-local `ctx7` runtime
+  plus `context7-docs.sh`, installs it via `scripts/install.sh`, and prompts
+  ARCHITECT to use the wrapper with an official-doc fallback. The wrapper's
+  `--json` mode now emits a stable `echelon.context7.v1` envelope so agents
+  parse `result` deterministically instead of inferring raw `ctx7` output shapes.
+- **EGR-090 validate-plan help handling** — `python -m harness validate-plan
+  --help` now prints usage and exits cleanly instead of treating `--help` as a
+  plan file path and emitting a traceback. Missing plan files now produce a
+  readable CLI error without a Python stack trace.
+- **EGR-089 CARTOGRAPHER Understanding JSON shape contract** — WHAT prompts now
+  document that enhanced `understanding scan --json --output` produces a
+  list-root payload and require normalizing to `payload[0]` before reading
+  metrics or analysis sections, preventing `.keys()`/dict-method failures during
+  CARTOGRAPHER diagnostic scoring.
+- **EGR-088 CARTOGRAPHER incomplete-result retry context** — when WHAT creates a
+  spec branch/directory but the provider connection drops before `echelon_result`,
+  the squad blocked state now preserves the existing spec id, spec directory,
+  published spec directory, feature branch, and CARTOGRAPHER resume guard flag so
+  `echelon continue` retries the same spec instead of risking a second
+  `speckit.specify`/branch allocation.
 - **EGR-087 banzai Phase 1 continuation defects** — squad runs no longer stop
   after CHIEF when a valid constitution's leading Sync Impact Report mentions
   old template placeholders, and node-level workflow conditions are now honored

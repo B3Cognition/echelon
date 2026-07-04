@@ -229,3 +229,46 @@ def test_checkpoint_list_without_spec_uses_active_staging_spec(
     out = capsys.readouterr().out
     assert "CHECKPOINTS - spec 001-simple-notes" in out
     assert "phase1-why1" in out
+
+
+def test_checkpoint_list_prefers_existing_active_run_spec_over_published(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    published_spec_dir = tmp_path / "specs" / "001-simple-notes"
+    published_spec_dir.mkdir(parents=True)
+
+    active_spec_dir = tmp_path / "runs" / "spec-20260704-120000" / "specs" / "001-simple-notes"
+    active_spec_dir.mkdir(parents=True)
+    record_checkpoint_metadata(
+        active_spec_dir,
+        PhaseCheckpoint(
+            id="phase3-sentinel",
+            spec_id="001-simple-notes",
+            phase="phase3-sentinel",
+            next_phase="phase3-plan",
+            commit="newabcdef123",
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-04T12:00:00Z",
+        ),
+    )
+    run_dir = active_spec_dir.parents[1]
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "001-simple-notes",
+                "spec_dir": "runs/spec-20260704-120000/specs/001-simple-notes",
+                "published_spec_dir": "specs/001-simple-notes",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_checkpoint_command(["list"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "CHECKPOINTS - spec 001-simple-notes" in out
+    assert "phase3-sentinel" in out

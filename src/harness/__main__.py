@@ -535,9 +535,13 @@ def _migrate_tasks() -> None:
 
 
 def _validate_plan() -> None:
+    usage = "Usage: python -m harness validate-plan <plan.md>"
     if len(sys.argv) < 3:
-        print("Usage: python -m harness validate-plan <plan.md>", file=sys.stderr)
+        print(usage, file=sys.stderr)
         sys.exit(1)
+    if sys.argv[2] in {"-h", "--help"}:
+        print(usage)
+        sys.exit(0)
 
     from pathlib import Path
 
@@ -548,6 +552,9 @@ def _validate_plan() -> None:
         validate_plan_file(plan_path)
     except PlanValidationError as e:
         print(f"invalid plan.md: {e}", file=sys.stderr)
+        sys.exit(1)
+    except OSError as e:
+        print(f"invalid plan.md: cannot read {plan_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
     print("OK: canonical plan.md")

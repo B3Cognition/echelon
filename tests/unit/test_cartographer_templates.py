@@ -76,6 +76,15 @@ class TestCartographerTemplates:
         assert "agents/exploration/templates/cartographer-overview-template.md" in text
         assert "using the provided templates" in text
 
+    def test_understanding_scan_output_shape_is_documented(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        phase_text = PHASE.read_text(encoding="utf-8")
+
+        for text in (agent_text, phase_text):
+            assert "list" in text
+            assert "payload[0] if isinstance(payload, list) and payload else payload" in text
+            assert "Do not call `.keys()`" in text or "NEVER call `.keys()`" in text
+
     def test_workflow_definition_lists_cartographer_outputs(self) -> None:
         text = DEFINITION.read_text(encoding="utf-8")
 

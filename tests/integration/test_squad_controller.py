@@ -166,6 +166,36 @@ class TestAgentResultIntegrity:
         assert state["blocked_reason"] == "missing_echelon_result"
         assert "phase1-what" not in state.get("completed_phases", [])
 
+    def test_phase1_what_missing_result_preserves_existing_spec_context(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result=None,
+            raw_output="connection closed after CARTOGRAPHER wrote spec artifacts",
+            duration_ms=100,
+            timed_out=False,
+        )
+        spec_dir = tmp_path / "specs" / "001-demo-notes"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo Notes\n", encoding="utf-8")
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        with patch.object(ctrl, "_current_git_branch", return_value="001-demo-notes"):
+            result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["blocked_reason"] == "missing_echelon_result"
+        assert state["spec_id"] == "001-demo-notes"
+        assert state["spec_dir"] == "specs/001-demo-notes"
+        assert state["published_spec_dir"] == "specs/001-demo-notes"
+        assert state["feature_branch"] == "001-demo-notes"
+        assert state["cartographer_resume_existing_spec"] is True
+        assert "phase1-what" not in state.get("completed_phases", [])
+
     def test_phase4_document_blocks_when_phase_a_build_inputs_are_missing(
         self, tmp_path,
     ):

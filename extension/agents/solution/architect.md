@@ -114,20 +114,47 @@ When `verdict: "CONCERN"`, always resolve the identified inconsistency or NEVER-
 - `pitfall_result`: Check the ADR against all pitfalls.yaml anti-patterns
 - `consistency_result`: Check the ADR for conflicts with all prior ADRs produced in this same run
 
-## Context7 Integration (Move 1)
+## Context7 Documentation Tool
 
-Before making ANY technology decision, look up current documentation:
+Before making ANY technology decision, look up current documentation through the
+Echelon Context7 CLI wrapper when it is installed:
 
-1. For each candidate technology, use Context7 (mcp__plugin_context7_context7__resolve-library-id + query-docs) to fetch:
-   - Latest version and release date
-   - API surface relevant to your use case
-   - Known breaking changes or deprecations
-   - Performance characteristics from official docs
-2. Grade the evidence: Context7 docs = Grade B (official documentation)
-3. Always cite current documentation for technology recommendations. NEVER recommend a technology based solely on training data (Grade E)
-4. Every ADR must cite the documentation version consulted
+```bash
+.specify/extensions/echelon/scripts/bash/context7-docs.sh library "<technology name>" --json
+.specify/extensions/echelon/scripts/bash/context7-docs.sh docs "<context7-library-id>" "<question>" --json
+```
 
-This upgrades every architecture decision from Grade E to Grade B.
+`--json` output is normalized by Echelon, not raw Context7 output. Parse the
+stable envelope:
+
+```json
+{
+  "schema": "echelon.context7.v1",
+  "ok": true,
+  "command": "library|docs",
+  "query": "...",
+  "library_id": "/resolved/library-id or null",
+  "redirected_from": "/stale/library-id or null",
+  "result": {}
+}
+```
+
+Use only `result` for the native Context7 library/docs payload after verifying
+`schema == "echelon.context7.v1"` and `ok == true`. If `ok` is false, treat the
+lookup as unavailable and use the official-doc fallback below.
+
+For each candidate technology, fetch:
+- Latest version and release date
+- API surface relevant to your use case
+- Known breaking changes or deprecations
+- Performance characteristics from official docs
+
+ALWAYS use `context7-docs.sh library ... --json` followed by `context7-docs.sh docs ... --json` when the wrapper is available.
+NEVER call connector-based Context7 tools or ToolSearch to locate Context7.
+
+If `context7-docs.sh` exits 127 or is not installed in the deployed extension, fall back to official vendor/platform documentation via normal available search/browse tools. Grade official vendor/platform docs as Grade B, third-party summaries as Grade C, and training-data-only claims as Grade E. NEVER recommend a technology based solely on Grade E evidence.
+
+Every ADR must cite the documentation source and version/date consulted. Context7 CLI output that points to official docs is Grade B evidence; unavailable Context7 is not a blocker when equivalent official docs are cited directly.
 
 ## Inputs
 

@@ -44,6 +44,7 @@ Use the Agent tool to dispatch a subagent with:
 
   Validation Tool Contract:
   - For diagnostic scoring during authoring/amendment, use `understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json`; read JSON from the output file, not stdout.
+  - The enhanced scan output file is a JSON list; normalize it before reading metrics: `payload=json.load(open("/tmp/cartographer-understanding.json")); report=payload[0] if isinstance(payload, list) and payload else payload`. Do not call `.keys()` or `.get("metrics")` on the root payload before this normalization.
   - Do NOT run `understanding validate` or guess module commands; SAGE owns the formal Understanding validation skill in WHY2/WHY3.
   - For Lexicon Gate validation, use `lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} --source-ref "{spec_dir}/{source_ref}" --glossary "{spec_dir}/{glossary_file}" --json` and treat that result as authoritative for `lexicon_pass`.
 

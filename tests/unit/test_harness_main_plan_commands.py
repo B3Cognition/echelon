@@ -67,6 +67,31 @@ class TestHarnessMainPlanCommands:
         assert exc.value.code == 1
         assert "invalid plan.md" in capsys.readouterr().err
 
+    def test_validate_plan_help_exits_zero_without_reading_help_as_path(self, capsys) -> None:
+        from harness.__main__ import main
+
+        with patch("sys.argv", ["python -m harness", "validate-plan", "--help"]), \
+             pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 0
+        captured = capsys.readouterr()
+        assert "Usage: python -m harness validate-plan <plan.md>" in captured.out
+        assert captured.err == ""
+
+    def test_validate_plan_missing_file_exits_nonzero_without_traceback(self, tmp_path, capsys) -> None:
+        from harness.__main__ import main
+
+        missing = tmp_path / "missing-plan.md"
+        with patch("sys.argv", ["python -m harness", "validate-plan", str(missing)]), \
+             pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "invalid plan.md: cannot read" in err
+        assert "Traceback" not in err
+
     def test_migrate_plan_dry_run_prints_without_editing_file(self, tmp_path, capsys) -> None:
         plan = tmp_path / "plan.md"
         original = "# Architecture Plan: Demo\n\n## Summary\nDemo.\n"

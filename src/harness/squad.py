@@ -1134,6 +1134,8 @@ class SquadController:
         from datetime import datetime, timezone
 
         state = self._state_store.load()
+        if phase == "phase1-what":
+            self._preserve_cartographer_spec_context(state)
         state["phase"] = PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
@@ -1148,6 +1150,56 @@ class SquadController:
             "(phase not marked complete)",
             flush=True,
         )
+
+    def _preserve_cartographer_spec_context(self, state: dict) -> None:
+        """Record an existing CARTOGRAPHER spec before blocking a failed dispatch."""
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            candidate = Path(spec_dir_ref)
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            if candidate.exists() and candidate.is_dir():
+                spec_id = str(state.get("spec_id") or candidate.name).strip()
+                if spec_id:
+                    state["spec_id"] = spec_id
+                    published = self._project_root / "specs" / spec_id
+                    if published.exists():
+                        state["published_spec_dir"] = self._repo_relative_or_absolute(published)
+                state["cartographer_resume_existing_spec"] = True
+                return
+
+        branch = self._current_git_branch()
+        if not branch or not self._is_spec_feature_branch(branch):
+            return
+
+        candidate = self._project_root / "specs" / branch
+        if not candidate.exists() or not candidate.is_dir():
+            return
+
+        state["spec_id"] = state.get("spec_id") or branch
+        state["spec_dir"] = self._repo_relative_or_absolute(candidate)
+        state["published_spec_dir"] = self._repo_relative_or_absolute(candidate)
+        state["feature_branch"] = state.get("feature_branch") or branch
+        state["cartographer_resume_existing_spec"] = True
+
+    def _current_git_branch(self) -> str:
+        try:
+            proc = subprocess.run(
+                ["git", "branch", "--show-current"],
+                cwd=str(self._project_root),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+        except Exception:
+            return ""
+        if proc.returncode != 0:
+            return ""
+        return (proc.stdout or "").strip()
+
+    def _is_spec_feature_branch(self, branch: str) -> bool:
+        return re.match(r"^[0-9]{3,4}-[A-Za-z0-9][A-Za-z0-9._-]*$", branch) is not None
 
     def _block_after_judgment_validation_failure(
         self,

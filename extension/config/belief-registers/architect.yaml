@@ -2,10 +2,10 @@ agent: ARCHITECT
 last_updated: "2026-03-28"
 beliefs:
   - id: ARC-001
-    claim: "Context7 documentation lookups produce Grade B evidence — equivalent to official documentation"
-    verified: "2026-03-28"
-    expires: "2026-09-28"
-    anchor: "Architectural decision (Context7 integration)"
+    claim: "Context7 CLI documentation lookups that cite official docs produce Grade B evidence — equivalent to direct official documentation"
+    verified: "2026-07-04"
+    expires: "2027-01-04"
+    anchor: "Architectural decision (Context7 CLI tool integration)"
     confidence: 0.80
     severity: high
 
@@ -61,6 +61,6 @@ beliefs:
     claim: "Training-data-only technology recommendations are Grade E evidence and insufficient for architectural decisions"
     verified: "2026-03-28"
     expires: "2026-09-28"
-    anchor: "Evidence grading system; Context7 rationale"
+    anchor: "Evidence grading system; Context7/official-docs rationale"
     confidence: 0.85
     severity: high
