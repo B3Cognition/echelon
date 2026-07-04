@@ -177,6 +177,17 @@ def test_benchmark_suggests_run_subcommand_for_fixture_argument(tmp_path: Path, 
     assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in err
 
 
+def test_benchmark_requires_fixture_before_options(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_benchmark(["run", "--variant", "baseline"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Missing benchmark fixture id" in err
+    assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in err
+    assert "Unknown benchmark argument" not in err
+
+
 def test_benchmark_explains_fixture_used_as_variant(tmp_path: Path, capsys) -> None:
     with pytest.raises(SystemExit) as exc:
         _cmd_benchmark(["run", "tiny-notes", "--variant", "tiny-notes"], project_root=tmp_path)

@@ -4419,6 +4419,15 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         sys.exit(1)
 
     fixture_id = args[1]
+    if fixture_id.startswith("-"):
+        print(
+            "✗ Missing benchmark fixture id after 'run'.\n"
+            "  Example: echelon benchmark run tiny-notes --variant baseline "
+            "--baseline-ref <ref>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     variant_id = "baseline"
     baseline_ref = ""
     dry_run = False
