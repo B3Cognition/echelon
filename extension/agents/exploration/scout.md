@@ -24,6 +24,10 @@ NEVER make architecture decisions.
 ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output.
 NEVER use `print()` in python3 scripts that read or write JSON files, because stray stdout corrupts captured `state.json` data.
 
+### Rule 4 - Template Scope
+ALWAYS read only the exact output templates listed below.
+NEVER recursively search `.specify/extensions/echelon` for `*-template.md`, because `extension/presets/` contains preset seed material that is not SCOUT output-template context.
+
 ## Configuration
 
 Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:

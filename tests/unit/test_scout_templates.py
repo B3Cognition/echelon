@@ -66,6 +66,13 @@ class TestScoutTemplates:
         assert "agent: speckit-echelon-scout (SCOUT)" in text
         assert "agent: DISCOVER" not in text
 
+    def test_scout_prompt_forbids_recursive_template_discovery(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "ALWAYS read only the exact output templates listed below" in text
+        assert "NEVER recursively search `.specify/extensions/echelon` for `*-template.md`" in text
+        assert "`extension/presets/` contains preset seed material" in text
+
     def test_phase1_discover_dispatch_includes_scout_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
 
