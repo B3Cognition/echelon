@@ -55,6 +55,19 @@ def _make_ralph(tmp_path, spec_id="001-feature", strategy_id="default"):
     return ralph, gitops
 
 
+def _assert_harness_commit_message(gitops, worktree_path: str) -> None:
+    gitops.commit.assert_called_once()
+    commit_args, _commit_kwargs = gitops.commit.call_args
+    assert commit_args[0] == worktree_path
+
+    message = commit_args[1]
+    assert message.startswith("harness: 001-feature/default iter-0")
+    assert "Echelon-Origin: delivery" in message
+    assert "Echelon-Action: commit" in message
+    assert "Echelon-Spec: 001-feature" in message
+    assert "Echelon-Strategy: default" in message
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -71,8 +84,7 @@ class TestCommitAndPushBranchDetection:
             mock_run_git.return_value = MagicMock(stdout="001-feature\n", returncode=0)
             ralph._commit_and_push(worktree_path, outer_iter=0)
 
-        gitops.commit.assert_called_once_with(worktree_path,
-                                               "harness: 001-feature/default iter-0")
+        _assert_harness_commit_message(gitops, worktree_path)
         gitops.push.assert_called_once_with(worktree_path, "001-feature")
 
     def test_commit_and_push_delegates_dirty_verify_artifacts_to_gitops_commit(
@@ -85,10 +97,7 @@ class TestCommitAndPushBranchDetection:
             mock_run_git.return_value = MagicMock(stdout="001-feature\n", returncode=0)
             ralph._commit_and_push(worktree_path, outer_iter=0)
 
-        gitops.commit.assert_called_once_with(
-            worktree_path,
-            "harness: 001-feature/default iter-0",
-        )
+        _assert_harness_commit_message(gitops, worktree_path)
 
     def test_feature_branch_push_not_hardcoded_harness_name(self, tmp_path):
         """Regression: push must NOT use hardcoded 'harness/{spec}/{strategy}/iter-N'."""

@@ -3243,6 +3243,40 @@ def _phase_run_requires_task_lexicon_config(phase_id: str) -> bool:
     return phase_id in {"phase3-plan", "phase3-consensus"}
 
 
+_AUTONOMY_MODES = {"semi", "banzai", "guided"}
+
+
+def _consume_mode_arg(
+    args: list[str],
+    index: int,
+    *,
+    command_name: str,
+) -> tuple[str | None, int]:
+    token = args[index]
+    if token == "--mode":
+        if index + 1 >= len(args):
+            print(
+                f"✗ {command_name}: --mode requires one of: semi, banzai, guided",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        mode = args[index + 1]
+        next_index = index + 2
+    elif token.startswith("--mode="):
+        mode = token.split("=", 1)[1]
+        next_index = index + 1
+    else:
+        return None, index
+
+    if mode not in _AUTONOMY_MODES:
+        print(
+            f"✗ {command_name}: invalid mode {mode!r}; expected semi, banzai, or guided",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return mode, next_index
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -3266,9 +3300,10 @@ def _cmd_run(
     message_parts: list[str] = []
     i = 0
     while i < len(args):
-        if args[i] == "--mode" and i + 1 < len(args):
-            mode = args[i + 1]
-            i += 2
+        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon run")
+        if parsed_mode is not None:
+            mode = parsed_mode
+            i = next_i
         elif args[i] == "--message" and i + 1 < len(args):
             message_parts.append(args[i + 1])
             i += 2
@@ -4051,9 +4086,10 @@ def _cmd_continue(
     mode_override = ""
     i = 0
     while i < len(args):
-        if args[i] == "--mode" and i + 1 < len(args):
-            mode_override = args[i + 1]
-            i += 2
+        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon continue")
+        if parsed_mode is not None:
+            mode_override = parsed_mode
+            i = next_i
         else:
             i += 1
 
@@ -4466,9 +4502,10 @@ def _cmd_phase(
     message_parts: list[str] = []
     i = 2
     while i < len(args):
-        if args[i] == "--mode" and i + 1 < len(args):
-            mode = args[i + 1]
-            i += 2
+        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon phase run")
+        if parsed_mode is not None:
+            mode = parsed_mode
+            i = next_i
         elif args[i] == "--spec" and i + 1 < len(args):
             spec_arg = args[i + 1]
             i += 2
@@ -4482,10 +4519,6 @@ def _cmd_phase(
                 file=sys.stderr,
             )
             sys.exit(1)
-    if mode not in {"semi", "banzai", "guided"}:
-        print(f"✗ Invalid mode: {mode}", file=sys.stderr)
-        sys.exit(1)
-
     run_dir = _find_current_run_dir(project_root)
     if run_dir is None:
         run_dir = _setup_run_dir(project_root, make_spec_run_id())
