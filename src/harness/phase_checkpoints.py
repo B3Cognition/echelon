@@ -157,3 +157,72 @@ def create_phase_checkpoint(
     )
     record_phase_checkpoint(spec_dir, checkpoint)
     return checkpoint
+
+
+def accept_checkpoint_baseline(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    phase: str,
+    run_id: str,
+) -> PhaseCheckpoint:
+    if _has_staged_or_unstaged_changes(project_root):
+        raise RuntimeError("dirty worktree cannot be accepted; commit, stash, or discard changes first")
+
+    spec_id = _spec_id_from_dir(spec_dir)
+    commit = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
+    checkpoint = PhaseCheckpoint(
+        id=new_checkpoint_id(phase, "user-accepted"),
+        spec_id=spec_id,
+        phase=phase,
+        next_phase=phase,
+        commit=commit,
+        metadata_commit="",
+        source="user-accepted",
+        run_id=run_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    record_phase_checkpoint(spec_dir, checkpoint)
+    return checkpoint
+
+
+def commit_manual_checkpoint(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    phase: str,
+    run_id: str,
+    message: str,
+) -> PhaseCheckpoint:
+    if not _has_staged_or_unstaged_changes(project_root):
+        raise RuntimeError("no changes to commit")
+
+    spec_id = _spec_id_from_dir(spec_dir)
+    checkpoint_id = new_checkpoint_id(phase, "user-committed")
+    commit_message = build_echelon_commit_message(
+        message,
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="user-committed-checkpoint",
+            spec_id=spec_id,
+            run_id=run_id,
+            phase=phase,
+            checkpoint_id=checkpoint_id,
+        ),
+    )
+    run_git(project_root, "add", "-A")
+    run_git(project_root, "commit", "-m", commit_message)
+    commit = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
+    checkpoint = PhaseCheckpoint(
+        id=checkpoint_id,
+        spec_id=spec_id,
+        phase=phase,
+        next_phase=phase,
+        commit=commit,
+        metadata_commit="",
+        source="user-committed",
+        run_id=run_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    record_phase_checkpoint(spec_dir, checkpoint)
+    return checkpoint

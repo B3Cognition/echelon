@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import subprocess
 
 import pytest
 
@@ -41,6 +42,66 @@ def test_checkpoint_list_prints_spec_scoped_ledger(tmp_path: Path, capsys) -> No
     assert "CHECKPOINTS - spec 001-demo" in out
     assert "phase3-plan" in out
     assert "abcdef1" in out
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _repo_with_spec(tmp_path: Path) -> tuple[Path, Path]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "001-demo")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    spec_dir = repo / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "base")
+    return repo, spec_dir
+
+
+def test_checkpoint_accept_refuses_dirty_files(tmp_path: Path) -> None:
+    from harness.phase_checkpoints import accept_checkpoint_baseline
+
+    repo, spec_dir = _repo_with_spec(tmp_path)
+    (spec_dir / "tasks.md").write_text("# Dirty Tasks\n", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="dirty worktree"):
+        accept_checkpoint_baseline(
+            project_root=repo,
+            spec_dir=spec_dir,
+            phase="phase3-plan",
+            run_id="squad-1",
+        )
+
+
+def test_checkpoint_commit_writes_echelon_trailers(tmp_path: Path) -> None:
+    from harness.phase_checkpoints import commit_manual_checkpoint
+
+    repo, spec_dir = _repo_with_spec(tmp_path)
+    (spec_dir / "tasks.md").write_text("# Manual Tasks\n", encoding="utf-8")
+
+    checkpoint = commit_manual_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        phase="phase3-plan",
+        run_id="squad-1",
+        message="docs: accept manual Phase A checkpoint",
+    )
+
+    body = _git(repo, "log", "-1", "--format=%B")
+    assert checkpoint.source == "user-committed"
+    assert "Co-authored-by: Echelon <echelon@b3cognition.dev>" in body
+    assert "Echelon-Action: user-committed-checkpoint" in body
+    assert "Echelon-Spec: 001-demo" in body
 
 
 def test_checkpoint_list_uses_active_spec_from_run_state(tmp_path: Path, capsys) -> None:

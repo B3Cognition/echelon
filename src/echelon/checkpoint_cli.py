@@ -6,7 +6,11 @@ import json
 from pathlib import Path
 import sys
 
-from harness.phase_checkpoints import load_checkpoint_ledger
+from harness.phase_checkpoints import (
+    accept_checkpoint_baseline,
+    commit_manual_checkpoint,
+    load_checkpoint_ledger,
+)
 from harness.spec_frontmatter import find_spec_dir
 
 
@@ -86,8 +90,11 @@ def _arg_value(args: list[str], name: str) -> str:
 
 def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     subcommand = args[0] if args else "list"
-    if subcommand != "list":
-        print("Usage: echelon checkpoint list [--spec <id>]", file=sys.stderr)
+    if subcommand not in {"list", "accept", "commit"}:
+        print(
+            "Usage: echelon checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     spec = _arg_value(args, "--spec")
@@ -104,6 +111,36 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     if spec_dir is None:
         print(f"No spec directory found for {spec!r}.", file=sys.stderr)
         raise SystemExit(1)
+
+    if subcommand == "accept":
+        phase = _arg_value(args, "--phase")
+        if not phase:
+            print("Usage: echelon checkpoint accept --phase <phase-id> [--spec <id>]", file=sys.stderr)
+            raise SystemExit(1)
+        checkpoint = accept_checkpoint_baseline(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            phase=phase,
+            run_id=_arg_value(args, "--run-id"),
+        )
+        print(f"Accepted checkpoint baseline {checkpoint.id} at {checkpoint.commit[:7]}")
+        return
+
+    if subcommand == "commit":
+        phase = _arg_value(args, "--phase")
+        message = _arg_value(args, "--message") or "docs: accept manual Phase A checkpoint"
+        if not phase:
+            print("Usage: echelon checkpoint commit --phase <phase-id> [--spec <id>]", file=sys.stderr)
+            raise SystemExit(1)
+        checkpoint = commit_manual_checkpoint(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            phase=phase,
+            run_id=_arg_value(args, "--run-id"),
+            message=message,
+        )
+        print(f"Committed checkpoint {checkpoint.id} at {checkpoint.commit[:7]}")
+        return
 
     ledger = load_checkpoint_ledger(spec_dir)
     print(f"CHECKPOINTS - spec {ledger.spec_id}\n")
