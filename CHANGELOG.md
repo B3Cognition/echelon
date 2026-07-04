@@ -23,6 +23,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-086 / #106 equals-form mode flags** — Phase A CLI parsing now accepts
+  both `--mode banzai` and `--mode=banzai` for `echelon run`,
+  `echelon spec run`, `echelon continue`, `echelon spec continue`, and
+  `echelon phase run`, instead of silently treating equals-form flags as task
+  text and falling back to `semi`.
 - **EGR-084 constitution guard workflow override** — squad routing no longer
   lets the controller-level constitution provenance guard bypass required
   upstream Phase 1 context phases. `phase1-synthesizer`, `phase1-modeler`, and
