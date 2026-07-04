@@ -39,10 +39,10 @@ class ConditionEvaluator:
         if re.search(r"\bOR\b", condition):
             parts = re.split(r"\bOR\b", condition)
             sub = [self.evaluate(p.strip(), state, result) for p in parts]
-            if all(s is None for s in sub):
+            if any(s is True for s in sub):
+                return True
+            if any(s is None for s in sub):
                 return None
-            if None in sub:
-                return None  # conservative: unknown sub-condition → COMMANDER
             return any(sub)
 
         # NOT <sub-condition> — three-valued negation. Used by the lexicon-gate
@@ -154,6 +154,9 @@ class ConditionEvaluator:
             if critical is None:
                 return default
             return not critical
+
+        if field == "autonomy":
+            return state.get("autonomy_mode", state.get("autonomy", default))
 
         # Normal dotted-path traversal
         parts = field.split(".")

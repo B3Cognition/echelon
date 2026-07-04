@@ -5,6 +5,7 @@ A mock agent always returns DONE. SquadController must still dispatch
 WHY3 + ASSESS2 (stage 1) before PLAN2 (stage 2) and before checkpoint-plan.
 """
 import sys
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -245,6 +246,11 @@ class TestAgentResultIntegrity:
             published_dir / "constitution.md"
         ).read_text(encoding="utf-8") == "# Constitution\n\nReal project rules.\n"
         assert (published_dir / "ARTIFACTS.md").exists()
+        assert (published_dir / "squad-report.md").exists()
+        history = json.loads((published_dir / "run-history.json").read_text(encoding="utf-8"))
+        assert history["runs"][-1]["run_id"] == "r"
+        assert history["runs"][-1]["phase"] == "A"
+        assert history["runs"][-1]["status"] == "done"
         state = store.load()
         assert state["published_spec_dir"] == "specs/001-demo"
 
@@ -287,7 +293,32 @@ class TestAgentResultIntegrity:
         assert (published_dir / "contracts" / "api.md").exists()
         assert (published_dir / "manual-note.md").exists()
         assert (published_dir / "ARTIFACTS.md").exists()
+        assert (published_dir / "squad-report.md").exists()
+        assert (published_dir / "run-history.json").exists()
         assert state["published_spec_dir"] == "specs/001-themed-ascii-animation"
+
+    def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
+        provider = MagicMock()
+        provider.exec_agent.side_effect = AssertionError(
+            "checkpoint-plan should not dispatch COMMANDER judgment in banzai"
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "checkpoint-plan", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+        assert provider.exec_agent.call_count == 0
 
 
 class TestCartographerResumeGuard:
@@ -462,6 +493,14 @@ class TestSquadControllerBasics:
         state["phase_dispatch_counts"] = {"phase3-consensus": 5}
         store.save(state)
         _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(state)
 
         result = ctrl.run("msg", "semi")
 

@@ -23,6 +23,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-094 checkpoint-plan deterministic routing** — banzai/semi checkpoint
+  auto-approval no longer falls through to a COMMANDER routing judgment. The
+  condition evaluator now resolves `autonomy` from `autonomy_mode` and
+  short-circuits `OR` conditions when one branch is already true.
+- **EGR-093 Phase A finalization outputs** — `phase4-document` now writes a
+  deterministic `squad-report.md`, records a Phase A `run-history.json` entry,
+  and refreshes `ARTIFACTS.md` after those outputs are present instead of
+  checkpointing a harness no-op as complete.
 - **EGR-092 TECH WRITER endocrine registry drift** — TECH WRITER is now listed
   in the endocrine `ALL_AGENTS` roster and explicitly mapped to the build
   archetype, keeping the legacy hormone registry consistent with the agent files

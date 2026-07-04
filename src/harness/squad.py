@@ -1,6 +1,7 @@
 """SquadController — deterministic phase routing for the pre-code squad run."""
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -27,6 +28,7 @@ from harness.phase_a_readiness import (
 )
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.quality_scores import normalize_why_quality_scores
+from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir
 from harness.squad_executors import (
     AgentExecutor,
@@ -900,6 +902,7 @@ class SquadController:
             else:
                 published_spec_dir.mkdir(parents=True, exist_ok=True)
             self._publish_constitution_snapshot(published_spec_dir)
+            self._write_phase_a_finalization_outputs(published_spec_dir, state)
             write_artifact_index(published_spec_dir)
             self._refresh_published_context_metadata(
                 published_spec_dir,
@@ -917,6 +920,63 @@ class SquadController:
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._state_store.save(updated)
         return validate_phase_a_readiness(updated, [published_spec_dir])
+
+    def _write_phase_a_finalization_outputs(
+        self,
+        published_spec_dir: Path,
+        state: dict,
+    ) -> None:
+        run_id = str(state.get("run_id") or "unknown")
+        spec_status = str(state.get("spec_status") or "planned")
+        constitution_hash = self._constitution_hash(published_spec_dir / "constitution.md")
+        append_phase_a_run(
+            published_spec_dir,
+            run_id=run_id,
+            spec_status=spec_status,
+            constitution_hash=constitution_hash,
+        )
+        self._write_squad_report(published_spec_dir, state)
+
+    def _constitution_hash(self, constitution_path: Path) -> str:
+        if not constitution_path.exists():
+            return ""
+        return hashlib.sha256(constitution_path.read_bytes()).hexdigest()
+
+    def _write_squad_report(self, published_spec_dir: Path, state: dict) -> None:
+        artifact_count = sum(
+            1
+            for path in published_spec_dir.rglob("*")
+            if path.is_file() and ".git" not in path.parts
+        )
+        quality_scores = state.get("quality_scores") or []
+        final_quality = quality_scores[-1] if quality_scores else {}
+        lines = [
+            "# Squad Report",
+            "",
+            "## Run",
+            "",
+            f"- Run ID: {state.get('run_id') or 'unknown'}",
+            f"- Spec ID: {state.get('spec_id') or published_spec_dir.name}",
+            f"- Mode: {state.get('mode') or 'unknown'}",
+            f"- Autonomy: {state.get('autonomy_mode') or 'unknown'}",
+            f"- Spec status: {state.get('spec_status') or 'planned'}",
+            "",
+            "## Final Quality",
+            "",
+            f"- WHY pass: {final_quality.get('pass', 'unknown')}",
+            f"- Overall: {final_quality.get('overall', 'n/a')}",
+            "",
+            "## Handoff",
+            "",
+            f"- Artifacts: {artifact_count} files in `{published_spec_dir.name}/`",
+            "- Ready for: `echelon harness run <spec-id>`",
+            "- Application source files modified by Phase A: none",
+            "",
+        ]
+        (published_spec_dir / "squad-report.md").write_text(
+            "\n".join(lines),
+            encoding="utf-8",
+        )
 
     def _publish_constitution_snapshot(self, published_spec_dir: Path) -> None:
         """Copy the project constitution into the published spec build inputs."""

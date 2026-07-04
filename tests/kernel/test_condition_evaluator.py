@@ -115,6 +115,12 @@ class TestConditionEvaluator:
              "verify_expand_iterations": 2, "max_verify_expand_iterations": 5},
         ) is True
 
+    def test_or_true_short_circuits_unknown_human_approved(self):
+        assert self.ev.evaluate(
+            "autonomy in [semi, banzai] OR human_approved",
+            {"autonomy_mode": "banzai"},
+        ) is True
+
     def test_or_both_false(self):
         assert self.ev.evaluate(
             "coverage_pct >= coverage_threshold OR verify_expand_iterations >= max_verify_expand_iterations",
