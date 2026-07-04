@@ -79,6 +79,28 @@ def _active_spec_dir(project_root: Path) -> Path | None:
     return _find_spec_dir(project_root, spec_id) if spec_id else None
 
 
+def _active_spec_dir_matching(project_root: Path, spec: str) -> Path | None:
+    run_dir = _active_run_dir(project_root)
+    if run_dir is None:
+        return None
+    state_path = run_dir / "state.json"
+    if not state_path.exists():
+        return None
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+    state_spec_id = str(state.get("spec_id") or "").strip()
+    if state_spec_id and (state_spec_id == spec or state_spec_id.startswith(f"{spec}-")):
+        for key in ("published_spec_dir", "spec_dir"):
+            spec_dir = _canonical_spec_dir_from_ref(project_root, str(state.get(key) or "").strip())
+            if spec_dir is not None:
+                return spec_dir
+
+    return None
+
+
 def _arg_value(args: list[str], name: str) -> str:
     if name not in args:
         return ""
@@ -98,7 +120,11 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
         raise SystemExit(1)
 
     spec = _arg_value(args, "--spec")
-    spec_dir = _find_spec_dir(project_root, spec) if spec else _active_spec_dir(project_root)
+    spec_dir = (
+        _active_spec_dir_matching(project_root, spec) or _find_spec_dir(project_root, spec)
+        if spec
+        else _active_spec_dir(project_root)
+    )
     if spec_dir is None and not spec:
         print(
             "No active spec resolved.\n\n"

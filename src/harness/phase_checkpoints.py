@@ -44,6 +44,10 @@ def _spec_id_from_dir(spec_dir: Path) -> str:
     return name
 
 
+def _spec_dir_allows_external_spec_id(spec_dir: Path) -> bool:
+    return spec_dir.name in {"staging", "specs"} and "runs" in spec_dir.parts
+
+
 def load_checkpoint_ledger(spec_dir: Path) -> CheckpointLedger:
     path = checkpoint_ledger_path(spec_dir)
     if not path.exists():
@@ -71,7 +75,7 @@ def record_phase_checkpoint(
     checkpoint: PhaseCheckpoint,
 ) -> CheckpointLedger:
     spec_id = _spec_id_from_dir(spec_dir)
-    if checkpoint.spec_id != spec_id:
+    if checkpoint.spec_id != spec_id and not _spec_dir_allows_external_spec_id(spec_dir):
         raise ValueError(
             f"checkpoint spec_id {checkpoint.spec_id!r} does not match spec directory {spec_id!r}"
         )
@@ -122,11 +126,12 @@ def create_phase_checkpoint(
     phase: str,
     next_phase: str,
     run_id: str,
+    spec_id: str = "",
 ) -> PhaseCheckpoint | None:
     if not _has_staged_or_unstaged_changes(project_root):
         return None
 
-    spec_id = _spec_id_from_dir(spec_dir)
+    spec_id = spec_id or _spec_id_from_dir(spec_dir)
     run_git(project_root, "add", "-A")
     if run_git(project_root, "diff", "--cached", "--quiet", check=False).returncode != 0:
         subject = f"echelon-checkpoint: {spec_id} {phase}"

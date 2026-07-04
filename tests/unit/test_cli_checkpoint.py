@@ -134,3 +134,59 @@ def test_checkpoint_list_uses_active_spec_from_run_state(tmp_path: Path, capsys)
     out = capsys.readouterr().out
     assert "CHECKPOINTS - spec 001-demo" in out
     assert "phase3-plan" in out
+
+
+def test_checkpoint_list_spec_prefers_matching_active_staging_spec(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    stale_spec_dir = tmp_path / "specs" / "001-old-feature"
+    stale_spec_dir.mkdir(parents=True)
+    record_checkpoint_metadata(
+        stale_spec_dir,
+        PhaseCheckpoint(
+            id="phase3-plan",
+            spec_id="001-old-feature",
+            phase="phase3-plan",
+            next_phase="phase3-consensus",
+            commit="oldabcdef123",
+            metadata_commit="",
+            source="auto",
+            run_id="old-run",
+            created_at="2026-07-04T11:00:00Z",
+        ),
+    )
+    active_spec_dir = tmp_path / "runs" / "spec-20260704-120000" / "staging"
+    active_spec_dir.mkdir(parents=True)
+    record_checkpoint_metadata(
+        active_spec_dir,
+        PhaseCheckpoint(
+            id="phase1-why1",
+            spec_id="001-simple-notes",
+            phase="phase1-why1",
+            next_phase="phase1-why1",
+            commit="newabcdef123",
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-04T12:00:00Z",
+        ),
+    )
+    run_dir = active_spec_dir.parent
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "001-simple-notes",
+                "spec_dir": "runs/spec-20260704-120000/staging",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_checkpoint_command(["list", "--spec", "001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "CHECKPOINTS - spec 001-simple-notes" in out
+    assert "phase1-why1" in out
+    assert "oldabcd" not in out

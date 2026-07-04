@@ -544,10 +544,17 @@ class TestSquadControllerBasics:
         assert state.get("escalation_question") is not None
         assert "consecutive" in state.get("escalation_question", "").lower()
 
-    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
+    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
         from harness.squad_provider import SquadAgentResult
         call_count = {"n": 0}
+        checkpoint_calls = []
+
+        def fake_checkpoint(**kwargs):
+            checkpoint_calls.append(kwargs)
+            return None
+
+        monkeypatch.setattr("harness.squad.create_phase_checkpoint", fake_checkpoint)
 
         def side_effect(*args, **kwargs):
             call_count["n"] += 1
@@ -641,11 +648,22 @@ class TestSquadControllerBasics:
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
+        staging = tmp_path / "squad" / "run-test" / "staging"
+        state = store.load()
+        state["spec_id"] = "001-test"
+        state["spec_dir"] = str(staging.relative_to(tmp_path))
+        store.save(state)
         result = ctrl.run("msg", "banzai")
         # Provider called at least twice: once for WHY1, once for COMMANDER escalation
         assert provider.exec_agent.call_count >= 2
         # Run did not end blocked
         assert result.status != "blocked"
+        assert any(
+            call["phase"] == "phase1-why1"
+            and call["next_phase"] == "phase1-why1"
+            and call["spec_id"] == "001-test"
+            for call in checkpoint_calls
+        )
 
     def test_semi_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
         """Semi: WHY1 returns escalation_question in state_updates → run stops blocked."""

@@ -653,6 +653,7 @@ class SquadController:
                     s = self._state_store.load()
                     s["escalation_resolved"] = True
                     self._state_store.save(s)
+                    self._checkpoint_successful_phase(phase, phase)
                     continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
                 else:
                     _blocked_banner(
@@ -966,6 +967,7 @@ class SquadController:
                 phase=phase,
                 next_phase=next_phase,
                 run_id=str(state.get("run_id") or ""),
+                spec_id=str(state.get("spec_id") or spec_dir.name),
             )
         except Exception as exc:
             logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
