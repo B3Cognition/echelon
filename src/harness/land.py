@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.ui import banner as _banner
 
 from harness.gitops import _run_git
@@ -136,7 +137,14 @@ def prepare_feature_branch(
             "--no-ff",
             default_branch,
             "-m",
-            f"Merge {default_branch} into {feature_branch}",
+            build_echelon_commit_message(
+                f"Merge {default_branch} into {feature_branch}",
+                EchelonCommitMetadata(
+                    origin="delivery",
+                    action="land-prepare-merge",
+                    spec_id=feature_branch,
+                ),
+            ),
         ],
         cwd=str(project_dir),
         check=False,

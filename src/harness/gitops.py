@@ -23,6 +23,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Optional
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
 from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
@@ -766,6 +767,11 @@ class GitOpsManager:
         # Build commit message
         if skip_ci and self._config.ci_skip_enabled:
             message = f"{self._config.ci_skip_tag} {message}"
+        if "Co-authored-by: Echelon" not in message:
+            message = build_echelon_commit_message(
+                message,
+                EchelonCommitMetadata(origin="delivery", action="commit"),
+            )
 
         _run_git(
             ["commit", "-m", message, "--allow-empty"],

@@ -28,6 +28,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
 from echelon.artifact_index import write_artifact_index
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME
 from harness.config import HarnessConfig
 from harness.documentation_gate import evaluate_documentation_gate
@@ -2465,9 +2466,19 @@ class RalphController:
             label = f"{phase_group} {label}"
         if not task_ids and phase_group:
             label = f"{phase_group} tasks-unknown"
-        message = (
-            f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
-            f"iter-{outer_iter} {phase} {label}"
+        message = build_echelon_commit_message(
+            (
+                f"harness-checkpoint: {self._spec_id}/{self._strategy_id} "
+                f"iter-{outer_iter} {phase} {label}"
+            ),
+            EchelonCommitMetadata(
+                origin="delivery",
+                action="checkpoint",
+                spec_id=self._spec_id,
+                run_id=self._build_id,
+                phase=phase,
+                strategy=self._strategy_id,
+            ),
         )
         commit = self._gitops.commit(worktree_path, message)
         checkpoint = {
@@ -2636,7 +2647,16 @@ class RalphController:
         """
         fallback = f"harness/{self._spec_id}-{self._strategy_id}-iter-{outer_iter}"
         branch = fallback
-        message = f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}"
+        message = build_echelon_commit_message(
+            f"harness: {self._spec_id}/{self._strategy_id} iter-{outer_iter}",
+            EchelonCommitMetadata(
+                origin="delivery",
+                action="commit",
+                spec_id=self._spec_id,
+                run_id=self._build_id,
+                strategy=self._strategy_id,
+            ),
+        )
         try:
             self._gitops.commit(worktree_path, message)
         except Exception as e:
@@ -3356,7 +3376,15 @@ def _salvage_build_worktree(
             timeout=60,
             check=True,
         )
-        message = f"harness-salvage: {spec_id} {strategy_id} iter-{outer_iter}"
+        message = build_echelon_commit_message(
+            f"harness-salvage: {spec_id} {strategy_id} iter-{outer_iter}",
+            EchelonCommitMetadata(
+                origin="delivery",
+                action="salvage",
+                spec_id=spec_id,
+                strategy=strategy_id,
+            ),
+        )
         subprocess.run(
             [
                 "git",

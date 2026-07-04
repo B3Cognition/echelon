@@ -7,6 +7,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
 from echelon.workspace_model import discover_workspace
 
@@ -453,6 +454,10 @@ def migrate_workspace(
 
     committed = False
     if commit:
+        commit_message = build_echelon_commit_message(
+            commit_message,
+            EchelonCommitMetadata(origin="workspace", action="init"),
+        )
         _run_git(plan.workspace_root, "commit", "-m", commit_message)
         committed = True
 

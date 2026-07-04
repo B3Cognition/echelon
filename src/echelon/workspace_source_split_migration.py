@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
+
 
 class SplitMigrationError(RuntimeError):
     pass
@@ -218,6 +220,10 @@ def split_workspace_source_repo(
 
     _init_child_git_repo(plan.source_dir)
     _run_git(plan.source_dir, "add", ".")
+    child_commit_message = build_echelon_commit_message(
+        child_commit_message,
+        EchelonCommitMetadata(origin="workspace", action="source-split-child"),
+    )
     _run_git(
         plan.source_dir,
         "-c",
@@ -239,6 +245,10 @@ def split_workspace_source_repo(
 
     root_committed = False
     if commit:
+        root_commit_message = build_echelon_commit_message(
+            root_commit_message,
+            EchelonCommitMetadata(origin="workspace", action="source-split-root"),
+        )
         _run_git(plan.workspace_root, "commit", "-m", root_commit_message)
         root_committed = True
 
