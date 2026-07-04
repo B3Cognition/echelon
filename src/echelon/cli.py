@@ -4205,15 +4205,17 @@ def _cmd_rewind(
     args: list[str],
     project_root: Path,
 ) -> None:
-    if len(args) != 1:
+    confirm = "--confirm" in args
+    positional = [arg for arg in args if arg != "--confirm"]
+    if len(positional) != 1:
         print(
-            "Usage: echelon rewind <phase-id>\n"
+            "Usage: echelon rewind <phase-id> [--confirm]\n"
             f"Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    target = args[0].strip()
+    target = positional[0].strip()
     if target not in _SAFE_REWIND_PHASES:
         print(
             "✗ Unsupported rewind target.\n"
@@ -4244,6 +4246,37 @@ def _cmd_rewind(
             file=sys.stderr,
         )
         sys.exit(1)
+
+    checkpoint_ledger = spec_dir / ".echelon" / "checkpoints.json"
+    if checkpoint_ledger.exists():
+        from echelon.rewind import RewindError, prepare_rewind
+
+        try:
+            result = prepare_rewind(
+                project_root=project_root,
+                spec=spec_dir.name,
+                target=target,
+                confirm=confirm,
+            )
+        except RewindError as exc:
+            print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if not result.applied:
+            print(result.message)
+            return
+
+        _banner(
+            "REWIND COMPLETE",
+            [
+                ("spec", result.spec_id),
+                ("checkpoint", result.checkpoint_id),
+                ("from", result.from_commit[:7]),
+                ("to", result.to_commit[:7]),
+                ("backup", result.backup_ref or "(none)"),
+            ],
+        )
+        return
 
     if not _rewind_constitution_is_real(project_root):
         print(
