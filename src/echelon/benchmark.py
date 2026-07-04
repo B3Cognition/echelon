@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
+
 
 @dataclass(frozen=True)
 class BenchmarkFixture:
@@ -199,6 +201,20 @@ def _default_runner(command: tuple[str, ...]) -> int:
     return subprocess.run(command, check=False).returncode
 
 
+def _git(
+    project_root: Path,
+    *args: str,
+    capture_output: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("git", *args),
+        cwd=project_root,
+        check=False,
+        text=True,
+        capture_output=capture_output,
+    )
+
+
 def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
@@ -372,6 +388,64 @@ def baseline_reset_commands(baseline_ref: str) -> tuple[tuple[str, ...], ...]:
     )
 
 
+def baseline_snapshot_commands() -> tuple[tuple[str, ...], ...]:
+    return (
+        (
+            "git",
+            "add",
+            "-A",
+            "--",
+            ".",
+            ":(exclude)runs",
+            ":(exclude).harness-build-status.json",
+        ),
+        ("git", "commit", "-m", "chore: snapshot workspace before benchmark"),
+    )
+
+
+def snapshot_benchmark_baseline(project_root: Path) -> str:
+    inside = _git(project_root, "rev-parse", "--is-inside-work-tree", capture_output=True)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        raise RuntimeError("benchmark requires a Git workspace before it can snapshot a baseline")
+
+    add = _git(
+        project_root,
+        "add",
+        "-A",
+        "--",
+        ".",
+        ":(exclude)runs",
+        ":(exclude).harness-build-status.json",
+    )
+    if add.returncode != 0:
+        raise RuntimeError("could not stage benchmark baseline snapshot")
+
+    has_head = _git(project_root, "rev-parse", "--verify", "HEAD", capture_output=True).returncode == 0
+    has_staged_changes = _git(project_root, "diff", "--cached", "--quiet").returncode != 0
+    if not has_head or has_staged_changes:
+        message = build_echelon_commit_message(
+            "chore: snapshot workspace before benchmark",
+            EchelonCommitMetadata(origin="benchmark", action="baseline-snapshot"),
+        )
+        commit = _git(
+            project_root,
+            "-c",
+            "user.name=Echelon Benchmark",
+            "-c",
+            "user.email=echelon-benchmark@example.invalid",
+            "commit",
+            "-m",
+            message,
+        )
+        if commit.returncode != 0:
+            raise RuntimeError("could not commit benchmark baseline snapshot")
+
+    ref = _git(project_root, "rev-parse", "--verify", "HEAD", capture_output=True)
+    if ref.returncode != 0:
+        raise RuntimeError("could not resolve benchmark baseline snapshot")
+    return ref.stdout.strip()
+
+
 def variant_execution_commands(
     plan: BenchmarkCommandPlan,
     baseline_ref: str,
@@ -391,6 +465,7 @@ def run_benchmark_variant(
 ) -> Path:
     plan = plan_variant_commands(fixture_id, variant_id)
     run = runner or _default_runner
+    resolved_baseline_ref = baseline_ref or snapshot_benchmark_baseline(project_root)
 
     status = "complete"
     retries = 0
@@ -409,10 +484,9 @@ def run_benchmark_variant(
             return False
         return True
 
-    if baseline_ref:
-        for reset_command in baseline_reset_commands(baseline_ref):
-            if not run_one(reset_command, "baseline_reset"):
-                break
+    for reset_command in baseline_reset_commands(resolved_baseline_ref):
+        if not run_one(reset_command, "baseline_reset"):
+            break
 
     if status == "complete" and not run_one(plan.commands[0], "spec_run"):
         pass
@@ -438,9 +512,8 @@ def run_benchmark_variant(
 
     elapsed = time.monotonic() - started
 
-    if baseline_ref:
-        for reset_command in baseline_reset_commands(baseline_ref):
-            run(reset_command)
+    for reset_command in baseline_reset_commands(resolved_baseline_ref):
+        run(reset_command)
 
     record = collect_benchmark_record(
         project_root,

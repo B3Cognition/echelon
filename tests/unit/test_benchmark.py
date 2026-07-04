@@ -257,7 +257,7 @@ def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> 
     assert "tiny-notes" in out
     assert "baseline" in out
     assert "constitution-tasks-adrs" in out
-    assert "echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>" in out
+    assert "echelon benchmark run tiny-notes --variant baseline" in out
 
 
 def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
@@ -281,6 +281,24 @@ def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
     assert "phase-exp-constitution-quality" in out
     assert "phase-exp-tasks-quality" in out
     assert "echelon delivery run RESOLVE_SPEC_ID_FROM_CURRENT_RUN mode=banzai" in out
+
+
+def test_benchmark_dry_run_without_baseline_ref_prints_snapshot_wrapper(tmp_path: Path, capsys) -> None:
+    _cmd_benchmark(
+        [
+            "run",
+            "tiny-notes",
+            "--variant",
+            "baseline",
+            "--dry-run",
+        ],
+        project_root=tmp_path,
+    )
+
+    out = capsys.readouterr().out
+    assert "git add -A -- . :(exclude)runs :(exclude).harness-build-status.json" in out
+    assert "git commit -m chore: snapshot workspace before benchmark" in out
+    assert "git reset --hard BENCHMARK_BASELINE_SNAPSHOT" in out
 
 
 def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
@@ -322,12 +340,40 @@ def test_benchmark_explains_fixture_used_as_variant(tmp_path: Path, capsys) -> N
     assert "Use --variant baseline" in err
 
 
-def test_benchmark_real_run_requires_baseline_ref(tmp_path: Path, capsys) -> None:
-    with pytest.raises(SystemExit) as exc:
-        _cmd_benchmark(["run", "tiny-notes", "--variant", "baseline"], project_root=tmp_path)
+def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
 
-    assert exc.value.code == 1
-    assert "--baseline-ref" in capsys.readouterr().err
+    def fake_run_benchmark_variant(
+        project_root: Path,
+        fixture_id: str,
+        variant_id: str,
+        *,
+        baseline_ref: str | None = None,
+    ) -> Path:
+        calls.append(
+            {
+                "project_root": project_root,
+                "fixture_id": fixture_id,
+                "variant_id": variant_id,
+                "baseline_ref": baseline_ref,
+            }
+        )
+        output_dir = tmp_path / "runs" / "benchmarks" / "fake" / variant_id
+        output_dir.mkdir(parents=True)
+        return output_dir
+
+    monkeypatch.setattr("echelon.benchmark.run_benchmark_variant", fake_run_benchmark_variant)
+
+    _cmd_benchmark(["run", "tiny-notes", "--variant", "baseline"], project_root=tmp_path)
+
+    assert calls == [
+        {
+            "project_root": tmp_path,
+            "fixture_id": "tiny-notes",
+            "variant_id": "baseline",
+            "baseline_ref": None,
+        }
+    ]
 
 
 def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Path) -> None:
@@ -388,6 +434,74 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
     assert summary["variants"]["constitution"]["spec_id"] == "001"
     assert summary["variants"]["constitution"]["delivery_run_id"] == "build-1"
     assert (output_dir / "summary.md").exists()
+
+
+def test_run_benchmark_variant_snapshots_workspace_when_baseline_ref_missing(tmp_path: Path) -> None:
+    subprocess_run = __import__("subprocess").run
+    subprocess_run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess_run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    subprocess_run(["git", "config", "user.email", "test@example.invalid"], cwd=tmp_path, check=True)
+    (tmp_path / "README.md").write_text("fixture\n", encoding="utf-8")
+    subprocess_run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess_run(["git", "commit", "-m", "Initial commit from Specify template"], cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_text("/runs/\n", encoding="utf-8")
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir()
+    config_path.write_text("deploy:\n  enabled: false\n", encoding="utf-8")
+
+    commands: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        if command[:3] == ("echelon", "spec", "run"):
+            squad_dir = tmp_path / "runs" / "spec-20260704-120000-000001"
+            squad_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+            (squad_dir / "state.json").write_text(
+                json.dumps({"run_id": "squad-1", "status": "done", "spec_id": "001"}),
+                encoding="utf-8",
+            )
+        if command[:3] == ("echelon", "delivery", "run"):
+            build_dir = tmp_path / "runs" / "build-20260704-130000-000001"
+            state_dir = build_dir / "state"
+            state_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
+            (state_dir / "default.json").write_text(
+                json.dumps({"run_id": "build-1", "status": "converged"}),
+                encoding="utf-8",
+            )
+        return 0
+
+    run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "baseline",
+        runner=runner,
+        timestamp="20260701-120000",
+    )
+
+    subject = subprocess_run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    body = subprocess_run(
+        ["git", "log", "-1", "--format=%B"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert subject == "chore: snapshot workspace before benchmark"
+    assert "Co-authored-by: Echelon <echelon@b3cognition.dev>" in body
+    assert config_path.exists()
+    assert commands[0][:3] == ("git", "reset", "--hard")
+    assert commands[1] == ("git", "clean", "-fd", "-e", "runs/benchmarks/")
+    assert commands[-2][:3] == ("git", "reset", "--hard")
+    assert commands[-1] == ("git", "clean", "-fd", "-e", "runs/benchmarks/")
 
 
 def test_run_benchmark_variant_resets_after_failed_variant(tmp_path: Path) -> None:

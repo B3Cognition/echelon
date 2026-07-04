@@ -4353,6 +4353,7 @@ def _cmd_rewind(
 
 def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     from echelon.benchmark import (
+        baseline_snapshot_commands,
         latest_summary_path,
         load_saved_scorecard,
         load_summary,
@@ -4372,10 +4373,13 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         "  echelon benchmark list\n"
         "  echelon benchmark show [latest|<summary-path-or-run-dir>]\n"
         "  echelon benchmark run <fixture-id> --variant <variant-id> "
-        "--baseline-ref <ref> [--dry-run]\n"
+        "[--baseline-ref <ref>] [--dry-run]\n"
         "\n"
         "Example:\n"
-        "  echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>\n"
+        "  echelon benchmark run tiny-notes --variant baseline\n"
+        "\n"
+        "If --baseline-ref is omitted, Echelon commits the current workspace as "
+        "the benchmark baseline snapshot.\n"
     )
 
     if not args or args[0] in ("-h", "--help"):
@@ -4395,7 +4399,9 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         for variant in variants:
             print(f"  {variant.id:<30} {variant.label}")
         print("\nExample:")
-        print("  echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>")
+        print("  echelon benchmark run tiny-notes --variant baseline")
+        print("\nBaseline snapshot:")
+        print("  --baseline-ref is optional; omitted runs commit the current workspace first.")
         print("\nPrint saved scores:")
         print("  echelon benchmark show")
         print("\nFor an existing spec, use: echelon delivery run <spec-id>")
@@ -4511,7 +4517,12 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         sys.exit(1)
 
     if dry_run:
-        commands = variant_execution_commands(plan, baseline_ref) if baseline_ref else plan.commands
+        commands = (
+            variant_execution_commands(plan, baseline_ref)
+            if baseline_ref
+            else baseline_snapshot_commands()
+            + variant_execution_commands(plan, "BENCHMARK_BASELINE_SNAPSHOT")
+        )
         _banner(
             "BENCHMARK DRY RUN",
             [("fixture", plan.fixture_id), ("variant", plan.variant_id)],
@@ -4521,15 +4532,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
             print(" ".join(command))
         return
 
-    if not baseline_ref:
-        print(
-            "✗ echelon benchmark run requires --baseline-ref <ref>.\n"
-            "  Commit Phase A baseline artifacts first, then pass that commit/ref.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    output_dir = run_benchmark_variant(project_root, fixture_id, variant_id, baseline_ref=baseline_ref)
+    output_dir = run_benchmark_variant(project_root, fixture_id, variant_id, baseline_ref=baseline_ref or None)
     _banner(
         "BENCHMARK COMPLETE",
         [("fixture", fixture_id), ("variant", variant_id), ("output", str(output_dir))],

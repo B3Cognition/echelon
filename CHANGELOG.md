@@ -10,6 +10,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   variants now run Phase A spec authoring and delivery in `banzai` mode,
   persist collected squad/build metrics to `runs/benchmarks/**/summary.json`,
   and expose `echelon benchmark show` to print saved scores without rerunning.
+- **EGR-063 benchmark baseline snapshots** — `echelon benchmark run` no
+  longer requires `--baseline-ref`; when omitted it commits the current
+  workspace as an Echelon-attributed benchmark baseline snapshot before
+  running reset-wrapped variants.
 - **EGR-063 / #85 artifact-quality benchmark** — added an experimental
   artifact-quality benchmark path. `echelon benchmark` can compare baseline
   builds against opt-in constitution, tasks, and ADR cleanse variants;
