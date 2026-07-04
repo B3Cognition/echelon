@@ -1339,7 +1339,7 @@ git commit -m "feat: add Echelon attribution to generated commits"
 Add under `[Unreleased]`:
 
 ```markdown
-- **EGR-082 / #105 spec-scoped checkpoints and rewind** - added spec-scoped
+- **EGR-085 spec-scoped checkpoints and rewind** - added spec-scoped
   Phase A checkpoint metadata, `echelon checkpoint` commands, branch-level
   rewind with backup refs, manual checkpoint UX, and mandatory Echelon commit
   attribution trailers for generated commits.
