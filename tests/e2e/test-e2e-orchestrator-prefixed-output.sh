@@ -25,9 +25,17 @@ trap 'rm -rf "$tmpdir"' EXIT
 ECHELON_YML=".specify/extensions/echelon/echelon-config.yml"
 
 # ── Setup: polyrepo P with spec and two initialised sub-repos ─────────────────
+git -C "$tmpdir" init -q  # workspace root must be a git repo for harness run
 mkdir -p "$tmpdir/specs/024-test"
 printf -- "---\ntargets:\n  - repo-a\n  - repo-b\n---\n# spec\n" \
   > "$tmpdir/specs/024-test/spec.md"
+for artifact in plan.md research.md data-model.md; do
+  printf '# %s\n' "$artifact" > "$tmpdir/specs/024-test/$artifact"
+done
+printf -- '- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n' \
+  > "$tmpdir/specs/024-test/tasks.md"
+printf '# Constitution\n\nPrinciples are defined for this project.\n' \
+  > "$tmpdir/specs/024-test/constitution.md"
 
 for repo in repo-a repo-b; do
   mkdir -p "$tmpdir/$repo/$(dirname $ECHELON_YML)"
