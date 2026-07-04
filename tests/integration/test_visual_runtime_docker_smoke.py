@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -16,37 +15,10 @@ from harness.visual_ralph import VisualRalphController
 PLAYWRIGHT_IMAGE = "mcr.microsoft.com/playwright:v1.42.0-jammy"
 
 
-def _docker_available() -> bool:
-    try:
-        return subprocess.run(
-            ["docker", "info"],
-            capture_output=True,
-            timeout=10,
-            check=False,
-        ).returncode == 0
-    except FileNotFoundError:
-        return False
-
-
-def _image_available(image: str) -> bool:
-    try:
-        return subprocess.run(
-            ["docker", "image", "inspect", image],
-            capture_output=True,
-            timeout=10,
-            check=False,
-        ).returncode == 0
-    except FileNotFoundError:
-        return False
-
-
 @pytest.mark.integration
+@pytest.mark.docker
+@pytest.mark.docker_image(PLAYWRIGHT_IMAGE)
 def test_visual_runtime_command_lifecycle_with_real_docker(tmp_path: Path) -> None:
-    if not _docker_available():
-        pytest.skip("Docker is not reachable")
-    if not _image_available(PLAYWRIGHT_IMAGE):
-        pytest.skip(f"Required local Docker image is missing: {PLAYWRIGHT_IMAGE}")
-
     (tmp_path / "server.js").write_text(
         """
 const http = require('http');

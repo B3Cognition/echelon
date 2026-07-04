@@ -8,13 +8,10 @@ Contract tests:
 CT-01: create() returns SandboxHandle with non-null session_id
 CT-02: exec() returns complete ExecResult with all fields
 CT-03: exec() timeout returns exit_code=124
-CT-04: exec() force-kill returns exit_code=137 (skipped for mock)
 CT-05: write_file() + read_file() roundtrip
 CT-06: destroy() cleans up resources
-CT-07: network policy default deny (integration-level, skipped for mock)
-CT-08: loopback allowed (integration-level, skipped for mock)
 CT-09: credential leak detection blocks create()
-CT-10: resource limits enforced (integration-level, skipped for mock)
+CT-10: resource limit defaults
 CT-11: bounded buffer truncation
 CT-12: capabilities() returns Set[Capability]
 """
@@ -126,20 +123,6 @@ class TestCT03TimeoutReturns124:
 
 
 @pytest.mark.contract
-class TestCT04ForceKillReturns137:
-    """CT-04: Force-kill returns exit_code=137 (FR-SANDBOX-003c).
-
-    Skipped for mock provider — requires real Docker to test hung process.
-    """
-
-    @pytest.mark.docker
-    def test_force_kill_exit_code(
-        self, provider_class: Type[SandboxProvider]
-    ) -> None:
-        pytest.skip("Requires real Docker provider for force-kill test")
-
-
-@pytest.mark.contract
 class TestCT05WriteReadRoundtrip:
     """CT-05: write_file() + read_file() roundtrip."""
 
@@ -175,34 +158,6 @@ class TestCT06DestroyCleanup:
 
         # Should not raise
         provider.destroy(handle)
-
-
-@pytest.mark.contract
-@pytest.mark.docker
-class TestCT07NetworkDenyDefault:
-    """CT-07: network policy default deny (FR-NETWORK-001a).
-
-    Requires real Docker with Squid proxy.
-    """
-
-    def test_non_allowlisted_blocked(
-        self, provider_class: Type[SandboxProvider]
-    ) -> None:
-        pytest.skip("Requires real Docker + Squid proxy")
-
-
-@pytest.mark.contract
-@pytest.mark.docker
-class TestCT08LoopbackAllowed:
-    """CT-08: loopback allowed (FR-NETWORK-002).
-
-    Requires real Docker.
-    """
-
-    def test_loopback_accessible(
-        self, provider_class: Type[SandboxProvider]
-    ) -> None:
-        pytest.skip("Requires real Docker")
 
 
 @pytest.mark.contract
@@ -254,17 +209,8 @@ class TestCT09CredentialLeakDetection:
 
 
 @pytest.mark.contract
-@pytest.mark.docker
 class TestCT10ResourceLimits:
-    """CT-10: resource limits enforced (FR-RESOURCE-001a/c).
-
-    Requires real Docker.
-    """
-
-    def test_oom_returns_139(
-        self, provider_class: Type[SandboxProvider]
-    ) -> None:
-        pytest.skip("Requires real Docker")
+    """CT-10: resource limit defaults."""
 
     def test_default_resource_limits(
         self, provider_class: Type[SandboxProvider]

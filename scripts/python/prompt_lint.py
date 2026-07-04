@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-EXT_DIR = SCRIPT_DIR.parent.parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
+EXT_DIR = REPO_ROOT / "extension"
 
 DEFAULT_AGENTS_ROOT = EXT_DIR / "agents"
 DEFAULT_DEFINITION = EXT_DIR / "workflow" / "definition.yaml"

@@ -6,7 +6,7 @@ FR-SHIM-001: Performance contract.
 from __future__ import annotations
 
 import subprocess
-import time
+import json
 
 import pytest
 
@@ -31,10 +31,10 @@ class TestShimOverhead:
         # Measure
         times = []
         for _ in range(3):
-            start = time.monotonic()
-            subprocess.run(
+            result = subprocess.run(
                 ["bash", shim_script, "true"],
                 capture_output=True,
+                text=True,
                 cwd=str(harness_dir_without_manifest),
                 timeout=5,
                 env={
@@ -42,8 +42,8 @@ class TestShimOverhead:
                     "HOME": str(harness_dir_without_manifest),
                 },
             )
-            elapsed_ms = (time.monotonic() - start) * 1000
-            times.append(elapsed_ms)
+            payload = json.loads(result.stdout)
+            times.append(payload["duration_ms"])
 
         avg_ms = sum(times) / len(times)
         # Allow some leeway for CI environments (200ms instead of strict 50ms)

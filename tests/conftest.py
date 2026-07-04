@@ -13,8 +13,10 @@ from typing import Optional
 
 import pytest
 
+REPO_ROOT = Path(__file__).parent.parent
+
 # Add src/ to path so codegen module is importable
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(REPO_ROOT / "src"))
 
 
 def _docker_available() -> bool:
@@ -34,6 +36,7 @@ def _docker_available() -> bool:
 
 # Cache result at module level so we only check once per test session
 _DOCKER_IS_AVAILABLE: Optional[bool] = None
+_DOCKER_IMAGE_AVAILABLE: dict[str, bool] = {}
 
 
 def docker_is_available() -> bool:
@@ -42,6 +45,24 @@ def docker_is_available() -> bool:
     if _DOCKER_IS_AVAILABLE is None:
         _DOCKER_IS_AVAILABLE = _docker_available()
     return _DOCKER_IS_AVAILABLE
+
+
+def docker_image_is_available(image: str) -> bool:
+    """Return cached Docker image availability check."""
+    if image not in _DOCKER_IMAGE_AVAILABLE:
+        if not docker_is_available():
+            _DOCKER_IMAGE_AVAILABLE[image] = False
+        else:
+            try:
+                result = subprocess.run(
+                    ["docker", "image", "inspect", image],
+                    capture_output=True,
+                    timeout=10,
+                )
+                _DOCKER_IMAGE_AVAILABLE[image] = result.returncode == 0
+            except (subprocess.TimeoutExpired, OSError):
+                _DOCKER_IMAGE_AVAILABLE[image] = False
+    return _DOCKER_IMAGE_AVAILABLE[image]
 
 
 # --- Pytest markers ---
@@ -54,17 +75,43 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "system: System tests (full Docker + fixture repos)")
     config.addinivalue_line("markers", "e2e: End-to-end smoke tests")
     config.addinivalue_line("markers", "docker: Tests that require Docker daemon")
+    config.addinivalue_line("markers", "docker_image(name): Tests that require a local Docker image")
+    config.addinivalue_line(
+        "markers",
+        "deployed_extension: Tests that require an installed .specify/extensions/echelon copy",
+    )
     config.addinivalue_line("markers", "slow: Tests that take > 30s")
 
 
-# --- Auto-skip for Docker-dependent tests ---
+# --- Auto-deselect tests whose external substrate is unavailable ---
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip docker-marked tests when Docker is not available."""
-    if docker_is_available():
-        return
+    """Deselect environment-dependent tests when their substrate is unavailable."""
+    docker_available = docker_is_available()
+    deployed_extension_available = (
+        REPO_ROOT / ".specify" / "extensions" / "echelon" / "scripts" / "bash" / "endocrine.sh"
+    ).exists()
+    selected: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
 
-    skip_docker = pytest.mark.skip(reason="Docker daemon not available")
     for item in items:
-        if "docker" in item.keywords:
-            item.add_marker(skip_docker)
+        if "docker" in item.keywords and not docker_available:
+            deselected.append(item)
+            continue
+        missing_image = False
+        for marker in item.iter_markers("docker_image"):
+            image = str(marker.args[0]) if marker.args else ""
+            if image and not docker_image_is_available(image):
+                missing_image = True
+                break
+        if missing_image:
+            deselected.append(item)
+            continue
+        if "deployed_extension" in item.keywords and not deployed_extension_available:
+            deselected.append(item)
+            continue
+        selected.append(item)
+
+    if deselected:
+        items[:] = selected
+        config.hook.pytest_deselected(items=deselected)

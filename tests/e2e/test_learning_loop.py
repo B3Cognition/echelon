@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-EXT_ROOT = Path(__file__).resolve().parent.parent.parent
-if str(EXT_ROOT) not in sys.path:
-    sys.path.insert(0, str(EXT_ROOT))
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.python.emit_score_deltas import (
     _apply_deltas,
@@ -496,48 +496,28 @@ class TestDetectPatternsE2E:
 # ---------------------------------------------------------------------------
 
 
-FIXTURES_PROMPTS = EXT_ROOT / "tests" / "fixtures" / "prompts"
-DEFINITION_PATH = EXT_ROOT / "workflow" / "definition.yaml"
+FIXTURES_PROMPTS = REPO_ROOT / "tests" / "fixtures" / "prompts"
+DEFINITION_PATH = REPO_ROOT / "extension" / "workflow" / "definition.yaml"
 
 
 class TestPromptLintCLI:
     def test_root_override_scans_fixture_dir(self):
         """CLI --root override: fixture dir with ambiguous_prompt.md must detect ambiguous terms."""
-        if not FIXTURES_PROMPTS.exists():
-            pytest.skip("fixtures/prompts not found")
-        if not DEFINITION_PATH.exists():
-            pytest.skip("definition.yaml not found")
-
         result = lint_prompts(FIXTURES_PROMPTS, DEFINITION_PATH)
         # Should find ambiguous terms in ambiguous_prompt.md
         assert result["files_scanned"] >= 1
         assert result["terms_loaded"] >= 1
 
     def test_ambiguous_prompt_detected(self):
-        if not FIXTURES_PROMPTS.exists():
-            pytest.skip("fixtures/prompts not found")
-        if not DEFINITION_PATH.exists():
-            pytest.skip("definition.yaml not found")
-
         result = lint_prompts(FIXTURES_PROMPTS, DEFINITION_PATH)
         assert result["ambiguous_count"] > 0
         assert result["exit_code"] == 1
 
     def test_ambiguous_files_includes_ambiguous_prompt(self):
-        if not FIXTURES_PROMPTS.exists():
-            pytest.skip("fixtures/prompts not found")
-        if not DEFINITION_PATH.exists():
-            pytest.skip("definition.yaml not found")
-
         result = lint_prompts(FIXTURES_PROMPTS, DEFINITION_PATH)
         assert any("ambiguous_prompt" in f for f in result["ambiguous_files"])
 
     def test_findings_have_line_numbers(self):
-        if not FIXTURES_PROMPTS.exists():
-            pytest.skip("fixtures/prompts not found")
-        if not DEFINITION_PATH.exists():
-            pytest.skip("definition.yaml not found")
-
         result = lint_prompts(FIXTURES_PROMPTS, DEFINITION_PATH)
         for finding in result["findings"]:
             assert "line_number" in finding
@@ -563,21 +543,15 @@ class TestPromptLintCLI:
             assert result["exit_code"] == 0 or result["ambiguous_count"] == 0
 
     def test_glossary_loads_all_terms(self):
-        if not DEFINITION_PATH.exists():
-            pytest.skip("definition.yaml not found")
         glossary = _load_glossary(DEFINITION_PATH)
         assert len(glossary) >= 8
 
     def test_all_glossary_terms_have_senses(self):
-        if not DEFINITION_PATH.exists():
-            pytest.skip("definition.yaml not found")
         glossary = _load_glossary(DEFINITION_PATH)
         for term_entry in glossary:
             assert len(term_entry.get("senses", [])) >= 1
 
     def test_report_has_required_keys(self):
-        if not FIXTURES_PROMPTS.exists():
-            pytest.skip("fixtures/prompts not found")
         result = lint_prompts(FIXTURES_PROMPTS, DEFINITION_PATH)
         required = ["files_scanned", "terms_loaded", "findings",
                     "ambiguous_count", "ambiguous_files", "exit_code"]

@@ -42,17 +42,13 @@ DEPLOYED_SCRIPT = (
     / "endocrine.sh"
 )
 
-# FR-011: fresh clone without extension installation — skip cleanly.
-DEPLOYED_AVAILABLE = DEPLOYED_SCRIPT.exists()
+pytestmark = [pytest.mark.integration, pytest.mark.deployed_extension]
 
 _RESOLVER_ANTIPATTERN = re.compile(
     r'eval\s+"\$\([^)]*specify[^)]*\)"\s*(?:2>/dev/null)?\s*\\?\s*&&\s*_ECHELON_RESOLVER_OK=true'
 )
 
 
-@pytest.mark.skipif(
-    not DEPLOYED_AVAILABLE, reason="FR-011: deployed copy not installed"
-)
 def test_source_deployed_byte_identical():
     """FR-005, SC-002, SC-005: source and deployed copies must be byte-identical."""
     src = SOURCE_SCRIPT.read_bytes()
@@ -67,9 +63,6 @@ def test_source_deployed_byte_identical():
     )
 
 
-@pytest.mark.skipif(
-    not DEPLOYED_AVAILABLE, reason="FR-011: deployed copy not installed"
-)
 def test_deployed_lacks_vulnerable_resolver_pattern():
     """FR-006, SC-003: deployed copy must not contain the pre-df99b73 antipattern.
 
@@ -90,9 +83,6 @@ def test_deployed_lacks_vulnerable_resolver_pattern():
     )
 
 
-@pytest.mark.skipif(
-    not DEPLOYED_AVAILABLE, reason="FR-011: deployed copy not installed"
-)
 def test_deployed_init_produces_archetype_baselines(tmp_path):
     """FR-002/003/004/013/014, SC-001/004: deployed init produces archetype-correct baselines.
 
@@ -177,15 +167,6 @@ def test_deployed_init_produces_archetype_baselines(tmp_path):
     )
 
 
-def test_skip_gracefully_if_deployed_missing():
-    """FR-011: in a fresh clone without `.specify/extensions/echelon/`, tests above
-    must skip cleanly rather than failing the build. This test exists as a
-    marker — the contract is enforced by the `pytest.mark.skipif` decorators
-    on the deployed-dependent tests.
-    """
-    if not DEPLOYED_AVAILABLE:
-        pytest.skip(
-            "deployed copy missing — guard tests skipped cleanly (FR-011 satisfied)"
-        )
-    # When deployed is available, this test is a no-op pass.
+def test_deployed_copy_exists():
+    """FR-011: this module is only collected when the deployed copy exists."""
     assert DEPLOYED_SCRIPT.exists()

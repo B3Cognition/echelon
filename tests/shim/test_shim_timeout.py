@@ -11,17 +11,9 @@ import subprocess
 import pytest
 
 
-def _docker_available() -> bool:
-    try:
-        result = subprocess.run(
-            ["docker", "info"], capture_output=True, timeout=10, check=False,
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+pytestmark = pytest.mark.docker
 
 
-@pytest.mark.skipif(not _docker_available(), reason="Docker not available")
 class TestShimTimeout:
     """Tests for shim routing timeout."""
 
