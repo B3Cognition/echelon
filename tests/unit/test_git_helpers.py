@@ -5,9 +5,11 @@ from echelon.git_helpers import (
     commit_exists,
     create_backup_ref,
     current_branch,
+    GitHelperError,
     is_worktree_dirty,
     ref_contains_commit,
     reset_branch_to_commit,
+    run_git,
 )
 
 
@@ -59,3 +61,45 @@ def test_backup_ref_and_reset_branch_to_commit(tmp_path: Path) -> None:
 
     assert _git(repo, "rev-parse", "HEAD") == base
     assert _git(repo, "rev-parse", backup) == head
+
+
+def test_backup_ref_updates_existing_ref_for_retry(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    base = _init_repo(repo)
+    backup = create_backup_ref(repo, "echelon/backup/test", base)
+
+    (repo / "feature.txt").write_text("feature\n", encoding="utf-8")
+    _git(repo, "add", "feature.txt")
+    _git(repo, "commit", "-m", "feature")
+    head = _git(repo, "rev-parse", "HEAD")
+
+    assert create_backup_ref(repo, backup, head) == backup
+    assert _git(repo, "rev-parse", backup) == head
+
+
+def test_run_git_wraps_missing_executable(monkeypatch, tmp_path: Path) -> None:
+    def raise_missing(*_args, **_kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", raise_missing)
+
+    try:
+        run_git(tmp_path, "status")
+    except GitHelperError as exc:
+        assert "could not execute git" in str(exc)
+    else:
+        raise AssertionError("missing git should raise GitHelperError")
+
+
+def test_run_git_wraps_timeout(monkeypatch, tmp_path: Path) -> None:
+    def raise_timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(["git", "status"], timeout=120)
+
+    monkeypatch.setattr(subprocess, "run", raise_timeout)
+
+    try:
+        run_git(tmp_path, "status")
+    except GitHelperError as exc:
+        assert "timed out" in str(exc)
+    else:
+        raise AssertionError("git timeout should raise GitHelperError")

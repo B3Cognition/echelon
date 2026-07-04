@@ -15,14 +15,19 @@ def run_git(
     *args: str,
     check: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise GitHelperError("could not execute git: git is not available") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise GitHelperError(f"git {' '.join(args)} timed out in {repo}") from exc
     if check and result.returncode != 0:
         raise GitHelperError(
             f"git {' '.join(args)} failed in {repo}\n"
@@ -60,7 +65,7 @@ def create_backup_ref(repo: Path, ref_name: str, target: str = "HEAD") -> str:
     cleaned = ref_name.strip().removeprefix("refs/heads/")
     if not cleaned.startswith("echelon/backup/"):
         raise ValueError("backup refs must live under echelon/backup/")
-    run_git(repo, "branch", cleaned, target)
+    run_git(repo, "branch", "--force", cleaned, target)
     return cleaned
 
 
