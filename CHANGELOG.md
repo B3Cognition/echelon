@@ -11,6 +11,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   builds against opt-in constitution, tasks, and ADR cleanse variants;
   experimental `phase-exp-*` workflow nodes are manually runnable through
   `echelon phase run` and are not part of the default workflow.
+- **EGR-085 spec-scoped checkpoints and rewind** - added spec-scoped
+  Phase A checkpoint metadata, `echelon checkpoint` commands, branch-level
+  rewind with backup refs, manual checkpoint UX, and mandatory Echelon commit
+  attribution trailers for generated commits.
 - **EGR-080 / #97 TECH WRITER documentation gate** — added a build-phase TECH
   WRITER agent plus a deterministic Ralph gate so completed Echelon
   implementation work records documentation impact and updates `README.md` and
