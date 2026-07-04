@@ -190,3 +190,42 @@ def test_checkpoint_list_spec_prefers_matching_active_staging_spec(
     assert "CHECKPOINTS - spec 001-simple-notes" in out
     assert "phase1-why1" in out
     assert "oldabcd" not in out
+
+
+def test_checkpoint_list_without_spec_uses_active_staging_spec(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    active_spec_dir = tmp_path / "runs" / "spec-20260704-120000" / "staging"
+    active_spec_dir.mkdir(parents=True)
+    record_checkpoint_metadata(
+        active_spec_dir,
+        PhaseCheckpoint(
+            id="phase1-why1",
+            spec_id="001-simple-notes",
+            phase="phase1-why1",
+            next_phase="phase1-why1",
+            commit="newabcdef123",
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-04T12:00:00Z",
+        ),
+    )
+    run_dir = active_spec_dir.parent
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "spec_id": "001-simple-notes",
+                "spec_dir": "runs/spec-20260704-120000/staging",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_checkpoint_command(["list"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "CHECKPOINTS - spec 001-simple-notes" in out
+    assert "phase1-why1" in out
