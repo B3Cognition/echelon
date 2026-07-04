@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-063 benchmark scoring persistence** — artifact-quality benchmark
+  variants now run Phase A spec authoring and delivery in `banzai` mode,
+  persist collected squad/build metrics to `runs/benchmarks/**/summary.json`,
+  and expose `echelon benchmark show` to print saved scores without rerunning.
 - **EGR-063 / #85 artifact-quality benchmark** — added an experimental
   artifact-quality benchmark path. `echelon benchmark` can compare baseline
   builds against opt-in constitution, tasks, and ADR cleanse variants;

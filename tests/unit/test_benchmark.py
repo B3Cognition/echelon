@@ -7,6 +7,10 @@ import pytest
 
 from echelon.benchmark import (
     BenchmarkRunRecord,
+    collect_benchmark_record,
+    latest_summary_path,
+    load_saved_scorecard,
+    load_summary,
     list_fixtures,
     list_variants,
     plan_variant_commands,
@@ -48,8 +52,21 @@ def test_plans_baseline_without_cleanse_phases() -> None:
     assert plan.fixture_id == "tiny-notes"
     assert plan.variant_id == "baseline"
     assert plan.phase_ids == ()
-    assert plan.commands[0][:2] == ("echelon", "run")
-    assert plan.commands[-1][:3] == ("echelon", "harness", "run")
+    assert plan.commands[0] == (
+        "echelon",
+        "spec",
+        "run",
+        "--mode",
+        "banzai",
+        list_fixtures()[0].prompt,
+    )
+    assert plan.commands[-1] == (
+        "echelon",
+        "delivery",
+        "run",
+        "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+        "mode=banzai",
+    )
 
 
 def test_plans_constitution_tasks_adrs_with_ordered_phases() -> None:
@@ -60,9 +77,36 @@ def test_plans_constitution_tasks_adrs_with_ordered_phases() -> None:
         "phase-exp-tasks-quality",
         "phase-exp-adr-quality",
     )
-    assert ("echelon", "phase", "run", "phase-exp-constitution-quality") in plan.commands
-    assert ("echelon", "phase", "run", "phase-exp-tasks-quality") in plan.commands
-    assert ("echelon", "phase", "run", "phase-exp-adr-quality") in plan.commands
+    assert (
+        "echelon",
+        "phase",
+        "run",
+        "phase-exp-constitution-quality",
+        "--spec",
+        "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+        "--mode",
+        "banzai",
+    ) in plan.commands
+    assert (
+        "echelon",
+        "phase",
+        "run",
+        "phase-exp-tasks-quality",
+        "--spec",
+        "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+        "--mode",
+        "banzai",
+    ) in plan.commands
+    assert (
+        "echelon",
+        "phase",
+        "run",
+        "phase-exp-adr-quality",
+        "--spec",
+        "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+        "--mode",
+        "banzai",
+    ) in plan.commands
 
 
 def test_unknown_fixture_and_variant_fail_clearly() -> None:
@@ -104,6 +148,22 @@ def test_summarize_records_prefers_build_outcomes() -> None:
     assert summary["variants"]["constitution-tasks"]["fulfillment_gaps"] == 1
 
 
+def test_summarize_records_does_not_prefer_failed_empty_metrics() -> None:
+    records = [
+        BenchmarkRunRecord(variant_id="baseline", status="failed"),
+        BenchmarkRunRecord(
+            variant_id="constitution",
+            status="complete",
+            fulfillment_gaps=1,
+            elapsed_seconds=120.0,
+        ),
+    ]
+
+    summary = summarize_records(records)
+
+    assert summary["best_variant"] == "constitution"
+
+
 def test_write_summary_outputs_json_and_markdown(tmp_path: Path) -> None:
     records = [
         BenchmarkRunRecord(
@@ -121,7 +181,71 @@ def test_write_summary_outputs_json_and_markdown(tmp_path: Path) -> None:
     json_path, md_path = write_summary(tmp_path, records)
 
     assert json.loads(json_path.read_text(encoding="utf-8"))["best_variant"] == "baseline"
-    assert "| baseline | complete | 8 | 2 | 1 | 2 | 3 | 600.0 |" in md_path.read_text(encoding="utf-8")
+    assert "| baseline | complete | - | - | 0 | 0 | 8 | 2 | 1 | 2 | 3 | 600.0 |" in md_path.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_collect_benchmark_record_reads_squad_and_delivery_state(tmp_path: Path) -> None:
+    squad_dir = tmp_path / "runs" / "spec-20260704-120000-000001"
+    squad_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "squad-1",
+                "status": "done",
+                "spec_id": "001",
+                "spec_dir": "specs/001-simple-notes-app",
+                "phase_dispatch_counts": {"phase1-what": 2, "phase1-why2": 2},
+                "quality_scores": [
+                    {"pass": True, "pass_id": "WHY1-iter-0"},
+                    {"pass": False, "pass_id": "WHY2-iter-0"},
+                    {"pass": True, "pass_id": "WHY2-iter-1"},
+                ],
+                "cost_usd": 12.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+    build_dir = tmp_path / "runs" / "build-20260704-130000-000001"
+    state_dir = build_dir / "state"
+    state_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
+    (state_dir / "default.json").write_text(
+        json.dumps(
+            {
+                "run_id": "build-1",
+                "status": "converged",
+                "outer_iter": 3,
+                "inner_iter": 1,
+                "iteration_log": [
+                    {"verify": {"status": "failed"}},
+                    {"verify": {"status": "passed"}},
+                ],
+                "last_verify_result": {
+                    "status": "failed",
+                    "verification_failures": 2,
+                    "fulfillment_gaps": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = collect_benchmark_record(tmp_path, "constitution", status="complete", elapsed_seconds=42.0)
+
+    assert record.variant_id == "constitution"
+    assert record.status == "complete"
+    assert record.spec_id == "001"
+    assert record.run_id == "squad-1"
+    assert record.delivery_run_id == "build-1"
+    assert record.phase_a_dispatches == 4
+    assert record.why_failures == 1
+    assert record.build_dispatches == 3
+    assert record.verification_failures == 2
+    assert record.fulfillment_gaps == 1
+    assert record.cost_usd == 12.5
 
 
 def test_benchmark_list_prints_fixtures_and_variants(tmp_path: Path, capsys) -> None:
@@ -153,10 +277,10 @@ def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert "git reset --hard baseline-artifacts" in out
     assert "git clean -fd -e runs/benchmarks/" in out
-    assert "echelon run" in out
+    assert "echelon spec run --mode banzai" in out
     assert "phase-exp-constitution-quality" in out
     assert "phase-exp-tasks-quality" in out
-    assert "echelon harness run RESOLVE_SPEC_ID_FROM_CURRENT_RUN" in out
+    assert "echelon delivery run RESOLVE_SPEC_ID_FROM_CURRENT_RUN mode=banzai" in out
 
 
 def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
@@ -211,6 +335,23 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
 
     def runner(command: tuple[str, ...]) -> int:
         commands.append(command)
+        if command[:3] == ("echelon", "spec", "run"):
+            squad_dir = tmp_path / "runs" / "spec-20260704-120000-000001"
+            squad_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+            (squad_dir / "state.json").write_text(
+                json.dumps({"run_id": "squad-1", "status": "done", "spec_id": "001"}),
+                encoding="utf-8",
+            )
+        if command[:3] == ("echelon", "delivery", "run"):
+            build_dir = tmp_path / "runs" / "build-20260704-130000-000001"
+            state_dir = build_dir / "state"
+            state_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
+            (state_dir / "default.json").write_text(
+                json.dumps({"run_id": "build-1", "status": "converged", "outer_iter": 2}),
+                encoding="utf-8",
+            )
         return 0
 
     output_dir = run_benchmark_variant(
@@ -227,13 +368,25 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
         ("git", "reset", "--hard", "baseline-artifacts"),
         ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
     ]
-    assert commands[2][:2] == ("echelon", "run")
-    assert ("echelon", "phase", "run", "phase-exp-constitution-quality") in commands
+    assert commands[2][:3] == ("echelon", "spec", "run")
+    assert (
+        "echelon",
+        "phase",
+        "run",
+        "phase-exp-constitution-quality",
+        "--spec",
+        "001",
+        "--mode",
+        "banzai",
+    ) in commands
+    assert ("echelon", "delivery", "run", "001", "mode=banzai") in commands
     assert commands[-2:] == [
         ("git", "reset", "--hard", "baseline-artifacts"),
         ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
     ]
-    assert (output_dir / "summary.json").exists()
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["variants"]["constitution"]["spec_id"] == "001"
+    assert summary["variants"]["constitution"]["delivery_run_id"] == "build-1"
     assert (output_dir / "summary.md").exists()
 
 
@@ -242,7 +395,7 @@ def test_run_benchmark_variant_resets_after_failed_variant(tmp_path: Path) -> No
 
     def runner(command: tuple[str, ...]) -> int:
         commands.append(command)
-        if command[:2] == ("echelon", "run"):
+        if command[:3] == ("echelon", "spec", "run"):
             return 9
         return 0
 
@@ -262,3 +415,94 @@ def test_run_benchmark_variant_resets_after_failed_variant(tmp_path: Path) -> No
         ("git", "reset", "--hard", "baseline-artifacts"),
         ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
     ]
+
+
+def test_latest_summary_path_and_load_summary(tmp_path: Path) -> None:
+    older = tmp_path / "runs" / "benchmarks" / "20260701-120000-tiny-notes" / "baseline"
+    newer = tmp_path / "runs" / "benchmarks" / "20260702-120000-tiny-notes" / "baseline"
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    (older / "summary.json").write_text('{"best_variant": "baseline", "variants": {}}\n', encoding="utf-8")
+    (newer / "summary.json").write_text(
+        '{"best_variant": "constitution", "variants": {"constitution": {"status": "complete"}}}\n',
+        encoding="utf-8",
+    )
+
+    assert latest_summary_path(tmp_path) == newer / "summary.json"
+    assert load_summary(newer)["best_variant"] == "constitution"
+
+
+def test_load_saved_scorecard_uses_latest_record_per_variant(tmp_path: Path) -> None:
+    old_baseline = tmp_path / "runs" / "benchmarks" / "20260701-120000-tiny-notes" / "baseline"
+    new_baseline = tmp_path / "runs" / "benchmarks" / "20260702-120000-tiny-notes" / "baseline"
+    constitution = tmp_path / "runs" / "benchmarks" / "20260703-120000-tiny-notes" / "constitution"
+    old_baseline.mkdir(parents=True)
+    new_baseline.mkdir(parents=True)
+    constitution.mkdir(parents=True)
+    (old_baseline / "summary.json").write_text(
+        json.dumps(
+            {
+                "best_variant": "baseline",
+                "variants": {"baseline": {"status": "complete", "fulfillment_gaps": 3}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (new_baseline / "summary.json").write_text(
+        json.dumps(
+            {
+                "best_variant": "baseline",
+                "variants": {"baseline": {"status": "complete", "fulfillment_gaps": 1}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (constitution / "summary.json").write_text(
+        json.dumps(
+            {
+                "best_variant": "constitution",
+                "variants": {"constitution": {"status": "complete", "fulfillment_gaps": 0}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scorecard = load_saved_scorecard(tmp_path)
+
+    assert scorecard["best_variant"] == "constitution"
+    assert scorecard["variants"]["baseline"]["fulfillment_gaps"] == 1
+    assert scorecard["variants"]["constitution"]["fulfillment_gaps"] == 0
+
+
+def test_benchmark_show_prints_saved_summary(tmp_path: Path, capsys) -> None:
+    summary_dir = tmp_path / "runs" / "benchmarks" / "20260702-120000-tiny-notes" / "baseline"
+    summary_dir.mkdir(parents=True)
+    (summary_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "best_variant": "baseline",
+                "variants": {
+                    "baseline": {
+                        "status": "complete",
+                        "spec_id": "001",
+                        "delivery_run_id": "build-1",
+                        "fulfillment_gaps": 0,
+                        "verification_failures": 0,
+                        "blocked_states": 0,
+                        "retries": 0,
+                        "build_dispatches": 2,
+                        "elapsed_seconds": 12.0,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_benchmark(["show"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "BENCHMARK SUMMARY" in out
+    assert "best_variant" in out
+    assert "baseline" in out
+    assert "build-1" in out

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 
 @dataclass(frozen=True)
@@ -35,18 +36,25 @@ class BenchmarkCommandPlan:
 class BenchmarkRunRecord:
     variant_id: str
     status: str
+    phase_a_dispatches: int = 0
+    why_failures: int = 0
     build_dispatches: int = 0
     retries: int = 0
     blocked_states: int = 0
     verification_failures: int = 0
     fulfillment_gaps: int = 0
     elapsed_seconds: float = 0.0
+    cost_usd: float = 0.0
     issue_url: str = ""
     run_id: str = ""
     spec_id: str = ""
+    delivery_run_id: str = ""
+    failure_kind: str = ""
 
-    def score_tuple(self) -> tuple[int, int, int, int, int, float]:
+    def score_tuple(self) -> tuple[int, int, int, int, int, int, float]:
+        status_penalty = 0 if self.status == "complete" else 1
         return (
+            status_penalty,
             self.fulfillment_gaps,
             self.verification_failures,
             self.blocked_states,
@@ -116,9 +124,31 @@ def _variant(variant_id: str) -> BenchmarkVariant:
 def plan_variant_commands(fixture_id: str, variant_id: str) -> BenchmarkCommandPlan:
     fixture = _fixture(fixture_id)
     variant = _variant(variant_id)
-    commands: list[tuple[str, ...]] = [("echelon", "run", fixture.prompt)]
-    commands.extend(("echelon", "phase", "run", phase_id) for phase_id in variant.phases)
-    commands.append(("echelon", "harness", "run", "RESOLVE_SPEC_ID_FROM_CURRENT_RUN"))
+    commands: list[tuple[str, ...]] = [
+        ("echelon", "spec", "run", "--mode", "banzai", fixture.prompt)
+    ]
+    commands.extend(
+        (
+            "echelon",
+            "phase",
+            "run",
+            phase_id,
+            "--spec",
+            "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+            "--mode",
+            "banzai",
+        )
+        for phase_id in variant.phases
+    )
+    commands.append(
+        (
+            "echelon",
+            "delivery",
+            "run",
+            "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+            "mode=banzai",
+        )
+    )
     return BenchmarkCommandPlan(
         fixture_id=fixture.id,
         variant_id=variant.id,
@@ -147,13 +177,15 @@ def write_summary(output_dir: Path, records: list[BenchmarkRunRecord]) -> tuple[
     lines = [
         "# Benchmark Summary",
         "",
-        "| Variant | Status | Dispatches | Retries | Blocks | Verify Failures | Fulfillment Gaps | Seconds |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
+        "| Variant | Status | Spec | Delivery | Phase A | WHY Fails | Dispatches | Retries | Blocks | Verify Failures | Fulfillment Gaps | Seconds |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for record in records:
         lines.append(
-            f"| {record.variant_id} | {record.status} | {record.build_dispatches} | "
-            f"{record.retries} | {record.blocked_states} | {record.verification_failures} | "
+            f"| {record.variant_id} | {record.status} | {record.spec_id or '-'} | "
+            f"{record.delivery_run_id or '-'} | {record.phase_a_dispatches} | "
+            f"{record.why_failures} | {record.build_dispatches} | {record.retries} | "
+            f"{record.blocked_states} | {record.verification_failures} | "
             f"{record.fulfillment_gaps} | {record.elapsed_seconds:.1f} |"
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -169,6 +201,168 @@ def _default_runner(command: tuple[str, ...]) -> int:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _current_squad_state(project_root: Path) -> tuple[Path | None, dict[str, Any]]:
+    current = project_root / "runs" / ".current"
+    if not current.exists():
+        return None, {}
+    run_id = current.read_text(encoding="utf-8", errors="replace").strip()
+    if not run_id:
+        return None, {}
+    run_dir = project_root / "runs" / run_id
+    return run_dir, _read_json(run_dir / "state.json")
+
+
+def _delivery_state(project_root: Path, spec_id: str) -> tuple[Path | None, dict[str, Any]]:
+    if not spec_id:
+        return None, {}
+    marker = project_root / "runs" / f".current-build-{spec_id}"
+    if not marker.exists():
+        return None, {}
+    build_id = marker.read_text(encoding="utf-8", errors="replace").strip()
+    if not build_id:
+        return None, {}
+    state_dir = project_root / "runs" / build_id / "state"
+    state_file = state_dir / "default.json"
+    if not state_file.exists():
+        candidates = sorted(state_dir.glob("*.json"))
+        state_file = candidates[0] if candidates else state_file
+    return project_root / "runs" / build_id, _read_json(state_file)
+
+
+def _count_why_failures(squad_state: dict[str, Any]) -> int:
+    scores = squad_state.get("quality_scores")
+    if not isinstance(scores, list):
+        return 0
+    return sum(1 for item in scores if isinstance(item, dict) and item.get("pass") is False)
+
+
+def _phase_a_dispatches(squad_state: dict[str, Any]) -> int:
+    counts = squad_state.get("phase_dispatch_counts")
+    if not isinstance(counts, dict):
+        return 0
+    return sum(value for value in counts.values() if isinstance(value, int))
+
+
+def _verification_failures(delivery_state: dict[str, Any]) -> int:
+    last_verify = delivery_state.get("last_verify_result")
+    if isinstance(last_verify, dict):
+        explicit = last_verify.get("verification_failures")
+        if isinstance(explicit, int):
+            return explicit
+
+    failures = 0
+    iteration_log = delivery_state.get("iteration_log")
+    if isinstance(iteration_log, list):
+        for item in iteration_log:
+            if not isinstance(item, dict):
+                continue
+            verify = item.get("verify") or item.get("verify_result") or item.get("last_verify_result")
+            if isinstance(verify, dict) and str(verify.get("status") or "").lower() in {"failed", "fail"}:
+                failures += 1
+    return failures
+
+
+def _fulfillment_gaps(delivery_state: dict[str, Any]) -> int:
+    last_verify = delivery_state.get("last_verify_result")
+    if isinstance(last_verify, dict):
+        explicit = last_verify.get("fulfillment_gaps")
+        if isinstance(explicit, int):
+            return explicit
+    explicit = delivery_state.get("fulfillment_gaps")
+    return explicit if isinstance(explicit, int) else 0
+
+
+def collect_benchmark_record(
+    project_root: Path,
+    variant_id: str,
+    *,
+    status: str,
+    retries: int = 0,
+    elapsed_seconds: float = 0.0,
+    failure_kind: str = "",
+) -> BenchmarkRunRecord:
+    _squad_dir, squad_state = _current_squad_state(project_root)
+    spec_id = str(squad_state.get("spec_id") or "")
+    _build_dir, delivery_state = _delivery_state(project_root, spec_id)
+
+    squad_blocked = str(squad_state.get("status") or "").lower() == "blocked"
+    delivery_blocked = str(delivery_state.get("status") or "").lower() == "blocked"
+    blocked_states = int(status == "failed") + int(squad_blocked) + int(delivery_blocked)
+
+    return BenchmarkRunRecord(
+        variant_id=variant_id,
+        status=status,
+        phase_a_dispatches=_phase_a_dispatches(squad_state),
+        why_failures=_count_why_failures(squad_state),
+        build_dispatches=int(delivery_state.get("outer_iter") or 0),
+        retries=retries,
+        blocked_states=blocked_states,
+        verification_failures=_verification_failures(delivery_state),
+        fulfillment_gaps=_fulfillment_gaps(delivery_state),
+        elapsed_seconds=elapsed_seconds,
+        cost_usd=float(squad_state.get("cost_usd") or 0.0),
+        run_id=str(squad_state.get("run_id") or ""),
+        spec_id=spec_id,
+        delivery_run_id=str(delivery_state.get("run_id") or ""),
+        failure_kind=failure_kind,
+    )
+
+
+def latest_summary_path(project_root: Path) -> Path | None:
+    summaries = sorted((project_root / "runs" / "benchmarks").glob("*/*/summary.json"))
+    return summaries[-1] if summaries else None
+
+
+def load_summary(path: Path) -> dict[str, Any]:
+    summary_path = path / "summary.json" if path.is_dir() else path
+    return _read_json(summary_path)
+
+
+def _mapping_score_tuple(record: dict[str, Any]) -> tuple[int, int, int, int, int, int, float]:
+    status_penalty = 0 if record.get("status") == "complete" else 1
+    return (
+        status_penalty,
+        int(record.get("fulfillment_gaps") or 0),
+        int(record.get("verification_failures") or 0),
+        int(record.get("blocked_states") or 0),
+        int(record.get("retries") or 0),
+        int(record.get("build_dispatches") or 0),
+        float(record.get("elapsed_seconds") or 0.0),
+    )
+
+
+def load_saved_scorecard(project_root: Path) -> dict[str, Any]:
+    variants: dict[str, dict[str, Any]] = {}
+    summaries = sorted((project_root / "runs" / "benchmarks").glob("*/*/summary.json"))
+    for summary_path in summaries:
+        summary = load_summary(summary_path)
+        summary_variants = summary.get("variants")
+        if not isinstance(summary_variants, dict):
+            continue
+        for variant_id, record in summary_variants.items():
+            if not isinstance(record, dict):
+                continue
+            enriched = dict(record)
+            enriched["summary_path"] = str(summary_path)
+            variants[variant_id] = enriched
+
+    if not variants:
+        return {"best_variant": None, "variants": {}}
+
+    best_variant = min(variants, key=lambda variant_id: _mapping_score_tuple(variants[variant_id]))
+    return {"best_variant": best_variant, "variants": variants}
 
 
 def baseline_reset_commands(baseline_ref: str) -> tuple[tuple[str, ...], ...]:
@@ -200,26 +394,61 @@ def run_benchmark_variant(
 
     status = "complete"
     retries = 0
-    commands = variant_execution_commands(plan, baseline_ref) if baseline_ref else plan.commands
-    for command in commands:
+    failure_kind = ""
+    started = time.monotonic()
+    output_dir = project_root / "runs" / "benchmarks" / f"{timestamp or _timestamp()}-{fixture_id}" / variant_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def run_one(command: tuple[str, ...], kind: str) -> bool:
+        nonlocal status, retries, failure_kind
         exit_code = run(command)
         if exit_code != 0:
             status = "failed"
             retries += 1
-            if baseline_ref and command not in baseline_reset_commands(baseline_ref):
-                for reset_command in baseline_reset_commands(baseline_ref):
-                    run(reset_command)
-            break
+            failure_kind = kind
+            return False
+        return True
 
-    output_dir = project_root / "runs" / "benchmarks" / f"{timestamp or _timestamp()}-{fixture_id}" / variant_id
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if baseline_ref:
+        for reset_command in baseline_reset_commands(baseline_ref):
+            if not run_one(reset_command, "baseline_reset"):
+                break
 
-    record = BenchmarkRunRecord(
-        variant_id=variant_id,
+    if status == "complete" and not run_one(plan.commands[0], "spec_run"):
+        pass
+
+    _squad_dir, squad_state = _current_squad_state(project_root)
+    spec_id = str(squad_state.get("spec_id") or "")
+    if status == "complete" and not spec_id:
+        status = "failed"
+        retries += 1
+        failure_kind = "spec_id_missing"
+
+    if status == "complete":
+        for phase_command in plan.commands[1:-1]:
+            command = tuple(spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in phase_command)
+            if not run_one(command, "cleanse_phase"):
+                break
+
+    if status == "complete":
+        delivery_command = tuple(
+            spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in plan.commands[-1]
+        )
+        run_one(delivery_command, "delivery_run")
+
+    elapsed = time.monotonic() - started
+
+    if baseline_ref:
+        for reset_command in baseline_reset_commands(baseline_ref):
+            run(reset_command)
+
+    record = collect_benchmark_record(
+        project_root,
+        variant_id,
         status=status,
-        build_dispatches=len(plan.commands),
         retries=retries,
-        blocked_states=1 if status == "failed" else 0,
+        elapsed_seconds=elapsed,
+        failure_kind=failure_kind,
     )
     write_summary(output_dir, [record])
     return output_dir
