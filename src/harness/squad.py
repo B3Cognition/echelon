@@ -107,10 +107,18 @@ def _normalize_phase_recommendation(recommended: object, valid_phases: set[str])
 
 
 def _phase_requires_constitution_provenance(phase: str) -> bool:
-    """Return True once a normal spec/build run is past the constitution gate."""
+    """Return True for phases that must run only after CHIEF has completed.
+
+    The exempt set is not "pre-constitution" only: it also includes
+    phase1-constitution itself, because CHIEF is the phase that creates the
+    provenance this guard checks.
+    """
     if phase in {
         "init",
         "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-modeler",
+        "phase1-tracker",
         "phase1-why1",
         "phase1-constitution",
         *TERMINAL_PHASES,

@@ -19,6 +19,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-084 constitution guard workflow override** — squad routing no longer
+  lets the controller-level constitution provenance guard bypass required
+  upstream Phase 1 context phases. `phase1-synthesizer`, `phase1-modeler`, and
+  `phase1-tracker` now run before CHIEF when the workflow graph routes there,
+  so TRACKER can produce `user-intent.md` for CHIEF's constitution context pack.
 - **EGR-083 quality gate pass normalization** — WHY/SAGE quality routing now
   treats `quality_scores[*].pass` as a boolean-only contract. Non-boolean or
   missing WHY pass flags are normalized deterministically from configured

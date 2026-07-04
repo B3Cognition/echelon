@@ -15,7 +15,11 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
-from harness.squad import SquadController, SquadResult
+from harness.squad import (
+    SquadController,
+    SquadResult,
+    _phase_requires_constitution_provenance,
+)
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
@@ -1233,6 +1237,22 @@ class TestConstitutionPhase:
 
         assert guarded == "phase1-constitution"
         assert store.load()["phase"] == "phase1-constitution"
+
+    def test_pre_constitution_context_phases_do_not_require_constitution_provenance(self):
+        """TRACKER must run before CHIEF so user-intent.md exists for constitution."""
+        for phase in [
+            "init",
+            "phase1-discover",
+            "phase1-synthesizer",
+            "phase1-modeler",
+            "phase1-tracker",
+            "phase1-why1",
+            "phase1-constitution",
+        ]:
+            assert _phase_requires_constitution_provenance(phase) is False
+
+    def test_phase1_what_still_requires_constitution_provenance(self):
+        assert _phase_requires_constitution_provenance("phase1-what") is True
 
     def test_run_dispatches_chief_before_phase1_what_without_provenance(self, tmp_path):
         provider = _mock_provider()
