@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 
 
 REQUIRED_PHASE_A_BUILD_INPUTS = (
@@ -24,6 +25,11 @@ CONSTITUTION_TEMPLATE_MARKERS = (
     "[PRINCIPLE_3_NAME]",
     "[PRINCIPLE_4_NAME]",
     "[PRINCIPLE_5_NAME]",
+)
+
+_SYNC_IMPACT_REPORT_RE = re.compile(
+    r"\A\s*<!--\s*Sync Impact Report\b.*?-->\s*",
+    re.DOTALL,
 )
 
 
@@ -107,10 +113,23 @@ def _constitution_blocker(path: Path) -> str | None:
     if not path.exists():
         return None
     text = path.read_text(encoding="utf-8", errors="replace")
-    markers = [
-        marker for marker in CONSTITUTION_TEMPLATE_MARKERS
-        if marker in text
-    ]
+    markers = unresolved_constitution_template_markers(text)
     if markers:
         return "constitution.md contains unresolved template markers: " + ", ".join(markers)
     return None
+
+
+def unresolved_constitution_template_markers(text: str) -> list[str]:
+    """Return unresolved constitution template markers in executable content.
+
+    Spec-kit constitution files may keep a leading Sync Impact Report comment
+    that maps old placeholder slots to concrete principle names. Those historical
+    mapping entries are not live template placeholders. The constitution body
+    after the report remains authoritative for readiness checks.
+    """
+    effective_text = _SYNC_IMPACT_REPORT_RE.sub("", text, count=1)
+    markers = [
+        marker for marker in CONSTITUTION_TEMPLATE_MARKERS
+        if marker in effective_text
+    ]
+    return markers

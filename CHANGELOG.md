@@ -23,6 +23,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-087 banzai Phase 1 continuation defects** — squad runs no longer stop
+  after CHIEF when a valid constitution's leading Sync Impact Report mentions
+  old template placeholders, and node-level workflow conditions are now honored
+  at runtime. Greenfield runs skip brownfield-only MODELER instead of dispatching
+  it despite `condition: "mode = brownfield"`.
 - **EGR-086 / #106 equals-form mode flags** — Phase A CLI parsing now accepts
   both `--mode banzai` and `--mode=banzai` for `echelon run`,
   `echelon spec run`, `echelon continue`, `echelon spec continue`, and

@@ -125,6 +125,53 @@ def test_workflow_validator_rejects_unknown_transition_target(tmp_path: Path) ->
     assert any("unknown transition target" in issue.message for issue in report.issues)
 
 
+def test_workflow_validator_rejects_unknown_phase_condition_field(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "condition": "missing_field",
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("unresolvable phase condition field 'missing_field'" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_unknown_greenfield_action(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "condition": "mode = brownfield",
+                "on_greenfield": {"action": "invented_skip"},
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("phase.on_greenfield.action" in issue.message for issue in report.issues)
+
+
 def test_workflow_validator_rejects_non_object_transition(tmp_path: Path) -> None:
     definition = _write_definition(
         tmp_path,

@@ -97,6 +97,11 @@ class TestPhaseGraph:
         assert "glossary.md" in node.outputs
         assert "mental-model.md" in node.outputs
 
+    def test_phase1_modeler_loads_node_condition_and_greenfield_skip(self):
+        node = self.graph.get("phase1-modeler")
+        assert node.condition == "mode = brownfield"
+        assert node.on_greenfield == {"action": "skip_agent_proceed_to_next"}
+
     def test_transitions_present(self):
         node = self.graph.get("phase1-discover")
         assert len(node.transitions) > 0

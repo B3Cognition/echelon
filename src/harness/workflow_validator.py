@@ -171,6 +171,47 @@ def validate_workflow_definition(
         seen.add(phase_id)
         known_condition_fields.update(_phase_condition_fields(phase))
 
+        phase_condition = phase.get("condition")
+        if phase_condition is not None:
+            condition_issue = validate_condition_expression(phase_condition)
+            if condition_issue:
+                issues.append(
+                    WorkflowValidationIssue(
+                        f"unsupported phase condition syntax: {condition_issue}",
+                        phase_id=phase_id,
+                        path=path,
+                    )
+                )
+            else:
+                for field in sorted(_condition_fields(str(phase_condition).strip())):
+                    if field not in known_condition_fields:
+                        issues.append(
+                            WorkflowValidationIssue(
+                                f"unresolvable phase condition field {field!r}",
+                                phase_id=phase_id,
+                                path=path,
+                            )
+                        )
+
+        on_greenfield = phase.get("on_greenfield")
+        if on_greenfield is not None:
+            if not isinstance(on_greenfield, dict):
+                issues.append(
+                    WorkflowValidationIssue(
+                        "phase.on_greenfield must be an object when present",
+                        phase_id=phase_id,
+                        path=path,
+                    )
+                )
+            elif on_greenfield.get("action") not in {"skip_agent_proceed_to_next"}:
+                issues.append(
+                    WorkflowValidationIssue(
+                        "phase.on_greenfield.action must be 'skip_agent_proceed_to_next'",
+                        phase_id=phase_id,
+                        path=path,
+                    )
+                )
+
         transitions = phase.get("transitions", [])
         if transitions is None:
             continue

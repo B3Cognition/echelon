@@ -20,7 +20,11 @@ from harness.echelon_result_schema import (
     validate_echelon_result,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
-from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
+from harness.phase_a_readiness import (
+    PhaseAReadinessResult,
+    unresolved_constitution_template_markers,
+    validate_phase_a_readiness,
+)
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.quality_scores import normalize_why_quality_scores
 from harness.spec_frontmatter import find_spec_dir
@@ -141,16 +145,7 @@ def _constitution_artifact_is_real(project_root: Path) -> bool:
     if not path.exists():
         return False
     text = path.read_text(errors="replace")
-    template_markers = (
-        "[PROJECT_NAME]",
-        "[CONSTITUTION_VERSION]",
-        "[RATIFICATION_DATE]",
-        "[LAST_AMENDED_DATE]",
-    )
-    return not any(marker in text for marker in template_markers) and not re.search(
-        r"\[PRINCIPLE_[0-9]+_NAME\]",
-        text,
-    )
+    return not unresolved_constitution_template_markers(text)
 
 
 def _blocked_banner(phase: str, reason: str, question: str) -> None:
@@ -552,6 +547,9 @@ class SquadController:
             node = self._graph.get(phase)
             label = node.label or node.id
 
+            if self._skip_phase_if_condition_false(node):
+                continue
+
             # Per-phase dispatch cap — prevents runaway loops on any phase.
             # WHY phases use max_iterations as their cap (they legitimately iterate).
             # All other phases use MAX_PHASE_DISPATCHES.
@@ -730,6 +728,8 @@ class SquadController:
 
         node = self._graph.get(phase)
         label = node.label or node.id
+        if self._skip_phase_if_condition_false(node, manual_phase_run=True):
+            return SquadResult.from_state(self._state_store.load())
         print(f"\n[squad] ▶ {node.id}  {label}  (manual phase run)", flush=True)
 
         executor = self._executors.get(node.type)
@@ -766,6 +766,76 @@ class SquadController:
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
+
+    def _skip_phase_if_condition_false(
+        self,
+        node: PhaseNode,
+        *,
+        manual_phase_run: bool = False,
+    ) -> bool:
+        """Apply node-level phase conditions before dispatching an agent."""
+        condition = (node.condition or "").strip()
+        if not condition:
+            return False
+
+        state = self._state_store.load()
+        evaluation = self._evaluator.evaluate(condition, state)
+        if evaluation is True:
+            return False
+        if evaluation is None:
+            state["phase"] = PHASE_TERMINAL_BLOCKED
+            state["status"] = "blocked"
+            state["blocked_reason"] = f"unresolvable phase condition {condition!r}"
+            self._state_store.save(state)
+            print(
+                f"[squad] ✗ {node.id} phase condition {condition!r} is unresolvable",
+                flush=True,
+            )
+            return True
+
+        action = ""
+        if isinstance(node.on_greenfield, dict):
+            action = str(node.on_greenfield.get("action") or "")
+        if state.get("mode") == "greenfield" and action == "skip_agent_proceed_to_next":
+            result = SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "output_files": [],
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+                cost_usd=0.0,
+            )
+            next_phase = self._evaluate_transitions(node, result)
+            self._state_store.advance(
+                node.id,
+                next_phase,
+                result,
+                allowed_state_update_keys=node.allowed_state_updates,
+                manual_phase_run=manual_phase_run,
+            )
+            self._checkpoint_successful_phase(node.id, next_phase)
+            self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
+            suffix = "  (stopped)" if manual_phase_run else ""
+            print(
+                f"[squad] skipped {node.id}  ({condition} false) -> {next_phase}{suffix}",
+                flush=True,
+            )
+            return True
+
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        state["blocked_reason"] = f"phase condition {condition!r} evaluated false"
+        self._state_store.save(state)
+        print(
+            f"[squad] ✗ {node.id} phase condition {condition!r} evaluated false",
+            flush=True,
+        )
+        return True
 
     def _publish_manual_phase_artifacts(self) -> None:
         """Refresh project-visible spec metadata after a targeted phase run."""

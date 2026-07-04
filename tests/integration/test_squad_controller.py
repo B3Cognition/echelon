@@ -18,6 +18,7 @@ from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.squad import (
     SquadController,
     SquadResult,
+    _constitution_artifact_is_real,
     _phase_requires_constitution_provenance,
 )
 from harness.squad_executors import AgentExecutor
@@ -1296,6 +1297,63 @@ class TestConstitutionPhase:
         const_path.write_text("# Constitution\n\nReal rules.\n", encoding="utf-8")
 
         assert ctrl._guard_constitution_provenance("phase1-what") == "phase1-what"
+
+    def test_constitution_guard_allows_sync_impact_report_placeholder_history(self, tmp_path):
+        const_path = tmp_path / ".specify" / "memory" / "constitution.md"
+        const_path.parent.mkdir(parents=True)
+        const_path.write_text(
+            """<!--
+Sync Impact Report
+Modified principles:
+  - [PRINCIPLE_1_NAME] -> I. Real Principle
+-->
+
+# Constitution
+
+## Core Principles
+
+### I. Real Principle
+
+Ready.
+""",
+            encoding="utf-8",
+        )
+
+        assert _constitution_artifact_is_real(tmp_path) is True
+
+    def test_constitution_guard_rejects_body_placeholder_after_sync_report(self, tmp_path):
+        const_path = tmp_path / ".specify" / "memory" / "constitution.md"
+        const_path.parent.mkdir(parents=True)
+        const_path.write_text(
+            """<!--
+Sync Impact Report
+Modified principles:
+  - [PRINCIPLE_1_NAME] -> I. Real Principle
+-->
+
+# Constitution
+
+## Core Principles
+
+### [PRINCIPLE_2_NAME]
+""",
+            encoding="utf-8",
+        )
+
+        assert _constitution_artifact_is_real(tmp_path) is False
+
+    def test_greenfield_modeler_phase_is_skipped_before_dispatch(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+
+        result = ctrl.run_single_phase("phase1-modeler", "msg", "banzai")
+        state = store.load()
+
+        assert result.status == "running"
+        assert state["phase"] == "phase1-tracker"
+        assert state["last_dispatch"]["phase_id"] == "phase1-modeler"
+        assert "phase1-modeler" in state["completed_phases"]
+        provider.exec_agent.assert_not_called()
 
     def test_completed_constitution_with_missing_artifact_blocks(self, tmp_path):
         ctrl, store = _controller(tmp_path)
