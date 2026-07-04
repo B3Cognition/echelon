@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from harness.quality_scores import normalize_why_quality_scores
+
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
     from harness.squad_provider import SquadAgentResult, SquadCliProvider
@@ -242,7 +244,8 @@ def _routing_contract(node: "PhaseNode") -> str:
         if node.id == "phase1-why2":
             fields.append((
                 "quality_scores",
-                "\n      - pass: \"WHY2-iter-{N}\""
+                "\n      - pass: <true|false>"
+                "\n        pass_id: \"WHY2-iter-{N}\""
                 "\n        overall: <float|null>"
                 "\n        structure: <float|null>"
                 "\n        readability: <float|null>"
@@ -306,6 +309,38 @@ class PhaseExecutor(ABC):
         from harness.paths import runs_dir as _runs_dir
         self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
+    def _project_config_path(self) -> Path:
+        canonical = self._project_root / ".echelon" / "config.yml"
+        if canonical.exists():
+            return canonical
+        return self._ext_dir / "echelon-config.yml"
+
+    def _quality_gate_thresholds(self) -> dict:
+        try:
+            import yaml
+
+            data = yaml.safe_load(self._project_config_path().read_text()) or {}
+            gates = data.get("quality_gates")
+            return gates if isinstance(gates, dict) else {}
+        except Exception:
+            return {}
+
+    def _normalize_why_result_quality_scores(
+        self,
+        node: "PhaseNode",
+        result: "SquadAgentResult",
+    ) -> None:
+        if node.id not in {"phase1-why1", "phase1-why2"}:
+            return
+        updates = result.state_updates
+        if "quality_scores" not in updates:
+            return
+        updates["quality_scores"] = normalize_why_quality_scores(
+            updates["quality_scores"],
+            verdict=result.verdict,
+            gates=self._quality_gate_thresholds(),
+        )
+
     def _validate_result_state_updates(
         self,
         node: "PhaseNode",
@@ -323,6 +358,7 @@ class PhaseExecutor(ABC):
         from harness.squad_provider import SquadAgentResult
 
         try:
+            self._normalize_why_result_quality_scores(node, result)
             result.echelon_result = validate_echelon_result(
                 result.echelon_result,
                 allowed_state_update_keys=getattr(

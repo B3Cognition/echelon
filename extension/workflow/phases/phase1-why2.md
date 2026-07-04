@@ -102,7 +102,8 @@ Read WHY2 outputs:
 
    ```yaml
    quality_scores:
-     - pass: "WHY2-iter-{N}"
+     - pass: <true|false>
+       pass_id: "WHY2-iter-{N}"
        overall: <float|null>
        structure: <float|null>
        readability: <float|null>

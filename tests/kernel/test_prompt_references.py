@@ -559,7 +559,7 @@ def test_phase1_why2_routes_state_updates_through_echelon_result():
     assert "quality_scores:" in text
 
 
-def test_sage_quality_scores_use_iteration_marker_not_boolean_pass():
+def test_sage_quality_scores_use_boolean_pass_and_separate_iteration_marker():
     import re
 
     prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
@@ -568,8 +568,9 @@ def test_sage_quality_scores_use_iteration_marker_not_boolean_pass():
     assert match is not None
     state_update_block = match.group("block")
 
-    assert "pass: <true | false>" not in state_update_block
-    assert 'pass: "WHY2-iter-{N}"' in state_update_block
+    assert "pass: <true|false>" in state_update_block
+    assert 'pass_id: "WHY2-iter-{N}"' in state_update_block
+    assert 'pass: "WHY2-iter-{N}"' not in state_update_block
 
 
 def test_phase1_modeler_routes_last_dispatch_through_echelon_result():

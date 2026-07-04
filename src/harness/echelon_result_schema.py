@@ -4,6 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Iterable
 
+from harness.quality_scores import validate_quality_scores_shape
+
 
 class EchelonResultValidationError(ValueError):
     """Raised when an agent echelon_result payload is not safe to consume."""
@@ -121,6 +123,11 @@ def validate_echelon_result(
                 "echelon_result.state_updates key "
                 f"{key!r} is not allowed for this phase; allowed keys: {allowed}"
             )
+
+    if "quality_scores" in state_updates:
+        error = validate_quality_scores_shape(state_updates["quality_scores"])
+        if error:
+            raise EchelonResultValidationError(error)
 
     if "journal_entries" in result and not isinstance(result["journal_entries"], list):
         raise EchelonResultValidationError(

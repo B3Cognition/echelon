@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Optional
 
+from harness.quality_scores import explicit_quality_pass
+
 if TYPE_CHECKING:
     from harness.squad_provider import SquadAgentResult
 
@@ -122,13 +124,13 @@ class ConditionEvaluator:
         if field == "quality_gates.pass":
             scores = state.get("quality_scores") or []
             if scores:
-                return bool(scores[-1].get("pass"))
+                return explicit_quality_pass(scores[-1]) is True
             # fall through to normal dotted-path
 
         if field == "quality_gates.fail":
             scores = state.get("quality_scores") or []
             if scores:
-                return not bool(scores[-1].get("pass"))
+                return explicit_quality_pass(scores[-1]) is not True
             # fall through to normal dotted-path
 
         # Derived: CRITICAL_issues / no_CRITICAL_issues
@@ -144,7 +146,7 @@ class ConditionEvaluator:
                 )
             scores = state.get("quality_scores") or []
             if scores:
-                return not bool(scores[-1].get("pass"))
+                return explicit_quality_pass(scores[-1]) is not True
             return default
 
         if field == "no_CRITICAL_issues":

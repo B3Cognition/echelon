@@ -160,6 +160,11 @@ class TestConditionEvaluator:
         state = {"quality_scores": [{"pass": False}]}
         assert self.ev.evaluate("quality_gates.pass", state) is False
 
+    def test_quality_gates_string_pass_value_is_not_truthy(self):
+        state = {"quality_scores": [{"pass": "WHY2-iter-0"}]}
+        assert self.ev.evaluate("quality_gates.pass", state) is False
+        assert self.ev.evaluate("quality_gates.fail", state) is True
+
     def test_quality_gates_falls_back_to_direct_field(self):
         # No quality_scores — fall back to state["quality_gates"]["pass"]
         state = {"quality_gates": {"pass": True}}

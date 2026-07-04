@@ -462,7 +462,8 @@ echelon_result:
     - {spec_dir}/issues.md
   state_updates:
     quality_scores:
-      - pass: "WHY2-iter-{N}"
+      - pass: <true|false>
+        pass_id: "WHY2-iter-{N}"
         overall: <0.0-1.0>
         structure: <0.0-1.0>
         testability: <0.0-1.0>

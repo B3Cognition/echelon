@@ -499,7 +499,9 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
 
     assert "quality_scores:" in contract
     assert "[{pass: true}]" not in contract
-    assert 'pass: "WHY2-iter-{N}"' in contract
+    assert "pass: <true|false>" in contract
+    assert 'pass_id: "WHY2-iter-{N}"' in contract
+    assert 'pass: "WHY2-iter-{N}"' not in contract
     assert "overall:" in contract
 
 

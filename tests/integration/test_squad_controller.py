@@ -452,6 +452,47 @@ class TestSquadControllerBasics:
         # why_fail_count should have been incremented (≥1)
         assert store.load().get("why_fail_count", 0) >= 1
 
+    def test_why_fail_string_pass_value_routes_to_repair(self, tmp_path):
+        """Non-boolean quality_scores.pass must not make WHY failure pass."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "quality_scores": [{
+                        "pass": "WHY2-iter-0",
+                        "overall": 0.745,
+                        "structure": 0.660,
+                        "testability": 0.679,
+                    }]
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        node = ctrl._graph.get("phase1-why2")
+        result = provider.exec_agent.return_value
+        next_phase = ctrl._evaluate_transitions(node, result)
+        store.advance(
+            "phase1-why2",
+            next_phase,
+            result,
+            allowed_state_update_keys=node.allowed_state_updates,
+        )
+
+        state = store.load()
+        assert state["phase"] == "phase1-what"
+        assert state["quality_scores"][-1]["pass"] is False
+        assert state["quality_scores"][-1]["pass_id"] == "WHY2-iter-0"
+        assert state.get("why_fail_count", 0) >= 1
+
     def test_why_fail_resets_on_pass(self, tmp_path):
         """why_fail_count resets when a WHY phase passes."""
         from harness.squad_provider import SquadAgentResult

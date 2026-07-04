@@ -21,6 +21,7 @@ from harness.echelon_result_schema import (
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
+from harness.quality_scores import normalize_why_quality_scores
 from harness.spec_frontmatter import find_spec_dir
 from harness.squad_executors import (
     AgentExecutor,
@@ -221,6 +222,29 @@ class SquadController:
         if canonical.exists():
             return canonical
         return self._ext_dir / "echelon-config.yml"
+
+    def _quality_gate_thresholds(self) -> dict:
+        try:
+            import yaml
+
+            data = yaml.safe_load(self._project_config_path().read_text()) or {}
+            gates = data.get("quality_gates")
+            return gates if isinstance(gates, dict) else {}
+        except Exception:
+            return {}
+
+    def _normalize_why_result_quality_scores(
+        self,
+        result: SquadAgentResult,
+    ) -> None:
+        updates = result.state_updates
+        if "quality_scores" not in updates:
+            return
+        updates["quality_scores"] = normalize_why_quality_scores(
+            updates["quality_scores"],
+            verdict=result.verdict,
+            gates=self._quality_gate_thresholds(),
+        )
 
     def _detect_project_mode(self, requested_mode: str) -> str:
         """Return the project type stored in state.mode.
@@ -1271,6 +1295,8 @@ class SquadController:
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
         state = self._state_store.load()
+        if node.id in WHY_PHASES:
+            self._normalize_why_result_quality_scores(result)
         # Merge order (lowest→highest precedence): lexicon_gate config, governance
         # config, then state, then result.state_updates — so freshly-written values
         # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace

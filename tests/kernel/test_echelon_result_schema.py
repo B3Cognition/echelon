@@ -104,3 +104,16 @@ def test_empty_state_updates_are_allowed_by_empty_allowlist():
     )
 
     assert result["state_updates"] == {}
+
+
+def test_quality_scores_pass_must_be_boolean():
+    with pytest.raises(EchelonResultValidationError, match="quality_scores\\[0\\]\\.pass"):
+        validate_echelon_result(
+            {
+                "verdict": "FAIL",
+                "state_updates": {
+                    "quality_scores": [{"pass": "WHY2-iter-0"}],
+                },
+            },
+            allowed_state_update_keys={"quality_scores"},
+        )

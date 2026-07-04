@@ -19,6 +19,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-083 quality gate pass normalization** — WHY/SAGE quality routing now
+  treats `quality_scores[*].pass` as a boolean-only contract. Non-boolean or
+  missing WHY pass flags are normalized deterministically from configured
+  thresholds or verdict before routing/state persistence, and raw non-WHY
+  `quality_scores.pass` strings are rejected by schema validation. SAGE prompt
+  examples now use `pass_id` for iteration labels.
 - **EGR-082 / #105 benchmark baseline reset discipline** — experimental
   artifact-quality benchmark runs now require an explicit `--baseline-ref`
   for real execution and wrap each variant with `git reset --hard <ref>` plus
