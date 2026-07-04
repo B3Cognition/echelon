@@ -7,6 +7,9 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
+from echelon.git_helpers import run_git
+
 
 CHECKPOINT_LEDGER_REL = Path(".echelon") / "checkpoints.json"
 
@@ -63,16 +66,28 @@ def write_checkpoint_ledger(spec_dir: Path, ledger: CheckpointLedger) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def record_checkpoint_metadata(
+def record_phase_checkpoint(
     spec_dir: Path,
     checkpoint: PhaseCheckpoint,
 ) -> CheckpointLedger:
+    spec_id = _spec_id_from_dir(spec_dir)
+    if checkpoint.spec_id != spec_id:
+        raise ValueError(
+            f"checkpoint spec_id {checkpoint.spec_id!r} does not match spec directory {spec_id!r}"
+        )
     ledger = load_checkpoint_ledger(spec_dir)
     checkpoints = [item for item in ledger.checkpoints if item.id != checkpoint.id]
     checkpoints.append(checkpoint)
     updated = CheckpointLedger(spec_id=checkpoint.spec_id, checkpoints=checkpoints)
     write_checkpoint_ledger(spec_dir, updated)
     return updated
+
+
+def record_checkpoint_metadata(
+    spec_dir: Path,
+    checkpoint: PhaseCheckpoint,
+) -> CheckpointLedger:
+    return record_phase_checkpoint(spec_dir, checkpoint)
 
 
 def resolve_checkpoint(ledger: CheckpointLedger, target: str) -> PhaseCheckpoint:
@@ -94,3 +109,51 @@ def new_checkpoint_id(phase: str, source: str = "auto") -> str:
         return phase
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return f"{source}-{phase}-{stamp}"
+
+
+def _has_staged_or_unstaged_changes(project_root: Path) -> bool:
+    return bool(run_git(project_root, "status", "--porcelain", check=False).stdout.strip())
+
+
+def create_phase_checkpoint(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    phase: str,
+    next_phase: str,
+    run_id: str,
+) -> PhaseCheckpoint | None:
+    if not _has_staged_or_unstaged_changes(project_root):
+        return None
+
+    spec_id = _spec_id_from_dir(spec_dir)
+    run_git(project_root, "add", "-A")
+    if run_git(project_root, "diff", "--cached", "--quiet", check=False).returncode != 0:
+        subject = f"echelon-checkpoint: {spec_id} {phase}"
+        message = build_echelon_commit_message(
+            subject,
+            EchelonCommitMetadata(
+                origin="phase-a",
+                action="checkpoint",
+                spec_id=spec_id,
+                run_id=run_id,
+                phase=phase,
+                checkpoint_id=phase,
+            ),
+        )
+        run_git(project_root, "commit", "-m", message)
+
+    commit = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
+    checkpoint = PhaseCheckpoint(
+        id=phase,
+        spec_id=spec_id,
+        phase=phase,
+        next_phase=next_phase,
+        commit=commit,
+        metadata_commit="",
+        source="auto",
+        run_id=run_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    record_phase_checkpoint(spec_dir, checkpoint)
+    return checkpoint
