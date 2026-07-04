@@ -4353,6 +4353,9 @@ def _cmd_rewind(
 
 def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     from echelon.benchmark import (
+        latest_summary_path,
+        load_saved_scorecard,
+        load_summary,
         list_fixtures,
         list_variants,
         plan_variant_commands,
@@ -4367,6 +4370,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     usage = (
         "Usage:\n"
         "  echelon benchmark list\n"
+        "  echelon benchmark show [latest|<summary-path-or-run-dir>]\n"
         "  echelon benchmark run <fixture-id> --variant <variant-id> "
         "--baseline-ref <ref> [--dry-run]\n"
         "\n"
@@ -4392,7 +4396,46 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
             print(f"  {variant.id:<30} {variant.label}")
         print("\nExample:")
         print("  echelon benchmark run tiny-notes --variant baseline --baseline-ref <ref>")
-        print("\nFor an existing spec, use: echelon harness run <spec-id>")
+        print("\nPrint saved scores:")
+        print("  echelon benchmark show")
+        print("\nFor an existing spec, use: echelon delivery run <spec-id>")
+        return
+
+    if args[0] == "show":
+        if len(args) > 2:
+            print("✗ Usage: echelon benchmark show [latest|<summary-path-or-run-dir>]", file=sys.stderr)
+            sys.exit(1)
+        target = args[1] if len(args) == 2 else "latest"
+        latest_path = latest_summary_path(project_root)
+        summary_path = latest_path if target == "latest" else Path(target)
+        if summary_path is None:
+            print("✗ No benchmark summaries found under runs/benchmarks/.", file=sys.stderr)
+            sys.exit(1)
+        summary = load_saved_scorecard(project_root) if target == "latest" else load_summary(summary_path)
+        if not summary:
+            print(f"✗ Could not read benchmark summary: {summary_path}", file=sys.stderr)
+            sys.exit(1)
+        _banner(
+            "BENCHMARK SUMMARY",
+            [("summary", str(summary_path)), ("best_variant", str(summary.get("best_variant")))],
+            subtitle="Saved benchmark scores",
+        )
+        print(
+            "| Variant | Status | Spec | Delivery | Gaps | Verify Failures | Blocks | Retries | Dispatches | Seconds |"
+        )
+        print("|---|---|---|---|---:|---:|---:|---:|---:|---:|")
+        variants = summary.get("variants")
+        if isinstance(variants, dict):
+            for variant_id, record in variants.items():
+                if not isinstance(record, dict):
+                    continue
+                print(
+                    f"| {variant_id} | {record.get('status', '')} | {record.get('spec_id') or '-'} | "
+                    f"{record.get('delivery_run_id') or '-'} | {record.get('fulfillment_gaps', 0)} | "
+                    f"{record.get('verification_failures', 0)} | {record.get('blocked_states', 0)} | "
+                    f"{record.get('retries', 0)} | {record.get('build_dispatches', 0)} | "
+                    f"{float(record.get('elapsed_seconds') or 0.0):.1f} |"
+                )
         return
 
     if args[0] != "run" or len(args) < 2:
