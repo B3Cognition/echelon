@@ -21,6 +21,7 @@ from harness.echelon_result_schema import (
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import PhaseAReadinessResult, validate_phase_a_readiness
+from harness.phase_checkpoints import create_phase_checkpoint
 from harness.quality_scores import normalize_why_quality_scores
 from harness.spec_frontmatter import find_spec_dir
 from harness.squad_executors import (
@@ -610,6 +611,7 @@ class SquadController:
                 result,
                 allowed_state_update_keys=node.allowed_state_updates,
             )
+            self._checkpoint_successful_phase(phase, next_phase)
             self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
@@ -759,6 +761,7 @@ class SquadController:
             allowed_state_update_keys=node.allowed_state_updates,
             manual_phase_run=True,
         )
+        self._checkpoint_successful_phase(phase, next_phase)
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
@@ -950,6 +953,22 @@ class SquadController:
             if run_local.exists():
                 return run_local
         return None
+
+    def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> None:
+        state = self._state_store.load()
+        spec_dir = self._active_phase_a_spec_dir(state)
+        if spec_dir is None or not spec_dir.exists():
+            return
+        try:
+            create_phase_checkpoint(
+                project_root=self._project_root,
+                spec_dir=spec_dir,
+                phase=phase,
+                next_phase=next_phase,
+                run_id=str(state.get("run_id") or ""),
+            )
+        except Exception as exc:
+            logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
 
     def _published_phase_a_spec_dir(self, state: dict, active_spec_dir: Path) -> Path:
         published_ref = str(state.get("published_spec_dir") or "").strip()
