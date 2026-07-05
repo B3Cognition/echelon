@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-096 / #108 Codex AI CLI backend** — Codex is now a first-class
+  `AICodingCliProvider` backend selected through `harness.llm.cli`, while
+  Docker remains the harness sandbox provider. Squad agents, the review loop,
+  and direct skill dispatch now route through concrete AI CLI backends instead
+  of local provider-specific command branches.
 - **EGR-063 benchmark scoring persistence** — artifact-quality benchmark
   variants now run Phase A spec authoring and delivery in `banzai` mode,
   persist collected squad/build metrics to `runs/benchmarks/**/summary.json`,
