@@ -10,6 +10,7 @@ import pytest
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
 from harness.ai_cli_backends.claude import ClaudeCliBackend
 from harness.ai_cli_backends.codex import CodexCliBackend
+from harness.ai_cli_backends.opencode import OpenCodeCliBackend
 from harness.ai_cli_backends.plain import PlainCliBackend
 from harness.config import HarnessConfig, LlmConfig
 
@@ -54,7 +55,7 @@ def test_cli_run_request_carries_prompt_and_timeout(tmp_path) -> None:
         ("claude", "ClaudeCliBackend"),
         ("codex", "CodexCliBackend"),
         ("copilot", "PlainCliBackend"),
-        ("opencode", "PlainCliBackend"),
+        ("opencode", "OpenCodeCliBackend"),
     ],
 )
 def test_backend_factory_returns_concrete_backend(cli: str, class_name: str) -> None:
@@ -197,3 +198,39 @@ def test_codex_backend_falls_back_to_plain_stdout(tmp_path) -> None:
 
     assert result.exit_code == 0
     assert "plain codex output" in result.stdout
+
+
+def test_opencode_backend_parses_json_events(tmp_path) -> None:
+    backend = OpenCodeCliBackend(_config("opencode"))
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps({"type": "message", "role": "assistant", "content": "working"})
+                + "\n"
+                + json.dumps({"type": "result", "output": "echelon_result:\\n  verdict: PASS\\n"})
+                + "\n"
+            ).encode()
+        )
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch("harness.ai_cli_backends.opencode.subprocess.Popen", return_value=FakeProcess()):
+        result = backend.run_agent(request)
+
+    assert result.exit_code == 0
+    assert "working" in result.stdout
+    assert "echelon_result:" in result.stdout

@@ -40,6 +40,7 @@ class AICodingCliBackend(Protocol):
 def create_ai_cli_backend(config: HarnessConfig) -> AICodingCliBackend:
     from harness.ai_cli_backends.claude import ClaudeCliBackend
     from harness.ai_cli_backends.codex import CodexCliBackend
+    from harness.ai_cli_backends.opencode import OpenCodeCliBackend
     from harness.ai_cli_backends.plain import PlainCliBackend
 
     cli = config.llm.cli
@@ -47,4 +48,6 @@ def create_ai_cli_backend(config: HarnessConfig) -> AICodingCliBackend:
         return ClaudeCliBackend(config)
     if cli == "codex":
         return CodexCliBackend(config)
+    if cli == "opencode":
+        return OpenCodeCliBackend(config)
     return PlainCliBackend(config)

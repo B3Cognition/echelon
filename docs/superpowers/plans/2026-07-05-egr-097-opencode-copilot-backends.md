@@ -263,7 +263,7 @@ git commit -m "fix: map OpenCode and Copilot CLI command policy"
 - Consumes: `CliRunRequest`, `CliRunResult`, `build_llm_cli_command(..., opencode_json=True)`
 - Produces: `OpenCodeCliBackend.run_prompt()` and `.run_agent()`.
 
-- [ ] **Step 1: Write failing factory and parser tests**
+- [x] **Step 1: Write failing factory and parser tests**
 
 Modify `tests/unit/test_ai_cli_backend.py` imports:
 
@@ -316,7 +316,7 @@ def test_opencode_backend_parses_json_events(tmp_path) -> None:
     assert "echelon_result:" in result.stdout
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -326,7 +326,7 @@ uv run --extra dev pytest tests/unit/test_ai_cli_backend.py::test_backend_factor
 
 Expected: FAIL because `OpenCodeCliBackend` does not exist and factory still returns `PlainCliBackend`.
 
-- [ ] **Step 3: Implement OpenCode backend**
+- [x] **Step 3: Implement OpenCode backend**
 
 Create `src/harness/ai_cli_backends/opencode.py`:
 
@@ -411,7 +411,7 @@ def _extract_opencode_text(line: str) -> str:
     return line
 ```
 
-- [ ] **Step 4: Wire the factory**
+- [x] **Step 4: Wire the factory**
 
 Modify `src/harness/ai_cli_backend.py`:
 
@@ -432,7 +432,7 @@ def create_ai_cli_backend(config: HarnessConfig) -> AICodingCliBackend:
     return PlainCliBackend(config)
 ```
 
-- [ ] **Step 5: Run OpenCode tests**
+- [x] **Step 5: Run OpenCode tests**
 
 Run:
 
@@ -442,7 +442,7 @@ uv run --extra dev pytest tests/unit/test_ai_cli_backend.py::test_opencode_backe
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/ai_cli_backends/opencode.py src/harness/ai_cli_backend.py tests/unit/test_ai_cli_backend.py
