@@ -295,6 +295,45 @@ def test_opencode_backend_enforces_timeout(tmp_path) -> None:
     assert elapsed < 0.25
 
 
+@pytest.mark.parametrize(
+    ("backend_cls", "cli"),
+    [
+        (OpenCodeCliBackend, "opencode"),
+        (CopilotCliBackend, "copilot"),
+    ],
+)
+def test_json_backends_drain_large_stderr_without_deadlock(
+    tmp_path,
+    capsys,
+    backend_cls: type[OpenCodeCliBackend] | type[CopilotCliBackend],
+    cli: str,
+) -> None:
+    backend = backend_cls(_config(cli))
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=2,
+    )
+    code = (
+        "import sys\n"
+        "sys.stderr.write('diagnostic-' + 'x' * 200000 + '\\n')\n"
+        "sys.stderr.flush()\n"
+        "sys.stdout.write('done\\n')\n"
+        "sys.stdout.flush()\n"
+    )
+
+    result = backend._run([sys.executable, "-c", code], request)
+    captured = capsys.readouterr()
+
+    assert result.timed_out is False
+    assert result.exit_code == 0
+    assert result.stdout == "done"
+    assert result.stderr.startswith("diagnostic-")
+    assert "diagnostic-" not in captured.out
+    assert "diagnostic-" in captured.err
+
+
 def test_copilot_backend_parses_jsonl_response(tmp_path) -> None:
     backend = CopilotCliBackend(_config("copilot"))
 

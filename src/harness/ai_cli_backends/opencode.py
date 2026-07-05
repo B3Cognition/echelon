@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 import threading
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
@@ -42,24 +43,31 @@ class OpenCodeCliBackend:
         stderr_parts: list[str] = []
         timed_out = False
 
+        def read_stderr() -> None:
+            if proc.stderr is None:
+                return
+            stderr = proc.stderr.read().decode("utf-8", errors="replace")
+            if stderr:
+                stderr_parts.append(stderr)
+
         def kill() -> None:
             nonlocal timed_out
             timed_out = True
             proc.kill()
 
         timer = threading.Timer(request.timeout_s, kill)
+        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
         try:
             timer.start()
+            stderr_thread.start()
             assert proc.stdout is not None
             for raw in proc.stdout:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
                 stdout_parts.append(_extract_opencode_text(line))
-            stderr = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
-            if stderr:
-                stderr_parts.append(stderr)
             exit_code = proc.wait()
+            stderr_thread.join(timeout=1)
         finally:
             timer.cancel()
 
@@ -68,7 +76,7 @@ class OpenCodeCliBackend:
         if stdout:
             print(stdout, flush=True)
         if stderr:
-            print(stderr, flush=True)
+            print(stderr, file=sys.stderr, flush=True)
         return CliRunResult(
             exit_code=-1 if timed_out else int(exit_code),
             stdout=stdout,
