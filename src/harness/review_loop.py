@@ -16,7 +16,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -27,7 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urlparse
 
 from harness.config import HarnessConfig
-from harness.llm_tool_policy import build_llm_cli_command
+from harness.llm_provider import AICodingCliProvider
 from harness.paths import build_dir as _build_dir_fn
 from harness.loop_result import LoopResult
 
@@ -162,7 +161,6 @@ class ReviewLoopController:
         # Resolve LLM CLI binary — ECHELON_LLM env var takes precedence over config
         _cli = os.environ.get("ECHELON_LLM", config.llm.cli)
         self._llm_cli = _cli
-        self._llm_bin = shutil.which(_cli) or _cli
         self._review_timeout_s = 1_200.0  # 20 min per review skill invocation
 
         # Persistent state: tracks which comment IDs we've already acted on
@@ -703,10 +701,6 @@ class ReviewLoopController:
         # Remove stale status file from a previous invocation
         status_file.unlink(missing_ok=True)
 
-        env = {**os.environ, "HARNESS_BUILD_STATUS_FILE": str(status_file)}
-        if self._config.llm.config_dir and self._llm_cli == "claude":
-            env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config.llm.config_dir)
-
         from harness.skill_loader import resolve_llm_prompt
         args = f"{self._spec_id} pr_url={pr_url}"
         spec_dir = _find_review_spec_dir(self._base_dir, self._spec_id)
@@ -722,25 +716,18 @@ class ReviewLoopController:
         )
         logger.info("Invoking echelon.review: spec=%s pr=%s", self._spec_id, pr_url)
 
-        try:
-            cmd = build_llm_cli_command(
-                self._llm_cli,
-                self._llm_bin,
-                prompt,
-                self._config.llm.tool_policy,
-            )
-            result = subprocess.run(
-                cmd,
-                cwd=str(self._base_dir),
-                env=env,
-                timeout=self._review_timeout_s,
-            )
-        except subprocess.TimeoutExpired:
+        result = AICodingCliProvider(self._config).run_prompt_result(
+            str(self._base_dir),
+            prompt,
+            extra_env={"HARNESS_BUILD_STATUS_FILE": str(status_file)},
+            timeout_ms=int(self._review_timeout_s * 1000),
+        )
+        if result.timed_out:
             logger.warning("echelon.review timed out after %ss", self._review_timeout_s)
             return 0
 
-        if result.returncode != 0:
-            logger.warning("echelon.review exited %d", result.returncode)
+        if result.exit_code != 0:
+            logger.warning("echelon.review exited %d", result.exit_code)
 
         # Read status file if present
         if status_file.exists():
@@ -755,7 +742,7 @@ class ReviewLoopController:
             except Exception as e:
                 logger.warning("Could not read review status file: %s", e)
 
-        return 0  # stdout not captured; token tracking via status file only
+        return max(1, len(result.stdout.encode("utf-8")) // 4)
 
     # === Private: state persistence ===
 
