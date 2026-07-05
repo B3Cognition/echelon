@@ -398,6 +398,24 @@ def _write_unsafe_host_execution_local_override(project_dir: Path, yaml_module) 
     return local_cfg
 
 
+def _apply_workspace_llm_selection(config: dict) -> str:
+    from harness.init import _detect_llm_cli
+
+    harness = config.setdefault("harness", {})
+    if not isinstance(harness, dict):
+        raise ValueError("config harness section must be a mapping")
+    llm = harness.setdefault("llm", {})
+    if not isinstance(llm, dict):
+        raise ValueError("config harness.llm section must be a mapping")
+
+    existing = llm.get("cli")
+    selected = _detect_llm_cli()
+    if os.environ.get("ECHELON_LLM", "").strip() or not existing:
+        llm["cli"] = selected
+        return selected
+    return str(existing)
+
+
 def _cmd_init(project_dir: Path, *, allow_unsafe_host_execution: bool = False) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
     legacy_cfg = ext_dir / "echelon-config.yml"
@@ -457,6 +475,17 @@ def _cmd_init(project_dir: Path, *, allow_unsafe_host_execution: bool = False) -
         echelon_cfg.write_text(yaml.dump(config, default_flow_style=False, allow_unicode=True))
         deploy_enabled = False
         print("✓ deploy.enabled=false written to .echelon/config.yml")
+
+    try:
+        llm_cli = _apply_workspace_llm_selection(config)
+    except Exception as e:
+        print(f"✗ Cannot write workspace LLM provider: {e}", file=sys.stderr)
+        sys.exit(1)
+    echelon_cfg.write_text(
+        yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    print(f"✓ LLM provider configured: {llm_cli}")
 
     if allow_unsafe_host_execution:
         try:
