@@ -1,10 +1,7 @@
 """SquadAgentResult + SquadCliProvider for pre-code squad phase dispatch."""
 from __future__ import annotations
 
-import json
 import os
-import subprocess
-import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,7 +14,6 @@ from harness.echelon_result_schema import (
     validate_echelon_result,
 )
 from harness.llm_provider import AICodingCliProvider
-from harness.skill_loader import StreamEventPrinter
 
 
 @dataclass
@@ -187,20 +183,16 @@ class SquadCliProvider(AICodingCliProvider):
         prompt: str,
         timeout_ms: Optional[int] = None,
     ) -> SquadAgentResult:
-        cmd = self._build_cmd(prompt)
-        env = {**os.environ}
-        if self._config_dir and self._cli == "claude":
-            env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(self._config_dir)
-
         start = time.monotonic()
-        cost_usd = 0.0
-        if self._cli == "claude":
-            exit_code, raw, cost_usd = self._run_streaming_captured(cmd, project_root, env, timeout_ms)
-        else:
-            exit_code, raw = self._run_plain_captured(cmd, project_root, env, timeout_ms)
-
+        backend_result = self.run_agent_result(
+            project_root,
+            prompt,
+            timeout_ms=timeout_ms,
+        )
         duration_ms = int((time.monotonic() - start) * 1000)
-        timed_out = exit_code is None
+        exit_code = backend_result.exit_code
+        raw = backend_result.stdout
+        timed_out = backend_result.timed_out
         echelon_result = _extract_echelon_result(raw)
         echelon_result = _validate_or_block_echelon_result(
             echelon_result,
@@ -221,72 +213,5 @@ class SquadCliProvider(AICodingCliProvider):
             raw_output=raw,
             duration_ms=duration_ms,
             timed_out=timed_out,
-            cost_usd=cost_usd,
+            cost_usd=backend_result.cost_usd,
         )
-
-    def _run_streaming_captured(
-        self, cmd: list, cwd: str, env: dict, timeout_ms: Optional[int]
-    ) -> tuple[Optional[int], str, float]:
-        timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
-        proc = subprocess.Popen(
-            cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=None
-        )
-        text_chunks: list[str] = []
-        timed_out = False
-        cost_usd = 0.0
-        printer = StreamEventPrinter()
-
-        def _kill() -> None:
-            nonlocal timed_out
-            timed_out = True
-            proc.kill()
-
-        timer = threading.Timer(timeout_s, _kill)
-        try:
-            timer.start()
-            for raw_line in proc.stdout:  # type: ignore[union-attr]
-                line = raw_line.decode("utf-8", errors="replace").strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    printer(event)
-                    etype = event.get("type")
-                    if etype == "assistant":
-                        # Full assistant turn message — extract all text blocks.
-                        # This is the primary format emitted by the Claude CLI.
-                        for block in event.get("message", {}).get("content", []):
-                            if block.get("type") == "text":
-                                text_chunks.append(block.get("text", ""))
-                    elif (
-                        etype == "content_block_delta"
-                        and event.get("delta", {}).get("type") == "text_delta"
-                    ):
-                        # Streaming delta format (older CLI versions).
-                        text_chunks.append(event["delta"].get("text", ""))
-                    elif etype == "result":
-                        cost_usd = float(event.get("total_cost_usd") or 0)
-                except json.JSONDecodeError:
-                    print(line, flush=True)
-                    text_chunks.append(line)
-            proc.stdout.close()  # type: ignore[union-attr]
-            proc.wait()
-        finally:
-            timer.cancel()
-
-        exit_code = None if timed_out else proc.returncode
-        return exit_code, "".join(text_chunks), cost_usd
-
-    def _run_plain_captured(
-        self, cmd: list, cwd: str, env: dict, timeout_ms: Optional[int]
-    ) -> tuple[Optional[int], str]:
-        timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
-        try:
-            result = subprocess.run(
-                cmd, cwd=cwd, env=env, timeout=timeout_s, capture_output=True
-            )
-            text = result.stdout.decode("utf-8", errors="replace")
-            print(text, flush=True)
-            return result.returncode, text
-        except subprocess.TimeoutExpired:
-            return None, ""
