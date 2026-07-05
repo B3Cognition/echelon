@@ -114,7 +114,7 @@ git commit -m "test: capture OpenCode and Copilot CLI output fixtures"
 - Consumes: `build_llm_cli_command(cli, bin_, prompt, policy, ...)`
 - Produces: correct command lists for `opencode` and `copilot`.
 
-- [ ] **Step 1: Write failing OpenCode and Copilot policy tests**
+- [x] **Step 1: Write failing OpenCode and Copilot policy tests**
 
 Add to `tests/unit/test_llm_tool_policy.py`:
 
@@ -169,7 +169,7 @@ def test_copilot_approved_unsafe_mode_uses_copilot_permission_flags() -> None:
     assert "--dangerously-skip-permissions" not in cmd
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -179,7 +179,7 @@ uv run --extra dev pytest tests/unit/test_llm_tool_policy.py -q
 
 Expected: FAIL because `opencode_json` and `copilot_json` keyword arguments do not exist yet, and Copilot unsafe mode currently uses the wrong generic flag.
 
-- [ ] **Step 3: Implement command builder arguments**
+- [x] **Step 3: Implement command builder arguments**
 
 Modify `build_llm_cli_command()` signature in `src/harness/llm_tool_policy.py`:
 
@@ -233,7 +233,7 @@ Leave the final fallback for unsupported CLIs only:
     return cmd
 ```
 
-- [ ] **Step 4: Run policy tests**
+- [x] **Step 4: Run policy tests**
 
 Run:
 
@@ -243,7 +243,7 @@ uv run --extra dev pytest tests/unit/test_llm_tool_policy.py -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/harness/llm_tool_policy.py tests/unit/test_llm_tool_policy.py

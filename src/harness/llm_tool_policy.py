@@ -72,6 +72,8 @@ def build_llm_cli_command(
     disallow_claude_task_tools: bool = False,
     codex_json: bool = False,
     output_last_message: str | None = None,
+    opencode_json: bool = False,
+    copilot_json: bool = False,
 ) -> list[str]:
     """Build a host-side AI coding CLI command under the effective policy."""
     validate_llm_tool_policy(policy)
@@ -82,6 +84,8 @@ def build_llm_cli_command(
         cmd = [bin_, "run"]
         if unsafe:
             cmd.append("--dangerously-skip-permissions")
+        if opencode_json:
+            cmd += ["--format", "json"]
         cmd.append(effective_prompt)
         return cmd
 
@@ -106,11 +110,17 @@ def build_llm_cli_command(
             cmd += ["--output-format", "stream-json", "--verbose"]
         return cmd
 
+    if cli == "copilot":
+        cmd = [bin_, "-p", effective_prompt]
+        if copilot_json:
+            cmd += ["--output-format", "json", "--stream", "off"]
+        if unsafe:
+            cmd.append("--allow-all-tools")
+        return cmd
+
     cmd = [bin_, "-p", effective_prompt]
     if unsafe:
         cmd.append("--dangerously-skip-permissions")
-        if cli == "copilot":
-            cmd.append("--allow-all-tools")
     return cmd
 
 

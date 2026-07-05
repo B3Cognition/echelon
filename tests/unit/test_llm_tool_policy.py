@@ -87,6 +87,56 @@ def test_codex_command_can_request_json_and_output_last_message() -> None:
     assert cmd[-1].startswith("## Effective Host Tool Policy")
 
 
+def test_opencode_prompt_command_can_request_json() -> None:
+    cmd = build_llm_cli_command(
+        "opencode",
+        "opencode",
+        "Do the work.",
+        LlmToolPolicy(),
+        opencode_json=True,
+    )
+
+    assert cmd[:2] == ["opencode", "run"]
+    assert "--format" in cmd
+    assert cmd[cmd.index("--format") + 1] == "json"
+    assert cmd[-1].startswith("## Effective Host Tool Policy")
+
+
+def test_copilot_prompt_command_uses_json_non_streaming_mode() -> None:
+    cmd = build_llm_cli_command(
+        "copilot",
+        "copilot",
+        "Do the work.",
+        LlmToolPolicy(),
+        copilot_json=True,
+    )
+
+    assert cmd[:2] == ["copilot", "-p"]
+    assert "--output-format" in cmd
+    assert cmd[cmd.index("--output-format") + 1] == "json"
+    assert "--stream" in cmd
+    assert cmd[cmd.index("--stream") + 1] == "off"
+    assert "--dangerously-skip-permissions" not in cmd
+
+
+def test_copilot_approved_unsafe_mode_uses_copilot_permission_flags() -> None:
+    policy = LlmToolPolicy(
+        allow_unsafe_host_execution=True,
+        approval_reason="Operator approved disposable local worktree.",
+    )
+
+    cmd = build_llm_cli_command(
+        "copilot",
+        "copilot",
+        "Do the work.",
+        policy,
+        copilot_json=True,
+    )
+
+    assert "--allow-all-tools" in cmd
+    assert "--dangerously-skip-permissions" not in cmd
+
+
 def test_opencode_skill_command_preserves_native_command_dispatch() -> None:
     cmd = build_opencode_skill_command(
         "opencode",
