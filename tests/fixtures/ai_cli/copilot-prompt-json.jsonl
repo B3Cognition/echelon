@@ -1,0 +1,4 @@
+{"type":"assistant.turn_start","data":{"turnId":"0","interactionId":"fixture-interaction"},"id":"fixture-turn-start","timestamp":"2026-07-05T00:00:00.000Z","parentId":"fixture-user-message"}
+{"type":"assistant.message","data":{"messageId":"fixture-message","content":"Hello! How can I help you today?","toolRequests":[],"interactionId":"fixture-interaction","outputTokens":12,"requestId":"fixture-request"},"id":"fixture-assistant-message","timestamp":"2026-07-05T00:00:01.000Z","parentId":"fixture-turn-start"}
+{"type":"assistant.turn_end","data":{"turnId":"0"},"id":"fixture-turn-end","timestamp":"2026-07-05T00:00:02.000Z","parentId":"fixture-assistant-message"}
+{"type":"result","timestamp":"2026-07-05T00:00:03.000Z","sessionId":"fixture-session","exitCode":0,"usage":{"premiumRequests":1,"totalApiDurationMs":1966,"sessionDurationMs":7995,"codeChanges":{"linesAdded":0,"linesRemoved":0,"filesModified":[]}}}
