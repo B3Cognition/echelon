@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 from unittest.mock import patch
 
 import pytest
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
 from harness.ai_cli_backends.claude import ClaudeCliBackend
+from harness.ai_cli_backends.plain import PlainCliBackend
 from harness.config import HarnessConfig, LlmConfig
 
 
@@ -103,3 +105,26 @@ def test_claude_backend_streams_json_and_captures_result_error(tmp_path) -> None
     assert result.exit_code == 1
     assert "session limit reached" in result.stdout
     assert result.token_usage == 12
+
+
+def test_plain_backend_captures_stdout_and_stderr(tmp_path) -> None:
+    backend = PlainCliBackend(_config("copilot"))
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+    )
+    completed = subprocess.CompletedProcess(
+        args=["copilot"],
+        returncode=3,
+        stdout=b"plain stdout",
+        stderr=b"plain stderr",
+    )
+
+    with patch("harness.ai_cli_backends.plain.subprocess.run", return_value=completed):
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 3
+    assert result.stdout == "plain stdout"
+    assert result.stderr == "plain stderr"
