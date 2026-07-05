@@ -462,7 +462,7 @@ git commit -m "feat: add OpenCode AI CLI backend"
 - Consumes: `CliRunRequest`, `CliRunResult`, `build_llm_cli_command(..., copilot_json=True)`
 - Produces: `CopilotCliBackend.run_prompt()` and `.run_agent()`.
 
-- [ ] **Step 1: Write failing factory and parser tests**
+- [x] **Step 1: Write failing factory and parser tests**
 
 Modify `tests/unit/test_ai_cli_backend.py` imports:
 
@@ -515,7 +515,7 @@ def test_copilot_backend_parses_jsonl_response(tmp_path) -> None:
     assert "echelon_result:" in result.stdout
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run:
 
@@ -525,7 +525,7 @@ uv run --extra dev pytest tests/unit/test_ai_cli_backend.py::test_backend_factor
 
 Expected: FAIL because `CopilotCliBackend` does not exist and factory still returns `PlainCliBackend`.
 
-- [ ] **Step 3: Implement Copilot backend**
+- [x] **Step 3: Implement Copilot backend**
 
 Create `src/harness/ai_cli_backends/copilot.py`:
 
@@ -610,11 +610,11 @@ def _extract_copilot_text(line: str) -> str:
     return line
 ```
 
-- [ ] **Step 4: Wire the factory**
+- [x] **Step 4: Wire the factory**
 
 Modify `src/harness/ai_cli_backend.py` so `copilot` returns `CopilotCliBackend` and `opencode` returns `OpenCodeCliBackend`.
 
-- [ ] **Step 5: Run Copilot tests**
+- [x] **Step 5: Run Copilot tests**
 
 Run:
 
@@ -624,7 +624,7 @@ uv run --extra dev pytest tests/unit/test_ai_cli_backend.py::test_copilot_backen
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/harness/ai_cli_backends/copilot.py src/harness/ai_cli_backend.py tests/unit/test_ai_cli_backend.py
