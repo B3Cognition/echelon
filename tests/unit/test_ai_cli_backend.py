@@ -3,6 +3,9 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import sys
+import time
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -234,3 +237,58 @@ def test_opencode_backend_parses_json_events(tmp_path) -> None:
     assert result.exit_code == 0
     assert "working" in result.stdout
     assert "echelon_result:" in result.stdout
+
+
+def test_opencode_backend_parses_recorded_fixture_text(tmp_path) -> None:
+    backend = OpenCodeCliBackend(_config("opencode"))
+    fixture = (
+        Path(__file__).resolve().parents[1]
+        / "fixtures"
+        / "ai_cli"
+        / "opencode-run-json.jsonl"
+    )
+
+    class FakeProcess:
+        stdout = io.BytesIO(fixture.read_bytes())
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch("harness.ai_cli_backends.opencode.subprocess.Popen", return_value=FakeProcess()):
+        result = backend.run_agent(request)
+
+    assert result.exit_code == 0
+    assert result.stdout == "Hello."
+
+
+def test_opencode_backend_enforces_timeout(tmp_path) -> None:
+    backend = OpenCodeCliBackend(_config("opencode"))
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=0.05,
+    )
+
+    started = time.monotonic()
+    result = backend._run(
+        [sys.executable, "-c", "import time; time.sleep(0.3)"],
+        request,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.timed_out is True
+    assert result.exit_code == -1
+    assert elapsed < 0.25

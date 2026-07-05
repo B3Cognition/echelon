@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
 from harness.config import HarnessConfig
@@ -30,16 +31,25 @@ class OpenCodeCliBackend:
         return self.run_prompt(request)
 
     def _run(self, cmd: list[str], request: CliRunRequest) -> CliRunResult:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=request.cwd,
+            env=dict(request.env),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         stdout_parts: list[str] = []
         stderr_parts: list[str] = []
+        timed_out = False
+
+        def kill() -> None:
+            nonlocal timed_out
+            timed_out = True
+            proc.kill()
+
+        timer = threading.Timer(request.timeout_s, kill)
         try:
-            proc = subprocess.Popen(
-                cmd,
-                cwd=request.cwd,
-                env=dict(request.env),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            timer.start()
             assert proc.stdout is not None
             for raw in proc.stdout:
                 line = raw.decode("utf-8", errors="replace").strip()
@@ -50,20 +60,21 @@ class OpenCodeCliBackend:
             if stderr:
                 stderr_parts.append(stderr)
             exit_code = proc.wait()
-        except subprocess.TimeoutExpired as exc:
-            return CliRunResult(
-                exit_code=-1,
-                stdout=(exc.stdout or b"").decode("utf-8", errors="replace"),
-                stderr=(exc.stderr or b"").decode("utf-8", errors="replace"),
-                timed_out=True,
-            )
+        finally:
+            timer.cancel()
+
         stdout = "\n".join(part for part in stdout_parts if part)
         stderr = "\n".join(part for part in stderr_parts if part)
         if stdout:
             print(stdout, flush=True)
         if stderr:
             print(stderr, flush=True)
-        return CliRunResult(exit_code=int(exit_code), stdout=stdout, stderr=stderr)
+        return CliRunResult(
+            exit_code=-1 if timed_out else int(exit_code),
+            stdout=stdout,
+            stderr=stderr,
+            timed_out=timed_out,
+        )
 
 
 def _extract_opencode_text(line: str) -> str:
@@ -71,8 +82,19 @@ def _extract_opencode_text(line: str) -> str:
         event = json.loads(line)
     except json.JSONDecodeError:
         return line
+
     for key in ("content", "output", "result", "text", "message"):
         value = event.get(key)
-        if isinstance(value, str):
+        if isinstance(value, str) and value.strip():
             return value
+
+    part = event.get("part")
+    if isinstance(part, dict):
+        value = part.get("text")
+        if isinstance(value, str) and value.strip():
+            return value
+        return ""
+
+    if "type" in event:
+        return ""
     return line
