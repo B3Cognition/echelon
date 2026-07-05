@@ -126,6 +126,23 @@ def test_workspace_init_persists_selected_llm_provider(tmp_path, monkeypatch, ca
     assert config["harness"]["llm"]["cli"] == "codex"
 
 
+@pytest.mark.parametrize("llm_cli", ["opencode", "copilot"])
+def test_workspace_init_persists_additional_llm_providers(tmp_path, monkeypatch, capsys, llm_cli: str) -> None:
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: http\n  blue_port: 18080\n  green_port: 18081\n",
+    )
+    monkeypatch.setenv("ECHELON_LLM", llm_cli)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_init(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "ECHELON INIT — COMPLETE" in captured.out
+    config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
+    assert config["harness"]["llm"]["cli"] == llm_cli
+
+
 def test_workspace_init_flag_writes_local_unsafe_host_execution_policy(
     tmp_path,
     monkeypatch,

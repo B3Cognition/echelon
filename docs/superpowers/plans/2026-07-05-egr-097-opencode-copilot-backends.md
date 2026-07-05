@@ -645,7 +645,7 @@ git commit -m "feat: add Copilot AI CLI backend"
 - Consumes: `AICodingCliProvider(config).exec_prompt(worktree_path, prompt)`
 - Produces: verified routing for `copilot`, verified native command dispatch for `opencode`, and workspace init persistence for both.
 
-- [ ] **Step 1: Add direct dispatch tests**
+- [x] **Step 1: Add direct dispatch tests**
 
 Add to `tests/unit/test_cli_llm_tool_policy.py`:
 
@@ -689,7 +689,7 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
 
 Keep the existing OpenCode direct skill dispatch path covered by `test_opencode_skill_command_preserves_native_command_dispatch()` in `tests/unit/test_llm_tool_policy.py`.
 
-- [ ] **Step 2: Add workspace init persistence tests**
+- [x] **Step 2: Add workspace init persistence tests**
 
 Add parameterized test to `tests/unit/test_workspace_init_deploy_runtime.py`:
 
@@ -711,7 +711,7 @@ def test_workspace_init_persists_additional_llm_providers(tmp_path, monkeypatch,
     assert config["harness"]["llm"]["cli"] == llm_cli
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run:
 
@@ -721,7 +721,7 @@ uv run --extra dev pytest tests/unit/test_cli_llm_tool_policy.py tests/unit/test
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/echelon/cli.py tests/unit/test_cli_llm_tool_policy.py tests/unit/test_workspace_init_deploy_runtime.py tests/unit/test_config.py
