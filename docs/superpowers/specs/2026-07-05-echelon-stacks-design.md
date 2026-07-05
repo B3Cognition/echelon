@@ -19,6 +19,11 @@ The first target stacks are:
 - `statsperform-stark-webapp`: Opta Stark web application archetype for
   Nx/Next.js web apps, including its web-app delivery conventions.
 
+The stack model must also handle infrastructure capabilities such as databases,
+messaging, and stream processing. These should be independent capability stacks
+so a service can opt into MSA plus Kafka, MSA plus Postgres, or a Flink data
+pipeline without making those choices implicit in the service archetype.
+
 The default must remain current Echelon behavior: infer the stack from
 requirements and repository evidence unless the user explicitly opts in.
 
@@ -38,11 +43,15 @@ machine-readable capability semantics rather than template replacement alone.
 - Let future stacks be added without editing core agents.
 - Support products with multiple target archetypes, for example a web app plus
   an MSA backend service.
+- Support non-application capability stacks such as databases, messaging, and
+  stream-processing engines.
 
 ## Non-Goals
 
 - Do not make Playbook, MSA, or Stark global defaults.
 - Do not make Stark a generic deployment stack for services.
+- Do not make MSA imply a database, Kafka, Flink, or any other infrastructure
+  dependency unless a dedicated stack explicitly declares it.
 - Do not extend or depend on speckit preset behavior.
 - Do not encode stack-specific `if stack then ...` branches inside agent prose.
 - Do not make the initial implementation install or update external repos.
@@ -167,6 +176,10 @@ Capability keys use namespaced strings. Core namespaces are:
 - `observability.*`
 - `audit.*`
 - `docs.*`
+- `data.*`
+- `messaging.*`
+- `stream.*`
+- `schema.*`
 
 Unknown namespaces are invalid unless they start with `x.`. Extension keys
 under `x.` are preserved in resolved output but ignored by core Echelon logic.
@@ -229,6 +242,8 @@ Operational guidance:
 - Use the MSA service template for new backend services.
 - Use MSA core conventions for service structure, configuration,
   observability, health checks, Docker, CI, and test/lint/typecheck commands.
+- Select persistence, messaging, and stream-processing stacks separately when
+  requirements call for them.
 - Do not apply Stark delivery behavior to MSA services.
 
 ### statsperform-stark-webapp
@@ -263,6 +278,86 @@ Operational guidance:
   `@statsperform/react-playbook`.
 - Stark does not imply MSA and is not a backend deployment model.
 
+## Infrastructure Capability Stack Examples
+
+Database, messaging, and stream-processing stacks are capability stacks. They
+compose with application archetypes but do not define the application archetype
+by themselves.
+
+These examples define the shape Echelon should support. They do not need to be
+bundled in the first implementation unless the organization has agreed
+standards and context files for them.
+
+### statsperform-postgres
+
+Kind: `capability`
+
+Applies to: `service`, `api_service`, `worker`
+
+Provides:
+
+```yaml
+data.store: postgres
+data.migrations: alembic
+data.access: sqlalchemy
+test.data: integration-postgres
+```
+
+Operational guidance:
+
+- Use when requirements require relational persistence.
+- Keep migration, local development, test fixture, and deployment guidance in
+  the stack context.
+- Do not imply MSA; a Postgres stack can compose with any compatible service
+  archetype.
+
+### statsperform-kafka
+
+Kind: `capability`
+
+Applies to: `service`, `api_service`, `worker`, `data_pipeline`
+
+Provides:
+
+```yaml
+messaging.broker: kafka
+messaging.consumer: kafka
+messaging.producer: kafka
+schema.registry: kafka-compatible
+test.messaging: kafka-integration
+```
+
+Operational guidance:
+
+- Use when requirements require event production or consumption.
+- Capture topic ownership, consumer group, retry, dead-letter, schema, and
+  local test-container guidance in context.
+- Do not imply Flink; stream processing is a separate decision.
+
+### statsperform-flink
+
+Kind: `capability`
+
+Applies to: `data_pipeline`, `worker`
+
+Provides:
+
+```yaml
+stream.engine: flink
+stream.state: flink-managed
+stream.checkpointing: flink
+test.stream: flink-integration
+```
+
+Operational guidance:
+
+- Use when requirements require long-running stream processing, stateful
+  operators, windowing, or event-time processing.
+- Compose with Kafka or another messaging stack when the pipeline source/sink
+  requires it.
+- Do not apply to ordinary request/response services unless the architecture
+  explicitly classifies the target as a stream-processing worker or pipeline.
+
 ## Resolution Flow
 
 Before Phase A routing and before Phase B harness build prompts, Echelon runs a
@@ -295,6 +390,9 @@ Hard conflicts:
 - A stack is applied to an incompatible target archetype.
 - A selected stack implies a stack that conflicts with another selected stack.
 - A stack references missing context files.
+- A target selects two stacks that provide different values for exclusive
+  infrastructure capabilities, for example `data.store` or
+  `messaging.broker`, without explicit override support.
 
 Warnings:
 
@@ -449,6 +547,10 @@ Integration tests:
 - Config selecting MSA and Stark succeeds for multi-target service + web app
   scenarios when each stack applies to the correct target.
 - Config selecting MSA for a web-only target fails early.
+- Config selecting MSA plus Kafka or MSA plus Postgres composes when the target
+  archetype is service/API/worker and capabilities do not conflict.
+- Config selecting Flink for an ordinary web app or request/response service
+  fails unless the target archetype includes `data_pipeline` or `worker`.
 
 Prompt/contract tests:
 
@@ -493,6 +595,8 @@ mechanism later. Do not solve remote distribution in the first implementation.
 - Stark implies Playbook; Playbook does not imply Stark.
 - MSA and Stark are scoped to different archetypes and cannot be confused as a
   shared deployment profile.
+- Database, messaging, and stream-processing choices are represented as
+  independent capability stacks, not hidden defaults inside MSA.
 - Stack conflicts are detected before agent dispatch.
 - Agents receive generated resolved context, not stack-specific branching prose.
 - New stacks can be added by adding a directory with `stack.yml` and
