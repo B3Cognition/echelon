@@ -70,6 +70,8 @@ def build_llm_cli_command(
     *,
     stream_json: bool = False,
     disallow_claude_task_tools: bool = False,
+    codex_json: bool = False,
+    output_last_message: str | None = None,
 ) -> list[str]:
     """Build a host-side AI coding CLI command under the effective policy."""
     validate_llm_tool_policy(policy)
@@ -87,6 +89,10 @@ def build_llm_cli_command(
         cmd = [bin_, "exec"]
         if unsafe:
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
+        if codex_json:
+            cmd.append("--json")
+        if output_last_message:
+            cmd += ["--output-last-message", output_last_message]
         cmd.append(effective_prompt)
         return cmd
 

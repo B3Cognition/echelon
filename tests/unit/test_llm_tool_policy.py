@@ -70,6 +70,23 @@ def test_approved_codex_command_uses_dangerous_bypass_flag() -> None:
     assert "Effective Host Tool Policy" in cmd[-1]
 
 
+def test_codex_command_can_request_json_and_output_last_message() -> None:
+    cmd = build_llm_cli_command(
+        "codex",
+        "codex",
+        "Do the work.",
+        LlmToolPolicy(),
+        codex_json=True,
+        output_last_message="/tmp/codex-last.txt",
+    )
+
+    assert cmd[:2] == ["codex", "exec"]
+    assert "--json" in cmd
+    assert "--output-last-message" in cmd
+    assert cmd[cmd.index("--output-last-message") + 1] == "/tmp/codex-last.txt"
+    assert cmd[-1].startswith("## Effective Host Tool Policy")
+
+
 def test_opencode_skill_command_preserves_native_command_dispatch() -> None:
     cmd = build_opencode_skill_command(
         "opencode",

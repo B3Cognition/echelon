@@ -9,6 +9,7 @@ import pytest
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
 from harness.ai_cli_backends.claude import ClaudeCliBackend
+from harness.ai_cli_backends.codex import CodexCliBackend
 from harness.ai_cli_backends.plain import PlainCliBackend
 from harness.config import HarnessConfig, LlmConfig
 
@@ -128,3 +129,71 @@ def test_plain_backend_captures_stdout_and_stderr(tmp_path) -> None:
     assert result.exit_code == 3
     assert result.stdout == "plain stdout"
     assert result.stderr == "plain stderr"
+
+
+def test_codex_backend_parses_jsonl_and_final_message_file(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    final_message = tmp_path / "last-message.txt"
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps({"type": "message", "role": "assistant", "content": "working"})
+                + "\n"
+            ).encode()
+        )
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            final_message.write_text("echelon_result:\n  verdict: PASS\n  state_updates: {}\n")
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch("harness.ai_cli_backends.codex.tempfile.NamedTemporaryFile") as named, patch(
+        "harness.ai_cli_backends.codex.subprocess.Popen",
+        return_value=FakeProcess(),
+    ):
+        named.return_value.__enter__.return_value.name = str(final_message)
+        result = backend.run_agent(request)
+
+    assert result.exit_code == 0
+    assert "working" in result.stdout
+    assert "echelon_result:" in result.stdout
+
+
+def test_codex_backend_falls_back_to_plain_stdout(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+
+    class FakeProcess:
+        stdout = io.BytesIO(b"plain codex output\n")
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch("harness.ai_cli_backends.codex.subprocess.Popen", return_value=FakeProcess()):
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 0
+    assert "plain codex output" in result.stdout
