@@ -232,12 +232,16 @@ def test_opencode_backend_parses_json_events(tmp_path) -> None:
         timeout_s=10,
     )
 
-    with patch("harness.ai_cli_backends.opencode.subprocess.Popen", return_value=FakeProcess()):
+    with patch("harness.ai_cli_backends.opencode.subprocess.Popen", return_value=FakeProcess()) as popen:
         result = backend.run_agent(request)
 
     assert result.exit_code == 0
     assert "working" in result.stdout
     assert "echelon_result:" in result.stdout
+    cmd = popen.call_args.args[0]
+    assert Path(cmd[0]).name == "opencode"
+    assert cmd[1:4] == ["run", "--format", "json"]
+    assert cmd[-1].startswith("## Effective Host Tool Policy")
 
 
 def test_opencode_backend_parses_recorded_fixture_text(tmp_path) -> None:
@@ -267,11 +271,15 @@ def test_opencode_backend_parses_recorded_fixture_text(tmp_path) -> None:
         timeout_s=10,
     )
 
-    with patch("harness.ai_cli_backends.opencode.subprocess.Popen", return_value=FakeProcess()):
+    with patch("harness.ai_cli_backends.opencode.subprocess.Popen", return_value=FakeProcess()) as popen:
         result = backend.run_agent(request)
 
     assert result.exit_code == 0
     assert result.stdout == "Hello."
+    cmd = popen.call_args.args[0]
+    assert Path(cmd[0]).name == "opencode"
+    assert cmd[1:4] == ["run", "--format", "json"]
+    assert cmd[-1].startswith("## Effective Host Tool Policy")
 
 
 def test_opencode_backend_enforces_timeout(tmp_path) -> None:
@@ -362,12 +370,17 @@ def test_copilot_backend_parses_jsonl_response(tmp_path) -> None:
         timeout_s=10,
     )
 
-    with patch("harness.ai_cli_backends.copilot.subprocess.Popen", return_value=FakeProcess()):
+    with patch("harness.ai_cli_backends.copilot.subprocess.Popen", return_value=FakeProcess()) as popen:
         result = backend.run_agent(request)
 
     assert result.exit_code == 0
     assert "working" in result.stdout
     assert "echelon_result:" in result.stdout
+    cmd = popen.call_args.args[0]
+    assert Path(cmd[0]).name == "copilot"
+    assert cmd[1] == "-p"
+    assert cmd[2].startswith("## Effective Host Tool Policy")
+    assert cmd[-4:] == ["--output-format", "json", "--stream", "off"]
 
 
 def test_copilot_backend_parses_recorded_fixture_text(tmp_path) -> None:
@@ -397,11 +410,16 @@ def test_copilot_backend_parses_recorded_fixture_text(tmp_path) -> None:
         timeout_s=10,
     )
 
-    with patch("harness.ai_cli_backends.copilot.subprocess.Popen", return_value=FakeProcess()):
+    with patch("harness.ai_cli_backends.copilot.subprocess.Popen", return_value=FakeProcess()) as popen:
         result = backend.run_agent(request)
 
     assert result.exit_code == 0
     assert result.stdout == "Hello! How can I help you today?"
+    cmd = popen.call_args.args[0]
+    assert Path(cmd[0]).name == "copilot"
+    assert cmd[1] == "-p"
+    assert cmd[2].startswith("## Effective Host Tool Policy")
+    assert cmd[-4:] == ["--output-format", "json", "--stream", "off"]
 
 
 def test_copilot_backend_enforces_timeout(tmp_path) -> None:

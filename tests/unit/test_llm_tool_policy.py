@@ -103,6 +103,8 @@ def test_opencode_prompt_command_can_request_json() -> None:
 
 
 def test_copilot_prompt_command_uses_json_non_streaming_mode() -> None:
+    prompt = inject_llm_tool_policy_preamble("Do the work.", LlmToolPolicy())
+
     cmd = build_llm_cli_command(
         "copilot",
         "copilot",
@@ -111,11 +113,17 @@ def test_copilot_prompt_command_uses_json_non_streaming_mode() -> None:
         copilot_json=True,
     )
 
-    assert cmd[:2] == ["copilot", "-p"]
-    assert "--output-format" in cmd
-    assert cmd[cmd.index("--output-format") + 1] == "json"
-    assert "--stream" in cmd
-    assert cmd[cmd.index("--stream") + 1] == "off"
+    assert cmd == [
+        "copilot",
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--stream",
+        "off",
+    ]
+    assert "--allow-all-tools" not in cmd
+    assert "--allow-all" not in cmd
     assert "--dangerously-skip-permissions" not in cmd
 
 
@@ -133,7 +141,18 @@ def test_copilot_approved_unsafe_mode_uses_copilot_permission_flags() -> None:
         copilot_json=True,
     )
 
+    assert cmd == [
+        "copilot",
+        "-p",
+        inject_llm_tool_policy_preamble("Do the work.", policy),
+        "--output-format",
+        "json",
+        "--stream",
+        "off",
+        "--allow-all-tools",
+    ]
     assert "--allow-all-tools" in cmd
+    assert "--allow-all" not in cmd
     assert "--dangerously-skip-permissions" not in cmd
 
 

@@ -117,4 +117,5 @@ def test_dispatch_skill_command_routes_copilot_through_ai_cli_provider(monkeypat
 
     assert exc.value.code == 0
     assert calls
+    assert calls[0][0] == str(tmp_path)
     assert "review 005 pr_url=https://github.com/org/repo/pull/1" in calls[0][1]
