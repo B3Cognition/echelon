@@ -55,7 +55,7 @@
 - Consumes: local `opencode` and `copilot` CLIs when available.
 - Produces: stable fixture files used by parser tests in later tasks.
 
-- [ ] **Step 1: Capture OpenCode JSON output**
+- [x] **Step 1: Capture OpenCode JSON output**
 
 Run from the repo root:
 
@@ -65,7 +65,7 @@ opencode run --format json "Say hello in one short sentence. Do not modify files
 
 Expected: exit code `0`, JSONL output containing at least one assistant/content/result event.
 
-- [ ] **Step 2: Sanitize and save the OpenCode fixture**
+- [x] **Step 2: Sanitize and save the OpenCode fixture**
 
 Inspect:
 
@@ -75,7 +75,7 @@ head -20 /tmp/egr097-opencode.jsonl
 
 Create `tests/fixtures/ai_cli/opencode-run-json.jsonl` with a minimal representative subset. Keep real event keys, but replace volatile ids/timestamps/session paths with deterministic values such as `"fixture-session"`.
 
-- [ ] **Step 3: Capture Copilot JSON output**
+- [x] **Step 3: Capture Copilot JSON output**
 
 Run from the repo root:
 
@@ -85,7 +85,7 @@ copilot -p "Say hello in one short sentence. Do not modify files." --output-form
 
 Expected: exit code `0`, JSONL output containing a final assistant response or completion event.
 
-- [ ] **Step 4: Sanitize and save the Copilot fixture**
+- [x] **Step 4: Sanitize and save the Copilot fixture**
 
 Inspect:
 
@@ -95,7 +95,7 @@ head -40 /tmp/egr097-copilot.jsonl
 
 Create `tests/fixtures/ai_cli/copilot-prompt-json.jsonl` with a minimal representative subset. Keep real event keys, but replace volatile ids/timestamps/session paths with deterministic values.
 
-- [ ] **Step 5: Commit the fixtures**
+- [x] **Step 5: Commit the fixtures**
 
 ```bash
 git add tests/fixtures/ai_cli/opencode-run-json.jsonl tests/fixtures/ai_cli/copilot-prompt-json.jsonl docs/superpowers/plans/2026-07-05-egr-097-opencode-copilot-backends.md
