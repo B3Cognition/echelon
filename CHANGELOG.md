@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-097 / #109 OpenCode and Copilot AI CLI backends** — OpenCode and
+  GitHub Copilot CLI now have first-class `AICodingCliProvider` backends with
+  provider-specific JSON output parsing and permission flag mapping, replacing
+  the generic `PlainCliBackend` path for supported providers.
 - **EGR-096 / #108 Codex AI CLI backend** — Codex is now a first-class
   `AICodingCliProvider` backend selected through `harness.llm.cli`, while
   Docker remains the harness sandbox provider. Squad agents, the review loop,

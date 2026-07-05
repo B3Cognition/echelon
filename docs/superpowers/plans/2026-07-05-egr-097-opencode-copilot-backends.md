@@ -741,7 +741,7 @@ git commit -m "test: cover OpenCode and Copilot provider routing"
 - Consumes: completed backend tasks and GitHub issue number.
 - Produces: completed EGR-097 documentation and verification evidence.
 
-- [ ] **Step 1: Add changelog entry**
+- [x] **Step 1: Add changelog entry**
 
 Add under `CHANGELOG.md` `[Unreleased]` / `Added`:
 
@@ -752,7 +752,7 @@ Add under `CHANGELOG.md` `[Unreleased]` / `Added`:
   the generic `PlainCliBackend` path for supported providers.
 ```
 
-- [ ] **Step 2: Update EGR-097 row**
+- [x] **Step 2: Update EGR-097 row**
 
 Change EGR-097 status from `in-progress` to `fixed`. Ensure evidence includes `GitHub issue #109`. Replace next action with:
 
@@ -760,7 +760,7 @@ Change EGR-097 status from `in-progress` to `fixed`. Ensure evidence includes `G
 Fixed: OpenCode and Copilot now use concrete AI CLI backends with provider-native command builders, JSON output parsing, final assistant/echelon result extraction, and correct unsafe-permission flag mapping. `PlainCliBackend` no longer handles supported production providers. Verification: focused provider/policy/CLI/config suites and full unit suite passed.
 ```
 
-- [ ] **Step 3: Add review note**
+- [x] **Step 3: Add review note**
 
 Append to Review Notes after retrieving the current short commit:
 
@@ -769,7 +769,7 @@ SHORT_HEAD="$(git rev-parse --short HEAD)"
 printf '| 2026-07-05 | `%s` | EGR-097 implemented: OpenCode and Copilot are now concrete AI CLI backends behind `AICodingCliProvider`; provider-specific permission flags and JSON output parsing are covered by tests. Verification: focused provider/policy/CLI/config suites passed; full unit suite passed. |\n' "$SHORT_HEAD"
 ```
 
-- [ ] **Step 4: Run focused verification**
+- [x] **Step 4: Run focused verification**
 
 Run:
 
@@ -779,7 +779,7 @@ uv run --extra dev pytest tests/unit/test_ai_cli_backend.py tests/unit/test_llm_
 
 Expected: PASS.
 
-- [ ] **Step 5: Run full unit verification**
+- [x] **Step 5: Run full unit verification**
 
 Run:
 
@@ -789,7 +789,7 @@ uv run --extra dev pytest tests/unit -q
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add CHANGELOG.md docs/findings/echelon-grounded-review-register.md docs/superpowers/plans/2026-07-05-egr-097-opencode-copilot-backends.md
