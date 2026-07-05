@@ -169,6 +169,7 @@ the same time as the code lands.
 
 | Date | Reviewed HEAD | Notes |
 |---|---|---|
+| 2026-07-05 | `b5e5027` | EGR-097 final review follow-up fixed OpenCode/Copilot stderr pipe draining and stderr stream routing for provider diagnostics. Verification: focused provider/policy/CLI/config suites passed with 101 tests; full unit suite passed with 1848 tests. |
 | 2026-07-05 | `fafc9f6` | EGR-097 implemented: OpenCode and Copilot are now concrete AI CLI backends behind `AICodingCliProvider`; provider-specific permission flags and JSON output parsing are covered by tests. Verification: focused provider/policy/CLI/config suites passed; full unit suite passed. |
 | 2026-06-29 | `working tree on main` | Added EGR-043 through EGR-046 from `/tmp/echelon.harness.run.3`: missing Claude custom-agent registration for verify-spec build agents, stale task-progress bookkeeping despite implemented code/tests, placeholder constitution allowed into harness build, and CodeGraph term-match confidence overreach. |
 | 2026-06-29 | `working tree on main` | EGR-043 through EGR-046 implemented: synced runtime agents now get Claude custom-agent frontmatter; reported completed task IDs that cannot be reconciled to `tasks.md` hard-block; Phase A readiness requires a non-placeholder published constitution snapshot; CodeGraph term-match-only source/test rows remain low-confidence fallback evidence. Verification: focused affected slice passed with 194 tests; full `pytest -q` passed with 2530 tests and 22 skipped. |
