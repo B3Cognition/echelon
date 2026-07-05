@@ -4977,6 +4977,8 @@ from harness.skill_loader import (
     build_skill_prompt as _build_skill_prompt_impl,
     StreamEventPrinter as _StreamEventPrinter,
 )
+from harness.config import load_config
+from harness.llm_provider import AICodingCliProvider
 from harness.llm_tool_policy import (
     LlmToolPolicy,
     build_llm_cli_command,
@@ -4992,10 +4994,12 @@ def _build_prompt(skill_path: Path, arguments: str) -> str:
     return _build_skill_prompt_impl(skill_path, arguments)
 
 
-def _load_cli_tool_policy(project_dir: Path) -> LlmToolPolicy:
-    from harness.config import load_config
+def _load_cli_config(project_dir: Path):
+    return load_config(project_dir, squad_only=True)
 
-    return load_config(project_dir, squad_only=True).llm.tool_policy
+
+def _load_cli_tool_policy(project_dir: Path) -> LlmToolPolicy:
+    return _load_cli_config(project_dir).llm.tool_policy
 
 
 def _print_event(event: dict, _printer: list = []) -> None:
@@ -5085,7 +5089,8 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     project_dir = Path.cwd()
     cli = os.environ.get("ECHELON_LLM", "claude")
     try:
-        tool_policy = _load_cli_tool_policy(project_dir)
+        config = _load_cli_config(project_dir)
+        tool_policy = config.llm.tool_policy
     except Exception as exc:
         print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -5101,8 +5106,8 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         result = subprocess.run(cmd, cwd=str(project_dir))
     elif cli in {"copilot", "codex"}:
         prompt = _build_prompt(skill_path, arguments)
-        cmd = build_llm_cli_command(cli, bin_, prompt, tool_policy)
-        result = subprocess.run(cmd, cwd=str(project_dir))
+        result_code = AICodingCliProvider(config).exec_prompt(str(project_dir), prompt)
+        sys.exit(result_code)
     else:
         # claude: use stream-json for live tool-call progress in the terminal
         prompt = _build_prompt(skill_path, arguments)
