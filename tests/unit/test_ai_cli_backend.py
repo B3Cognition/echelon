@@ -258,6 +258,90 @@ def test_codex_backend_returns_on_task_complete_even_when_process_lingers(tmp_pa
     assert result.token_usage == 15
 
 
+def test_codex_backend_suppresses_successful_command_event_noise(tmp_path, capsys) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    final_message = tmp_path / "last-message.txt"
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "item.started",
+                        "item": {
+                            "id": "item_1",
+                            "type": "command_execution",
+                            "command": "/bin/zsh -lc 'sed -n 1,240p huge-file.md'",
+                            "aggregated_output": "",
+                            "status": "in_progress",
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "id": "item_1",
+                            "type": "command_execution",
+                            "command": "/bin/zsh -lc 'sed -n 1,240p huge-file.md'",
+                            "aggregated_output": "very noisy command output\n" * 100,
+                            "exit_code": 0,
+                            "status": "completed",
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "last_agent_message": (
+                                "echelon_result:\n"
+                                "  verdict: COMPLETE\n"
+                                "  state_updates: {}\n"
+                                "  journal_entries: []\n"
+                            ),
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        stderr = io.BytesIO(b"")
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self, timeout=None) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch("harness.ai_cli_backends.codex.tempfile.NamedTemporaryFile") as named, patch(
+        "harness.ai_cli_backends.codex.subprocess.Popen",
+        return_value=FakeProcess(),
+    ):
+        named.return_value.__enter__.return_value.name = str(final_message)
+        result = backend.run_agent(request)
+
+    captured = capsys.readouterr()
+    assert "echelon_result:" in result.stdout
+    assert "very noisy command output" not in result.stdout
+    assert "aggregated_output" not in result.stdout
+    assert '"type": "item.completed"' not in result.stdout
+    assert "very noisy command output" not in captured.out
+    assert "aggregated_output" not in captured.out
+    assert '"type": "item.completed"' not in captured.out
+
+
 def test_codex_backend_falls_back_to_plain_stdout(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
 

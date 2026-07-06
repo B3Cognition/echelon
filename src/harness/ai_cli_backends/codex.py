@@ -134,6 +134,10 @@ def _codex_event(line: str) -> _CodexEvent:
     except json.JSONDecodeError:
         return _CodexEvent(line)
 
+    item = event.get("item")
+    if isinstance(item, dict) and item.get("type") == "command_execution":
+        return _CodexEvent(_codex_command_event_text(event, item))
+
     payload = event.get("payload")
     if isinstance(payload, dict):
         payload_type = payload.get("type")
@@ -160,11 +164,26 @@ def _codex_event_text(line: str) -> str:
 
 
 def _codex_event_text_from_json(event: dict) -> str:
+    event_type = event.get("type")
+    if event_type in {
+        "item.started",
+        "item.completed",
+        "turn.started",
+        "turn.completed",
+        "thread.started",
+    }:
+        return ""
+
     payload = event.get("payload")
     if isinstance(payload, dict):
         message = payload.get("message")
         if isinstance(message, str) and message.strip():
             return message
+
+    if event_type == "response_item":
+        text = _codex_response_item_text(event.get("payload"))
+        if text:
+            return text
 
     for key in ("content", "text", "message", "result"):
         value = event.get(key)
@@ -178,7 +197,68 @@ def _codex_event_text_from_json(event: dict) -> str:
             if isinstance(value, str) and value.strip():
                 return value
 
-    return json.dumps(event)
+    return ""
+
+
+def _codex_response_item_text(payload: object) -> str:
+    if not isinstance(payload, dict) or payload.get("type") != "message":
+        return ""
+    chunks: list[str] = []
+    content = payload.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                chunks.append(text)
+    return "".join(chunks).strip()
+
+
+def _codex_command_event_text(event: dict, item: dict) -> str:
+    event_type = event.get("type")
+    status = str(item.get("status") or "")
+    exit_code = item.get("exit_code")
+    command = _truncate_one_line(str(item.get("command") or "command"), limit=180)
+    output = str(item.get("aggregated_output") or "").strip()
+    debug = _debug_llm_enabled()
+
+    if event_type == "item.started":
+        return f"[codex] command started: {command}" if debug else ""
+
+    failed = exit_code not in (None, 0) or status == "failed"
+    if not failed and not debug:
+        return ""
+
+    if failed:
+        header = f"[codex] command failed"
+    else:
+        header = f"[codex] command completed"
+    if exit_code is not None:
+        header += f" (exit {exit_code})"
+    header += f": {command}"
+
+    if output and (failed or debug):
+        header += "\n" + _truncate_multiline(output, limit=4000)
+    return header
+
+
+def _truncate_one_line(text: str, *, limit: int) -> str:
+    line = " ".join(text.split())
+    if len(line) <= limit:
+        return line
+    return line[: limit - 1].rstrip() + "..."
+
+
+def _truncate_multiline(text: str, *, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "\n..."
+
+
+def _debug_llm_enabled() -> bool:
+    value = os.environ.get("ECHELON_DEBUG_LLM", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def _extract_token_usage(info: object) -> int:
