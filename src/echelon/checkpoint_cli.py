@@ -14,6 +14,15 @@ from harness.phase_checkpoints import (
 from harness.spec_frontmatter import find_spec_dir
 
 
+_USAGE = (
+    "Usage:\n"
+    "  echelon checkpoint list [--spec <id>]\n"
+    "  echelon checkpoint accept --phase <phase-id> [--spec <id>] [--run-id <id>]\n"
+    "  echelon checkpoint commit --phase <phase-id> [--spec <id>] "
+    "[--run-id <id>] [--message <msg>]\n"
+)
+
+
 def _find_spec_dir(project_root: Path, spec: str) -> Path | None:
     return find_spec_dir(spec, project_root)
 
@@ -115,11 +124,11 @@ def _arg_value(args: list[str], name: str) -> str:
 
 def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     subcommand = args[0] if args else "list"
+    if subcommand in {"-h", "--help", "help"}:
+        print(_USAGE)
+        raise SystemExit(0)
     if subcommand not in {"list", "accept", "commit"}:
-        print(
-            "Usage: echelon checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]",
-            file=sys.stderr,
-        )
+        print(_USAGE, file=sys.stderr)
         raise SystemExit(1)
 
     spec = _arg_value(args, "--spec")

@@ -27,6 +27,54 @@ def test_help_command_prints_usage_without_unknown_command(
     assert "delivery run <spec_id> [mode=<m>] [strategy=<s>]" in captured.out
     assert "max_outer=<n>" in captured.out
     assert "auto_merge=<bool>" in captured.out
+    assert "workspace migrate [--write] [--commit] [--message <msg>]" in captured.out
+    assert "spec run <description> [--mode semi|banzai|guided] [--reset]" in captured.out
+    assert "[--message <text>] [--next-phase <id>]" in captured.out
+    assert "phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]" in captured.out
+    assert "[--message <text>]" in captured.out
+    assert "checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
+    assert "benchmark show [latest|<summary-path-or-run-dir>]" in captured.out
+    assert "[--baseline-ref <ref>] [--dry-run]" in captured.out
+
+
+@pytest.mark.unit
+def test_phase_help_does_not_require_installed_extension(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "phase", "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "Echelon extension not installed" not in captured.err
+    assert "echelon phase run <phase-id>" in captured.out
+    assert "--message <text>" in captured.out
+
+
+@pytest.mark.unit
+def test_checkpoint_help_documents_subcommands_and_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "checkpoint", "--help"])
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert "echelon checkpoint list" in captured.out
+    assert "echelon checkpoint accept --phase <phase-id>" in captured.out
+    assert "echelon checkpoint commit --phase <phase-id>" in captured.out
+    assert "--run-id <id>" in captured.out
+    assert "--message <msg>" in captured.out
 
 
 @pytest.mark.unit

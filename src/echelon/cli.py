@@ -65,12 +65,15 @@ echelon {CLI_VERSION}
 Usage: echelon <command> [args...]
 
 Commands:
-  workspace init [--llm <claude|codex|opencode|copilot>] [--allow-unsafe-host-execution]
+  workspace init [--llm <claude|codex|opencode|copilot>]
+                    [--allow-unsafe-host-execution|--no-unsafe-host-execution]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
-  workspace migrate [--write] [--commit]    Migrate legacy workspace layout
+  workspace migrate [--write] [--commit] [--message <msg>]
+                                            Migrate legacy workspace layout
 
   spec run <description> [--mode semi|banzai|guided] [--reset]
+                    [--message <text>] [--next-phase <id>]
                                             Run Phase A squad spec authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
@@ -86,11 +89,16 @@ Commands:
 
   phase list                                List workflow phases available for manual replay.
   phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
+                    [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
-  checkpoint list --spec <id>               List spec-scoped phase checkpoints.
+  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
+                    [--run-id <id>] [--message <msg>]
+                                            Manage spec-scoped phase checkpoints.
 
   benchmark list                            List experimental benchmark fixtures and variants.
-  benchmark run <fixture> --variant <id> [--dry-run]
+  benchmark show [latest|<summary-path-or-run-dir>]
+                                            Print saved benchmark scores.
+  benchmark run <fixture> --variant <id> [--baseline-ref <ref>] [--dry-run]
                                             Run or print an artifact-quality benchmark variant.
 
   stack list [--json]                       List available Echelon stacks.
@@ -4639,7 +4647,8 @@ def _cmd_phase(
         print(
             "Usage:\n"
             "  echelon phase list\n"
-            "  echelon phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]\n",
+            "  echelon phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided] "
+            "[--message <text>]\n",
             flush=True,
         )
         return
@@ -4695,7 +4704,8 @@ def _cmd_phase(
         else:
             print(f"✗ Unknown phase run argument: {args[i]}", file=sys.stderr)
             print(
-                "  Usage: echelon phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]",
+                "  Usage: echelon phase run <phase-id> [--spec <id>] "
+                "[--mode semi|banzai|guided] [--message <text>]",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -5200,6 +5210,7 @@ def _cmd_spec(args: list[str]) -> None:
         print(
             "Usage: echelon spec <subcommand> [args...]\n\n"
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
+            "                    [--message <text>] [--next-phase <id>]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
@@ -5342,12 +5353,14 @@ def _cmd_workspace(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon workspace <subcommand> [args...]\n\n"
-            "  init [--llm <provider>] [--allow-unsafe-host-execution]\n"
+            "  init [--llm <provider>]\n"
+            "       [--allow-unsafe-host-execution|--no-unsafe-host-execution]\n"
             "                            One-time project setup (no LLM)\n"
             "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
             "  migrate [--write]         Copy legacy config, ignore runtime state, stage fixes\n"
-            "          [--commit]        Apply and commit migration changes\n",
+            "          [--commit] [--message <msg>]\n"
+            "                            Apply and commit migration changes\n",
             file=sys.stderr,
         )
         sys.exit(0)
@@ -5892,6 +5905,14 @@ def main() -> None:
     if command == "phase":
         project_root = Path.cwd()
         ext_dir = project_root / ".specify" / "extensions" / "echelon"
+        if not args[1:] or args[1] in ("-h", "--help"):
+            print(
+                "Usage:\n"
+                "  echelon phase list\n"
+                "  echelon phase run <phase-id> [--spec <id>] "
+                "[--mode semi|banzai|guided] [--message <text>]"
+            )
+            sys.exit(0)
         if not ext_dir.exists():
             print(
                 f"✗ Echelon extension not installed: {ext_dir}\n"
