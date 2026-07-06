@@ -374,8 +374,9 @@ stack resolver:
 8. Detect capability conflicts.
 9. Surface missing commands, registries, or credentials as early warnings or
    blockers depending on phase.
-10. Write `.echelon/context/stacks/resolved.yml`.
-11. Render `.echelon/context/stacks/resolved.md`.
+10. Render deterministic stack context for orchestration and agent prompts.
+11. Optionally persist `.echelon/context/stacks/resolved.yml` and
+    `.echelon/context/stacks/resolved.md` when a phase needs runtime artifacts.
 
 Stack resolution is deterministic. Agents consume only resolved context.
 
@@ -413,8 +414,8 @@ not include overrides. Failing fast is safer until real override cases exist.
 
 ## Selected Stacks
 
-- statsperform-stark-webapp
 - statsperform-playbook (implied by statsperform-stark-webapp)
+- statsperform-stark-webapp
 
 ## Capabilities
 
@@ -441,8 +442,8 @@ Phase specs include this file where relevant:
 - Architecture and planning phases use it for technology decisions.
 - Sentinel/test strategy phases use it for stack-specific test defaults.
 - Orchestrator/task phases use it for scaffolding and sequencing.
-- Build implementation prompts use it as `Strategy Context` or equivalent
-  resolved stack context.
+- Build implementation prompts append it to generated `Strategy Context`, after
+  any strategy-file content.
 - Review, test, visual, and compliance gates use it for stack-specific checks.
 
 Agents must not read raw `stack.yml` files during ordinary execution. Raw stack

@@ -1155,6 +1155,22 @@ deploy:
   # dockerfile: Dockerfile
 
 # =============================================================================
+# STACKS — Opt-in technology profiles for generated apps and services
+# =============================================================================
+#
+# Default is empty, which means Echelon decides from requirements and repository
+# evidence. Add stack IDs only when you want to force a known implementation
+# path. Bundled examples:
+#   - statsperform-playbook       # Playbook UI components and tooling
+#   - statsperform-stark-webapp   # Stark Nx/Next.js web app; implies Playbook
+#   - statsperform-msa-service    # CAIC MSA FastAPI service; does not imply Stark
+#
+# Infrastructure capabilities such as Postgres, Kafka, and Flink should be
+# selected through their own stacks when those stacks exist.
+stacks:
+  selected: []
+
+# =============================================================================
 # HARNESS — Sandbox execution substrate (echelon harness run / echelon harness init)
 # =============================================================================
 #

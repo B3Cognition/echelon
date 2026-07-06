@@ -746,6 +746,18 @@ mempalace:
   wing: ""   # Set by 'echelon init' — do not edit manually
 
 # =============================================================================
+# STACKS — Opt-in technology profiles
+# =============================================================================
+# Empty means Echelon keeps deciding from requirements and repository evidence.
+# Add stack IDs only when a project should explicitly use a known stack, such as
+# statsperform-playbook, statsperform-stark-webapp, or statsperform-msa-service.
+# Stark applies to web apps and implies Playbook; MSA applies to backend services
+# and stays separate from Stark and infrastructure choices.
+
+stacks:
+  selected: []
+
+# =============================================================================
 # DEPLOY — Blue/green local CD
 # =============================================================================
 
