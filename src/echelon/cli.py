@@ -3434,6 +3434,8 @@ def _cmd_run(
         ("Artifacts", str(squad_dir)),
     ])
     _print_next_steps(project_root, result.status)
+    if result.status != "done":
+        sys.exit(1)
 
 
 def _repo_relative_or_absolute(path: Path, project_root: Path) -> str:

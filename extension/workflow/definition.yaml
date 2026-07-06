@@ -938,6 +938,7 @@ phases:
       - gate_decision
       - convergence_forced
       - phase_recommendation
+      - implementability_metrics
       - feasibility_structural_pass
       - feasibility_structural_attempts
       - tasks_lexicon_pass

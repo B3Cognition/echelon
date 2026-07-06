@@ -493,6 +493,10 @@ def run_benchmark_variant(
 
     _squad_dir, squad_state = _current_squad_state(project_root)
     spec_id = str(squad_state.get("spec_id") or "")
+    if status == "complete" and str(squad_state.get("status") or "").lower() == "blocked":
+        status = "failed"
+        retries += 1
+        failure_kind = "spec_run_blocked"
     if status == "complete" and not spec_id:
         status = "failed"
         retries += 1

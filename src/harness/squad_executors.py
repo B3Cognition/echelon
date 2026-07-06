@@ -359,6 +359,11 @@ class PhaseExecutor(ABC):
 
         try:
             self._normalize_why_result_quality_scores(node, result)
+            if (result.verdict or "").upper() == "BLOCKED":
+                # BLOCKED results are consumed by the controller as harness-owned
+                # blocked-state metadata, not applied through phase state_updates.
+                result.echelon_result = validate_echelon_result(result.echelon_result)
+                return result
             result.echelon_result = validate_echelon_result(
                 result.echelon_result,
                 allowed_state_update_keys=getattr(
