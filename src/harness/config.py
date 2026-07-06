@@ -186,6 +186,13 @@ class FulfillmentConfig:
 
 
 @dataclass
+class StacksConfig:
+    """Selected Echelon stacks from committed project config."""
+    selected: List[str] = field(default_factory=list)
+    target_archetypes: List[str] = field(default_factory=list)
+
+
+@dataclass
 class HarnessConfig:
     """Complete harness configuration."""
     target_repo: str
@@ -215,6 +222,7 @@ class HarnessConfig:
     llm: LlmConfig = field(default_factory=LlmConfig)
     review_loop: ReviewLoopConfig = field(default_factory=ReviewLoopConfig)
     fulfillment: FulfillmentConfig = field(default_factory=FulfillmentConfig)
+    stacks: StacksConfig = field(default_factory=StacksConfig)
     verify_command: Optional[str] = None
 
 
@@ -333,6 +341,10 @@ def _inherit_top_level_harness_defaults(
         if not isinstance(harness_llm, dict):
             harness_llm = {}
         merged["llm"] = _merge(top_llm, harness_llm)
+
+    top_stacks = raw.get("stacks")
+    if isinstance(top_stacks, dict) and "stacks" not in merged:
+        merged["stacks"] = dict(top_stacks)
     return merged
 
 
@@ -522,6 +534,66 @@ def _parse_llm_tool_policy(raw_llm: Dict[str, Any]) -> LlmToolPolicy:
     return policy
 
 
+def _parse_stacks(data: Dict[str, Any]) -> StacksConfig:
+    raw = data.get("stacks", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValidationError("stacks must be a mapping", field_path="stacks")
+
+    selected_raw = raw.get("selected", [])
+    if selected_raw is None:
+        selected_raw = []
+    if not isinstance(selected_raw, list):
+        raise ValidationError(
+            "stacks.selected must be a list of stack IDs",
+            field_path="stacks.selected",
+        )
+
+    selected = _parse_string_list(
+        selected_raw,
+        field_path="stacks.selected",
+        item_name="stack IDs",
+    )
+
+    target_archetypes_raw = raw.get("target_archetypes", [])
+    if target_archetypes_raw is None:
+        target_archetypes_raw = []
+    if not isinstance(target_archetypes_raw, list):
+        raise ValidationError(
+            "stacks.target_archetypes must be a list of archetype IDs",
+            field_path="stacks.target_archetypes",
+        )
+    target_archetypes = _parse_string_list(
+        target_archetypes_raw,
+        field_path="stacks.target_archetypes",
+        item_name="archetype IDs",
+    )
+
+    return StacksConfig(
+        selected=selected,
+        target_archetypes=target_archetypes,
+    )
+
+
+def _parse_string_list(
+    values: List[Any],
+    *,
+    field_path: str,
+    item_name: str,
+) -> List[str]:
+    parsed: List[str] = []
+    for index, value in enumerate(values):
+        item = str(value).strip()
+        if not item:
+            raise ValidationError(
+                f"{field_path} entries must be non-empty {item_name}",
+                field_path=f"{field_path}[{index}]",
+            )
+        parsed.append(item)
+    return parsed
+
+
 def _parse_fulfillment(data: Dict[str, Any]) -> FulfillmentConfig:
     raw = data.get("fulfillment", {})
     if not isinstance(raw, dict):
@@ -602,6 +674,7 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
         llm=_parse_llm(data),
         review_loop=_parse_review_loop(data),
         fulfillment=_parse_fulfillment(data),
+        stacks=_parse_stacks(data),
         verify_command=data.get("verify_command") or None,
     )
 

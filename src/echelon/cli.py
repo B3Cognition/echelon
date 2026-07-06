@@ -65,7 +65,7 @@ echelon {CLI_VERSION}
 Usage: echelon <command> [args...]
 
 Commands:
-  workspace init [--allow-unsafe-host-execution]
+  workspace init [--llm <claude|codex|opencode|copilot>] [--allow-unsafe-host-execution]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
   workspace migrate [--write] [--commit]    Migrate legacy workspace layout
@@ -398,7 +398,8 @@ def _write_unsafe_host_execution_local_override(project_dir: Path, yaml_module) 
     return local_cfg
 
 
-def _apply_workspace_llm_selection(config: dict) -> str:
+def _apply_workspace_llm_selection(config: dict, llm_cli: str | None = None) -> str:
+    from harness.config import VALID_LLM_CLIS
     from harness.init import _detect_llm_cli
 
     harness = config.setdefault("harness", {})
@@ -409,6 +410,15 @@ def _apply_workspace_llm_selection(config: dict) -> str:
         raise ValueError("config harness.llm section must be a mapping")
 
     existing = llm.get("cli")
+    if llm_cli:
+        if llm_cli not in VALID_LLM_CLIS:
+            raise ValueError(
+                f"invalid --llm {llm_cli!r}; expected one of: "
+                f"{', '.join(sorted(VALID_LLM_CLIS))}"
+            )
+        llm["cli"] = llm_cli
+        return llm_cli
+
     selected = _detect_llm_cli()
     if os.environ.get("ECHELON_LLM", "").strip() or not existing:
         llm["cli"] = selected
@@ -416,7 +426,12 @@ def _apply_workspace_llm_selection(config: dict) -> str:
     return str(existing)
 
 
-def _cmd_init(project_dir: Path, *, allow_unsafe_host_execution: bool = False) -> None:
+def _cmd_init(
+    project_dir: Path,
+    *,
+    allow_unsafe_host_execution: bool = False,
+    llm_cli: str | None = None,
+) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
     legacy_cfg = ext_dir / "echelon-config.yml"
     echelon_cfg = project_dir / ".echelon" / "config.yml"
@@ -477,7 +492,7 @@ def _cmd_init(project_dir: Path, *, allow_unsafe_host_execution: bool = False) -
         print("✓ deploy.enabled=false written to .echelon/config.yml")
 
     try:
-        llm_cli = _apply_workspace_llm_selection(config)
+        selected_llm_cli = _apply_workspace_llm_selection(config, llm_cli=llm_cli)
     except Exception as e:
         print(f"✗ Cannot write workspace LLM provider: {e}", file=sys.stderr)
         sys.exit(1)
@@ -485,7 +500,7 @@ def _cmd_init(project_dir: Path, *, allow_unsafe_host_execution: bool = False) -
         yaml.dump(config, default_flow_style=False, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
-    print(f"✓ LLM provider configured: {llm_cli}")
+    print(f"✓ LLM provider configured: {selected_llm_cli}")
 
     if allow_unsafe_host_execution:
         try:
@@ -3419,6 +3434,8 @@ def _cmd_run(
         ("Artifacts", str(squad_dir)),
     ])
     _print_next_steps(project_root, result.status)
+    if result.status != "done":
+        sys.exit(1)
 
 
 def _repo_relative_or_absolute(path: Path, project_root: Path) -> str:
@@ -5294,7 +5311,7 @@ def _cmd_workspace(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon workspace <subcommand> [args...]\n\n"
-            "  init [--allow-unsafe-host-execution]\n"
+            "  init [--llm <provider>] [--allow-unsafe-host-execution]\n"
             "                            One-time project setup (no LLM)\n"
             "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
@@ -5310,29 +5327,55 @@ def _cmd_workspace(args: list[str]) -> None:
         if any(arg in {"-h", "--help"} for arg in init_args):
             print(
                 "Usage: echelon workspace init "
+                "[--llm <claude|codex|opencode|copilot>] "
                 "[--allow-unsafe-host-execution|--no-unsafe-host-execution]\n\n"
+                "  --llm <provider>              Persist the workspace AI CLI provider\n"
                 "  --allow-unsafe-host-execution  Write local approval for AI CLI "
                 "permission-bypass flags\n"
                 "  --no-unsafe-host-execution     Do not prompt or write local approval",
                 file=sys.stderr,
             )
             sys.exit(0)
-        allowed = {
-            "--allow-unsafe-host-execution",
-            "--no-unsafe-host-execution",
-        }
-        unknown = [arg for arg in init_args if arg not in allowed]
-        if unknown:
-            print(f"echelon workspace init: unknown option '{unknown[0]}'\n", file=sys.stderr)
+        parsed_init_args: list[str] = []
+        llm_cli: str | None = None
+        valid_llm_clis = {"claude", "codex", "opencode", "copilot"}
+        i = 0
+        while i < len(init_args):
+            arg = init_args[i]
+            if arg in {"--llm", "--llm-cli"}:
+                if i + 1 >= len(init_args):
+                    print(f"echelon workspace init: {arg} requires a provider", file=sys.stderr)
+                    sys.exit(1)
+                llm_cli = init_args[i + 1]
+                i += 2
+            elif arg.startswith("--llm="):
+                llm_cli = arg.split("=", 1)[1]
+                i += 1
+            elif arg.startswith("--llm-cli="):
+                llm_cli = arg.split("=", 1)[1]
+                i += 1
+            elif arg in {"--allow-unsafe-host-execution", "--no-unsafe-host-execution"}:
+                parsed_init_args.append(arg)
+                i += 1
+            else:
+                print(f"echelon workspace init: unknown option '{arg}'\n", file=sys.stderr)
+                print(
+                    "Usage: echelon workspace init "
+                    "[--llm <claude|codex|opencode|copilot>] "
+                    "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        if llm_cli and llm_cli not in valid_llm_clis:
             print(
-                "Usage: echelon workspace init "
-                "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
+                f"echelon workspace init: invalid --llm {llm_cli!r}; expected one of: "
+                f"{', '.join(sorted(valid_llm_clis))}",
                 file=sys.stderr,
             )
             sys.exit(1)
         if (
-            "--allow-unsafe-host-execution" in init_args
-            and "--no-unsafe-host-execution" in init_args
+            "--allow-unsafe-host-execution" in parsed_init_args
+            and "--no-unsafe-host-execution" in parsed_init_args
         ):
             print(
                 "echelon workspace init: choose only one of "
@@ -5340,10 +5383,10 @@ def _cmd_workspace(args: list[str]) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        allow_unsafe = "--allow-unsafe-host-execution" in init_args
-        if "--no-unsafe-host-execution" not in init_args and not allow_unsafe:
+        allow_unsafe = "--allow-unsafe-host-execution" in parsed_init_args
+        if "--no-unsafe-host-execution" not in parsed_init_args and not allow_unsafe:
             allow_unsafe = _wants_unsafe_host_execution_interactively()
-        _cmd_init(Path.cwd(), allow_unsafe_host_execution=allow_unsafe)
+        _cmd_init(Path.cwd(), allow_unsafe_host_execution=allow_unsafe, llm_cli=llm_cli)
         return
 
     if subcmd == "doctor":

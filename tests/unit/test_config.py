@@ -30,6 +30,7 @@ import yaml
 from harness.config import (
     DEFAULT_NETWORK_ALLOWLIST,
     HarnessConfig,
+    StacksConfig,
     ValidationError,
     _parse_config,
     get_full_resolved_config,
@@ -121,6 +122,8 @@ class TestParseConfigValid:
         assert config.bind_mount_ack is False
         assert config.pr_host == "none"
         assert config.fulfillment.refresh_policy == "milestone"
+        assert isinstance(config.stacks, StacksConfig)
+        assert config.stacks.selected == []
 
     def test_fulfillment_refresh_policy_can_be_configured(self) -> None:
         config = _parse_config({
@@ -158,6 +161,40 @@ class TestParseConfigValid:
         assert config.bind_mount_ack is True
         assert config.pr_host == "github"
         assert "custom.registry.io" in config.network.allowlist
+        assert config.stacks.selected == []
+
+    def test_stacks_default_to_empty_selection(self) -> None:
+        config = _parse_config(MINIMAL)
+
+        assert isinstance(config.stacks, StacksConfig)
+        assert config.stacks.selected == []
+
+    def test_stacks_selection_can_be_configured(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "stacks": {
+                "selected": [
+                    "statsperform-playbook",
+                    "statsperform-msa-service",
+                ],
+            },
+        })
+
+        assert config.stacks.selected == [
+            "statsperform-playbook",
+            "statsperform-msa-service",
+        ]
+
+    def test_stack_target_archetypes_can_be_configured(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "stacks": {
+                "selected": ["statsperform-stark-webapp"],
+                "target_archetypes": ["web_app"],
+            },
+        })
+
+        assert config.stacks.target_archetypes == ["web_app"]
 
 
 @pytest.mark.unit
@@ -198,6 +235,18 @@ class TestParseConfigInvalid:
         assert config.provider == "docker"
         assert config.llm.cli == "codex"
 
+    def test_stacks_selected_must_be_list(self) -> None:
+        with pytest.raises(ValidationError, match="stacks.selected"):
+            _parse_config({**MINIMAL, "stacks": {"selected": "statsperform-playbook"}})
+
+    def test_stacks_selected_rejects_empty_ids(self) -> None:
+        with pytest.raises(ValidationError, match="stacks.selected"):
+            _parse_config({**MINIMAL, "stacks": {"selected": ["statsperform-playbook", " "]}})
+
+    def test_stack_target_archetypes_must_be_list(self) -> None:
+        with pytest.raises(ValidationError, match="stacks.target_archetypes"):
+            _parse_config({**MINIMAL, "stacks": {"target_archetypes": "web_app"}})
+
 
 @pytest.mark.unit
 class TestConfigDefaults:
@@ -231,6 +280,39 @@ class TestLoadConfigCascade:
         assert config.resource_limits.memory == "8g"
         # Defaults still fill unspecified sub-fields
         assert config.resource_limits.cpu == 2.0
+
+    def test_top_level_stacks_in_unified_config_inherited_by_harness(self, tmp_path: Path) -> None:
+        ext = _ext_dir(tmp_path)
+        _write_yaml(ext / "echelon-config.yml", {
+            "stacks": {
+                "selected": ["statsperform-playbook"],
+            },
+            "harness": {
+                **MINIMAL,
+            },
+        })
+
+        config = load_config(tmp_path)
+
+        assert config.stacks.selected == ["statsperform-playbook"]
+
+    def test_harness_stacks_override_top_level_stacks(self, tmp_path: Path) -> None:
+        ext = _ext_dir(tmp_path)
+        _write_yaml(ext / "echelon-config.yml", {
+            "stacks": {
+                "selected": ["top-level-stack"],
+            },
+            "harness": {
+                **MINIMAL,
+                "stacks": {
+                    "selected": ["harness-stack"],
+                },
+            },
+        })
+
+        config = load_config(tmp_path)
+
+        assert config.stacks.selected == ["harness-stack"]
 
     def test_local_config_overrides_project(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)

@@ -531,6 +531,47 @@ def test_run_benchmark_variant_resets_after_failed_variant(tmp_path: Path) -> No
     ]
 
 
+def test_run_benchmark_variant_stops_when_spec_run_exits_zero_but_blocks(
+    tmp_path: Path,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        if command[:3] == ("echelon", "spec", "run"):
+            squad_dir = tmp_path / "runs" / "spec-20260704-120000-000001"
+            squad_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+            (squad_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "squad-1",
+                        "status": "blocked",
+                        "phase": "terminal-blocked",
+                        "spec_id": "001",
+                        "blocked_reason": "phase3-consensus failed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+        return 0
+
+    output_dir = run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "baseline",
+        baseline_ref="baseline-artifacts",
+        runner=runner,
+        timestamp="20260701-120000",
+    )
+
+    assert not any(command[:3] == ("echelon", "delivery", "run") for command in commands)
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    baseline = summary["variants"]["baseline"]
+    assert baseline["status"] == "failed"
+    assert baseline["failure_kind"] == "spec_run_blocked"
+
+
 def test_latest_summary_path_and_load_summary(tmp_path: Path) -> None:
     older = tmp_path / "runs" / "benchmarks" / "20260701-120000-tiny-notes" / "baseline"
     newer = tmp_path / "runs" / "benchmarks" / "20260702-120000-tiny-notes" / "baseline"

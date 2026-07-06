@@ -9,7 +9,11 @@ import pytest
 import yaml
 
 from harness.config import load_config
-from harness.init import _apply_verify_command_detection, _harness_config_file
+from harness.init import (
+    _apply_verify_command_detection,
+    _harness_config_file,
+    _resolve_harness_llm_config,
+)
 
 
 @pytest.mark.unit
@@ -112,3 +116,27 @@ def test_harness_init_preserves_legacy_config_for_legacy_workspace(tmp_path: Pat
     config_file = _harness_config_file(tmp_path)
 
     assert config_file == legacy
+
+
+@pytest.mark.unit
+def test_harness_init_preserves_existing_llm_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ECHELON_LLM", raising=False)
+
+    llm = _resolve_harness_llm_config(
+        {"harness": {"llm": {"cli": "codex", "timeout_ms": 600_000}}},
+        detected_cli="claude",
+    )
+
+    assert llm == {"cli": "codex", "timeout_ms": 600_000}
+
+
+@pytest.mark.unit
+def test_harness_init_env_llm_overrides_existing_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ECHELON_LLM", "opencode")
+
+    llm = _resolve_harness_llm_config(
+        {"harness": {"llm": {"cli": "codex", "timeout_ms": 600_000}}},
+        detected_cli="claude",
+    )
+
+    assert llm == {"cli": "opencode", "timeout_ms": 600_000}

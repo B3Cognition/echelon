@@ -40,6 +40,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-100 / #112 Phase A blocked exit code** — `echelon spec run` /
+  `echelon run` now exits nonzero when the squad result is blocked or otherwise
+  unsuccessful, and benchmark variants stop before delivery if a zero-exit
+  Phase A command left squad state blocked.
+- **EGR-099 / #111 validation-failure masking** — executor-side phase
+  validation no longer revalidates provider-created `BLOCKED` wrappers against
+  per-phase agent `state_updates` allowlists, preserving the original validation
+  error such as `quality_scores must be a list`.
+- **EGR-098 / #110 ASSESS2 implementability metrics** — ASSESS2/GATEKEEPER now
+  has a dedicated `implementability_metrics` state update in `phase3-consensus`
+  instead of putting task-readiness and effort metrics under reserved
+  list-shaped `quality_scores`.
 - **EGR-094 checkpoint-plan deterministic routing** — banzai/semi checkpoint
   auto-approval no longer falls through to a COMMANDER routing judgment. The
   condition evaluator now resolves `autonomy` from `autonomy_mode` and

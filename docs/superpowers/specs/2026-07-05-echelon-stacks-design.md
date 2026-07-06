@@ -67,6 +67,9 @@ Stacks are selected in committed Echelon config:
 
 ```yaml
 stacks:
+  target_archetypes:
+    - web_app
+    - service
   selected:
     - statsperform-playbook
     - statsperform-msa-service
@@ -365,17 +368,21 @@ stack resolver:
 
 1. Read selected stack IDs from `.echelon/config.yml`, then legacy config if
    compatibility requires it.
-2. Load bundled stack definitions from `extension/stacks/**/stack.yml`.
+2. Load bundled stack definitions from `extension/stacks/**/stack.yml` in source
+   checkouts, or `.specify/extensions/echelon/stacks/**/stack.yml` in installed
+   project checkouts.
 3. Load optional project-local stack definitions from `.echelon/stacks/**/stack.yml`.
 4. Resolve `implies` recursively.
 5. Reject unknown, cyclic, or duplicate stack IDs.
-6. Match selected stacks against known target archetypes.
+6. Match selected stacks against known target archetypes when supplied by
+   `stacks.target_archetypes` or spec frontmatter `target_archetypes`.
 7. Merge `provides` into a resolved capability map.
 8. Detect capability conflicts.
 9. Surface missing commands, registries, or credentials as early warnings or
    blockers depending on phase.
-10. Write `.echelon/context/stacks/resolved.yml`.
-11. Render `.echelon/context/stacks/resolved.md`.
+10. Render deterministic stack context for orchestration and agent prompts.
+11. Optionally persist `.echelon/context/stacks/resolved.yml` and
+    `.echelon/context/stacks/resolved.md` when a phase needs runtime artifacts.
 
 Stack resolution is deterministic. Agents consume only resolved context.
 
@@ -413,8 +420,8 @@ not include overrides. Failing fast is safer until real override cases exist.
 
 ## Selected Stacks
 
-- statsperform-stark-webapp
 - statsperform-playbook (implied by statsperform-stark-webapp)
+- statsperform-stark-webapp
 
 ## Capabilities
 
@@ -434,6 +441,12 @@ not include overrides. Failing fast is safer until real override cases exist.
 ## Requirements
 
 - Requires Stats Perform Nexus npm registry access.
+
+## Stack Guidance
+
+### context.md
+
+Resolved contents from each selected or implied stack context file.
 ```
 
 Phase specs include this file where relevant:
@@ -441,8 +454,8 @@ Phase specs include this file where relevant:
 - Architecture and planning phases use it for technology decisions.
 - Sentinel/test strategy phases use it for stack-specific test defaults.
 - Orchestrator/task phases use it for scaffolding and sequencing.
-- Build implementation prompts use it as `Strategy Context` or equivalent
-  resolved stack context.
+- Build implementation prompts append it to generated `Strategy Context`, after
+  any strategy-file content.
 - Review, test, visual, and compliance gates use it for stack-specific checks.
 
 Agents must not read raw `stack.yml` files during ordinary execution. Raw stack
@@ -481,10 +494,21 @@ Add config support:
 
 ```yaml
 stacks:
+  target_archetypes: []
   selected: []
 ```
 
 Default is empty. Empty means no stack override.
+
+`target_archetypes` is also optional. When present, it makes stack compatibility
+validation explicit. Spec frontmatter may provide the same signal:
+
+```yaml
+---
+target_archetypes:
+  - web_app
+---
+```
 
 Environment override can be added later if needed. The initial implementation
 should keep selection in committed config to avoid hidden stack changes in CI.

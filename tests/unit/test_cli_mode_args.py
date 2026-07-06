@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
-from echelon.cli import _consume_mode_arg
+from echelon.cli import _cmd_run, _consume_mode_arg
 
 
 def test_consume_mode_arg_accepts_split_form() -> None:
@@ -52,3 +55,43 @@ def test_consume_mode_arg_rejects_invalid_mode(capsys) -> None:
 
     assert exc.value.code == 1
     assert "invalid mode 'turbo'" in capsys.readouterr().err
+
+
+def test_cmd_run_exits_nonzero_when_squad_blocks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
+
+    class FakeController:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def run(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status="blocked",
+                phase="terminal-blocked",
+                run_id="spec-20260706-120000-000001",
+            )
+
+    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.phase_graph.PhaseGraph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.squad.SquadController", FakeController)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_run(["build notes", "--mode=banzai"], project_root=tmp_path, ext_dir=tmp_path / "ext")
+
+    assert exc.value.code == 1

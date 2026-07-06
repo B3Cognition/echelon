@@ -1289,6 +1289,32 @@ def test_staged_prompt_includes_allowed_state_updates(tmp_path):
     assert "- `quality_scores`" in prompt
 
 
+def test_blocked_validation_result_preserves_original_error(tmp_path):
+    """Provider-created BLOCKED wrappers are harness-owned, not phase state writes."""
+    ex = _executor(tmp_path)
+    node = SimpleNamespace(id="phase3-consensus", allowed_state_updates=["quality_scores"])
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {
+                "blocked_reason": "echelon_result validation failed: quality_scores must be a list",
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    validated = ex._validate_result_state_updates(node, result)
+
+    assert validated.verdict == "BLOCKED"
+    assert validated.state_updates["blocked_reason"] == (
+        "echelon_result validation failed: quality_scores must be a list"
+    )
+
+
 def test_conditional_sequential_prompt_includes_allowed_state_updates(tmp_path):
     """Conditional sequential dispatches no longer send raw agent text only."""
     squad_dir = tmp_path / "squad" / "run-test"

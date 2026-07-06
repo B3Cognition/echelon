@@ -37,7 +37,12 @@ from harness.repair_loop import (
 from harness.review_loop import ReviewLoopController
 from harness.run_intent import RunIntent
 from harness.skill_loader import resolve_llm_prompt
-from harness.spec_frontmatter import find_spec_dir
+from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+from harness.stacks import (
+    load_stack_definitions,
+    render_resolved_markdown,
+    resolve_stacks,
+)
 from harness.visual_ralph import VisualRalphController
 from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
@@ -325,11 +330,17 @@ class StrategyCoordinator:
                 )
                 state_store.transition("running")
 
+            stack_context = self._build_stack_context(spec_dir)
+            strategy_context = self._combine_strategy_context(
+                spec.context,
+                stack_context,
+            )
+
             arguments = f"spec {intent.spec_id} strategy={strategy_id} {intent.mode} mode"
             if intent.task_description:
                 arguments += f"\n\n{intent.task_description}"
-            if spec.context:
-                arguments += f"\n\n{spec.context}"
+            if strategy_context:
+                arguments += f"\n\n{strategy_context}"
 
             llm_provider = (
                 AICodingCliProvider(self._config)
@@ -365,7 +376,7 @@ class StrategyCoordinator:
                 max_inner=intent.max_inner,
                 token_budget=budget,
                 build_command=spec.build_command,
-                strategy_context=spec.context,
+                strategy_context=strategy_context,
                 build_prompt=build_prompt,
             )
 
@@ -472,7 +483,7 @@ class StrategyCoordinator:
                             max_inner=intent.max_inner,
                             token_budget=budget,
                             build_command=spec.build_command,
-                            strategy_context=spec.context,
+                            strategy_context=strategy_context,
                             build_prompt=reentry_prompt,
                         )
                         return RepairAttempt(
@@ -539,6 +550,66 @@ class StrategyCoordinator:
 
         finally:
             state_store.release_lock()
+
+    def _build_stack_context(self, spec_dir: Path | None = None) -> str:
+        """Render resolved Echelon stack context for selected project stacks."""
+        selected_stacks = self._config.stacks.selected
+        if not selected_stacks:
+            return ""
+
+        base_dir = Path(self._base_dir)
+        definitions = load_stack_definitions(
+            extension_root=self._stack_extension_root(base_dir),
+            project_root=base_dir,
+        )
+        resolved = resolve_stacks(
+            selected_stacks,
+            definitions,
+            target_archetypes=self._stack_target_archetypes(spec_dir),
+        )
+        return render_resolved_markdown(resolved)
+
+    @staticmethod
+    def _stack_extension_root(base_dir: Path) -> Path:
+        """Return the extension root that owns bundled stack definitions."""
+        source_root = Path(__file__).resolve().parents[2] / "extension"
+        for candidate in (
+            base_dir / "extension",
+            base_dir / ".specify" / "extensions" / "echelon",
+            source_root,
+        ):
+            if (candidate / "stacks").is_dir():
+                return candidate
+        return base_dir / "extension"
+
+    def _stack_target_archetypes(self, spec_dir: Path | None) -> set[str] | None:
+        """Read optional target archetypes from config and spec frontmatter."""
+        archetypes = set(self._config.stacks.target_archetypes)
+        if spec_dir is not None:
+            frontmatter = read_frontmatter(spec_dir)
+            for key in ("target_archetypes", "stack_archetypes", "archetypes"):
+                raw = frontmatter.get(key)
+                if isinstance(raw, list):
+                    archetypes.update(
+                        str(item).strip()
+                        for item in raw
+                        if str(item).strip()
+                    )
+                elif isinstance(raw, str) and raw.strip():
+                    archetypes.add(raw.strip())
+        return archetypes or None
+
+    @staticmethod
+    def _combine_strategy_context(
+        strategy_context: str,
+        stack_context: str,
+    ) -> str:
+        """Append generated stack context without changing empty-stack behavior."""
+        if not stack_context:
+            return strategy_context
+        if not strategy_context:
+            return stack_context
+        return f"{strategy_context.rstrip()}\n\n{stack_context}"
 
     def _build_reentry_prompt(self, base_prompt: str, spec_id: str) -> str:
         """Augment build prompt with review-fix content from the feature branch.

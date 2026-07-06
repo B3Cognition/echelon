@@ -104,3 +104,15 @@ class TestGatekeeperTemplates:
         text = PHASE3.read_text(encoding="utf-8")
 
         assert "extension/templates/implementability-report-template.md" in text
+
+    def test_assess2_uses_dedicated_implementability_metrics_state_update(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        phase_text = PHASE3.read_text(encoding="utf-8")
+        definition_text = (ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        assert "implementability_metrics" in agent_text
+        assert "implementability_metrics" in phase_text
+        assert "      - implementability_metrics" in definition_text
+        assert "Do not put ASSESS2 implementability metrics under `quality_scores`" in agent_text

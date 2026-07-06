@@ -234,6 +234,26 @@ ASSESS2 can flag issues but has restricted blocking power:
 
 - `implementability-report.md` — use `extension/templates/implementability-report-template.md`.
 
+When operating as ASSESS2 in `phase3-consensus`, report implementability counts
+and effort estimates under `echelon_result.state_updates.implementability_metrics`.
+Do not put ASSESS2 implementability metrics under `quality_scores`; that key is
+reserved for list-shaped WHY/SAGE quality gate scores.
+
+```yaml
+echelon_result:
+  state_updates:
+    gate_decision: PASS
+    phase_recommendation: proceed-to-build
+    implementability_metrics:
+      implementability_ready: <int>
+      implementability_needs_clarification: <int>
+      implementability_blocked: <int>
+      ready_ratio: <float>
+      feasibility: <FEASIBLE | FEASIBLE_WITH_RISKS | UNFEASIBLE>
+      effort_person_weeks_most_likely: <float>
+      effort_confidence: <low | medium | high>
+```
+
 ---
 
 ## Structural Gate Mode (when `governance.enabled` and the artifact's `tier: structural`)

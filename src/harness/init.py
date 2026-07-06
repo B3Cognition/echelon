@@ -308,6 +308,24 @@ def _detect_llm_cli() -> str:
     return "claude"  # default; will error at runtime if not installed
 
 
+def _resolve_harness_llm_config(
+    existing: dict,
+    *,
+    detected_cli: str,
+) -> dict:
+    """Preserve workspace LLM provider unless ECHELON_LLM explicitly overrides it."""
+    harness = existing.get("harness")
+    existing_llm = harness.get("llm") if isinstance(harness, dict) else {}
+    llm = dict(existing_llm) if isinstance(existing_llm, dict) else {}
+
+    env = os.environ.get("ECHELON_LLM", "").strip()
+    if env in ("claude", "copilot", "opencode", "codex"):
+        llm["cli"] = env
+    elif not llm.get("cli"):
+        llm["cli"] = detected_cli
+    return llm
+
+
 
 def _check_constitution(base_dir: Path) -> Optional[str]:
     """Check for constitution placeholder or populated content.
@@ -533,6 +551,9 @@ def init_harness(
     # Step 13: Write harness section into the Echelon project config.
     config_file = _harness_config_file(base)
     config_file.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict = {}
+    if yaml is not None and config_file.exists():
+        existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
 
     harness_data = {
         "target_repo": config.target_repo,
@@ -564,16 +585,11 @@ def init_harness(
         "ci_skip_tag": config.ci_skip_tag,
         "pr_host": config.pr_host,
         "bind_mount_ack": config.bind_mount_ack,
-        "llm": {
-            "cli": _detect_llm_cli(),
-        },
+        "llm": _resolve_harness_llm_config(existing, detected_cli=_detect_llm_cli()),
     }
 
     if yaml is not None:
         # Merge into existing echelon-config.yml (preserves echelon squad settings)
-        existing: dict = {}
-        if config_file.exists():
-            existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
         existing["harness"] = harness_data
         config_file.write_text(
             yaml.dump(existing, default_flow_style=False, sort_keys=False),

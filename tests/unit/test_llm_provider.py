@@ -164,6 +164,15 @@ class TestAICodingCliProvider:
 
         assert result == -1
 
+    def test_provider_debug_env_prints_effective_backend(self, monkeypatch, capsys):
+        monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")
+
+        AICodingCliProvider(_config(cli="codex"))
+
+        captured = capsys.readouterr()
+        assert "[llm] provider=codex" in captured.err
+        assert "backend=CodexCliBackend" in captured.err
+
     def test_streaming_captures_result_error_text(self, tmp_path):
         provider = AICodingCliProvider(_config())
         lines = [
