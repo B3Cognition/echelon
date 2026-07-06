@@ -266,6 +266,39 @@ class TestLoadConfigCascade:
         # Defaults still fill unspecified sub-fields
         assert config.resource_limits.cpu == 2.0
 
+    def test_top_level_stacks_in_unified_config_inherited_by_harness(self, tmp_path: Path) -> None:
+        ext = _ext_dir(tmp_path)
+        _write_yaml(ext / "echelon-config.yml", {
+            "stacks": {
+                "selected": ["statsperform-playbook"],
+            },
+            "harness": {
+                **MINIMAL,
+            },
+        })
+
+        config = load_config(tmp_path)
+
+        assert config.stacks.selected == ["statsperform-playbook"]
+
+    def test_harness_stacks_override_top_level_stacks(self, tmp_path: Path) -> None:
+        ext = _ext_dir(tmp_path)
+        _write_yaml(ext / "echelon-config.yml", {
+            "stacks": {
+                "selected": ["top-level-stack"],
+            },
+            "harness": {
+                **MINIMAL,
+                "stacks": {
+                    "selected": ["harness-stack"],
+                },
+            },
+        })
+
+        config = load_config(tmp_path)
+
+        assert config.stacks.selected == ["harness-stack"]
+
     def test_local_config_overrides_project(self, tmp_path: Path) -> None:
         ext = _ext_dir(tmp_path)
         _write_yaml(ext / "echelon-config.yml", {"harness": {**MINIMAL, "buffer_limit_bytes": 5_000_000}})

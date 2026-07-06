@@ -340,6 +340,10 @@ def _inherit_top_level_harness_defaults(
         if not isinstance(harness_llm, dict):
             harness_llm = {}
         merged["llm"] = _merge(top_llm, harness_llm)
+
+    top_stacks = raw.get("stacks")
+    if isinstance(top_stacks, dict) and "stacks" not in merged:
+        merged["stacks"] = dict(top_stacks)
     return merged
 
 
