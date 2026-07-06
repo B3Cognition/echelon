@@ -547,6 +547,30 @@ def test_assemble_prompt_injects_squad_context(tmp_path):
     assert "STAGING_DIR" in prompt
 
 
+def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
+    """Runtime agents get unambiguous installed-extension path mappings."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / ".specify" / "extensions" / "echelon"
+    ext_dir.mkdir(parents=True)
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(id="phase1-test", type="agent")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+
+    assert f"EXTENSION_DIR={ext_dir}" in prompt
+    assert f"EXTENSION_TEMPLATES_DIR={ext_dir / 'templates'}" in prompt
+    assert "`extension/templates/foo.md` resolves to `${EXTENSION_DIR}/templates/foo.md`" in prompt
+    assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
+
+
 def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     """Agent prompts include the shared endocrine contract before role text."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -669,6 +693,8 @@ def test_pre_dispatch_prompt_includes_parent_allowed_state_updates(tmp_path):
 
     assert "## Allowed state_updates for this dispatch" in prompt
     assert "- `golddigger_status`" in prompt
+    assert f"EXTENSION_TEMPLATES_DIR={tmp_path / 'ext' / 'templates'}" in prompt
+    assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
 
 
 def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):

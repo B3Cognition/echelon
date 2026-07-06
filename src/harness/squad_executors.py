@@ -433,6 +433,18 @@ class PhaseExecutor(ABC):
             for entry in prepared_entries:
                 fh.write(json.dumps(entry, default=lambda o: o.isoformat() if hasattr(o, "isoformat") else str(o)) + "\n")
 
+    def _extension_path_context(self) -> str:
+        return (
+            f"EXTENSION_DIR={self._ext_dir}\n"
+            f"EXTENSION_TEMPLATES_DIR={self._ext_dir / 'templates'}\n"
+            f"EXTENSION_AGENTS_DIR={self._ext_dir / 'agents'}\n"
+            "\n"
+            "## Extension Path Resolution\n"
+            "- `extension/templates/foo.md` resolves to `${EXTENSION_DIR}/templates/foo.md`.\n"
+            "- `extension/agents/foo.md` resolves to `${EXTENSION_DIR}/agents/foo.md`.\n"
+            "- NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md` or add an extra `extension/` path segment.\n\n"
+        )
+
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         static_parts: list[str] = []
         dynamic_parts: list[str] = []
@@ -504,7 +516,8 @@ class PhaseExecutor(ABC):
             f"SQUAD_DIR={squad_dir_str}\n"
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
-            f"PROJECT_ROOT={self._project_root}\n\n"
+            f"PROJECT_ROOT={self._project_root}\n"
+            f"{self._extension_path_context()}"
         )
         if spec_dir_ref:
             spec_dir_path = Path(spec_dir_ref)
@@ -813,7 +826,8 @@ class PhaseExecutor(ABC):
                 + f"SQUAD_DIR={squad_dir_str}\n"
                 + f"STAGING_DIR={staging_dir_str}\n"
                 + f"CONTEXT_DIR={context_dir_str}\n"
-                + f"PROJECT_ROOT={self._project_root}\n\n"
+                + f"PROJECT_ROOT={self._project_root}\n"
+                + self._extension_path_context()
                 + "<context>\n"
                 + f"project_root: {self._project_root}\n"
                 + f"run_id: {run_id}\n"
@@ -837,6 +851,7 @@ class PhaseExecutor(ABC):
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + self._extension_path_context()
             + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)
         )
@@ -884,7 +899,8 @@ class PhaseExecutor(ABC):
             + f"SQUAD_DIR={squad_dir_str}\n"
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
-            + f"PROJECT_ROOT={self._project_root}\n\n"
+            + f"PROJECT_ROOT={self._project_root}\n"
+            + self._extension_path_context()
             + "\n".join(context_lines)
             + "\n\n<instructions>\n"
             + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
