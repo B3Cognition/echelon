@@ -393,14 +393,74 @@ def baseline_snapshot_commands() -> tuple[tuple[str, ...], ...]:
         (
             "git",
             "add",
-            "-A",
+            "-u",
             "--",
             ".",
             ":(exclude)runs",
             ":(exclude).harness-build-status.json",
         ),
+        (
+            "git",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "|",
+            "git",
+            "add",
+            "--pathspec-from-file=-",
+            "--pathspec-file-nul",
+        ),
         ("git", "commit", "-m", "chore: snapshot workspace before benchmark"),
     )
+
+
+def _is_benchmark_snapshot_excluded(path: str) -> bool:
+    normalized = path.strip("/")
+    return (
+        normalized == "runs"
+        or normalized.startswith("runs/")
+        or normalized == ".harness-build-status.json"
+    )
+
+
+def _stage_benchmark_baseline(project_root: Path) -> bool:
+    tracked_files = _git(project_root, "ls-files", "-z", capture_output=True)
+    if tracked_files.returncode != 0:
+        return False
+    if tracked_files.stdout:
+        tracked = _git(
+            project_root,
+            "add",
+            "-u",
+            "--",
+            ".",
+            ":(exclude)runs",
+            ":(exclude).harness-build-status.json",
+        )
+        if tracked.returncode != 0:
+            return False
+
+    untracked = _git(
+        project_root,
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        capture_output=True,
+    )
+    if untracked.returncode != 0:
+        return False
+    paths = [
+        path
+        for path in untracked.stdout.split("\0")
+        if path and not _is_benchmark_snapshot_excluded(path)
+    ]
+    if not paths:
+        return True
+
+    added = _git(project_root, "add", "--", *paths)
+    return added.returncode == 0
 
 
 def snapshot_benchmark_baseline(project_root: Path) -> str:
@@ -408,16 +468,7 @@ def snapshot_benchmark_baseline(project_root: Path) -> str:
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         raise RuntimeError("benchmark requires a Git workspace before it can snapshot a baseline")
 
-    add = _git(
-        project_root,
-        "add",
-        "-A",
-        "--",
-        ".",
-        ":(exclude)runs",
-        ":(exclude).harness-build-status.json",
-    )
-    if add.returncode != 0:
+    if not _stage_benchmark_baseline(project_root):
         raise RuntimeError("could not stage benchmark baseline snapshot")
 
     has_head = _git(project_root, "rev-parse", "--verify", "HEAD", capture_output=True).returncode == 0

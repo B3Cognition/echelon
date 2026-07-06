@@ -61,6 +61,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- Benchmark baseline snapshots now stage tracked changes plus non-ignored
+  untracked files without touching ignored `runs/`, avoiding `git add` failures
+  in workspaces that correctly ignore runtime state.
 - `echelon workspace init` now bootstraps lightweight workspace Git for Spec Kit
   workspaces when needed, committing `.gitignore`, `.echelon/config.yml`, and
   `specs/` as the initial workspace contract, so the documented `workspace init`

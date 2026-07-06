@@ -15,6 +15,7 @@ from echelon.benchmark import (
     list_variants,
     plan_variant_commands,
     run_benchmark_variant,
+    snapshot_benchmark_baseline,
     summarize_records,
     write_summary,
 )
@@ -296,7 +297,8 @@ def test_benchmark_dry_run_without_baseline_ref_prints_snapshot_wrapper(tmp_path
     )
 
     out = capsys.readouterr().out
-    assert "git add -A -- . :(exclude)runs :(exclude).harness-build-status.json" in out
+    assert "git add -u -- . :(exclude)runs :(exclude).harness-build-status.json" in out
+    assert "git ls-files --others --exclude-standard -z | git add --pathspec-from-file=-" in out
     assert "git commit -m chore: snapshot workspace before benchmark" in out
     assert "git reset --hard BENCHMARK_BASELINE_SNAPSHOT" in out
 
@@ -502,6 +504,29 @@ def test_run_benchmark_variant_snapshots_workspace_when_baseline_ref_missing(tmp
     assert commands[1] == ("git", "clean", "-fd", "-e", "runs/benchmarks/")
     assert commands[-2][:3] == ("git", "reset", "--hard")
     assert commands[-1] == ("git", "clean", "-fd", "-e", "runs/benchmarks/")
+
+
+def test_benchmark_baseline_snapshot_ignores_existing_runs_dir(tmp_path: Path) -> None:
+    subprocess_run = __import__("subprocess").run
+    subprocess_run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / ".gitignore").write_text("/runs/\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("fixture\n", encoding="utf-8")
+    (tmp_path / "runs").mkdir()
+    (tmp_path / "runs" / "transient.txt").write_text("runtime\n", encoding="utf-8")
+
+    ref = snapshot_benchmark_baseline(tmp_path)
+
+    assert ref
+    tracked = subprocess_run(
+        ["git", "ls-files"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert ".gitignore" in tracked
+    assert "README.md" in tracked
+    assert not any(path.startswith("runs/") for path in tracked)
 
 
 def test_run_benchmark_variant_resets_after_failed_variant(tmp_path: Path) -> None:
