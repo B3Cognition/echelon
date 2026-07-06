@@ -458,7 +458,16 @@ def migrate_workspace(
             commit_message,
             EchelonCommitMetadata(origin="workspace", action="init"),
         )
-        _run_git(plan.workspace_root, "commit", "-m", commit_message)
+        _run_git(
+            plan.workspace_root,
+            "-c",
+            "user.name=Echelon",
+            "-c",
+            "user.email=echelon-workspace@example.invalid",
+            "commit",
+            "-m",
+            commit_message,
+        )
         committed = True
 
     return WorkspaceGitMigrationResult(

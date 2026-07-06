@@ -61,6 +61,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `echelon workspace init` now bootstraps lightweight workspace Git for Spec Kit
+  workspaces when needed, committing `.gitignore`, `.echelon/config.yml`, and
+  `specs/` as the initial workspace contract, so the documented `workspace init`
+  -> `delivery init` flow works even when `specify init` did not create `.git`.
 - `echelon delivery init` now fails fast with workspace Git setup guidance when
   run from a non-Git workspace instead of falling through to a confusing
   `git clone --mirror` failure.

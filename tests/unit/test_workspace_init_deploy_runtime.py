@@ -152,6 +152,48 @@ def test_workspace_init_llm_option_overrides_template_default(tmp_path, monkeypa
     assert not (tmp_path / ".echelon" / "local.yml").exists()
 
 
+def test_workspace_init_initializes_git_for_specify_workspace(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    (tmp_path / ".specify").mkdir()
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: http\n  blue_port: 18080\n  green_port: 18081\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+
+    captured = capsys.readouterr()
+    assert "workspace Git initialized" in captured.out
+    assert "committed initial workspace contract" in captured.out
+    assert (tmp_path / ".git").exists()
+    gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "/.specify/" in gitignore
+    assert "/runs/" in gitignore
+    commit = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s%n%B"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "chore: initialize echelon workspace" in commit
+    assert "Echelon-Origin: workspace" in commit
+    assert "Echelon-Action: init" in commit
+    staged = subprocess.run(
+        ["git", "status", "--short"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert staged == []
+
+
 def test_workspace_init_rejects_invalid_llm_option(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
 

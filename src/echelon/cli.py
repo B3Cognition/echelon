@@ -164,6 +164,37 @@ def _workspace_git_present(project_root: Path) -> bool:
     return discover_workspace(project_root).workspace.git_present
 
 
+def _workspace_git_has_head(project_root: Path) -> bool:
+    if not _workspace_git_present(project_root):
+        return False
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _maybe_bootstrap_workspace_git(project_root: Path) -> None:
+    """Initialize lightweight workspace Git after workspace init when possible."""
+    has_head = _workspace_git_has_head(project_root)
+    if has_head:
+        return
+    if not ((project_root / ".specify").exists() or (project_root / "specs").exists()):
+        return
+
+    from echelon.workspace_git_migration import migrate_workspace
+
+    result = migrate_workspace(project_root, write=True, commit=True)
+    if result.git_initialized:
+        staged = ", ".join(result.staged_paths) or "(none)"
+        print(f"✓ workspace Git initialized; staged: {staged}")
+    if result.committed:
+        print("✓ committed initial workspace contract")
+
+
 def _print_legacy_branchless_recovery_notice(command_name: str) -> None:
     print(
         "legacy branchless run detected; continuing for recovery only\n"
@@ -5439,7 +5470,9 @@ def _cmd_workspace(args: list[str]) -> None:
         allow_unsafe = "--allow-unsafe-host-execution" in parsed_init_args
         if "--no-unsafe-host-execution" not in parsed_init_args and not allow_unsafe:
             allow_unsafe = _wants_unsafe_host_execution_interactively()
-        _cmd_init(Path.cwd(), allow_unsafe_host_execution=allow_unsafe, llm_cli=llm_cli)
+        project_root = Path.cwd()
+        _cmd_init(project_root, allow_unsafe_host_execution=allow_unsafe, llm_cli=llm_cli)
+        _maybe_bootstrap_workspace_git(project_root)
         return
 
     if subcmd == "doctor":
