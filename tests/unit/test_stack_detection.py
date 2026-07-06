@@ -119,6 +119,36 @@ def test_artifact_detection_blocks_adoption_when_target_stack_unresolved(
 
 
 @pytest.mark.unit
+def test_top_level_specs_artifact_root_scans_nested_re_folders(tmp_path: Path) -> None:
+    artifacts = tmp_path / "specs" / "000-re-overview"
+    artifacts.mkdir(parents=True)
+    (artifacts / "overview.md").write_text(
+        "\n".join(
+            [
+                "# Overview",
+                "**Target**: [NEEDS CLARIFICATION: target stack]",
+                "| Area | Technology |",
+                "|---|---|",
+                "| Frontend | React, Playbook |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report = detect_stacks(
+        target=tmp_path,
+        stack_definitions=_definitions(),
+        artifact_roots=[tmp_path / "specs"],
+    )
+
+    assert "playbook-design-system" in {stack.id for stack in report.observed_stacks}
+    assert "statsperform-playbook" in {
+        stack.id for stack in report.matching_echelon_stacks
+    }
+    assert any(decision.code == "TARGET_STACK_UNRESOLVED" for decision in report.decisions_required)
+
+
+@pytest.mark.unit
 def test_detection_report_yaml_round_trips(tmp_path: Path) -> None:
     _write_package_json(
         tmp_path / "package.json",

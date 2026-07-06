@@ -35,13 +35,29 @@ def detect_re_artifacts(artifact_roots: list[Path]) -> list[StackEvidence]:
     for root in artifact_roots:
         if not root.exists():
             continue
-        for path in _artifact_files(root):
+        for path in _artifact_files_from_root(root):
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             evidence.extend(_evidence_from_text(path, text))
     return _dedupe(evidence)
+
+
+def _artifact_files_from_root(root: Path) -> list[Path]:
+    files = _artifact_files(root)
+    if root.is_file():
+        return files
+
+    nested_roots = [
+        child
+        for child in sorted(root.iterdir())
+        if child.is_dir() and re.match(r"^\d{3}-re-", child.name)
+    ]
+    nested_files: list[Path] = []
+    for nested_root in nested_roots:
+        nested_files.extend(_artifact_files(nested_root))
+    return [*files, *nested_files]
 
 
 def _artifact_files(root: Path) -> list[Path]:
@@ -89,6 +105,8 @@ def _evidence_from_text(path: Path, text: str) -> list[StackEvidence]:
 
 
 def _target_stack_unresolved(text: str) -> bool:
+    if re.search(r"needs clarification.{0,80}target stack", text, flags=re.DOTALL):
+        return True
     target_near_uncertainty = re.search(
         r"target stack.{0,120}(requires?|needed|human input|unresolved|tbd|placeholder)",
         text,
