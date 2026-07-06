@@ -108,10 +108,11 @@ Commands:
                                             Check selected stack commands, registries, and tool probes.
 
   delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
-  delivery run <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]
-                    [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]
+  delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
+                    [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
-  delivery resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]
+                    Legacy key=value options remain accepted for compatibility.
+  delivery resume <spec_id> [--strategy <s>] [--mode <guided|semi|banzai>]
                                             Resume a blocked delivery run.
   delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
@@ -5841,16 +5842,19 @@ def main() -> None:
 
     command = args[0]
 
+    if command in {"delivery", "harness"}:
+        from click import ClickException
+        from echelon.cli_app import run as run_typer_cli
+
+        try:
+            run_typer_cli(args)
+        except ClickException as exc:
+            exc.show()
+            sys.exit(exc.exit_code)
+        return
+
     if command == "init":
         _cmd_init(Path.cwd())
-        return
-
-    if command == "harness":
-        _cmd_harness(args[1:])
-        return
-
-    if command == "delivery":
-        _cmd_delivery(args[1:])
         return
 
     if command == "cicd":

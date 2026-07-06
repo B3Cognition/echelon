@@ -24,9 +24,10 @@ def test_help_command_prints_usage_without_unknown_command(
     assert "echelon: unknown command" not in captured.err
     assert "Usage: echelon <command>" in captured.out
     assert "delivery init" in captured.out
-    assert "delivery run <spec_id> [mode=<m>] [strategy=<s>]" in captured.out
-    assert "max_outer=<n>" in captured.out
-    assert "auto_merge=<bool>" in captured.out
+    assert "delivery run <spec_id> [--mode <m>] [--strategy <s>]" in captured.out
+    assert "--max-outer <n>" in captured.out
+    assert "--auto-merge|--no-auto-merge" in captured.out
+    assert "Legacy key=value options remain accepted for compatibility." in captured.out
     assert "workspace migrate [--write] [--commit] [--message <msg>]" in captured.out
     assert "spec run <description> [--mode semi|banzai|guided] [--reset]" in captured.out
     assert "[--message <text>] [--next-phase <id>]" in captured.out
@@ -135,3 +136,21 @@ def test_harness_namespace_remains_compatibility_alias(monkeypatch: pytest.Monke
         main()
 
     mock_run.assert_called_once_with(["001"])
+
+
+@pytest.mark.unit
+def test_delivery_unknown_subcommand_exits_without_traceback(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "bogus"])
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "No such command 'bogus'" in captured.err
+    assert "Traceback" not in captured.err

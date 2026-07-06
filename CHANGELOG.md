@@ -61,6 +61,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-104 / #128 Typer CLI front door** — `delivery` and `harness`
+  commands now route through a Typer parser that documents canonical
+  `--mode`, `--strategy`, `--max-outer`, and related options while preserving
+  legacy `key=value` delivery arguments for compatibility.
 - **EGR-103 / #127 installed-extension path prompt guidance** — runtime agent prompts
   now expose `EXTENSION_DIR`, template/agent subdirectory aliases, and explicit
   `extension/...` path-resolution rules so agents do not double-prefix the
