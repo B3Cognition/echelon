@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from dataclasses import dataclass
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
 from harness.config import HarnessConfig
@@ -59,30 +60,44 @@ class CodexCliBackend:
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
         timed_out = False
+        saw_task_complete = False
+        token_usage = 0
 
         def kill() -> None:
             nonlocal timed_out
             timed_out = True
             proc.kill()
 
+        def drain_stderr() -> None:
+            if proc.stderr is None:
+                return
+            stderr_chunks.append(proc.stderr.read().decode("utf-8", errors="replace"))
+
         timer = threading.Timer(request.timeout_s, kill)
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
         try:
             timer.start()
+            stderr_thread.start()
             assert proc.stdout is not None
             for raw in proc.stdout:
                 line = raw.decode("utf-8", errors="replace").strip()
                 if not line:
                     continue
-                text = _codex_event_text(line)
-                stdout_chunks.append(text)
-                print(text, flush=True)
-            if proc.stderr is not None:
-                stderr_chunks.append(
-                    proc.stderr.read().decode("utf-8", errors="replace")
-                )
-            proc.wait()
+                event = _codex_event(line)
+                if event.token_usage:
+                    token_usage = event.token_usage
+                if event.text:
+                    stdout_chunks.append(event.text)
+                    print(event.text, flush=True)
+                if event.task_complete:
+                    saw_task_complete = True
+                    _stop_completed_process(proc)
+                    break
+            if not saw_task_complete:
+                proc.wait()
         finally:
             timer.cancel()
+            stderr_thread.join(timeout=1.0)
 
         if final_path and os.path.exists(final_path):
             with open(final_path, encoding="utf-8", errors="replace") as handle:
@@ -95,11 +110,44 @@ class CodexCliBackend:
                 pass
 
         return CliRunResult(
-            exit_code=-1 if timed_out else int(proc.returncode),
+            exit_code=(
+                0 if saw_task_complete else (-1 if timed_out else int(proc.returncode))
+            ),
             stdout="\n".join(chunk for chunk in stdout_chunks if chunk),
             stderr="\n".join(chunk for chunk in stderr_chunks if chunk),
+            token_usage=token_usage,
             timed_out=timed_out,
+            metadata={"task_complete": saw_task_complete},
         )
+
+
+@dataclass(frozen=True)
+class _CodexEvent:
+    text: str
+    task_complete: bool = False
+    token_usage: int = 0
+
+
+def _codex_event(line: str) -> _CodexEvent:
+    try:
+        event = json.loads(line)
+    except json.JSONDecodeError:
+        return _CodexEvent(line)
+
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        payload_type = payload.get("type")
+        if payload_type == "task_complete":
+            message = payload.get("last_agent_message")
+            return _CodexEvent(
+                message if isinstance(message, str) else "",
+                task_complete=True,
+            )
+        if payload_type == "token_count":
+            usage = _extract_token_usage(payload.get("info"))
+            return _CodexEvent("", token_usage=usage)
+
+    return _CodexEvent(_codex_event_text_from_json(event))
 
 
 def _codex_event_text(line: str) -> str:
@@ -107,6 +155,16 @@ def _codex_event_text(line: str) -> str:
         event = json.loads(line)
     except json.JSONDecodeError:
         return line
+
+    return _codex_event_text_from_json(event)
+
+
+def _codex_event_text_from_json(event: dict) -> str:
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        message = payload.get("message")
+        if isinstance(message, str) and message.strip():
+            return message
 
     for key in ("content", "text", "message", "result"):
         value = event.get(key)
@@ -120,4 +178,41 @@ def _codex_event_text(line: str) -> str:
             if isinstance(value, str) and value.strip():
                 return value
 
-    return line
+    return json.dumps(event)
+
+
+def _extract_token_usage(info: object) -> int:
+    if not isinstance(info, dict):
+        return 0
+    total = info.get("total_token_usage")
+    if not isinstance(total, dict):
+        return 0
+    try:
+        return int(total.get("total_tokens") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _stop_completed_process(proc: subprocess.Popen) -> None:
+    try:
+        proc.wait(timeout=2.0)
+        return
+    except TypeError:
+        proc.wait()
+        return
+    except subprocess.TimeoutExpired:
+        pass
+
+    terminate = getattr(proc, "terminate", None)
+    if callable(terminate):
+        terminate()
+    else:
+        proc.kill()
+
+    try:
+        proc.wait(timeout=2.0)
+    except TypeError:
+        proc.wait()
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
