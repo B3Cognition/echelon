@@ -94,7 +94,9 @@ Commands:
                                             Run or print an artifact-quality benchmark variant.
 
   stack list [--json]                       List available Echelon stacks.
-  stack preflight [--stack <id>] [--target-archetype <id>] [--probe-tools] [--json]
+  stack detect [--target <path>] [--artifacts <path>] [--write] [--format text|yaml] [--json]
+                                            Detect source/artifact stack evidence.
+  stack preflight [--stack <id>] [--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]
                                             Check selected stack commands, registries, and tool probes.
 
   delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
@@ -5438,12 +5440,17 @@ def _cmd_artifacts(args: list[str]) -> None:
 
 
 from harness.stacks import (  # noqa: E402  (CLI command helpers)
+    detect_stacks,
+    detection_report_from_file,
+    detection_report_to_yaml,
     load_stack_definitions,
     preflight_to_dict,
+    render_detection_markdown,
     render_preflight_markdown,
     resolve_stacks,
     resolved_to_dict,
     run_stack_preflight,
+    write_detection_report,
 )
 from harness.stacks.errors import StackError  # noqa: E402
 from harness.stacks.paths import find_stack_extension_root  # noqa: E402
@@ -5455,14 +5462,20 @@ def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
         print(
             "Usage:\n"
             "  echelon stack list [--json]\n"
+            "  echelon stack detect [--target <path>] [--artifacts <path>] "
+            "[--write] [--format text|yaml] [--json]\n"
             "  echelon stack preflight [--stack <id>] "
-            "[--target-archetype <id>] [--probe-tools] [--json]"
+            "[--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]"
         )
         return
 
     subcmd = args[0]
     if subcmd == "list":
         _cmd_stack_list(args[1:], project_root=project_root)
+        return
+
+    if subcmd == "detect":
+        _cmd_stack_detect(args[1:], project_root=project_root)
         return
 
     if subcmd == "preflight":
@@ -5506,15 +5519,110 @@ def _cmd_stack_list(args: list[str], *, project_root: Path) -> None:
         print(f"- {stack.id} ({stack.kind}; {archetypes}) {stack.name}")
 
 
+def _cmd_stack_detect(args: list[str], *, project_root: Path) -> None:
+    target = project_root
+    artifact_roots: list[Path] = []
+    write_report = False
+    output_format = "text"
+
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--target":
+            index += 1
+            if index >= len(args):
+                print("echelon stack detect: --target requires a value", file=sys.stderr)
+                sys.exit(1)
+            target = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--target="):
+            target = _resolve_cli_path(project_root, arg.split("=", 1)[1])
+        elif arg == "--artifacts":
+            index += 1
+            if index >= len(args):
+                print("echelon stack detect: --artifacts requires a value", file=sys.stderr)
+                sys.exit(1)
+            artifact_roots.append(_resolve_cli_path(project_root, args[index]))
+        elif arg.startswith("--artifacts="):
+            artifact_roots.append(_resolve_cli_path(project_root, arg.split("=", 1)[1]))
+        elif arg == "--write":
+            write_report = True
+        elif arg == "--format":
+            index += 1
+            if index >= len(args):
+                print("echelon stack detect: --format requires text or yaml", file=sys.stderr)
+                sys.exit(1)
+            output_format = args[index]
+        elif arg.startswith("--format="):
+            output_format = arg.split("=", 1)[1]
+        elif arg == "--json":
+            output_format = "json"
+        else:
+            print(f"echelon stack detect: unknown argument '{arg}'", file=sys.stderr)
+            sys.exit(1)
+        index += 1
+
+    if output_format not in {"text", "yaml", "json"}:
+        print("echelon stack detect: --format must be text or yaml", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        definitions = _load_stack_definitions_for_project(project_root)
+        report = detect_stacks(
+            target=target,
+            artifact_roots=artifact_roots,
+            stack_definitions=definitions,
+        )
+    except StackError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    written = None
+    if write_report:
+        written = write_detection_report(report, project_root=project_root)
+
+    if output_format == "json":
+        import json
+
+        print(json.dumps(report.to_dict(), indent=2))
+    elif output_format == "yaml":
+        print(detection_report_to_yaml(report).rstrip())
+    else:
+        print(render_detection_markdown(report).rstrip())
+        if written is not None:
+            rel_yaml = _relative_display_path(written.yaml_path, project_root)
+            rel_markdown = _relative_display_path(written.markdown_path, project_root)
+            print()
+            print(f"Wrote detection report: {rel_yaml}")
+            print(f"Wrote detection summary: {rel_markdown}")
+
+
 def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
-    selected, target_archetypes, probe_tools, json_output = _parse_stack_preflight_args(args)
-    if not selected:
+    (
+        selected,
+        target_archetypes,
+        from_detect,
+        probe_tools,
+        json_output,
+    ) = _parse_stack_preflight_args(args, project_root=project_root)
+    if from_detect is not None:
+        report = detection_report_from_file(from_detect)
+        detected_selected, detected_archetypes = _stack_selection_from_detection(report)
+        selected = _append_cli_unique(detected_selected, selected)
+        target_archetypes = _append_cli_unique(detected_archetypes, target_archetypes)
+
+    if not selected and from_detect is None:
         config = _load_cli_config(project_root)
         selected = list(config.stacks.selected)
         target_archetypes = target_archetypes or list(config.stacks.target_archetypes)
 
     if not selected:
-        message = "No Echelon stacks selected. Use --stack <id> or configure stacks.selected."
+        if from_detect is not None:
+            message = "No adoptable stacks in detection report."
+        else:
+            message = "No Echelon stacks selected. Use --stack <id> or configure stacks.selected."
         if json_output:
             import json
 
@@ -5561,9 +5669,12 @@ def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
 
 def _parse_stack_preflight_args(
     args: list[str],
-) -> tuple[list[str], list[str], bool, bool]:
+    *,
+    project_root: Path,
+) -> tuple[list[str], list[str], Path | None, bool, bool]:
     selected: list[str] = []
     target_archetypes: list[str] = []
+    from_detect: Path | None = None
     probe_tools = False
     json_output = False
 
@@ -5589,6 +5700,17 @@ def _parse_stack_preflight_args(
             target_archetypes.append(args[index])
         elif arg.startswith("--target-archetype="):
             target_archetypes.append(arg.split("=", 1)[1])
+        elif arg == "--from-detect":
+            index += 1
+            if index >= len(args):
+                print(
+                    "echelon stack preflight: --from-detect requires a value",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            from_detect = _resolve_cli_path(project_root, args[index])
+        elif arg.startswith("--from-detect="):
+            from_detect = _resolve_cli_path(project_root, arg.split("=", 1)[1])
         elif arg == "--probe-tools":
             probe_tools = True
         elif arg == "--json":
@@ -5598,7 +5720,45 @@ def _parse_stack_preflight_args(
             sys.exit(1)
         index += 1
 
-    return selected, target_archetypes, probe_tools, json_output
+    return selected, target_archetypes, from_detect, probe_tools, json_output
+
+
+def _stack_selection_from_detection(report) -> tuple[list[str], list[str]]:
+    config = report.suggested_config or {}
+    stacks = config.get("stacks", {}) if isinstance(config, dict) else {}
+    selected = stacks.get("selected", []) if isinstance(stacks, dict) else []
+    target_archetypes = (
+        stacks.get("target_archetypes", []) if isinstance(stacks, dict) else []
+    )
+    return _string_values(selected), _string_values(target_archetypes)
+
+
+def _string_values(values) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
+def _append_cli_unique(first: list[str], second: list[str]) -> list[str]:
+    result = list(first)
+    for value in second:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _resolve_cli_path(project_root: Path, value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return project_root / path
+
+
+def _relative_display_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError:
+        return str(path)
 
 
 def _load_stack_definitions_for_project(project_root: Path):
@@ -5623,6 +5783,7 @@ def _stack_definition_to_dict(stack) -> dict:
             "commands": stack.requires_commands,
             "registries": stack.requires_registries,
         },
+        "detection": stack.detection.to_dict(),
         "tools": sorted(stack.tools),
     }
 

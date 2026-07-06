@@ -1,0 +1,1 @@
+"""Stack detection evidence adapters."""

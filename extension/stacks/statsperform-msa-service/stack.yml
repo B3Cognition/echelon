@@ -27,6 +27,29 @@ requires:
     - uv
   registries:
     - statsperform-nexus
+detection:
+  positive:
+    technologies:
+      - fastapi
+      - python
+      - uv
+      - pydantic
+    dependencies:
+      - fastapi
+      - caic-msa-core
+      - pydantic-settings
+    files:
+      - pyproject.toml
+      - uv.lock
+  negative:
+    technologies:
+      - nextjs
+      - react
+  modernization:
+    technologies:
+      - fastapi
+      - python
+      - api-service
 tools:
   uv:
     type: cli

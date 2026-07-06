@@ -1,6 +1,6 @@
 # Echelon Stack Detection Design
 
-**Status:** Proposed
+**Status:** Implemented
 **Date:** 2026-07-06
 **Related EGR:** EGR-102 / GitHub issue #126
 **Deciders:** Echelon maintainers

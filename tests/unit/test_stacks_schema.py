@@ -56,6 +56,61 @@ def test_parse_valid_stack_definition() -> None:
 
 
 @pytest.mark.unit
+def test_parse_optional_detection_rules() -> None:
+    raw = {
+        **VALID_STACK,
+        "detection": {
+            "positive": {
+                "technologies": ["react", "nx"],
+                "dependencies": ["@statsperform/react-playbook"],
+                "files": ["package.json"],
+            },
+            "negative": {
+                "technologies": ["nestjs"],
+            },
+            "modernization": {
+                "technologies": ["nextjs"],
+                "dependencies": ["legacy-ui"],
+                "files": ["webpack.config.js"],
+            },
+        },
+    }
+
+    stack = parse_stack_definition(raw, Path("stack.yml"))
+
+    assert stack.detection.positive.technologies == ["react", "nx"]
+    assert stack.detection.positive.dependencies == ["@statsperform/react-playbook"]
+    assert stack.detection.positive.files == ["package.json"]
+    assert stack.detection.negative.technologies == ["nestjs"]
+    assert stack.detection.modernization.dependencies == ["legacy-ui"]
+    assert stack.detection.modernization.files == ["webpack.config.js"]
+
+
+@pytest.mark.unit
+def test_detection_defaults_to_empty_rule_groups() -> None:
+    stack = parse_stack_definition(VALID_STACK, Path("stack.yml"))
+
+    assert stack.detection.positive.technologies == []
+    assert stack.detection.negative.dependencies == []
+    assert stack.detection.modernization.files == []
+
+
+@pytest.mark.unit
+def test_rejects_invalid_detection_list_entry() -> None:
+    raw = {
+        **VALID_STACK,
+        "detection": {
+            "positive": {
+                "technologies": ["react", 7],
+            },
+        },
+    }
+
+    with pytest.raises(StackValidationError, match="detection.positive.technologies"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
 def test_rejects_unknown_core_namespace() -> None:
     raw = {**VALID_STACK, "provides": {"unknown.capability": "value"}}
 

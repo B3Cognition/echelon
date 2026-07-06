@@ -25,6 +25,22 @@ requires:
     - npx
   registries:
     - statsperform-nexus
+detection:
+  positive:
+    technologies:
+      - stark
+      - opta-stark
+    dependencies:
+      - "@statsperform/opta-stark"
+    files:
+      - stark.config.yml
+  modernization:
+    technologies:
+      - nextjs
+      - nx
+      - react
+    dependencies:
+      - "@statsperform/react-playbook"
 tools:
   nx:
     type: cli

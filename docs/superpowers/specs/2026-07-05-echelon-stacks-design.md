@@ -138,6 +138,23 @@ requires:
   registries:
     - statsperform-nexus
 
+detection:
+  positive:
+    technologies:
+      - react
+      - playbook
+    dependencies:
+      - "@statsperform/react-playbook"
+    files:
+      - package.json
+  negative:
+    technologies:
+      - nestjs
+  modernization:
+    technologies:
+      - react
+      - component-library
+
 tools:
   playbook_cli:
     command: npx -y @statsperform/playbook-cli
@@ -160,6 +177,12 @@ Required top-level keys:
 - `applies_to`
 - `provides`
 - `context`
+
+Optional `detection` rules declare stack identity hints for source-tree and
+brownfield evidence adapters. `positive`, `negative`, and `modernization`
+sections may each contain string-list fields for `technologies`, `dependencies`,
+and `files`. Python evidence adapters remain responsible for parsing files,
+normalizing evidence, and applying safety/confidence scoring.
 
 Supported `stack.kind` values:
 

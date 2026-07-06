@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-102 / #126 stack detection** — added `echelon stack detect` for
+  deterministic source-tree and RE-artifact stack evidence, YAML/JSON/text
+  reports under `runs/stack-detect/**`, conservative current-vs-modernization
+  recommendations, declarative stack detection hints, and read-only
+  `echelon stack preflight --from-detect`.
 - **EGR-101 / #113 stack preflight** — added `echelon stack list` and
   `echelon stack preflight` so operators can discover bundled/project stacks
   and verify declared commands, registry requirements, and optional gated tool

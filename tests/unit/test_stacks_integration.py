@@ -28,6 +28,19 @@ def test_loads_bundled_statsperform_stacks() -> None:
 
 
 @pytest.mark.unit
+def test_bundled_statsperform_stacks_include_detection_hints() -> None:
+    definitions = _definitions()
+
+    assert "playbook" in definitions["statsperform-playbook"].detection.positive.technologies
+    assert (
+        "@statsperform/react-playbook"
+        in definitions["statsperform-playbook"].detection.positive.dependencies
+    )
+    assert "nextjs" in definitions["statsperform-stark-webapp"].detection.modernization.technologies
+    assert "fastapi" in definitions["statsperform-msa-service"].detection.positive.technologies
+
+
+@pytest.mark.unit
 def test_stark_resolves_playbook_dependency_first() -> None:
     resolved = resolve_stacks(
         ["statsperform-stark-webapp"],

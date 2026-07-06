@@ -26,6 +26,8 @@ CORE_CAPABILITY_PREFIXES = (
 
 VALID_STACK_KINDS = {"archetype", "capability", "policy", "resource"}
 VALID_PHASE_SCOPE = {"spec", "delivery"}
+VALID_DETECTION_SECTIONS = {"positive", "negative", "modernization"}
+VALID_DETECTION_RULE_FIELDS = {"technologies", "dependencies", "files"}
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,34 @@ class StackTool:
 
 
 @dataclass(frozen=True)
+class StackDetectionRuleSet:
+    technologies: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, list[str]]:
+        return {
+            "technologies": self.technologies,
+            "dependencies": self.dependencies,
+            "files": self.files,
+        }
+
+
+@dataclass(frozen=True)
+class StackDetection:
+    positive: StackDetectionRuleSet = field(default_factory=StackDetectionRuleSet)
+    negative: StackDetectionRuleSet = field(default_factory=StackDetectionRuleSet)
+    modernization: StackDetectionRuleSet = field(default_factory=StackDetectionRuleSet)
+
+    def to_dict(self) -> dict[str, dict[str, list[str]]]:
+        return {
+            "positive": self.positive.to_dict(),
+            "negative": self.negative.to_dict(),
+            "modernization": self.modernization.to_dict(),
+        }
+
+
+@dataclass(frozen=True)
 class StackDefinition:
     id: str
     name: str
@@ -62,6 +92,7 @@ class StackDefinition:
     requires_registries: list[str]
     tools: dict[str, StackTool]
     context_files: list[str]
+    detection: StackDetection = field(default_factory=StackDetection)
 
 
 def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefinition:
@@ -155,8 +186,62 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
         requires_registries=_string_list(
             requires_map.get("registries"), source_path, "requires.registries"
         ),
+        detection=_parse_detection(raw.get("detection", {}), source_path),
         tools=_parse_tools(raw.get("tools", {}), source_path),
         context_files=context_files,
+    )
+
+
+def _parse_detection(value: Any, source_path: Path) -> StackDetection:
+    if value is None:
+        return StackDetection()
+    detection_raw = _mapping(value, source_path, "detection")
+    for section in detection_raw:
+        if section not in VALID_DETECTION_SECTIONS:
+            raise StackValidationError(
+                f"unknown detection section: {section}",
+                path=source_path,
+                field_path=f"detection.{section}",
+            )
+
+    return StackDetection(
+        positive=_parse_detection_rule_set(
+            detection_raw.get("positive", {}), source_path, "detection.positive"
+        ),
+        negative=_parse_detection_rule_set(
+            detection_raw.get("negative", {}), source_path, "detection.negative"
+        ),
+        modernization=_parse_detection_rule_set(
+            detection_raw.get("modernization", {}),
+            source_path,
+            "detection.modernization",
+        ),
+    )
+
+
+def _parse_detection_rule_set(
+    value: Any,
+    source_path: Path,
+    field_path: str,
+) -> StackDetectionRuleSet:
+    if value is None:
+        return StackDetectionRuleSet()
+    rules_raw = _mapping(value, source_path, field_path)
+    for rule_field in rules_raw:
+        if rule_field not in VALID_DETECTION_RULE_FIELDS:
+            raise StackValidationError(
+                f"unknown detection rule field: {rule_field}",
+                path=source_path,
+                field_path=f"{field_path}.{rule_field}",
+            )
+    return StackDetectionRuleSet(
+        technologies=_string_list(
+            rules_raw.get("technologies", []), source_path, f"{field_path}.technologies"
+        ),
+        dependencies=_string_list(
+            rules_raw.get("dependencies", []), source_path, f"{field_path}.dependencies"
+        ),
+        files=_string_list(rules_raw.get("files", []), source_path, f"{field_path}.files"),
     )
 
 

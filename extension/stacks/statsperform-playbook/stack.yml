@@ -25,6 +25,20 @@ requires:
     - npx
   registries:
     - statsperform-nexus
+detection:
+  positive:
+    technologies:
+      - playbook
+    dependencies:
+      - "@statsperform/react-playbook"
+      - "@statsperform/playbook-cli"
+      - "@statsperform/react-playbook-styles"
+    files:
+      - package.json
+  modernization:
+    technologies:
+      - component-library
+      - design-system
 tools:
   playbook_cli:
     type: cli
