@@ -47,6 +47,7 @@ class BuildPromptBuilder:
         tasks_content: str,
         build_skill: str,
         strategy_context: str = "",
+        stack_context: str = "",
         lessons: str = "",
         pitfalls: str = "",
         bugfix_content: str = "",
@@ -66,6 +67,9 @@ class BuildPromptBuilder:
 
         if bugfix_content:
             parts.append(f"## Bugfix Context\n{bugfix_content}")
+
+        if stack_context:
+            parts.append(f"## Echelon Stack Context\n{stack_context}")
 
         if strategy_context:
             parts.append(f"## Strategy Context\n{strategy_context}")
