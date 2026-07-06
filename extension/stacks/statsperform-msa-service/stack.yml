@@ -1,0 +1,54 @@
+schema_version: "1.0"
+stack:
+  id: statsperform-msa-service
+  name: Stats Perform MSA Service
+  version: "1.0.0"
+  kind: archetype
+  owner: statsperform
+  description: CAIC MSA service archetype using the MSA service template and MSA core conventions.
+applies_to:
+  archetypes:
+    - service
+    - api_service
+provides:
+  service.template: caic-msa-service-template
+  service.core: caic-msa-core
+  service.framework: fastapi
+  service.runtime: uv-python
+  service.config: pydantic-settings
+  delivery.service: msa-template-default
+  test.backend: pytest
+  lint.python: ruff
+  typecheck.python: mypy
+  observability.service: msa-default
+implies: []
+requires:
+  commands:
+    - uv
+  registries:
+    - statsperform-nexus
+tools:
+  uv:
+    type: cli
+    command: uv
+    phase_scope:
+      - spec
+      - delivery
+    purpose: Python environment, dependency, test, lint, and typecheck command runner for MSA services.
+    commands:
+      test:
+        args: ["run", "pytest"]
+        output: text
+        gate: true
+      lint:
+        args: ["run", "ruff", "check", "."]
+        output: text
+        gate: true
+      typecheck:
+        args: ["run", "mypy", "src"]
+        output: text
+        gate: true
+context:
+  files:
+    - context.md
+conflicts: []

@@ -1,0 +1,59 @@
+schema_version: "1.0"
+stack:
+  id: statsperform-playbook
+  name: Stats Perform Playbook
+  version: "1.0.0"
+  kind: capability
+  owner: statsperform
+  description: Playbook UI, component, design-token, form, test, audit, and documentation stack for web apps.
+applies_to:
+  archetypes:
+    - web_app
+provides:
+  ui.components: playbook
+  ui.tokens: playbook
+  ui.forms: playbook-form-builder
+  ui.icons: playbook-icons
+  ui.scaffolding: playbook-guided
+  test.ui_accessibility: axe
+  test.visual: playwright
+  audit.design_system: playbook-cli
+  docs.ui_lookup: playbook-cli
+implies: []
+requires:
+  commands:
+    - npx
+  registries:
+    - statsperform-nexus
+tools:
+  playbook_cli:
+    type: cli
+    command: npx
+    args:
+      - "-y"
+      - "@statsperform/playbook-cli"
+    phase_scope:
+      - spec
+      - delivery
+    purpose: Component discovery, pattern guidance, token lookup, form-builder docs, and compliance scans.
+    commands:
+      component_lookup:
+        args: ["components", "show"]
+        output: markdown
+        gate: false
+      component_list:
+        args: ["components", "list", "--json"]
+        output: json
+        gate: false
+      pattern_lookup:
+        args: ["patterns", "show"]
+        output: markdown
+        gate: false
+      compliance_scan:
+        args: ["compliance", "scan"]
+        output: text
+        gate: true
+context:
+  files:
+    - context.md
+conflicts: []
