@@ -126,6 +126,43 @@ def test_workspace_init_persists_selected_llm_provider(tmp_path, monkeypatch, ca
     assert config["harness"]["llm"]["cli"] == "codex"
 
 
+def test_workspace_init_llm_option_overrides_template_default(tmp_path, monkeypatch, capsys) -> None:
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "deploy:\n"
+        "  enabled: false\n"
+        "  type: http\n"
+        "  blue_port: 18080\n"
+        "  green_port: 18081\n"
+        "harness:\n"
+        "  llm:\n"
+        "    cli: claude\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_workspace(["init", "--llm", "codex", "--no-unsafe-host-execution"])
+
+    captured = capsys.readouterr()
+    assert "LLM provider configured: codex" in captured.out
+    loaded = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert loaded["harness"]["llm"]["cli"] == "codex"
+    assert not (tmp_path / ".echelon" / "local.yml").exists()
+
+
+def test_workspace_init_rejects_invalid_llm_option(tmp_path, monkeypatch, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_workspace(["init", "--llm", "kubernetes"])
+
+    captured = capsys.readouterr()
+    assert exc.value.code == 1
+    assert "invalid --llm" in captured.err
+
+
 @pytest.mark.parametrize("llm_cli", ["opencode", "copilot"])
 def test_workspace_init_persists_additional_llm_providers(tmp_path, monkeypatch, capsys, llm_cli: str) -> None:
     _write_workspace_config(
