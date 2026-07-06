@@ -117,6 +117,14 @@ def test_rejects_unsupported_schema_version() -> None:
 
 
 @pytest.mark.unit
+def test_rejects_non_string_schema_version() -> None:
+    raw = {**VALID_STACK, "schema_version": 1.0}
+
+    with pytest.raises(StackValidationError, match="schema_version must be a string"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
 def test_rejects_non_string_stack_id() -> None:
     raw = {**VALID_STACK, "stack": {**VALID_STACK["stack"], "id": 123}}
 
@@ -153,4 +161,73 @@ def test_rejects_empty_provides() -> None:
     raw = {**VALID_STACK, "provides": {}}
 
     with pytest.raises(StackValidationError, match="at least one capability"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_capability_value() -> None:
+    raw = {**VALID_STACK, "provides": {"ui.components": 123}}
+
+    with pytest.raises(StackValidationError, match="provides.ui.components"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_owner() -> None:
+    raw = {**VALID_STACK, "stack": {**VALID_STACK["stack"], "owner": 123}}
+
+    with pytest.raises(StackValidationError, match="stack.owner"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_description() -> None:
+    raw = {
+        **VALID_STACK,
+        "stack": {**VALID_STACK["stack"], "description": {"text": "value"}},
+    }
+
+    with pytest.raises(StackValidationError, match="stack.description"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_tool_type() -> None:
+    raw = {**VALID_STACK, "tools": {"example_cli": {"type": 1, "command": "npx"}}}
+
+    with pytest.raises(StackValidationError, match="tools.example_cli.type"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_tool_purpose() -> None:
+    raw = {
+        **VALID_STACK,
+        "tools": {
+            "example_cli": {
+                "type": "cli",
+                "command": "npx",
+                "purpose": [],
+            }
+        },
+    }
+
+    with pytest.raises(StackValidationError, match="tools.example_cli.purpose"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_command_output() -> None:
+    raw = {
+        **VALID_STACK,
+        "tools": {
+            "example_cli": {
+                "type": "cli",
+                "command": "npx",
+                "commands": {"list": {"output": 5}},
+            }
+        },
+    }
+
+    with pytest.raises(StackValidationError, match="tools.example_cli.commands.list.output"):
         parse_stack_definition(raw, Path("stack.yml"))

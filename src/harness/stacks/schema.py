@@ -66,13 +66,12 @@ class StackDefinition:
 
 def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefinition:
     _mapping(raw, source_path, "root")
-    schema_version = str(raw.get("schema_version", "")).strip()
-    if schema_version != "1.0":
-        raise StackValidationError(
-            "unsupported stack schema_version",
-            path=source_path,
-            field_path="schema_version",
-        )
+    schema_version = _required_literal_str(
+        raw.get("schema_version", ""),
+        source_path,
+        "schema_version",
+        expected="1.0",
+    )
 
     stack_raw = _mapping(raw.get("stack"), source_path, "stack")
     stack_id = _non_empty_str(stack_raw.get("id"), source_path, "stack.id")
@@ -113,7 +112,9 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
                 path=source_path,
                 field_path=f"provides.{capability}",
             )
-        provides[capability] = str(value).strip()
+        provides[capability] = _non_empty_str(
+            value, source_path, f"provides.{capability}"
+        )
     if not provides:
         raise StackValidationError(
             "provides must contain at least one capability",
@@ -140,8 +141,10 @@ def parse_stack_definition(raw: dict[str, Any], source_path: Path) -> StackDefin
         name=name,
         version=version,
         kind=kind,
-        owner=str(stack_raw.get("owner", "")).strip(),
-        description=str(stack_raw.get("description", "")).strip(),
+        owner=_optional_str(stack_raw.get("owner"), source_path, "stack.owner"),
+        description=_optional_str(
+            stack_raw.get("description"), source_path, "stack.description"
+        ),
         source_path=source_path,
         applies_to_archetypes=archetypes,
         provides=provides,
@@ -179,13 +182,15 @@ def _parse_tools(value: Any, source_path: Path) -> dict[str, StackTool]:
             )
         tools[tool_id] = StackTool(
             id=tool_id,
-            type=str(tool_raw.get("type", "cli")).strip(),
+            type=_optional_str(
+                tool_raw.get("type"), source_path, f"tools.{tool_id}.type", default="cli"
+            ),
             command=_non_empty_str(
                 tool_raw.get("command"), source_path, f"tools.{tool_id}.command"
             ),
             args=_string_list(tool_raw.get("args", []), source_path, f"tools.{tool_id}.args"),
             phase_scope=phase_scope,
-            purpose=str(tool_raw.get("purpose", "")).strip(),
+            purpose=_optional_str(tool_raw.get("purpose"), source_path, f"tools.{tool_id}.purpose"),
             commands=_parse_tool_commands(
                 tool_raw.get("commands", {}), source_path, tool_id
             ),
@@ -213,7 +218,12 @@ def _parse_tool_commands(
                 source_path,
                 f"tools.{tool_id}.commands.{command_id}.args",
             ),
-            output=str(command_raw.get("output", "text")).strip(),
+            output=_optional_str(
+                command_raw.get("output"),
+                source_path,
+                f"tools.{tool_id}.commands.{command_id}.output",
+                default="text",
+            ),
             gate=bool(command_raw.get("gate", False)),
         )
     return commands
@@ -244,6 +254,46 @@ def _non_empty_str(value: Any, source_path: Path, field_path: str) -> str:
     if not result:
         raise StackValidationError(
             f"{field_path} must be a non-empty string",
+            path=source_path,
+            field_path=field_path,
+        )
+    return result
+
+
+def _optional_str(
+    value: Any,
+    source_path: Path,
+    field_path: str,
+    default: str = "",
+) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise StackValidationError(
+            f"{field_path} must be a string",
+            path=source_path,
+            field_path=field_path,
+        )
+    return value.strip()
+
+
+def _required_literal_str(
+    value: Any,
+    source_path: Path,
+    field_path: str,
+    *,
+    expected: str,
+) -> str:
+    if not isinstance(value, str):
+        raise StackValidationError(
+            f"{field_path} must be a string",
+            path=source_path,
+            field_path=field_path,
+        )
+    result = value.strip()
+    if result != expected:
+        raise StackValidationError(
+            "unsupported stack schema_version",
             path=source_path,
             field_path=field_path,
         )
