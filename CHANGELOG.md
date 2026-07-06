@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **EGR-101 stack preflight** — added `echelon stack list` and
+- **EGR-101 / #113 stack preflight** — added `echelon stack list` and
   `echelon stack preflight` so operators can discover bundled/project stacks
   and verify declared commands, registry requirements, and optional gated tool
   probes before relying on Playbook/MSA/Stark stack tooling.
