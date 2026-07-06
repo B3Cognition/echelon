@@ -10,17 +10,26 @@ from harness.config import HarnessConfig, StacksConfig
 from harness.coordinator import StrategyCoordinator
 from harness.loop_result import LoopResult
 from harness.run_intent import RunIntent
+from harness.stacks.errors import StackResolutionError
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _coordinator_with_stacks(selected: list[str], base_dir: Path) -> StrategyCoordinator:
+def _coordinator_with_stacks(
+    selected: list[str],
+    base_dir: Path,
+    *,
+    target_archetypes: list[str] | None = None,
+) -> StrategyCoordinator:
     config = HarnessConfig(
         target_repo="git@example.com:t/r.git",
         target_default_branch="main",
         provider="docker",
-        stacks=StacksConfig(selected=selected),
+        stacks=StacksConfig(
+            selected=selected,
+            target_archetypes=target_archetypes or [],
+        ),
     )
     return StrategyCoordinator(
         provider=MagicMock(),
@@ -66,6 +75,62 @@ def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> No
     playbook_index = stack_context.index("- statsperform-playbook")
     stark_index = stack_context.index("- statsperform-stark-webapp")
     assert playbook_index < stark_index
+    assert "## Stack Guidance" in stack_context
+    assert "Use Playbook for UI components" in stack_context
+    assert "Use the Opta Stark Nx/Next.js archetype" in stack_context
+
+
+@pytest.mark.unit
+def test_installed_extension_stack_layout_is_supported(tmp_path: Path) -> None:
+    installed_stacks = tmp_path / ".specify" / "extensions" / "echelon" / "stacks"
+    for stack_id in ("statsperform-playbook", "statsperform-stark-webapp"):
+        source = ROOT / "extension" / "stacks" / stack_id
+        target = installed_stacks / stack_id
+        target.mkdir(parents=True)
+        for path in source.iterdir():
+            if path.is_file():
+                (target / path.name).write_text(
+                    path.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+
+    coord = _coordinator_with_stacks(["statsperform-stark-webapp"], tmp_path)
+
+    stack_context = coord._build_stack_context()
+
+    assert "statsperform-playbook" in stack_context
+    assert "statsperform-stark-webapp" in stack_context
+    assert "Use the Opta Stark Nx/Next.js archetype" in stack_context
+
+
+@pytest.mark.unit
+def test_configured_target_archetypes_are_enforced() -> None:
+    coord = _coordinator_with_stacks(
+        ["statsperform-msa-service"],
+        ROOT,
+        target_archetypes=["web_app"],
+    )
+
+    with pytest.raises(StackResolutionError, match="statsperform-msa-service"):
+        coord._build_stack_context()
+
+
+@pytest.mark.unit
+def test_spec_frontmatter_target_archetypes_are_enforced(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "spec-001"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\n"
+        "target_archetypes:\n"
+        "  - service\n"
+        "---\n"
+        "# Spec\n",
+        encoding="utf-8",
+    )
+    coord = _coordinator_with_stacks(["statsperform-stark-webapp"], ROOT)
+
+    with pytest.raises(StackResolutionError, match="statsperform-playbook|statsperform-stark-webapp"):
+        coord._build_stack_context(spec_dir)
 
 
 @pytest.mark.unit

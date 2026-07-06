@@ -756,6 +756,7 @@ mempalace:
 
 stacks:
   selected: []
+  target_archetypes: []
 
 # =============================================================================
 # DEPLOY — Blue/green local CD

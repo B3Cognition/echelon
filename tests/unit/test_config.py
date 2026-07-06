@@ -185,6 +185,17 @@ class TestParseConfigValid:
             "statsperform-msa-service",
         ]
 
+    def test_stack_target_archetypes_can_be_configured(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "stacks": {
+                "selected": ["statsperform-stark-webapp"],
+                "target_archetypes": ["web_app"],
+            },
+        })
+
+        assert config.stacks.target_archetypes == ["web_app"]
+
 
 @pytest.mark.unit
 class TestParseConfigInvalid:
@@ -231,6 +242,10 @@ class TestParseConfigInvalid:
     def test_stacks_selected_rejects_empty_ids(self) -> None:
         with pytest.raises(ValidationError, match="stacks.selected"):
             _parse_config({**MINIMAL, "stacks": {"selected": ["statsperform-playbook", " "]}})
+
+    def test_stack_target_archetypes_must_be_list(self) -> None:
+        with pytest.raises(ValidationError, match="stacks.target_archetypes"):
+            _parse_config({**MINIMAL, "stacks": {"target_archetypes": "web_app"}})
 
 
 @pytest.mark.unit

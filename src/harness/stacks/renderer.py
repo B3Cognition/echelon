@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from harness.stacks.resolver import ResolvedStacks
 
 
@@ -107,4 +109,23 @@ def render_resolved_markdown(resolved: ResolvedStacks) -> str:
             lines.append(f"- `{context_file}`")
         lines.append("")
 
+        guidance = _render_context_file_contents(resolved.context_files)
+        if guidance:
+            lines.extend(["## Stack Guidance", "", *guidance])
+
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_context_file_contents(context_files: list[str]) -> list[str]:
+    lines: list[str] = []
+    for context_file in context_files:
+        path = Path(context_file)
+        if not path.exists() or not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8").strip()
+        if not content:
+            continue
+        if lines:
+            lines.append("")
+        lines.extend([f"### {path.name}", "", content])
+    return lines

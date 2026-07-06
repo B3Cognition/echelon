@@ -1169,6 +1169,10 @@ deploy:
 # selected through their own stacks when those stacks exist.
 stacks:
   selected: []
+  # Optional guard. When set, selected stacks must apply to at least one listed
+  # target archetype. Supported initial values include web_app, service, and
+  # api_service. Spec frontmatter can also declare target_archetypes.
+  target_archetypes: []
 
 # =============================================================================
 # HARNESS — Sandbox execution substrate (echelon harness run / echelon harness init)
