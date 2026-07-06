@@ -73,14 +73,14 @@ def resolve_stacks(
         visiting.add(stack_id)
         try:
             stack = definitions[stack_id]
-            resolved_ids.append(stack_id)
-            resolved_seen.add(stack_id)
-
             if parent is not None and stack_id not in selected_set:
                 implied_by.setdefault(stack_id, parent)
 
             for implied_id in stack.implies:
                 visit(implied_id, stack_id)
+
+            resolved_ids.append(stack_id)
+            resolved_seen.add(stack_id)
         finally:
             visiting.remove(stack_id)
 

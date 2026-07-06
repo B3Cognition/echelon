@@ -9,7 +9,7 @@ from harness.stacks.errors import StackConflictError, StackResolutionError
 from harness.stacks.loader import load_stack_definitions
 from harness.stacks.renderer import render_resolved_markdown, resolved_to_dict
 from harness.stacks.resolver import resolve_stacks
-from harness.stacks.schema import StackDefinition
+from harness.stacks.schema import StackDefinition, StackTool
 
 
 def _stack(
@@ -21,6 +21,7 @@ def _stack(
     context_files: list[str] | None = None,
     requires_commands: list[str] | None = None,
     requires_registries: list[str] | None = None,
+    tools: dict[str, StackTool] | None = None,
 ) -> StackDefinition:
     return StackDefinition(
         id=stack_id,
@@ -35,7 +36,7 @@ def _stack(
         implies=implies or [],
         requires_commands=requires_commands or [],
         requires_registries=requires_registries or [],
-        tools={},
+        tools=tools or {},
         context_files=context_files or ["context.md"],
     )
 
@@ -108,9 +109,40 @@ def test_resolve_implied_stack() -> None:
     resolved = resolve_stacks(["stark"], definitions, target_archetypes={"web_app"})
 
     assert resolved.selected_ids == ["stark"]
-    assert resolved.resolved_ids == ["stark", "playbook"]
+    assert resolved.resolved_ids == ["playbook", "stark"]
     assert resolved.implied_by == {"playbook": "stark"}
     assert resolved.capabilities["ui.components"].value == "playbook"
+
+
+@pytest.mark.unit
+def test_resolve_implied_stack_before_dependent_in_rendered_outputs() -> None:
+    definitions = {
+        "statsperform-stark-webapp": _stack(
+            "statsperform-stark-webapp",
+            provides={"web_app.framework": "nextjs"},
+            implies=["statsperform-playbook"],
+        ),
+        "statsperform-playbook": _stack(
+            "statsperform-playbook",
+            provides={"ui.components": "playbook"},
+        ),
+    }
+
+    resolved = resolve_stacks(["statsperform-stark-webapp"], definitions)
+    data = resolved_to_dict(resolved)
+    markdown = render_resolved_markdown(resolved)
+
+    assert resolved.resolved_ids == [
+        "statsperform-playbook",
+        "statsperform-stark-webapp",
+    ]
+    assert data["resolved"] == [
+        "statsperform-playbook",
+        "statsperform-stark-webapp",
+    ]
+    assert markdown.index("- statsperform-playbook (implied by statsperform-stark-webapp)") < (
+        markdown.index("- statsperform-stark-webapp")
+    )
 
 
 @pytest.mark.unit
@@ -138,6 +170,37 @@ def test_capability_conflict_fails() -> None:
     }
 
     with pytest.raises(StackConflictError, match="ui.components"):
+        resolve_stacks(["playbook", "mui"], definitions)
+
+
+@pytest.mark.unit
+def test_tool_id_conflict_fails_when_definitions_differ() -> None:
+    definitions = {
+        "playbook": _stack(
+            "playbook",
+            provides={"ui.components": "playbook"},
+            tools={
+                "design-audit": StackTool(
+                    id="design-audit",
+                    type="cli",
+                    command="playbook-audit",
+                ),
+            },
+        ),
+        "mui": _stack(
+            "mui",
+            provides={"ui.tokens": "mui"},
+            tools={
+                "design-audit": StackTool(
+                    id="design-audit",
+                    type="cli",
+                    command="mui-audit",
+                ),
+            },
+        ),
+    }
+
+    with pytest.raises(StackConflictError, match="design-audit"):
         resolve_stacks(["playbook", "mui"], definitions)
 
 
