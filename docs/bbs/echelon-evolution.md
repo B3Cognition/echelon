@@ -20,7 +20,7 @@ Third, orchestration moved out of LLM judgment. The project externalized workflo
 
 Fourth, Echelon grew a build and delivery harness. The harness added isolated worktrees, Docker-compatible sandbox verification, GitOps, PR loops, review reentry, fulfillment checks, and land gates. This turned "the agent implemented it" into an evidence-based loop: build, verify, feed back failures, fix, re-verify, open PR, handle review, prove fulfillment, and land.
 
-Finally, the current version tightened contracts around machine-readable requirements and project topology. Lexicon adds controlled grammar validation as a derived artifact beside human-readable `spec.md`. The workspace/source-root model makes single-repo, polyrepo, and planning-only layouts explicit. Current README state identifies version 3.0.0, 54 registered agent roles, 46 active-routed manifest roles, Understanding gates, MemPalace/codegen integration, native brownfield extraction, delivery commands, and multi-LLM provider support.
+Finally, the current version tightened contracts around machine-readable requirements, project topology, provider execution, and technology-stack guidance. Lexicon adds controlled grammar validation as a derived artifact beside human-readable `spec.md`. The workspace/source-root model makes single-repo, polyrepo, and planning-only layouts explicit. The AI CLI backend layer isolates Claude, Codex, GitHub Copilot, and Opencode behavior. Echelon Stacks add schema-backed, opt-in technology capability context with deterministic preflight and brownfield stack detection. Current README state identifies version 3.0.0, 54 registered agent roles, 46 active-routed manifest roles, Understanding gates, MemPalace/codegen integration, native brownfield extraction, delivery commands, and multi-LLM provider support.
 
 The useful story for a brownbag is this: Echelon matured by repeatedly taking authority away from prompts where correctness mattered, and putting that authority into contracts, state, workflow definitions, harnesses, and verification loops.
 
@@ -224,6 +224,42 @@ Limitation exposed:
 
 - Existing users need migration tools and clear operator guidance.
 
+### July 2026: AI CLI Backends
+
+The provider layer became explicit. Earlier code paths had provider-specific command construction and parsing logic around Claude, Codex, Copilot, and Opencode. The newer implementation routes terminal AI execution through `AICodingCliProvider` and concrete backend classes.
+
+This is the provider-equivalent of the earlier workflow/state-machine lesson: provider quirks should not leak into the workflow graph or build loop. Each backend owns its CLI syntax, JSON/JSONL/event parsing, stderr behavior, permission flags, and final assistant-result extraction.
+
+Problem solved:
+
+- Multi-provider support was real, but provider behavior was too easy to scatter across the CLI, harness, direct skill dispatch, and review loop.
+
+Approach:
+
+- Add concrete AI CLI backend classes for Claude, Codex, GitHub Copilot, and Opencode behind one provider facade.
+
+Limitation exposed:
+
+- Live provider behavior is still less deterministic than local tests; each backend needs focused fixtures and sampled real CLI validation.
+
+### July 2026: Echelon Stacks, Stack Preflight, and Stack Detection
+
+Echelon added schema-backed stack definitions for known internal technology bundles. The first bundled stacks target Stats Perform Playbook, MSA service, and Stark webapp patterns. Selected stacks resolve into deterministic capability/tool context and concise agent-readable Markdown rather than being scattered through agent prose.
+
+Stack preflight then checks whether required commands and declared tools are available before agents depend on them. Stack detection extends the idea to brownfield work: source trees and RE artifacts can produce observed stack evidence, matching Echelon stacks, modernization candidates, and decisions required. Detection is deliberately conservative and does not silently mutate project config.
+
+Problem solved:
+
+- Internal platform guidance needed to be machine-readable and preflightable instead of living as informal prompt instructions.
+
+Approach:
+
+- Add `extension/stacks/`, `src/harness/stacks/*`, `echelon stack list`, `echelon stack preflight`, and `echelon stack detect`.
+
+Limitation exposed:
+
+- Stack recommendation needs governance: observed current stack evidence is not the same as a future modernization decision.
+
 ## Core Evolution Pattern
 
 The repeated pattern is:
@@ -244,6 +280,8 @@ Examples:
 - Markdown requirements were too soft for hard gates, so Lexicon became a derived validation artifact.
 - Current-directory assumptions were unsafe, so workspace/source-root modeling became explicit.
 - Dangerous LLM provider bypass behavior was too easy to enable implicitly, so host tool policy became fail-closed.
+- Provider CLI behavior was too scattered, so concrete AI CLI backends now isolate Claude/Codex/Copilot/Opencode differences.
+- Internal stack guidance was too informal, so Echelon Stacks now provide schema-backed capability context, preflight, and conservative detection.
 
 ## Four Engineering Tracks
 
@@ -261,7 +299,7 @@ This is the compaction-safety lesson: the model can reason over context, but the
 
 ### Harness Engineering
 
-The harness moved risky operations into controlled execution: worktrees, sandbox verification, GitOps, PR operations, provider abstraction, review loops, host tool policy, and container runtime support.
+The harness moved risky operations into controlled execution: worktrees, sandbox verification, GitOps, PR operations, concrete AI CLI backends, review loops, stack preflight, host tool policy, and container runtime support.
 
 This is the safety lesson: the LLM can propose and edit, but the harness owns mutation boundaries, retries, verification, and irreversible operations.
 
@@ -286,6 +324,9 @@ This is the reliability lesson: autonomous coding is less about one brilliant ge
 | Markdown too soft for hard gates | `spec.md` only | Canonical `spec.md` plus derived Lexicon |
 | Repo topology implicit | Current directory assumptions | Workspace/source-root contract |
 | Unsafe provider permissions | CLI-specific behavior | Fail-closed host tool policy |
+| Provider behavior scattered | One provider path with special cases | Concrete AI CLI backends |
+| Internal stack guidance informal | Prompt prose and repo inference | Schema-backed Echelon Stacks |
+| Brownfield stack selection manual | Narrative evidence in RE artifacts | Conservative `stack detect` reports |
 | Delivery terminology scattered | harness/run/land variants | `echelon delivery ...` namespace |
 
 ## Talk Track
@@ -302,7 +343,9 @@ Use this as a 10-15 minute brownbag narrative.
 8. Fulfillment and CodeGraph evidence made "done" evidence-based rather than agent-declared.
 9. Lexicon added a machine-checkable requirements lane while preserving human-readable `spec.md`.
 10. Workspace/source-root modeling made repo topology explicit, which is required for serious polyrepo and planning-only workflows.
-11. The core lesson: as the stakes went up, Echelon kept the LLM for semantic work and moved correctness-critical authority into contracts, state, and tools.
+11. AI CLI backends made provider differences explicit without polluting workflow logic.
+12. Echelon Stacks made internal platform guidance schema-backed, preflightable, and detectable from brownfield evidence.
+13. The core lesson: as the stakes went up, Echelon kept the LLM for semantic work and moved correctness-critical authority into contracts, state, and tools.
 
 ## Suggested Slide Sequence
 
@@ -316,8 +359,10 @@ Use this as a 10-15 minute brownbag narrative.
 8. **Loop Engineering:** verify, repair, fulfill, review, land.
 9. **Lexicon:** derived hard grammar beside canonical `spec.md`.
 10. **Workspace Model:** explicit workspace and source roots.
-11. **Current State:** version 3.0.0, delivery namespace, 54 registered roles, 46 routed roles.
-12. **Takeaway:** prompt engineering was the start; system engineering made it reliable.
+11. **AI CLI Backends:** Claude, Codex, Copilot, and Opencode behind one provider facade.
+12. **Echelon Stacks:** schema-backed platform context, preflight, and detection.
+13. **Current State:** version 3.0.0, delivery namespace, 54 registered roles, 46 routed roles.
+14. **Takeaway:** prompt engineering was the start; system engineering made it reliable.
 
 ## Source Map
 
@@ -328,6 +373,10 @@ Use these files when preparing slides or validating claims:
 - `docs/pipeline-matrix.md`: Phase A/Phase B split and Lexicon strategy.
 - `docs/workspace-model.md`: workspace/source-root model and migration guidance.
 - `docs/re-overview.md`: brownfield reverse-engineering workflow.
+- `docs/superpowers/plans/2026-07-05-codex-cli-backend.md`: Codex and AI CLI backend abstraction.
+- `docs/superpowers/plans/2026-07-05-egr-097-opencode-copilot-backends.md`: Opencode and GitHub Copilot backend implementation.
+- `docs/superpowers/specs/2026-07-05-echelon-stacks-design.md`: Echelon Stacks model.
+- `docs/superpowers/specs/2026-07-06-stack-detection-design.md`: deterministic stack detection.
 - `docs/superpowers/specs/2026-04-09-echelon-journal-refactor-design.md`: journal/context/state ownership refactor.
 - `docs/superpowers/specs/2026-04-15-codegen-echelon-integration-design.md`: SOAR/codegen integration.
 - `docs/superpowers/specs/2026-04-27-mempalace-integration-fix-design.md`: MemPalace integration.
@@ -345,3 +394,5 @@ Use these files when preparing slides or validating claims:
 - Which demo artifact best makes the LLM-to-state-machine transition visible?
 - Is Lexicon currently a default operating path for the audience, or should it be presented as an emerging hard-gate capability?
 - Should the delivery namespace be presented as current user-facing terminology, with `harness` treated as implementation history?
+- Should provider backends be shown as an implementation detail or as a key reliability step?
+- Should Echelon Stacks be presented as product direction, internal platform governance, or a brownfield modernization aid?

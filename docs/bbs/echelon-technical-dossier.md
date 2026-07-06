@@ -10,14 +10,14 @@ The project solves a practical problem in AI-assisted engineering: getting from 
 
 Primary users are engineers using spec-kit, Claude Code, Copilot, Opencode, or Codex-based workflows. The system also supports automated terminal entry points, so it can run outside an interactive AI session.
 
-Current source snapshot: the repository now presents Echelon as version 3.0.0, with 54 registered agent roles and 46 active-routed manifest roles in the executable workflow.
+Current source snapshot: the repository now presents Echelon as version 3.0.0, with 54 registered agent roles and 46 active-routed manifest roles in the executable workflow. The current source also includes first-class AI CLI backends for Claude, Codex, GitHub Copilot, and Opencode, plus opt-in Echelon Stacks with deterministic stack resolution, preflight, and brownfield stack detection.
 
 The main inputs are:
 
 - A feature, bugfix, review, or brownfield-analysis request.
 - Existing project files, workspace metadata, run-local specs under `runs/<run>/specs/<id>`, and canonical published specs under `specs/<id>-*/`.
 - Echelon configuration in `echelon-config.yml`.
-- Optional target repository/source-root configuration, Docker or Podman sandbox configuration, CI/test commands, PR URL, Lexicon validation settings, and MemPalace requirements memory.
+- Optional target repository/source-root configuration, Docker or Podman sandbox configuration, CI/test commands, PR URL, Lexicon validation settings, Echelon stack selection/detection inputs, and MemPalace requirements memory.
 
 The main outputs are:
 
@@ -35,13 +35,14 @@ Echelon sits around spec-kit and one or more AI coding CLIs. The README identifi
 Important external systems and dependencies:
 
 - `spec-kit` / `specify-cli`: extension installation, project initialization, slash-command integration, config cascade where available.
-- AI CLIs: `claude`, `copilot`, `opencode`, and `codex`; selected by `ECHELON_LLM` or harness config.
+- AI CLIs: `claude`, `codex`, `copilot`, and `opencode`; selected by `ECHELON_LLM` or harness config and routed through concrete AI CLI backend classes.
 - Docker or Podman: deterministic build/test/verify sandboxing and optional local blue/green deploy.
 - Git and GitHub/GitLab CLI: mirror clone, worktrees, commit, push, PR creation, PR review polling, merge.
 - MemPalace: ChromaDB-backed semantic memory for mined requirements, scoped by project "wing".
 - SOAR: bundled engine used by the `codegen` pipeline.
 - Understanding CLI: requirements-quality scanner with 34 metrics.
 - Lexicon CLI: controlled grammar validation for specs, tasks, structural governance artifacts, source contracts, and derived machine-readable requirements.
+- Echelon Stacks: schema-backed capability/tool/context bundles for known technology stacks, with deterministic resolution, preflight, and source/RE-artifact detection.
 - Python 3.11+, PyYAML, Typer, Rich, Lark, spaCy, Graphviz, Transformers, Torch.
 
 Runtime environment:
@@ -51,6 +52,7 @@ Runtime environment:
 - Harness state and runtime extension material under `.specify/extensions/echelon/` in target projects.
 - Worktrees, mirrors, strategy state, and build run state under `.specify/extensions/echelon/harness/` or related build directories.
 - Workspace-owned state under `.specify/`, `specs/`, and `runs/`, with implementation files living in one or more source roots.
+- Stack definitions under `extension/stacks/` and resolved stack context under `.echelon/context/stacks/`.
 
 Deployment target:
 
@@ -61,7 +63,7 @@ Important constraints:
 
 - LLM reasoning runs on the host; deterministic commands run in Docker-compatible containers.
 - Sandbox containers must not receive host Git credentials.
-- Terminal CLI runs do not add dangerous permission-bypass flags by default; unsafe host execution is fail-closed unless `harness.llm.tool_policy` explicitly approves it with a reason.
+- Terminal CLI runs do not add dangerous permission-bypass flags by default; unsafe host execution is fail-closed unless `harness.llm.tool_policy` explicitly approves it with a reason. `echelon workspace init` can write local approval interactively or via `--allow-unsafe-host-execution`.
 - Quality gates and workflow routing are intended to be declarative and reproducible.
 - Commands are thin wrappers; real routing lives in `extension/workflow/definition.yaml` and phase specs.
 - State must survive compaction, interruption, retry, and parallel strategy runs.
@@ -73,10 +75,12 @@ Main components:
 - Spec-kit extension: prompt commands, agent definitions, workflow graph, phase specs, templates, presets.
 - Echelon CLI: deterministic command entry points, config/init helpers, LLM command invocation, artifact/status/continue/resume/land commands.
 - Harness: build/verify/PR execution substrate with strategy fan-out, Docker-compatible sandboxing, GitOps, state management, review loops, fulfillment checks, and optional visual tests.
+- AI CLI backend layer: provider-specific command construction, JSON/JSONL parsing, streaming handling, final-message extraction, and permission-flag mapping behind one provider facade.
 - Codegen pipeline: SOAR-backed alternative build path with requirements memory, phase gates, PSI score, and Tier 1 testing.
 - Understanding CLI: requirements-quality scoring used by SAGE and standalone scans.
 - Lexicon CLI: grammar-backed validation for derived requirements, task artifacts, structural governance artifacts, source-reference freshness, and deterministic parsing.
 - Workspace model: explicit separation between the workspace root that owns `.specify/`, `runs/`, and `specs/`, and source roots that own implementation files.
+- Echelon Stacks: opt-in stack context, deterministic stack preflight, and brownfield stack detection for current-state and modernization recommendations.
 - Kernel helpers: validation and fulfillment contracts shared by CLI and harness logic.
 - Knowledge base: local YAML/Markdown memory for calibration, patterns, pitfalls, feedback, and evolution signals.
 
@@ -99,10 +103,13 @@ echelon CLI or spec-kit command
         +--> harness coordinator
                 |
                 +--> LLM build provider on host
+                |       |
+                |       +--> AI CLI backends: Claude / Codex / Copilot / Opencode
                 +--> GitOps mirror/worktrees/PRs
                 +--> Docker/Podman sandbox for verify/test/build commands
                 +--> ReviewLoopController for PR comments
                 +--> StateStore JSON files + locks + backups
+                +--> resolved Echelon stack context when configured/detected
 
 Alternative build strategy:
 
@@ -156,7 +163,9 @@ Important directories:
 - `extension/commands/`: thin command wrappers such as `echelon.run.md`, `echelon.build.md`, `echelon.codegen.md`, `echelon.review.md`, and re-* brownfield commands.
 - `extension/workflow/`: declarative workflow graph and phase-level prompt specs. `definition.yaml` is especially important.
 - `src/echelon/`: main CLI entry point, target detection, workspace/source-root model, migration helpers, UI helpers, orchestrator, artifact index.
-- `src/harness/`: build harness implementation. Key files include `coordinator.py`, `ralph.py`, `docker_provider.py`, `gitops.py`, `state.py`, `config.py`, `review_loop.py`, `visual_ralph.py`, and `llm_provider.py`.
+- `src/harness/`: build harness implementation. Key files include `coordinator.py`, `ralph.py`, `docker_provider.py`, `gitops.py`, `state.py`, `config.py`, `review_loop.py`, `visual_ralph.py`, `llm_provider.py`, and `ai_cli_backend.py`.
+- `src/harness/ai_cli_backends/`: concrete Claude, Codex, GitHub Copilot, Opencode, and plain subprocess backend implementations.
+- `src/harness/stacks/`: Echelon stack schema, loader, resolver, renderer, preflight, deterministic detection, and source/RE-artifact evidence adapters.
 - `src/codegen/`: SOAR codegen pipeline, memory integration, phase gates, requirement mining/search, constitution extraction, security utilities, LSP gate, and CI helpers.
 - `src/understanding/`: requirements quality analyzer and metric modules.
 - `src/lexicon/`: grammar-backed parser, CLI, resolver, deterministic linter, validity/completeness scoring, tasks validation, structural governance validation, and source-contract checks.
@@ -167,6 +176,8 @@ Important directories:
 - `docs/`: design notes, run analyses, RE docs, fallback-mode docs, calibration guides, plans/specs.
 - `docs/workspace-model.md`: current workspace/source-root contract and migration guidance.
 - `docs/pipeline-matrix.md`: current Phase A/Phase B strategy matrix, including canonical Markdown specs plus derived Lexicon artifacts.
+- `docs/superpowers/specs/2026-07-05-echelon-stacks-design.md`: Echelon Stacks design.
+- `docs/superpowers/specs/2026-07-06-stack-detection-design.md`: deterministic stack detection design.
 - `docs/findings/`: Echelon Grounded Review findings and refreshes.
 - `specs/`: local specs for Echelon features and hardening work.
 - `tests/`: unit, integration, contract, kernel, e2e, shim, validation, benchmark, fixtures, mocks, and manual tests.
@@ -174,6 +185,7 @@ Important directories:
 - `.ci/pipeline.yml`: additional pipeline config, not deeply analyzed here.
 - `network/`: Squid proxy configuration for sandbox network policy.
 - `scripts/`: install/uninstall, Docker sandbox/network/GC helpers, KB management, dry-run validation, internalization scripts.
+- `extension/stacks/`: bundled stack definitions and agent-readable stack context, currently including Stats Perform Playbook, MSA service, and Stark webapp stacks.
 
 Entry points:
 
@@ -194,7 +206,10 @@ Most important files for quick understanding:
 - `src/harness/ralph.py`: core build/verify/feedback loop.
 - `src/harness/state.py`: state invariants and atomic writes.
 - `src/harness/docker_provider.py`: sandbox security and execution model.
+- `src/harness/ai_cli_backend.py`: provider facade for terminal AI CLI execution.
+- `src/harness/ai_cli_backends/*.py`: provider-specific CLI backends.
 - `src/harness/gitops.py`: mirror/worktree/branch/PR operations.
+- `src/harness/stacks/resolver.py`, `preflight.py`, and `detection.py`: stack capability resolution, environment/tool preflight, and brownfield stack detection.
 - `src/harness/phase_a_readiness.py`: readiness checks for Phase A artifacts and Lexicon integration.
 - `src/codegen/pipeline/pipeline_engine.py`: SOAR pipeline lifecycle.
 - `src/understanding/cli.py`: quality-gate metric surface.
@@ -237,6 +252,13 @@ Fail-closed host tool policy:
 - Trade-off: first-run friction for workflows that intentionally need broader host tool access.
 - Visible alternative: always delegate permission behavior to the selected LLM CLI defaults.
 
+AI CLI backend abstraction:
+
+- Decision: route Claude, Codex, GitHub Copilot, and Opencode through concrete backend classes behind `AICodingCliProvider`.
+- Likely reason: provider-specific command syntax, output formats, JSON/JSONL parsing, stderr handling, and unsafe-permission flags were becoming scattered.
+- Trade-off: each backend needs provider-specific fixtures and parser tests.
+- Visible alternative: keep one generic subprocess provider with special cases.
+
 Docker-compatible container abstraction:
 
 - Decision: Docker remains the default sandbox CLI, while Podman is supported through `harness.container_cli`.
@@ -257,6 +279,20 @@ Canonical spec plus derived Lexicon artifact:
 - Likely reason: avoid making humans author controlled grammar directly while still gaining machine-checkable requirements contracts.
 - Trade-off: source-reference freshness and artifact synchronization must be enforced.
 - Visible alternative: replace `spec.md` with Lexicon-native blocks or keep requirements validation entirely soft.
+
+Echelon Stacks:
+
+- Decision: model known technology bundles as opt-in, schema-backed stack definitions under `extension/stacks/`, resolve them into deterministic YAML and concise Markdown context, and inject resolved context into relevant prompts/build flows.
+- Likely reason: teams need a way to steer generation toward known internal stacks such as Playbook, MSA, and Stark without scattering stack-specific prose across agents.
+- Trade-off: stack definitions can become another governance surface; detection must not silently select modernization targets.
+- Visible alternative: continue relying on requirements prose and repository inference alone.
+
+Deterministic stack detection and preflight:
+
+- Decision: add `echelon stack detect`, `echelon stack list`, and `echelon stack preflight` so stack evidence and required tools can be checked before agents rely on them.
+- Likely reason: brownfield source trees and RE artifacts already contain stack evidence, but operators need conservative, machine-readable recommendations and readiness checks.
+- Trade-off: detection confidence and modernization recommendations must remain conservative; false-positive stack selection would be worse than asking the user.
+- Visible alternative: let SCOUT/GOLDDIGGER infer stacks narratively and leave tool readiness to build failures.
 
 Git mirror and worktree model:
 
@@ -395,6 +431,18 @@ Fulfillment refresh policy:
 - Why interesting: it avoids scattering dangerous branch/push/PR behavior across the system.
 - How it works: manages mirror clones, worktrees, commits, pushes, PRs, and degraded modes when PR CLIs are absent. It also contains runtime skill-wrapper generation logic for synced commands.
 
+`src/harness/ai_cli_backend.py` and `src/harness/ai_cli_backends/*`:
+
+- What it does: abstracts terminal AI CLI execution behind provider-specific backends.
+- Why interesting: it keeps Claude, Codex, Copilot, and Opencode differences out of the workflow/harness state machine.
+- How it works: the facade chooses a concrete backend, then each backend owns command construction, JSON/JSONL/event parsing, stderr handling, direct skill dispatch behavior, and final assistant result extraction.
+
+`src/harness/stacks/*` and `extension/stacks/*`:
+
+- What it does: defines, validates, resolves, preflights, and detects Echelon stack capabilities.
+- Why interesting: it turns "use our internal stack" from informal prompt text into a schema-backed context and readiness contract.
+- How it works: selected stack IDs load from config, resolve implied/conflicting capabilities, render machine YAML plus agent-readable Markdown, check required commands/tools, and detect observed/matching/modernization stack evidence from source trees or RE artifacts.
+
 `src/harness/review_loop.py`:
 
 - What it does: automates PR review feedback handling.
@@ -471,7 +519,15 @@ Understanding metrics provide useful gates, but requirements quality cannot be c
 
 LLM provider variability:
 
-Different CLIs have different invocation syntax, streaming behavior, permission models, tool availability, and output formats. Provider abstraction reduces friction but cannot eliminate behavioral differences.
+Different CLIs have different invocation syntax, streaming behavior, permission models, tool availability, and output formats. The concrete AI CLI backend layer reduces scattered special cases, but live provider behavior remains a residual risk.
+
+Stack mis-selection:
+
+Echelon Stacks are useful because they make internal technology guidance explicit. The risk is over-selection: treating detected current-state evidence as a future target, or choosing a modernization stack without a human decision. The current stack detection design explicitly separates observed stacks, matching Echelon stacks, modernization candidates, and decisions required.
+
+Stack preflight coverage:
+
+Stack preflight can catch missing commands and tool probes before agent dispatch, but it cannot prove that credentials, environments, generated services, or private registries will behave correctly in every target workspace.
 
 Review-loop false positives:
 
@@ -507,7 +563,7 @@ Visible test structure:
 
 Approximate discovered test file distribution from the current source tree:
 
-- 274 unit test files
+- 299 unit test files
 - 74 integration test files
 - 23 e2e files
 - 20 kernel files
@@ -515,7 +571,7 @@ Approximate discovered test file distribution from the current source tree:
 - 7 shim files
 - 6 validation files
 - 2 benchmark files
-- 101 fixture files
+- 103 fixture files
 
 Quality mechanisms:
 
@@ -526,6 +582,8 @@ Quality mechanisms:
 - Lexicon gates apply hard grammar/source-contract validation where enabled.
 - Harness fulfillment checks block landing unless gaps are handled or explicitly overridden.
 - CodeGraph evidence mapping and fulfillment refresh policies strengthen source-grounded convergence checks.
+- AI CLI backend fixtures and tests cover provider-specific command/output parsing for Codex, Opencode, and Copilot.
+- Stack resolver, schema, preflight, detection, prompt-context, and CLI tests cover the new stack subsystem.
 - Spec artifact indexes make missing lifecycle artifacts visible.
 
 Testing gaps or weak areas visible from the repo:
@@ -536,6 +594,7 @@ Testing gaps or weak areas visible from the repo:
 - LLM behavior is difficult to test deterministically; the repo uses mocks and templates, but live provider variance remains a residual risk.
 - Security testing exists in pieces, but a full threat-model-driven test suite is not obvious from the quick scan.
 - Workspace migrations and source-root splits have dedicated tests, but real local repository layouts are likely more varied than fixtures.
+- Stack detection and preflight have deterministic tests, but real internal repositories and private toolchains will need sampled end-to-end validation.
 
 ## 9. CI/CD and Deployment
 
@@ -589,6 +648,7 @@ Operational signals visible in the repo:
 - `echelon status`: re-orients users around run state, artifacts, open issues, cost, and next step.
 - `echelon artifacts <id>`: generates `ARTIFACTS.md` for a spec folder.
 - `HARNESS HISTORY`: run/resume output records recent harness events and refresh decisions.
+- `echelon stack list`, `echelon stack detect`, and `echelon stack preflight`: make stack availability, observed evidence, modernization candidates, and required-tool readiness inspectable before generation.
 - Harness per-strategy state files track status, iterations, token usage, PR URL, termination reason, and final verify result.
 - `StateStore` writes backups and lockfiles.
 - `RalphController` tracks termination reasons such as convergence, budget exhaustion, same failure, no progress, interruption, and cancellation.
@@ -596,6 +656,8 @@ Operational signals visible in the repo:
 - Docker provider collects resource stats when available and truncates large output predictably.
 - Codegen state tracks pipeline phase, PSI score, Tier 1 gate, SOAR model, retries, impasse count, and MemPalace wing.
 - Lexicon validation reports make derived artifact failures deterministic and reproducible.
+- Resolved stack context under `.echelon/context/stacks/` makes stack assumptions visible to humans and agents.
+- Stack detection reports can be written under `runs/stack-detect/**` for durable brownfield evidence.
 - Echelon Grounded Review findings under `docs/findings/` provide a structured register for source-grounded issues and refreshes.
 - Knowledge-base files preserve calibration, patterns, pitfalls, feedback, and evolution signals.
 - Local deploy state tracks active slot/image/ports and supports status/rollback.
@@ -790,6 +852,13 @@ June 30-July 2, 2026: workspace configuration, replay commands, and delivery nam
 - Problems being solved: repair after missing `echelon_result` or bad phase output needed narrow deterministic tools; run-local and canonical artifacts needed clearer ownership; delivery operations needed a more coherent CLI surface.
 - Approach shift: recovery and delivery move from "resume the whole thing and hope context is sufficient" toward targeted, inspectable command surfaces.
 
+July 5-6, 2026: AI CLI backends and Echelon Stacks.
+
+- Current source adds a concrete AI CLI backend layer for Claude, Codex, GitHub Copilot, and Opencode, including provider-specific command construction, JSON/JSONL parsing, stderr handling, permission-flag mapping, and workspace LLM provider selection.
+- It also adds Echelon Stacks: schema-backed, opt-in stack definitions under `extension/stacks/`, resolved stack context for prompts/builds, `echelon stack list`, deterministic `echelon stack preflight`, and `echelon stack detect` for source-tree and RE-artifact evidence.
+- Problems being solved: provider behavior was too scattered for serious multi-CLI support; internal technology-stack guidance was living in prose/inference rather than deterministic capability context; brownfield stack evidence needed conservative recommendations instead of silent config mutation.
+- Approach shift: provider choice and stack choice become explicit, testable subsystems rather than ambient assumptions inside prompts.
+
 ### Evolution Pattern
 
 The repeated pattern is:
@@ -811,6 +880,8 @@ Examples:
 - Human-friendly Markdown could not provide a hard requirements grammar, so Lexicon became a derived validation artifact instead of replacing `spec.md`.
 - Expensive fulfillment checks were necessary but costly, so refresh policy became configurable while still requiring full evidence before convergence/land.
 - Unsafe host tool bypass behavior was too important to hide in provider defaults, so the harness added explicit fail-closed tool policy.
+- Provider command handling was too scattered, so Claude/Codex/Copilot/Opencode behavior moved behind concrete AI CLI backend classes.
+- Internal stack guidance was too easy to bury in prompt prose, so Echelon Stacks became schema-backed, preflighted, and rendered into deterministic context.
 - Spec folders became hard to review, so artifact indexing became deterministic and regenerated without LLM tokens.
 - Landing could leave users in unsafe merge states, so `echelon land` gained a state machine with prepare, verify, push, continue, and conflict policies.
 
@@ -894,7 +965,7 @@ Context is treated as an engineered resource:
 
 Guardrails exist at multiple levels:
 
-- OpenAI's guardrails guidance separates input, output, and tool-call checks. Echelon has analogous layers even though it is not using that SDK directly: preflight checks, prompt contracts, output contracts, Lexicon validation, deterministic helper validation, Docker/Podman sandboxing, GitOps safeguards, fulfillment gates, land gates, and security specialist review.
+- OpenAI's guardrails guidance separates input, output, and tool-call checks. Echelon has analogous layers even though it is not using that SDK directly: preflight checks, stack preflight, prompt contracts, output contracts, Lexicon validation, deterministic helper validation, Docker/Podman sandboxing, GitOps safeguards, fulfillment gates, land gates, and security specialist review.
 - The better pattern is not one giant "be safe" instruction; it is checks at the point where damage can happen.
 
 The harness separates reasoning from execution:
@@ -902,6 +973,7 @@ The harness separates reasoning from execution:
 - Running LLM reasoning on the host while executing deterministic build/test/verify steps in isolated worktrees and Docker-compatible containers is a strong architecture.
 - It recognizes that code execution, Git state, network access, credentials, and filesystem mutation are infrastructure problems, not just prompt problems.
 - The newer fail-closed host tool policy is a particularly important best-practice move: dangerous permission bypass is no longer an implicit provider behavior.
+- The concrete AI CLI backend layer is the same principle applied to provider behavior: provider-specific command/output quirks are isolated instead of leaking into workflow routing.
 
 The system has recovery paths:
 
@@ -914,6 +986,11 @@ Machine-readable requirements are derived, not forced on humans:
 - Keeping `spec.md` canonical while deriving `requirements.lexicon.md` is a strong compromise.
 - It respects human review ergonomics while still adding a hard parser/validator for machine gates.
 - The source-reference contract is the crucial guardrail; without it, derived artifacts would become another source of drift.
+
+Stack context is schema-backed, not prompt folklore:
+
+- Echelon Stacks are a strong pattern for internal platform guidance: stack constraints, tools, capabilities, and requirements live in versioned definitions, then render into concise agent-readable context.
+- Stack detection stays conservative by separating current observed evidence from modernization candidates and decisions required.
 
 ### What Is Not Yet Ideal or Needs Care
 
@@ -959,7 +1036,7 @@ Review-loop classification is heuristic:
 Security posture is promising but not complete from visible evidence:
 
 - Docker/Podman isolation, credential checks, network allowlists, fail-closed host tool policy, staged secret commit blocking, GUARDIAN, path/YAML safety modules, and land safeguards are good.
-- Missing or unclear from this pass: dependency scanning, formal threat model coverage, AI-provider data handling policy, and operational audit expectations for autonomous merges.
+- Missing or unclear from this pass: dependency scanning, formal threat model coverage, AI-provider data handling policy, stack credential governance, and operational audit expectations for autonomous merges.
 
 ### Evolution Through Four Engineering Tracks
 
@@ -982,7 +1059,7 @@ Context engineering: from conversation memory to reconstructable state.
 Harness engineering: from "agent runs commands" to controlled execution substrate.
 
 - Early phase: AI-driven build work could mutate a repo and then depend on prompt-side discipline to cleanly report status.
-- Improvements: worktrees, Docker/Podman sandbox, provider abstraction, GitOps manager, config cascade, resource limits, network allowlist, credential leak detection, target preflight, fail-closed host tool policy, source-root modeling, land state machine.
+- Improvements: worktrees, Docker/Podman sandbox, concrete AI CLI backends, GitOps manager, config cascade, resource limits, network allowlist, credential leak detection, target preflight, stack preflight, fail-closed host tool policy, source-root modeling, land state machine.
 - Good: the harness owns irreversible or risky operations.
 - Risk: container/Git/provider dependencies make setup and debugging more operationally demanding.
 - Meetup artifact to show: `src/harness/ralph.py`, `src/harness/docker_provider.py`, `src/harness/gitops.py`, and polyrepo target preflight.
@@ -1003,7 +1080,7 @@ Use a four-column slide:
 |---|---|---|---|
 | Prompt engineering | Roles, contracts, structured outputs | Less ambiguous agent behavior | `extension/agents/...`, `echelon_result` |
 | Context engineering | State/artifacts/workspaces over chat memory | Resumable, compaction-safe workflows | `workflow/definition.yaml`, `ARTIFACTS.md`, `docs/workspace-model.md` |
-| Harness engineering | Worktrees/container sandbox/GitOps | Safer execution and delivery | `src/harness/ralph.py`, `docker_provider.py` |
+| Harness engineering | Worktrees/container sandbox/GitOps/provider backends | Safer execution and delivery | `src/harness/ralph.py`, `docker_provider.py`, `ai_cli_backend.py` |
 | Loop engineering | Verify/retry/reconcile/land gates | Evidence-based convergence | fulfillment reports, Lexicon output, review-fix tasks |
 
 The talk track can be: "We did not just improve prompts. We progressively moved from prompt engineering to system engineering around the prompt."
@@ -1016,6 +1093,9 @@ Patterns worth copying:
 - Treat prompt outputs as structured contracts, not prose.
 - Keep human-readable canonical specs and derive machine-readable validation artifacts when hard parsing is useful.
 - Model workspace state and source roots explicitly before automating Git operations.
+- Isolate AI provider differences behind explicit backend classes.
+- Put internal technology-stack guidance in schema-backed stack definitions instead of scattered prompt branches.
+- Preflight selected stacks before agents depend on stack-specific tools or credentials.
 - Keep state transitions deterministic and validated.
 - Use isolated worktrees for autonomous implementation attempts.
 - Run untrusted or AI-generated build/test commands in a constrained sandbox.
@@ -1032,6 +1112,7 @@ Mistakes to avoid:
 - Treating LLM provider CLIs as interchangeable.
 - Letting generated validation artifacts drift from their human-readable source.
 - Assuming the current directory is always the implementation root.
+- Treating detected stack evidence as permission to silently mutate selected stack config.
 - Hiding too much behavior behind automation without status/debug artifacts.
 - Over-trusting numeric quality gates.
 - Making sandbox allowlists too narrow or too broad without feedback.
@@ -1043,6 +1124,8 @@ Good conventions visible here:
 - Structured state JSON with backups.
 - Workspace/source-root manifests instead of implicit topology assumptions.
 - Fail-closed unsafe host-execution policy.
+- Provider-specific backend fixtures for AI CLI behavior.
+- Stack resolver/preflight/detection tests for internal platform guidance.
 - Test suites for shell/prompt/template logic as well as Python.
 - Clear separation between interactive spec-kit path and terminal CLI path.
 
@@ -1080,14 +1163,22 @@ Suggested 5-10 minute flow:
    - Show credential checks, container runtime config, and sandbox creation.
    - Connect it to the risk of running AI-generated build commands.
 
-8. Optional branch based on audience:
+8. Open `src/harness/ai_cli_backend.py`.
+   - Show how Claude, Codex, Copilot, and Opencode are selected behind one provider facade.
+   - Explain that provider quirks belong in backends, not in workflow logic.
+
+9. Open `src/harness/stacks/resolver.py` and `src/harness/stacks/detection.py`.
+   - Show selected stack resolution and brownfield stack detection.
+   - Connect it to internal platform adoption without prompt sprawl.
+
+10. Optional branch based on audience:
    - For AI workflow audience: show an agent file and `echelon_result` contract from README.
    - For systems audience: show `src/harness/coordinator.py` parallel strategy fan-out.
    - For requirements audience: show `src/understanding/cli.py` and quality gates.
    - For grammar/validation audience: show `lexicon validate --source-ref spec.md` behavior.
    - For memory audience: show codegen requirement mining/search and `PipelineEngine.run_re_phase`.
 
-9. End with a simulated or recorded output.
+11. End with a simulated or recorded output.
    - Show `ARTIFACTS.md`, a harness state file, `HARNESS HISTORY`, a Lexicon validation report, a fulfillment report, or a review-fix task.
    - Avoid a live long-running AI build during a short meetup.
 
@@ -1096,6 +1187,8 @@ Recommended demo input:
 - A small spec folder or fixture already in the repo.
 - A deliberately failing verify command, if showing loop behavior.
 - A stale derived Lexicon artifact, if showing source-reference validation.
+- A selected stack with a missing command, if showing stack preflight.
+- A brownfield fixture with observed and modernization stack candidates, if showing stack detection.
 - A mocked PR comment, if showing review-loop behavior.
 
 What not to demo live:
@@ -1104,6 +1197,7 @@ What not to demo live:
 - Real PR merge automation.
 - Container runtime setup from scratch.
 - Workspace migration on a real repo.
+- Private stack credential setup.
 - First-run model downloads for Understanding energy metrics.
 
 ## 17. Suggested Brownbag Angles
@@ -1138,6 +1232,7 @@ Show:
 - `RalphController`
 - Container sandbox credential/network/resource controls
 - `harness.container_cli` and Podman support
+- `AICodingCliProvider` and concrete AI CLI backends
 - `harness.llm.tool_policy` fail-closed unsafe host execution
 - GitOps worktree isolation
 - State termination reasons
@@ -1214,7 +1309,7 @@ Show:
 
 - Prompt engineering: role files and `echelon_result`
 - Context engineering: `workflow/definition.yaml`, state files, `ARTIFACTS.md`, workspace model
-- Harness engineering: `RalphController`, Docker/Podman provider, GitOps, host tool policy
+- Harness engineering: `RalphController`, Docker/Podman provider, AI CLI backends, GitOps, host tool policy
 - Loop engineering: fulfillment gates, Lexicon gates, review-fix reentry, verify-spec reconciliation
 
 Avoid:
@@ -1229,6 +1324,8 @@ Questions for engineers:
 - Which workflow path is used most in practice: interactive spec-kit commands, terminal `echelon`, harness, or codegen?
 - Which parts are stable production paths vs experimental or research paths?
 - Is the Lexicon gate used as a default in any real workflow, or still an opt-in path?
+- Which AI CLI backend is the expected default for live demos: Claude, Codex, Copilot, or Opencode?
+- Which Echelon stacks should be shown, if any: Playbook, MSA, Stark, or a neutral fixture?
 - Which workspace mode is most common: single repo, polyrepo, or planning-only?
 - How mature is the new delivery CLI namespace compared with `land` and harness flows?
 - What are the most common failure modes in real runs?
