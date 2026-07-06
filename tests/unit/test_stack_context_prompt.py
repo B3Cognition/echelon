@@ -72,6 +72,7 @@ def test_selected_stark_stack_context_resolves_playbook_dependency_first() -> No
     stack_context = coord._build_stack_context()
 
     assert "# Resolved Echelon Stacks" in stack_context
+    assert "## Stack Preflight" in stack_context
     playbook_index = stack_context.index("- statsperform-playbook")
     stark_index = stack_context.index("- statsperform-stark-webapp")
     assert playbook_index < stark_index

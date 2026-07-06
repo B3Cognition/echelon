@@ -176,6 +176,88 @@ def test_codex_backend_parses_jsonl_and_final_message_file(tmp_path) -> None:
     assert "echelon_result:" in result.stdout
 
 
+def test_codex_backend_returns_on_task_complete_even_when_process_lingers(tmp_path) -> None:
+    backend = CodexCliBackend(_config("codex"))
+    final_message = tmp_path / "last-message.txt"
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "token_count",
+                            "info": {
+                                "total_token_usage": {
+                                    "input_tokens": 10,
+                                    "output_tokens": 5,
+                                    "total_tokens": 15,
+                                }
+                            },
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps(
+                    {
+                        "type": "event_msg",
+                        "payload": {
+                            "type": "task_complete",
+                            "last_agent_message": (
+                                "echelon_result:\n"
+                                "  verdict: COMPLETE\n"
+                                "  state_updates: {}\n"
+                                "  journal_entries: []\n"
+                            ),
+                        },
+                    }
+                )
+                + "\n"
+            ).encode()
+        )
+        stderr = io.BytesIO(b"codex diagnostic\n")
+        returncode = None
+        terminated = False
+
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = -15
+
+        def kill(self) -> None:
+            self.terminated = True
+            self.returncode = -9
+
+        def wait(self, timeout=None) -> int:
+            if self.returncode is None and timeout is not None:
+                raise subprocess.TimeoutExpired(["codex"], timeout)
+            if self.returncode is None:
+                self.returncode = 0
+            return self.returncode
+
+    fake_process = FakeProcess()
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Do work.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch("harness.ai_cli_backends.codex.tempfile.NamedTemporaryFile") as named, patch(
+        "harness.ai_cli_backends.codex.subprocess.Popen",
+        return_value=fake_process,
+    ):
+        named.return_value.__enter__.return_value.name = str(final_message)
+        result = backend.run_agent(request)
+
+    assert result.exit_code == 0
+    assert result.metadata["task_complete"] is True
+    assert fake_process.terminated is True
+    assert "echelon_result:" in result.stdout
+    assert "codex diagnostic" in result.stderr
+    assert result.token_usage == 15
+
+
 def test_codex_backend_falls_back_to_plain_stdout(tmp_path) -> None:
     backend = CodexCliBackend(_config("codex"))
 

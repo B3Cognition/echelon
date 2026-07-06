@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-101 stack preflight** — added `echelon stack list` and
+  `echelon stack preflight` so operators can discover bundled/project stacks
+  and verify declared commands, registry requirements, and optional gated tool
+  probes before relying on Playbook/MSA/Stark stack tooling.
 - **EGR-097 / #109 OpenCode and Copilot AI CLI backends** — OpenCode and
   GitHub Copilot CLI now have first-class `AICodingCliProvider` backends with
   provider-specific JSON output parsing and permission flag mapping, replacing

@@ -93,6 +93,10 @@ Commands:
   benchmark run <fixture> --variant <id> [--dry-run]
                                             Run or print an artifact-quality benchmark variant.
 
+  stack list [--json]                       List available Echelon stacks.
+  stack preflight [--stack <id>] [--target-archetype <id>] [--probe-tools] [--json]
+                                            Check selected stack commands, registries, and tool probes.
+
   delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
   delivery run <spec_id> [strategy=<s>]      Run build→verify→PR loop.
   delivery resume <spec_id> [strategy=<s>]   Resume a blocked delivery run.
@@ -5433,6 +5437,196 @@ def _cmd_artifacts(args: list[str]) -> None:
     print(f"✓ Wrote artifact map: {path}")
 
 
+from harness.stacks import (  # noqa: E402  (CLI command helpers)
+    load_stack_definitions,
+    preflight_to_dict,
+    render_preflight_markdown,
+    resolve_stacks,
+    resolved_to_dict,
+    run_stack_preflight,
+)
+from harness.stacks.errors import StackError  # noqa: E402
+from harness.stacks.paths import find_stack_extension_root  # noqa: E402
+
+
+def _cmd_stack(args: list[str], project_root: Path | None = None) -> None:
+    project_root = project_root or Path.cwd()
+    if not args or args[0] in {"-h", "--help", "help"}:
+        print(
+            "Usage:\n"
+            "  echelon stack list [--json]\n"
+            "  echelon stack preflight [--stack <id>] "
+            "[--target-archetype <id>] [--probe-tools] [--json]"
+        )
+        return
+
+    subcmd = args[0]
+    if subcmd == "list":
+        _cmd_stack_list(args[1:], project_root=project_root)
+        return
+
+    if subcmd == "preflight":
+        _cmd_stack_preflight(args[1:], project_root=project_root)
+        return
+
+    print(f"echelon stack: unknown subcommand '{subcmd}'", file=sys.stderr)
+    sys.exit(1)
+
+
+def _cmd_stack_list(args: list[str], *, project_root: Path) -> None:
+    json_output = False
+    for arg in args:
+        if arg == "--json":
+            json_output = True
+            continue
+        print(f"echelon stack list: unknown argument '{arg}'", file=sys.stderr)
+        sys.exit(1)
+
+    definitions = _load_stack_definitions_for_project(project_root)
+    if json_output:
+        import json
+
+        print(
+            json.dumps(
+                {
+                    "stacks": [
+                        _stack_definition_to_dict(definitions[stack_id])
+                        for stack_id in sorted(definitions)
+                    ]
+                },
+                indent=2,
+            )
+        )
+        return
+
+    print("Available Echelon stacks:")
+    for stack_id in sorted(definitions):
+        stack = definitions[stack_id]
+        archetypes = ", ".join(stack.applies_to_archetypes)
+        print(f"- {stack.id} ({stack.kind}; {archetypes}) {stack.name}")
+
+
+def _cmd_stack_preflight(args: list[str], *, project_root: Path) -> None:
+    selected, target_archetypes, probe_tools, json_output = _parse_stack_preflight_args(args)
+    if not selected:
+        config = _load_cli_config(project_root)
+        selected = list(config.stacks.selected)
+        target_archetypes = target_archetypes or list(config.stacks.target_archetypes)
+
+    if not selected:
+        message = "No Echelon stacks selected. Use --stack <id> or configure stacks.selected."
+        if json_output:
+            import json
+
+            print(json.dumps({"status": "pass", "message": message, "selected": []}, indent=2))
+        else:
+            print(message)
+        return
+
+    try:
+        definitions = _load_stack_definitions_for_project(project_root)
+        resolved = resolve_stacks(
+            selected,
+            definitions,
+            target_archetypes=set(target_archetypes) or None,
+        )
+    except StackError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    result = run_stack_preflight(resolved, probe_tools=probe_tools)
+
+    if json_output:
+        import json
+
+        print(
+            json.dumps(
+                {
+                    "resolved": resolved_to_dict(resolved),
+                    "preflight": preflight_to_dict(result),
+                },
+                indent=2,
+            )
+        )
+    else:
+        print("Resolved Echelon stacks:")
+        for stack_id in resolved.resolved_ids:
+            print(f"- {stack_id}")
+        print()
+        print(render_preflight_markdown(result).rstrip())
+
+    if result.has_errors:
+        sys.exit(1)
+
+
+def _parse_stack_preflight_args(
+    args: list[str],
+) -> tuple[list[str], list[str], bool, bool]:
+    selected: list[str] = []
+    target_archetypes: list[str] = []
+    probe_tools = False
+    json_output = False
+
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--stack":
+            index += 1
+            if index >= len(args):
+                print("echelon stack preflight: --stack requires a value", file=sys.stderr)
+                sys.exit(1)
+            selected.append(args[index])
+        elif arg.startswith("--stack="):
+            selected.append(arg.split("=", 1)[1])
+        elif arg == "--target-archetype":
+            index += 1
+            if index >= len(args):
+                print(
+                    "echelon stack preflight: --target-archetype requires a value",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            target_archetypes.append(args[index])
+        elif arg.startswith("--target-archetype="):
+            target_archetypes.append(arg.split("=", 1)[1])
+        elif arg == "--probe-tools":
+            probe_tools = True
+        elif arg == "--json":
+            json_output = True
+        else:
+            print(f"echelon stack preflight: unknown argument '{arg}'", file=sys.stderr)
+            sys.exit(1)
+        index += 1
+
+    return selected, target_archetypes, probe_tools, json_output
+
+
+def _load_stack_definitions_for_project(project_root: Path):
+    return load_stack_definitions(
+        extension_root=find_stack_extension_root(project_root),
+        project_root=project_root,
+    )
+
+
+def _stack_definition_to_dict(stack) -> dict:
+    return {
+        "id": stack.id,
+        "name": stack.name,
+        "version": stack.version,
+        "kind": stack.kind,
+        "owner": stack.owner,
+        "description": stack.description,
+        "applies_to_archetypes": stack.applies_to_archetypes,
+        "provides": stack.provides,
+        "implies": stack.implies,
+        "requirements": {
+            "commands": stack.requires_commands,
+            "registries": stack.requires_registries,
+        },
+        "tools": sorted(stack.tools),
+    }
+
+
 # ── Entry point ───────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -5474,6 +5668,10 @@ def main() -> None:
 
     if command == "benchmark":
         _cmd_benchmark(args[1:], project_root=Path.cwd())
+        return
+
+    if command == "stack":
+        _cmd_stack(args[1:], project_root=Path.cwd())
         return
 
     if command == "artifacts":
