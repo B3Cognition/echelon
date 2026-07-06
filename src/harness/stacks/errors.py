@@ -24,3 +24,11 @@ class StackValidationError(StackError):
         if len(parts) == 1:
             return parts[0]
         return f"{parts[0]} ({', '.join(parts[1:])})"
+
+
+class StackResolutionError(StackError):
+    """Raised when selected stacks cannot be resolved."""
+
+
+class StackConflictError(StackResolutionError):
+    """Raised when selected stacks provide conflicting capabilities."""
