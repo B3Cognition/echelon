@@ -45,6 +45,8 @@ selection by themselves.
 - Let `echelon stack detect` consume SCOUT, GOLDDIGGER, and RE artifacts when
   present, without making those artifacts mandatory.
 - Produce machine-readable evidence and a concise human summary.
+- Align durable machine-readable artifacts with Echelon's existing YAML-heavy
+  config and runtime artifact style.
 - Generate suggested `stacks:` config snippets only when confidence and intent
   are clear.
 - Keep stack selection opt-in; detection must not silently mutate project
@@ -77,7 +79,7 @@ concepts:
 - `decisions_required`: unresolved choices that block safe recommendation.
 
 The command does not edit `.echelon/config.yml`. When adoption is safe, it
-prints a suggested config snippet. A future `echelon stack adopt` command may
+prints a suggested config snippet. A future `echelon stack accept` command may
 write config after explicit confirmation.
 
 Example:
@@ -86,6 +88,8 @@ Example:
 echelon stack detect
 echelon stack detect --target ./source-repo
 echelon stack detect --artifacts specs/000-re-overview
+echelon stack detect --write
+echelon stack detect --format yaml
 echelon stack detect --json
 ```
 
@@ -136,8 +140,33 @@ confidence: high
 ```
 
 The scorer maps evidence to stack recommendations. Stack definitions should
-eventually own their own detection rules, but the first implementation can keep
-rules in Python while the schema is stabilized.
+own simple declarative detection rules. Python should parse source trees and
+artifacts into normalized evidence records; the stack definitions should say
+which evidence makes a stack match.
+
+Keep the first `detection:` schema deliberately small:
+
+```yaml
+detection:
+  positive:
+    technologies:
+      - react
+      - nx
+    dependencies:
+      - "@statsperform/react-playbook"
+  negative:
+    technologies:
+      - nestjs
+  modernization:
+    technologies:
+      - nextjs
+      - nx
+```
+
+Python rules remain appropriate for complex parsing, confidence normalization,
+and cross-stack safety checks, but not for ordinary stack identity. This keeps
+new stacks extensible without adding `if this stack then ...` logic to core
+agents or the detector.
 
 ## Evidence Adapters
 
@@ -174,56 +203,67 @@ SCOUT and GOLDDIGGER should eventually emit a compact machine-readable artifact,
 for example:
 
 ```text
-.echelon/context/stacks/observed-evidence.json
+runs/<run-id>/stacks/observed-evidence.yml
 ```
 
-or a run-local equivalent. That file should not replace source/artifact
-parsing; it should be another adapter input.
+That file should not replace source/artifact parsing; it should be another
+adapter input.
 
 ## Output Model
 
-JSON output should be stable enough for future automation:
+The durable report format should be YAML. That aligns with Echelon config,
+stack definitions, workflow definitions, and many existing run artifacts.
 
-```json
-{
-  "target": ".",
-  "observed_stacks": [
-    {
-      "id": "nextjs-nx-webapp",
-      "confidence": 0.92,
-      "evidence": [
-        "overview.md: Tech Stack Summary contains Next.js and Nx"
-      ]
-    }
-  ],
-  "matching_echelon_stacks": [
-    {
-      "id": "statsperform-playbook",
-      "confidence": 0.88,
-      "recommendation": "adopt",
-      "evidence": [
-        "overview.md: repository map identifies Playbook design system",
-        "constitution.md: UI stack uses Radix, CVA, Tailwind, Playbook tooling"
-      ]
-    }
-  ],
-  "modernization_candidates": [
-    {
-      "id": "statsperform-stark-webapp",
-      "confidence": 0.65,
-      "recommendation": "consider",
-      "decision_required": "Target stack unresolved"
-    }
-  ],
-  "decisions_required": [
-    {
-      "code": "TARGET_STACK_UNRESOLVED",
-      "message": "RE artifacts explicitly mark target stack as requiring input."
-    }
-  ],
-  "suggested_config": null
-}
+Default terminal output is human-readable text. `--write` persists a YAML
+report. `--json` remains available for shell tooling and integrations that
+prefer JSON stdout, but JSON is not the canonical persisted artifact.
+
+Standalone command output:
+
+```text
+runs/stack-detect/<timestamp>/detected.yml
+runs/stack-detect/<timestamp>/detected.md
 ```
+
+Run-integrated output:
+
+```text
+runs/<run-id>/stacks/detected.yml
+runs/<run-id>/stacks/detected.md
+```
+
+Do not write detection output under `.echelon/`. `.echelon` should remain
+committed config plus explicit local override/state locations, not a staging
+area for exploratory detection artifacts.
+
+Canonical YAML shape:
+
+```yaml
+target: "."
+observed_stacks:
+  - id: nextjs-nx-webapp
+    confidence: 0.92
+    evidence:
+      - "overview.md: Tech Stack Summary contains Next.js and Nx"
+matching_echelon_stacks:
+  - id: statsperform-playbook
+    confidence: 0.88
+    recommendation: adopt
+    evidence:
+      - "overview.md: repository map identifies Playbook design system"
+      - "constitution.md: UI stack uses Radix, CVA, Tailwind, Playbook tooling"
+modernization_candidates:
+  - id: statsperform-stark-webapp
+    confidence: 0.65
+    recommendation: consider
+    decision_required: Target stack unresolved
+decisions_required:
+  - code: TARGET_STACK_UNRESOLVED
+    message: RE artifacts explicitly mark target stack as requiring input.
+suggested_config: null
+```
+
+`--json` should emit the same data model encoded as JSON.
 
 ## Scoring Rules
 
@@ -281,20 +321,39 @@ Add focused tests for:
 - MSA not recommended for NestJS evidence.
 - Stark emitted as modernization candidate, not selected stack, when target is
   unresolved.
-- JSON output shape stability.
-- CLI text output and `--json` output.
+- YAML output shape stability.
+- JSON parity with the YAML data model.
+- CLI text output, `--format yaml`, and `--json` output.
 
 The OG fixture should be reduced to small test fixtures that preserve the
 important tables and target-stack placeholder rather than vendoring the full
 external artifact set.
 
-## Open Questions
+## Acceptance and Preflight Flow
 
-- Should stack detection write a run-local report by default, such as
-  `.echelon/context/stacks/detected.json`, or only print to stdout in the first
-  implementation?
-- Should stack definitions gain declarative `detection:` rules in the same
-  implementation, or should Python rules ship first while the evidence schema is
-  proven?
-- Should `echelon stack preflight` accept `--from-detect` later, or should stack
-  adoption remain an explicit separate step?
+Stack detection should feed stack preflight and eventual adoption, but those
+steps must remain explicit.
+
+Recommended command flow:
+
+```bash
+echelon stack detect --write
+echelon stack preflight --from-detect runs/stack-detect/<timestamp>/detected.yml
+echelon stack accept --from-detect runs/stack-detect/<timestamp>/detected.yml
+```
+
+`stack preflight --from-detect` is read-only. It resolves and checks the stacks
+that the detection report marks as safe to adopt, plus any explicitly selected
+modernization candidates.
+
+`stack accept --from-detect` is the mutating command. It writes the suggested
+`stacks:` config only after:
+
+- the detection report has at least one adoptable stack,
+- no `decisions_required` block adoption,
+- stack resolution succeeds,
+- stack preflight has no errors.
+
+The accept command may run preflight internally, but preflight itself should not
+mutate config. Keeping mutation under `stack accept` preserves a clear command
+contract while still supporting a smooth detect -> preflight -> accept workflow.
