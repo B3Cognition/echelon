@@ -106,3 +106,51 @@ def test_rejects_invalid_phase_scope() -> None:
 
     with pytest.raises(StackValidationError, match="phase_scope"):
         parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_unsupported_schema_version() -> None:
+    raw = {**VALID_STACK, "schema_version": "2.0"}
+
+    with pytest.raises(StackValidationError, match="unsupported stack schema_version"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_stack_id() -> None:
+    raw = {**VALID_STACK, "stack": {**VALID_STACK["stack"], "id": 123}}
+
+    with pytest.raises(StackValidationError, match="stack.id"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_archetype_entry() -> None:
+    raw = {**VALID_STACK, "applies_to": {"archetypes": [False]}}
+
+    with pytest.raises(StackValidationError, match="applies_to.archetypes"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_non_string_requires_command_entry() -> None:
+    raw = {**VALID_STACK, "requires": {"commands": [7]}}
+
+    with pytest.raises(StackValidationError, match="requires.commands"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_empty_applies_to_archetypes() -> None:
+    raw = {**VALID_STACK, "applies_to": {"archetypes": []}}
+
+    with pytest.raises(StackValidationError, match="at least one archetype"):
+        parse_stack_definition(raw, Path("stack.yml"))
+
+
+@pytest.mark.unit
+def test_rejects_empty_provides() -> None:
+    raw = {**VALID_STACK, "provides": {}}
+
+    with pytest.raises(StackValidationError, match="at least one capability"):
+        parse_stack_definition(raw, Path("stack.yml"))

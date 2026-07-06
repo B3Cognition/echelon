@@ -234,7 +234,13 @@ def _mapping(value: Any, source_path: Path, field_path: str) -> dict[str, Any]:
 
 
 def _non_empty_str(value: Any, source_path: Path, field_path: str) -> str:
-    result = str(value or "").strip()
+    if not isinstance(value, str):
+        raise StackValidationError(
+            f"{field_path} must be a string",
+            path=source_path,
+            field_path=field_path,
+        )
+    result = value.strip()
     if not result:
         raise StackValidationError(
             f"{field_path} must be a non-empty string",
@@ -253,7 +259,14 @@ def _string_list(value: Any, source_path: Path, field_path: str) -> list[str]:
             path=source_path,
             field_path=field_path,
         )
-    result = [str(item).strip() for item in value]
+    for item in value:
+        if not isinstance(item, str):
+            raise StackValidationError(
+                f"{field_path} entries must be strings",
+                path=source_path,
+                field_path=field_path,
+            )
+    result = [item.strip() for item in value]
     if any(not item for item in result):
         raise StackValidationError(
             f"{field_path} entries must be non-empty strings",
