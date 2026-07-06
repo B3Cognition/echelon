@@ -40,9 +40,12 @@ from harness.skill_loader import resolve_llm_prompt
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter
 from harness.stacks import (
     load_stack_definitions,
+    render_preflight_markdown,
     render_resolved_markdown,
     resolve_stacks,
+    run_stack_preflight,
 )
+from harness.stacks.paths import find_stack_extension_root
 from harness.visual_ralph import VisualRalphController
 from harness.state import StateStore
 from harness.strategy_loader import StrategySpec, load_strategies
@@ -567,20 +570,14 @@ class StrategyCoordinator:
             definitions,
             target_archetypes=self._stack_target_archetypes(spec_dir),
         )
-        return render_resolved_markdown(resolved)
+        stack_context = render_resolved_markdown(resolved)
+        preflight = run_stack_preflight(resolved)
+        return f"{stack_context.rstrip()}\n\n{render_preflight_markdown(preflight)}"
 
     @staticmethod
     def _stack_extension_root(base_dir: Path) -> Path:
         """Return the extension root that owns bundled stack definitions."""
-        source_root = Path(__file__).resolve().parents[2] / "extension"
-        for candidate in (
-            base_dir / "extension",
-            base_dir / ".specify" / "extensions" / "echelon",
-            source_root,
-        ):
-            if (candidate / "stacks").is_dir():
-                return candidate
-        return base_dir / "extension"
+        return find_stack_extension_root(base_dir)
 
     def _stack_target_archetypes(self, spec_dir: Path | None) -> set[str] | None:
         """Read optional target archetypes from config and spec frontmatter."""
