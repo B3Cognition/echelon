@@ -186,6 +186,12 @@ class FulfillmentConfig:
 
 
 @dataclass
+class StacksConfig:
+    """Selected Echelon stacks from committed project config."""
+    selected: List[str] = field(default_factory=list)
+
+
+@dataclass
 class HarnessConfig:
     """Complete harness configuration."""
     target_repo: str
@@ -215,6 +221,7 @@ class HarnessConfig:
     llm: LlmConfig = field(default_factory=LlmConfig)
     review_loop: ReviewLoopConfig = field(default_factory=ReviewLoopConfig)
     fulfillment: FulfillmentConfig = field(default_factory=FulfillmentConfig)
+    stacks: StacksConfig = field(default_factory=StacksConfig)
     verify_command: Optional[str] = None
 
 
@@ -522,6 +529,35 @@ def _parse_llm_tool_policy(raw_llm: Dict[str, Any]) -> LlmToolPolicy:
     return policy
 
 
+def _parse_stacks(data: Dict[str, Any]) -> StacksConfig:
+    raw = data.get("stacks", {})
+    if raw is None:
+        raw = {}
+    if not isinstance(raw, dict):
+        raise ValidationError("stacks must be a mapping", field_path="stacks")
+
+    selected_raw = raw.get("selected", [])
+    if selected_raw is None:
+        selected_raw = []
+    if not isinstance(selected_raw, list):
+        raise ValidationError(
+            "stacks.selected must be a list of stack IDs",
+            field_path="stacks.selected",
+        )
+
+    selected: List[str] = []
+    for index, value in enumerate(selected_raw):
+        stack_id = str(value).strip()
+        if not stack_id:
+            raise ValidationError(
+                "stacks.selected entries must be non-empty strings",
+                field_path=f"stacks.selected[{index}]",
+            )
+        selected.append(stack_id)
+
+    return StacksConfig(selected=selected)
+
+
 def _parse_fulfillment(data: Dict[str, Any]) -> FulfillmentConfig:
     raw = data.get("fulfillment", {})
     if not isinstance(raw, dict):
@@ -602,6 +638,7 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
         llm=_parse_llm(data),
         review_loop=_parse_review_loop(data),
         fulfillment=_parse_fulfillment(data),
+        stacks=_parse_stacks(data),
         verify_command=data.get("verify_command") or None,
     )
 

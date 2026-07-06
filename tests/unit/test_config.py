@@ -30,6 +30,7 @@ import yaml
 from harness.config import (
     DEFAULT_NETWORK_ALLOWLIST,
     HarnessConfig,
+    StacksConfig,
     ValidationError,
     _parse_config,
     get_full_resolved_config,
@@ -121,6 +122,8 @@ class TestParseConfigValid:
         assert config.bind_mount_ack is False
         assert config.pr_host == "none"
         assert config.fulfillment.refresh_policy == "milestone"
+        assert isinstance(config.stacks, StacksConfig)
+        assert config.stacks.selected == []
 
     def test_fulfillment_refresh_policy_can_be_configured(self) -> None:
         config = _parse_config({
@@ -158,6 +161,29 @@ class TestParseConfigValid:
         assert config.bind_mount_ack is True
         assert config.pr_host == "github"
         assert "custom.registry.io" in config.network.allowlist
+        assert config.stacks.selected == []
+
+    def test_stacks_default_to_empty_selection(self) -> None:
+        config = _parse_config(MINIMAL)
+
+        assert isinstance(config.stacks, StacksConfig)
+        assert config.stacks.selected == []
+
+    def test_stacks_selection_can_be_configured(self) -> None:
+        config = _parse_config({
+            **MINIMAL,
+            "stacks": {
+                "selected": [
+                    "statsperform-playbook",
+                    "statsperform-msa-service",
+                ],
+            },
+        })
+
+        assert config.stacks.selected == [
+            "statsperform-playbook",
+            "statsperform-msa-service",
+        ]
 
 
 @pytest.mark.unit
@@ -197,6 +223,14 @@ class TestParseConfigInvalid:
 
         assert config.provider == "docker"
         assert config.llm.cli == "codex"
+
+    def test_stacks_selected_must_be_list(self) -> None:
+        with pytest.raises(ValidationError, match="stacks.selected"):
+            _parse_config({**MINIMAL, "stacks": {"selected": "statsperform-playbook"}})
+
+    def test_stacks_selected_rejects_empty_ids(self) -> None:
+        with pytest.raises(ValidationError, match="stacks.selected"):
+            _parse_config({**MINIMAL, "stacks": {"selected": ["statsperform-playbook", " "]}})
 
 
 @pytest.mark.unit
