@@ -24,6 +24,9 @@ def test_help_command_prints_usage_without_unknown_command(
     assert "echelon: unknown command" not in captured.err
     assert "Usage: echelon <command>" in captured.out
     assert "delivery init" in captured.out
+    assert "delivery run <spec_id> [mode=<m>] [strategy=<s>]" in captured.out
+    assert "max_outer=<n>" in captured.out
+    assert "auto_merge=<bool>" in captured.out
 
 
 @pytest.mark.unit

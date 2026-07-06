@@ -100,8 +100,11 @@ Commands:
                                             Check selected stack commands, registries, and tool probes.
 
   delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
-  delivery run <spec_id> [strategy=<s>]      Run build→verify→PR loop.
-  delivery resume <spec_id> [strategy=<s>]   Resume a blocked delivery run.
+  delivery run <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]
+                    [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]
+                                            Run build→verify→PR loop.
+  delivery resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]
+                                            Resume a blocked delivery run.
   delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
                                             Land a spec: merge PR/branch, clean up.
@@ -705,16 +708,19 @@ def _cmd_harness(args: list[str]) -> None:
             "Compatibility alias for: echelon delivery <subcommand> [args...]\n\n"
             "Subcommands:\n"
             "  init   [<target_repo>]             Initialize delivery environment — config, mirror, verify\n"
-            "  run    <spec_id> [strategy=<s>]    Run build→verify→PR loop\n"
+            "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
+            "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
+            "                                     Run build→verify→PR loop\n"
+            "                                     mode: semi (default) | banzai | guided\n"
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
-            "                                     mode:     semi (default) | banzai | guided\n"
-            "  resume <spec_id>                   Resume a blocked run after answering/fixing its blocker\n\n"
+            "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
+            "                                     Resume a blocked run after answering/fixing its blocker\n\n"
             "Examples:\n"
             "  echelon delivery init\n"
             "  echelon delivery init https://github.com/org/repo\n"
             "  echelon delivery run 001\n"
             "  echelon delivery run 001 strategy=codegen\n"
-            "  echelon delivery run 001 strategy=default mode=banzai\n"
+            "  echelon delivery run 001 strategy=default mode=banzai max_outer=3\n"
             "  echelon delivery resume 001\n"
         )
         return
@@ -738,10 +744,13 @@ def _cmd_delivery(args: list[str]) -> None:
             "Delivery is Echelon Phase B: build, verify, recover, review, and land a completed spec.\n\n"
             "Subcommands:\n"
             "  init   [<target_repo>]             Initialize delivery environment — sandbox, mirror, verify\n"
-            "  run    <spec_id> [strategy=<s>]    Run build→verify→PR loop\n"
+            "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
+            "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
+            "                                     Run build→verify→PR loop\n"
+            "                                     mode: semi (default) | banzai | guided\n"
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
-            "                                     mode:     semi (default) | banzai | guided\n"
-            "  resume <spec_id> [strategy=<s>]    Resume a blocked delivery run\n"
+            "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
+            "                                     Resume a blocked delivery run\n"
             "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
             "Compatibility aliases:\n"
             "  echelon harness init|run|resume\n"
@@ -750,6 +759,7 @@ def _cmd_delivery(args: list[str]) -> None:
             "  echelon delivery init\n"
             "  echelon delivery run 001\n"
             "  echelon delivery run 001 strategy=codegen\n"
+            "  echelon delivery run 001 mode=banzai max_outer=3\n"
             "  echelon delivery resume 001\n"
             "  echelon delivery land 001\n"
         )
@@ -1198,6 +1208,21 @@ def _cmd_harness_run(args: list[str]) -> None:
     mode = kv.get("mode", "semi")
 
     parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
+    if kv.get("max_outer"):
+        parts.append(f"max {kv['max_outer']} outer iterations")
+    if kv.get("max_inner"):
+        parts.append(f"max {kv['max_inner']} inner iterations")
+    if kv.get("token_budget"):
+        parts.append(f"token_budget={kv['token_budget']}")
+    auto_merge = kv.get("auto_merge")
+    if auto_merge is not None:
+        if auto_merge.lower() in {"0", "false", "no", "off"}:
+            parts.append("no_auto_merge")
+        else:
+            parts.append("auto_merge")
+    kill_losers = kv.get("kill_losers")
+    if kill_losers is not None and kill_losers.lower() not in {"0", "false", "no", "off"}:
+        parts.append("kill_losers")
     if free_text:
         parts.append(f"task: {' '.join(free_text)}")
     if reset:

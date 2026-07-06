@@ -368,6 +368,54 @@ class TestHarnessRunTaskFormatErrors:
 
         mock_run.assert_called_once()
 
+    def test_harness_run_forwards_loop_options_to_run_intent(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        config_file = tmp_path / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        spec_dir = tmp_path / "specs" / "003-test"
+        _write_phase_a_build_inputs(spec_dir)
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
+            from echelon.cli import _cmd_harness_run
+
+            _cmd_harness_run([
+                "003",
+                "mode=banzai",
+                "strategy=codegen",
+                "max_outer=3",
+                "max_inner=2",
+                "token_budget=1000",
+                "auto_merge=false",
+                "kill_losers=true",
+            ])
+
+        user_message = mock_run.call_args.args[0]
+        intent = parse_intent(user_message)
+        assert intent.spec_id == "003"
+        assert intent.mode == "banzai"
+        assert intent.strategies == ["codegen"]
+        assert intent.max_outer == 3
+        assert intent.max_inner == 2
+        assert intent.token_budget == 1000
+        assert intent.auto_merge is False
+        assert intent.kill_losers is True
+
     def test_placeholder_constitution_blocks_before_harness_dispatch(
         self,
         tmp_path: Path,
