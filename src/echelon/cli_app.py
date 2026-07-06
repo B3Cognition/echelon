@@ -94,13 +94,21 @@ def delivery_init(target_repo: Optional[str] = typer.Argument(None)) -> None:
     """Initialize delivery environment: sandbox, mirror, verify."""
     from echelon import cli as legacy_cli
 
-    legacy_cli._cmd_harness_init([target_repo] if target_repo else [])
+    legacy_cli._cmd_harness_init(
+        [target_repo] if target_repo else [],
+        command_prefix="echelon delivery init",
+    )
 
 
 @harness_app.command("init")
 def harness_init(target_repo: Optional[str] = typer.Argument(None)) -> None:
     """Compatibility alias for delivery init."""
-    delivery_init(target_repo)
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_harness_init(
+        [target_repo] if target_repo else [],
+        command_prefix="echelon harness init",
+    )
 
 
 @delivery_app.command(

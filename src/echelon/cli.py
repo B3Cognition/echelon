@@ -776,7 +776,7 @@ def _cmd_delivery(args: list[str]) -> None:
 
     subcmd = args[0]
     if subcmd == "init":
-        _cmd_harness_init(args[1:])
+        _cmd_harness_init(args[1:], command_prefix="echelon delivery init")
     elif subcmd == "run":
         _cmd_harness_run(args[1:])
     elif subcmd == "resume":
@@ -788,13 +788,21 @@ def _cmd_delivery(args: list[str]) -> None:
         sys.exit(1)
 
 
-def _cmd_harness_init(args: list[str]) -> None:
+def _cmd_harness_init(
+    args: list[str],
+    *,
+    command_prefix: str = "echelon harness init",
+) -> None:
     import logging
     import os
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     target_repo = args[0] if args else "."
     base_dir = str(Path.cwd())
+    _workspace_git_preflight(
+        Path(base_dir),
+        command_name=_command_display(command_prefix, args),
+    )
     bind_mount_ack = os.environ.get("HARNESS_BIND_MOUNT_ACK", "").lower() in ("true", "1", "yes")
 
     from harness.init import init_harness, InitError

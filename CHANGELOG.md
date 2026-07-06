@@ -61,6 +61,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `echelon delivery init` now fails fast with workspace Git setup guidance when
+  run from a non-Git workspace instead of falling through to a confusing
+  `git clone --mirror` failure.
 - **EGR-104 / #128 Typer CLI front door** — `delivery` and `harness`
   commands now route through a Typer parser that documents canonical
   `--mode`, `--strategy`, `--max-outer`, and related options while preserving

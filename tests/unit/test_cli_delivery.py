@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -87,7 +88,34 @@ def test_delivery_init_routes_to_harness_init(monkeypatch: pytest.MonkeyPatch) -
     with patch("echelon.cli._cmd_harness_init") as mock_init:
         main()
 
-    mock_init.assert_called_once_with(["app"])
+    mock_init.assert_called_once_with(["app"], command_prefix="echelon delivery init")
+
+
+@pytest.mark.unit
+def test_delivery_init_non_git_workspace_fails_before_mirror_clone(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from harness.init import InitError
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "init"])
+    monkeypatch.chdir(tmp_path)
+
+    def fail_if_called(*_args, **_kwargs):
+        raise InitError("Failed to clone mirror: should not be reached")
+
+    monkeypatch.setattr("harness.init.init_harness", fail_if_called)
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "workspace root is not a Git repo" in captured.err
+    assert "Failed to clone mirror" not in captured.err
+    assert "Then rerun:\n  echelon delivery init" in captured.err
 
 
 @pytest.mark.unit
