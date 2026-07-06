@@ -37,7 +37,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   builds against opt-in constitution, tasks, and ADR cleanse variants;
   experimental `phase-exp-*` workflow nodes are manually runnable through
   `echelon phase run` and are not part of the default workflow.
-- **EGR-085 spec-scoped checkpoints and rewind** - added spec-scoped
+- **EGR-085 / #116 spec-scoped checkpoints and rewind** - added spec-scoped
   Phase A checkpoint metadata, `echelon checkpoint` commands, branch-level
   rewind with backup refs, manual checkpoint UX, and mandatory Echelon commit
   attribution trailers for generated commits.
@@ -46,9 +46,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   implementation work records documentation impact and updates `README.md` and
   Keep a Changelog-style `CHANGELOG.md` when user-facing, API, setup,
   configuration, operational, or significant performance behavior changes.
+- **EGR-079 / #96 delivery command namespace** — added `echelon delivery
+  init/run/resume/land` as the canonical Phase B command family, kept
+  `harness` and top-level `land` as compatibility aliases, and made
+  `echelon help` a first-class command.
+- **EGR-073 / #90 Workspace Contract v1** — added canonical committed
+  `.echelon/config.yml` workspace configuration, ignored `.echelon/local.yml`
+  runtime overrides, workspace doctor/migration commands, source-root-aware
+  discovery, and canonical-first init/harness guidance.
+- **EGR-053 / #76 single-phase repair/replay** — added `echelon phase list` and
+  `echelon phase run <phase-id> [--spec <id>]` so operators can replay one
+  workflow phase through normal squad state, journal, artifact, and constitution
+  contracts without advancing the whole graph.
 
 ### Fixed
 
+- **EGR-103 / #127 installed-extension path prompt guidance** — runtime agent prompts
+  now expose `EXTENSION_DIR`, template/agent subdirectory aliases, and explicit
+  `extension/...` path-resolution rules so agents do not double-prefix the
+  installed extension root when reading bundled templates or prompts.
 - **EGR-100 / #112 Phase A blocked exit code** — `echelon spec run` /
   `echelon run` now exits nonzero when the squad result is blocked or otherwise
   unsuccessful, and benchmark variants stop before delivery if a zero-exit
@@ -61,40 +77,40 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   has a dedicated `implementability_metrics` state update in `phase3-consensus`
   instead of putting task-readiness and effort metrics under reserved
   list-shaped `quality_scores`.
-- **EGR-094 checkpoint-plan deterministic routing** — banzai/semi checkpoint
+- **EGR-094 / #124 checkpoint-plan deterministic routing** — banzai/semi checkpoint
   auto-approval no longer falls through to a COMMANDER routing judgment. The
   condition evaluator now resolves `autonomy` from `autonomy_mode` and
   short-circuits `OR` conditions when one branch is already true.
-- **EGR-093 Phase A finalization outputs** — `phase4-document` now writes a
+- **EGR-093 / #123 Phase A finalization outputs** — `phase4-document` now writes a
   deterministic `squad-report.md`, records a Phase A `run-history.json` entry,
   and refreshes `ARTIFACTS.md` after those outputs are present instead of
   checkpointing a harness no-op as complete.
-- **EGR-092 TECH WRITER endocrine registry drift** — TECH WRITER is now listed
+- **EGR-092 / #122 TECH WRITER endocrine registry drift** — TECH WRITER is now listed
   in the endocrine `ALL_AGENTS` roster and explicitly mapped to the build
   archetype, keeping the legacy hormone registry consistent with the agent files
   added by EGR-080.
-- **EGR-091 Context7 CLI tool integration** — ARCHITECT no longer asks for
+- **EGR-091 / #121 Context7 CLI tool integration** — ARCHITECT no longer asks for
   Context7 MCP tools. Echelon now ships a pinned extension-local `ctx7` runtime
   plus `context7-docs.sh`, installs it via `scripts/install.sh`, and prompts
   ARCHITECT to use the wrapper with an official-doc fallback. The wrapper's
   `--json` mode now emits a stable `echelon.context7.v1` envelope so agents
   parse `result` deterministically instead of inferring raw `ctx7` output shapes.
-- **EGR-090 validate-plan help handling** — `python -m harness validate-plan
+- **EGR-090 / #120 validate-plan help handling** — `python -m harness validate-plan
   --help` now prints usage and exits cleanly instead of treating `--help` as a
   plan file path and emitting a traceback. Missing plan files now produce a
   readable CLI error without a Python stack trace.
-- **EGR-089 CARTOGRAPHER Understanding JSON shape contract** — WHAT prompts now
+- **EGR-089 / #119 CARTOGRAPHER Understanding JSON shape contract** — WHAT prompts now
   document that enhanced `understanding scan --json --output` produces a
   list-root payload and require normalizing to `payload[0]` before reading
   metrics or analysis sections, preventing `.keys()`/dict-method failures during
   CARTOGRAPHER diagnostic scoring.
-- **EGR-088 CARTOGRAPHER incomplete-result retry context** — when WHAT creates a
+- **EGR-088 / #118 CARTOGRAPHER incomplete-result retry context** — when WHAT creates a
   spec branch/directory but the provider connection drops before `echelon_result`,
   the squad blocked state now preserves the existing spec id, spec directory,
   published spec directory, feature branch, and CARTOGRAPHER resume guard flag so
   `echelon continue` retries the same spec instead of risking a second
   `speckit.specify`/branch allocation.
-- **EGR-087 banzai Phase 1 continuation defects** — squad runs no longer stop
+- **EGR-087 / #117 banzai Phase 1 continuation defects** — squad runs no longer stop
   after CHIEF when a valid constitution's leading Sync Impact Report mentions
   old template placeholders, and node-level workflow conditions are now honored
   at runtime. Greenfield runs skip brownfield-only MODELER instead of dispatching
@@ -104,12 +120,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `echelon spec run`, `echelon continue`, `echelon spec continue`, and
   `echelon phase run`, instead of silently treating equals-form flags as task
   text and falling back to `semi`.
-- **EGR-084 constitution guard workflow override** — squad routing no longer
+- **EGR-084 / #115 constitution guard workflow override** — squad routing no longer
   lets the controller-level constitution provenance guard bypass required
   upstream Phase 1 context phases. `phase1-synthesizer`, `phase1-modeler`, and
   `phase1-tracker` now run before CHIEF when the workflow graph routes there,
   so TRACKER can produce `user-intent.md` for CHIEF's constitution context pack.
-- **EGR-083 quality gate pass normalization** — WHY/SAGE quality routing now
+- **EGR-083 / #114 quality gate pass normalization** — WHY/SAGE quality routing now
   treats `quality_scores[*].pass` as a boolean-only contract. Non-boolean or
   missing WHY pass flags are normalized deterministically from configured
   thresholds or verdict before routing/state persistence, and raw non-WHY
@@ -120,6 +136,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   for real execution and wrap each variant with `git reset --hard <ref>` plus
   `git clean -fd -e runs/benchmarks/`, so cleanse variants do not inherit
   mutations from prior variants.
+- **EGR-081 / #104 Dockerless workspace init** — `echelon workspace init` now
+  treats HTTP deploy provisioning as optional workspace setup. Missing or
+  unavailable Docker/Podman writes `deploy.enabled: false`, skips local HTTP
+  deploy infra with actionable guidance, and still completes MemPalace/config
+  bootstrap.
+- **EGR-078 / #95 recovery backup gitignore contract** — workspace migration,
+  doctor, and docs now treat `.echelon/recovery-backups/` as ignored runtime
+  state so recovery artifacts do not appear as untracked files after migration.
+- **EGR-077 / #94 noninteractive land archive prompt** — successful
+  `echelon land` no longer crashes with `EOFError` when the optional archive
+  prompt runs without interactive stdin.
+- **EGR-076 / #93 local land cleanup recovery** — landing cleanup now skips
+  remote feature-branch deletion when `origin` is absent or local, and
+  recognizes already-merged feature branches from either checkout.
+- **EGR-075 / #92 generated verification drift during land** — `echelon land`
+  discards allowlisted generated verification metrics before final merge
+  checkout, blocks other dirty files, and skips default-branch push when no
+  non-local origin exists.
+- **EGR-074 / #91 local/no-origin land continuation** — `echelon land
+  --continue` now treats a clean feature branch that already contains the
+  default branch as prepared after push-only failures in local/no-origin repos.
 - **EGR-072 / #89 autonomous land runtime-state conflict resolution** —
   `echelon land` now autoresolves the legacy transition where a feature branch
   still tracks `.specify/*` runtime files while the default branch ignores
@@ -195,6 +232,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `harness run` to resume. Unsupported blocked reasons now point to
   `harness resume` after fixing the blocker or `harness run --reset` only when
   discarding blocked state.
+- **EGR-057 / #79 Phase-A-only harness resume retry** — `echelon harness
+  resume` now skips git recovery for build-incomplete states caused solely by
+  Phase A readiness blockers when there is no salvage/checkpoint commit to
+  recover.
+- **EGR-056 / #78 build-worktree Phase A artifact sync** — Ralph now
+  materializes the current project-visible Phase A spec inputs and constitution
+  snapshot into generated build worktrees before LLM dispatch, then validates
+  the worktree copy with the shared readiness gate.
+- **EGR-055 / #77 repaired harness-error resume** — `echelon harness resume`
+  now refreshes stale persisted spec artifact paths and retries prior
+  `harness_error` runs only after deterministic artifact preflight confirms the
+  current spec is resolvable and build-ready.
 - Clarified and enforced squad recovery command contracts. `echelon continue`
   is now the no-input recovery executor, `echelon resume` only answers human
   gates before delegating back to continuation, and blocked runs without human
@@ -305,6 +354,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pass of the same phase appears in `completed_phases`, so `missing_echelon_result`
   after `echelon resume` guides `echelon continue` back to the failed phase
   instead of vague manual recovery.
+- **EGR-042 / #63 harness blocker UX consistency** — repeated-failure
+  escalation context now reports the actual consecutive streak, threshold, and
+  fingerprint count, and terminal guidance points to `echelon harness resume
+  <spec_id>` after appending `## Answer`.
+- **EGR-041 / #62 fulfillment cache invalidation** — full verify-spec cache keys
+  now include deterministic implementation-input content hashes for source,
+  tests, and build manifests so uncommitted implementation changes cannot reuse
+  stale fulfillment reports.
+- **EGR-040 / #61 project config compatibility** — terminal CLI now warns or
+  blocks before Phase A dispatch when existing project config still points the
+  Lexicon tasks gate at stale `spec.md` instead of the derived requirements
+  artifact.
 - **EGR-038 SAGE Understanding handoff contract** — SAGE's follow-up
   Understanding appendix now documents the actual enhanced JSON list shape for
   behavioral-transition extraction, including `.[0].behavioral_analysis.transitions`,
@@ -326,6 +387,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   build dispatch; the register now records that the deterministic Phase A
   readiness gate blocks missing or template constitution input before build
   agents run.
+- **EGR-052 / #73 constitution context packs** — CARTOGRAPHER, ORCHESTRATOR
+  PLAN, SAGE WHY3, and ORCHESTRATOR PLAN2 now receive read-only constitution
+  context, while ARCHITECT no longer claims fallback constitution creation or
+  edit authority.
+- **EGR-051 / #72 recovery untracked-collision handling** — harness recovery now
+  preflights untracked paths that collide with recovered commits, removes
+  identical duplicates before cherry-pick, and backs up differing local copies
+  under `.echelon/recovery-backups/`.
+- **EGR-050 / #71 constitution ownership contract** — CHIEF/spec-kit remains the
+  only constitution source of truth; non-CHIEF phases consume snapshots or emit
+  amendment candidates, and codegen/finalize paths validate snapshots instead of
+  copying or repairing constitution files.
+- **EGR-049 / #98 provider session-limit blocked UX** — provider session-limit
+  failures now render as first-class harness blocks across Ralph stop banners,
+  `echelon status`, and delivery summaries, including reset hints, salvage
+  details, retry guidance, and token context where available.
 - **EGR-054/#70 workspace/source-root model** — Echelon now treats projects as
   Git-backed orchestration workspaces with zero or more source roots. Reverse
   engineering emits and prefers `workspace-manifest.json`, harness target
