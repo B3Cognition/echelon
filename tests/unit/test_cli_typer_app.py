@@ -88,7 +88,7 @@ def test_delivery_run_help_shows_canonical_flags():
     result = CliRunner().invoke(
         app,
         ["delivery", "run", "--help"],
-        env={"COLUMNS": "120"},
+        terminal_width=120,
     )
 
     assert result.exit_code == 0
