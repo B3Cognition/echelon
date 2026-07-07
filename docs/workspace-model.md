@@ -3,7 +3,7 @@
 Echelon treats every project as a workspace with zero or more source roots.
 
 - Single repo: `sources: [.]`
-- Polyrepo: `sources: [repo-a, repo-b]`
+- Polyrepo: `sources: [sources/repo-a, sources/repo-b]`
 - Planning-only workspace: `sources: []`
 
 The workspace root owns project-visible `specs/` artifacts and local Echelon
@@ -11,24 +11,28 @@ runtime state. `.echelon/config.yml` is the committed project contract.
 `.echelon/local.yml`, `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
 `.echelon/cache/`, and `.echelon/recovery-backups/` are runtime/local
 directories and should be gitignored in generated workspaces; published spec
-artifacts under `specs/` are the tracked handoff.
+artifacts under `specs/` are the tracked handoff. New orchestration workspaces
+scaffold `sources/README.md` as the visible landing zone for implementation
+repositories. Child repositories under `sources/` are ignored by workspace Git
+until they are declared as source roots in `.echelon/config.yml`.
 
 For polyrepo work, initialize a lightweight workspace Git repo:
 
 ```bash
 git init
-mkdir -p .echelon specs
+mkdir -p .echelon specs sources
 cat > .echelon/config.yml <<'YAML'
 workspace:
   git_role: orchestration
 sources:
   - id: og-platform
-    path: og-platform
+    path: sources/og-platform
   - id: pbg-api
-    path: pbg-api
+    path: sources/pbg-api
 YAML
-printf "/og-platform/\n/pbg-api/\n/.specify/\n/runs/\n/.claude/\n/.echelon/runtime/\n/.echelon/cache/\n/.echelon/recovery-backups/\n" >> .gitignore
-git add .gitignore .echelon/config.yml specs
+printf "/sources/*\n!/sources/README.md\n/.specify/\n/runs/\n/.claude/\n/.echelon/runtime/\n/.echelon/cache/\n/.echelon/recovery-backups/\n" >> .gitignore
+printf "# Workspace Source Roots\n\nClone implementation repositories here and declare them in .echelon/config.yml.\n" > sources/README.md
+git add .gitignore .echelon/config.yml specs sources/README.md
 git commit -m "chore: initialize echelon workspace"
 ```
 

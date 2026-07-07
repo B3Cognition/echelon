@@ -88,7 +88,9 @@ Echelon expects a Git-backed workspace with a committed `.echelon/config.yml`.
 Runtime state is local: `.specify/`, `runs/`, `.claude/`, `.echelon/runtime/`,
 `.echelon/cache/`, `.echelon/recovery-backups/`, and `.echelon/local.yml`
 should be ignored. Spec artifacts under `specs/<id>-*/` are the tracked
-handoff between Phase A, harness build, and land.
+handoff between Phase A, harness build, and land. New workspaces also include a
+tracked `sources/README.md`; clone or copy implementation repositories under
+`sources/`, then declare the ones Echelon should use in `.echelon/config.yml`.
 
 Declare implementation source roots explicitly in `.echelon/config.yml`:
 
@@ -97,7 +99,7 @@ workspace:
   git_role: orchestration
 sources:
   - id: app
-    path: app
+    path: sources/app
 ```
 
 Use `sources: []` for a planning-only workspace. Run `echelon workspace doctor`

@@ -170,10 +170,17 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     captured = capsys.readouterr()
     assert "workspace Git initialized" in captured.out
     assert "committed initial workspace contract" in captured.out
+    assert "source roots scaffolded" in captured.out
     assert (tmp_path / ".git").exists()
+    assert (tmp_path / "sources").is_dir()
+    assert (tmp_path / "sources" / "README.md").read_text(encoding="utf-8").startswith(
+        "# Workspace Source Roots"
+    )
     gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
     assert "/.specify/" in gitignore
     assert "/runs/" in gitignore
+    assert "/sources/*" in gitignore
+    assert "!/sources/README.md" in gitignore
     commit = subprocess.run(
         ["git", "log", "-1", "--pretty=%s%n%B"],
         cwd=tmp_path,
@@ -184,6 +191,14 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     assert "chore: initialize echelon workspace" in commit
     assert "Echelon-Origin: workspace" in commit
     assert "Echelon-Action: init" in commit
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert "sources/README.md" in tracked
     staged = subprocess.run(
         ["git", "status", "--short"],
         cwd=tmp_path,

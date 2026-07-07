@@ -38,6 +38,7 @@ class WorkspaceGitMigrationResult:
     write_requested: bool
     git_initialized: bool
     canonical_config_copied: bool
+    source_roots_scaffolded: bool
     gitignore_updated: bool
     untracked_runtime_paths: tuple[str, ...]
     staged_paths: tuple[str, ...]
@@ -105,6 +106,7 @@ def _is_echelon_workspace(root: Path) -> bool:
 def _existing_stage_paths(root: Path) -> tuple[str, ...]:
     paths = [".gitignore"]
     paths.extend(path for path in (".echelon/config.yml",) if (root / path).exists())
+    paths.extend(path for path in ("sources/README.md",) if (root / path).exists())
     paths.extend(path for path in ("specs",) if (root / path).exists())
     return tuple(paths)
 
@@ -140,6 +142,8 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.echelon/runtime/",
         "/.echelon/cache/",
         "/.echelon/recovery-backups/",
+        "/sources/*",
+        "!/sources/README.md",
     )
     stage_paths = _existing_stage_paths(root)
 
@@ -197,6 +201,33 @@ def _copy_legacy_config_to_canonical(plan: WorkspaceGitMigrationPlan) -> bool:
         return False
     plan.canonical_config.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(plan.legacy_config, plan.canonical_config)
+    return True
+
+
+def _scaffold_source_roots_directory(root: Path) -> bool:
+    sources_dir = root / "sources"
+    readme = sources_dir / "README.md"
+    sources_dir.mkdir(exist_ok=True)
+    if readme.exists():
+        return False
+    readme.write_text(
+        "# Workspace Source Roots\n\n"
+        "Put implementation repositories for this Echelon workspace here.\n\n"
+        "Examples:\n\n"
+        "```bash\n"
+        "git clone git@github.com:example/app.git sources/app\n"
+        "git clone git@github.com:example/api.git sources/api\n"
+        "```\n\n"
+        "After adding sources, declare them in `.echelon/config.yml`:\n\n"
+        "```yaml\n"
+        "sources:\n"
+        "  - id: app\n"
+        "    path: sources/app\n"
+        "```\n\n"
+        "Child repositories under this directory are ignored by workspace Git; "
+        "this README is tracked so the location is visible in new workspaces.\n",
+        encoding="utf-8",
+    )
     return True
 
 
@@ -421,6 +452,7 @@ def migrate_workspace(
             write_requested=False,
             git_initialized=False,
             canonical_config_copied=False,
+            source_roots_scaffolded=False,
             gitignore_updated=False,
             untracked_runtime_paths=(),
             staged_paths=(),
@@ -433,6 +465,7 @@ def migrate_workspace(
         git_initialized = True
 
     canonical_config_copied = _copy_legacy_config_to_canonical(plan)
+    source_roots_scaffolded = _scaffold_source_roots_directory(plan.workspace_root)
     gitignore_updated = _append_missing_gitignore_entries(
         plan.workspace_root,
         plan.gitignore_entries,
@@ -442,6 +475,8 @@ def migrate_workspace(
         stage_paths_list: list[str] = []
         if gitignore_updated:
             stage_paths_list.append(".gitignore")
+        if source_roots_scaffolded or not _is_tracked(plan.workspace_root, "sources/README.md"):
+            stage_paths_list.append("sources/README.md")
         if canonical_config_copied or (
             plan.canonical_config.exists()
             and (gitignore_updated or not _is_tracked(plan.workspace_root, ".echelon/config.yml"))
@@ -475,6 +510,7 @@ def migrate_workspace(
         write_requested=True,
         git_initialized=git_initialized,
         canonical_config_copied=canonical_config_copied,
+        source_roots_scaffolded=source_roots_scaffolded,
         gitignore_updated=gitignore_updated,
         untracked_runtime_paths=untracked_runtime_paths,
         staged_paths=staged_paths,
@@ -499,6 +535,7 @@ def _print_plan(result: WorkspaceGitMigrationResult) -> None:
     elif (
         not result.git_initialized
         and not result.canonical_config_copied
+        and not result.source_roots_scaffolded
         and not result.gitignore_updated
         and not result.untracked_runtime_paths
         and not result.staged_paths
@@ -508,6 +545,7 @@ def _print_plan(result: WorkspaceGitMigrationResult) -> None:
         print("Applied:")
         print(f"  git_initialized: {result.git_initialized}")
         print(f"  canonical_config_copied: {result.canonical_config_copied}")
+        print(f"  source_roots_scaffolded: {result.source_roots_scaffolded}")
         print(f"  gitignore_updated: {result.gitignore_updated}")
         print(f"  untracked_runtime_paths: {', '.join(result.untracked_runtime_paths) or '(none)'}")
         print(f"  staged_paths: {', '.join(result.staged_paths) or '(none)'}")

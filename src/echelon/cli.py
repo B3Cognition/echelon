@@ -188,6 +188,8 @@ def _maybe_bootstrap_workspace_git(project_root: Path) -> None:
     from echelon.workspace_git_migration import migrate_workspace
 
     result = migrate_workspace(project_root, write=True, commit=True)
+    if result.source_roots_scaffolded:
+        print("✓ source roots scaffolded: sources/ (clone/copy implementation repos there)")
     if result.git_initialized:
         staged = ", ".join(result.staged_paths) or "(none)"
         print(f"✓ workspace Git initialized; staged: {staged}")
