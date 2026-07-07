@@ -53,8 +53,8 @@ Per-repo depth overrides: resolve config with `specify extension config resolve 
 Resolve depth configuration (or use built-in defaults):
 ```yaml
 depth:
-  level: signatures  # metadata, signatures, logic, full
-  max_lines_per_file: 500
+  level: full  # metadata, signatures, logic, full
+  max_lines_per_file: 5000
   priority_patterns:
     - "**/main.*"
     - "**/*Service.*"

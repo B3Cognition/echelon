@@ -160,7 +160,10 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
 
     assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
-    assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" "$RE_OUTPUT_DIR" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
+    assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" \\' in analyzer
+    assert '--output "$RE_OUTPUT_DIR"' in analyzer
+    assert '--manifest "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
+    assert '--profile "$RE_PROFILE"' in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
     assert "repos-manifest.json" in analyzer
     assert "Prefer workspace-manifest.json" in analyzer

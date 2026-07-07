@@ -12,7 +12,7 @@
 #       → ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_CEILING=0.9
 #         ECHELON_CFG_ENDOCRINE_CIRCUIT_BREAKERS_FLOOR=0.1
 #
-# Repo root is auto-detected by walking up from cwd until .specify/ is found.
+# Repo root is auto-detected by walking up from cwd until .specify/ or .echelon/ is found.
 # Falls back to reading .echelon/config.yml directly when specify is unavailable;
 # legacy .specify/extensions/echelon/echelon-config.yml is read only during migration.
 #
@@ -53,7 +53,7 @@ _find_repo_root() {
   local dir
   dir="$(pwd)"
   while [[ "$dir" != "/" ]]; do
-    if [[ -d "$dir/.specify" ]]; then
+    if [[ -d "$dir/.specify" || -d "$dir/.echelon" ]]; then
       echo "$dir"
       return 0
     fi
@@ -64,7 +64,7 @@ _find_repo_root() {
 
 REPO_ROOT=""
 if ! REPO_ROOT="$(_find_repo_root)"; then
-  echo "echelon-config-get: could not find repo root (.specify/ not found in any parent)" >&2
+  echo "echelon-config-get: could not find repo root (.specify/ or .echelon/ not found in any parent)" >&2
   exit 1
 fi
 
@@ -90,21 +90,53 @@ _get_json() {
       return 0
     fi
   fi
-  # Fallback: read project config file directly (no layer merging).
-  # Prefer committed workspace config, then legacy deployed config, then source config so
-  # CI checkouts (where .specify/extensions/ is gitignored) still work.
-  local cfg=""
-  if [[ -f "$REPO_ROOT/.echelon/config.yml" ]]; then
-    cfg="$REPO_ROOT/.echelon/config.yml"
-  elif [[ -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" ]]; then
-    cfg="$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml"
-  elif [[ -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
-    cfg="$REPO_ROOT/extension/echelon-config.yml"
-  else
+  # Fallback: read the same migration cascade as harness.config for callers
+  # that run before/without `specify extension config resolve`.
+  if [[ ! -f "$REPO_ROOT/.echelon/config.yml" \
+        && ! -f "$REPO_ROOT/.specify/extensions/echelon/echelon-config.yml" \
+        && ! -f "$REPO_ROOT/extension/echelon-config.yml" ]]; then
     echo "echelon-config-get: specify resolver failed and no config file found" >&2
     return 1
   fi
-  python3 -c "import sys, yaml, json; print(json.dumps(yaml.safe_load(open('$cfg')) or {}))"
+  REPO_ROOT="$REPO_ROOT" python3 -c '
+import json
+import os
+from pathlib import Path
+
+import yaml
+
+
+root = Path(os.environ["REPO_ROOT"])
+
+
+def load(rel):
+    path = root / rel
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def merge(base, override):
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(result.get(key), dict) and isinstance(value, dict):
+            result[key] = merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+project = load(".echelon/config.yml")
+if not project:
+    project = load(".specify/extensions/echelon/echelon-config.yml")
+if not project:
+    project = load("extension/echelon-config.yml")
+
+config = merge(project, load(".specify/extensions/echelon/local-config.yml"))
+config = merge(config, load(".echelon/local.yml"))
+print(json.dumps(config))
+'
 }
 
 # ─── key navigation and output ───────────────────────────────────────────────

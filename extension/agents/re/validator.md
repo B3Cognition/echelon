@@ -37,8 +37,8 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 Resolve config or use defaults:
 ```yaml
 workflow:
-  resolution_threshold: 80    # Target: 80% of findings auto-resolved
-  max_validate_iterations: 3  # Max loop iterations
+  resolution_threshold: 99    # Target: 99% of findings auto-resolved
+  max_validate_iterations: 5  # Max loop iterations
 ```
 
 Read RE `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir`.

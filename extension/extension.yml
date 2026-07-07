@@ -833,6 +833,7 @@ config:
         screenshot_dir: "playwright-report"
         max_iterations: 3
     re:
+      profile: full
       analysis:
         include_patterns: [ "**/*" ]
         exclude_patterns:
@@ -848,13 +849,13 @@ config:
         tests: true
         docs: true
         git_history: true
-        git_history_limit: 100
+        git_history_limit: 2500
         ci_cd: true
         deployment: true
         integrations: true
       depth:
-        level: signatures
-        max_lines_per_file: 500
+        level: full
+        max_lines_per_file: 5000
         context_management: progressive
         priority_patterns:
           - "**/main.*"
@@ -872,9 +873,9 @@ config:
       workflow:
         pause_between_phases: false
         require_confirmation: false
-        coverage_threshold: 80
-        resolution_threshold: 80
-        max_validate_iterations: 3
+        coverage_threshold: 99
+        resolution_threshold: 99
+        max_validate_iterations: 5
       polyrepo:
         enabled: auto
         discovery: flat

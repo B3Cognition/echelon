@@ -25,3 +25,14 @@ class TestGolddiggerTemplates:
         assert '"$DISCOVER_REPOS" "$REPOS_MANIFEST"' in text
         assert "Do not infer single-repo mode from missing manifests" in text
         assert 'MODE="single"' not in text
+
+    def test_golddigger_uses_explicit_re_runtime_args_not_local_config(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "ALWAYS write extraction config overrides" not in text
+        assert "cat > .specify/extensions/echelon/local-config.yml" not in text
+        assert "active via `local-config.yml`" not in text
+        assert "--profile" in text
+        assert "--output" in text
+        assert "--manifest" in text
+        assert "RE_OUTPUT_DIR" in text

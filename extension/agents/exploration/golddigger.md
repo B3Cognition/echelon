@@ -34,71 +34,32 @@ NEVER substitute manual code analysis for the Skill tool invocation.
 ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output in inline `python3 -c` snippets.
 NEVER use `print()` in python3 scripts that read or write JSON files.
 
-### Rule 7 - Config Layering
-ALWAYS write extraction config overrides to `.specify/extensions/echelon/local-config.yml` and remove the file after extraction completes.
-NEVER write config into `$SQUAD_DIR` or legacy `.specify/squad` paths.
+### Rule 7 - Explicit RE Runtime Arguments
+ALWAYS rely on RE scripts receiving explicit runtime arguments (`--output`, `--manifest`, `--profile`, `--depth`, `--max-lines-per-file`, `--git-history-limit`).
+NEVER write temporary extraction config to `.specify/extensions/echelon/local-config.yml`, `.echelon/local.yml`, `$SQUAD_DIR`, or legacy `.specify/squad` paths.
 
 ## Configuration Profiles
 
-Always use exactly these named profiles, written to `.specify/extensions/echelon/local-config.yml` (spec-kit config layer 2 — overrides project config and extension defaults, gitignored). Do NOT let agents or users pass arbitrary re-extraction config.
+Always use exactly these named profiles through explicit RE runtime arguments. Do NOT let agents or users pass arbitrary re-extraction config.
 
-**Config lifecycle:** Write `local-config.yml` → invoke extract → remove `local-config.yml`. This ensures the override is temporary and does not persist to subsequent runs.
+**Runtime lifecycle:** resolve workspace/run directory → discover source roots → invoke `speckit.echelon.re-extract`; RE-ANALYZER passes explicit args to `run-analysis.sh`. Do not create temporary config files.
 
 ### Mode 1 — Survey (single-repo)
 
 ```yaml
-# Write to .specify/extensions/echelon/local-config.yml
-re:
-  depth:
-    level: logic
-    max_lines_per_file: 5000
-  workflow:
-    coverage_threshold: 99
-    resolution_threshold: 99
-    max_validate_iterations: 3
-    git_history_limit: 2500
-  output:
-    generate_spec: false
-    generate_plan: false
-    generate_tasks: false
+--profile full --depth full --max-lines-per-file 5000 --git-history-limit 2500
 ```
 
 ### Mode 1 — Survey (polyrepo)
 
 ```yaml
-# Write to .specify/extensions/echelon/local-config.yml
-re:
-  depth:
-    level: logic
-    max_lines_per_file: 5000
-  workflow:
-    coverage_threshold: 99
-    resolution_threshold: 99
-    max_validate_iterations: 3
-    git_history_limit: 2500
-  output:
-    generate_spec: false
-    generate_plan: false
-    generate_tasks: false
+--profile full --depth full --max-lines-per-file 5000 --git-history-limit 2500
 ```
 
 ### Mode 2 — Deep Dive
 
 ```yaml
-# Write to .specify/extensions/echelon/local-config.yml
-re:
-  depth:
-    level: full
-    max_lines_per_file: 5000
-  workflow:
-    coverage_threshold: 99
-    resolution_threshold: 99
-    max_validate_iterations: 5
-    git_history_limit: 2500
-  output:
-    generate_spec: true
-    generate_plan: false
-    generate_tasks: false
+--profile deep --depth full --max-lines-per-file 5000 --git-history-limit 2500
 ```
 
 ---
@@ -138,104 +99,19 @@ fi
 echo "Detected mode: $MODE"
 ```
 
-If `MODE` is `polyrepo`, proceed to Step 1b (polyrepo config). If `single`, proceed to Step 2 (write standard Mode 1 config).
+Proceed to Step 2 (invoke extraction).
 
-### Step 1b: Build polyrepo config with adaptive depth
-
-Small repos are cheap to extract at `full` depth in Mode 1, eliminating the need for Mode 2 dispatches on them entirely. Read the threshold and auto-promote repos below it from `logic` to `full`.
-
-```bash
-THRESHOLD=$(bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh heuristics.polyrepo_full_depth_threshold 2>/dev/null || echo 50)
-```
-
-```bash
-# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
-python3 -c "
-import json, os, yaml
-
-with open(os.environ['MANIFEST']) as f:
-    manifest = json.load(f)
-
-threshold = int('$THRESHOLD')
-overrides = {}
-
-entries = manifest.get('sources') or manifest.get('repos') or []
-for repo in entries:
-    name = repo.get('id') or repo.get('name') or repo.get('path')
-    if not name:
-        continue
-    count = repo.get('source_file_count', 0)
-    if count <= threshold:
-        overrides[name] = {
-            'depth': {'level': 'full'},
-            'workflow': {
-                'coverage_threshold': 99,
-                'resolution_threshold': 99,
-                'max_validate_iterations': 5
-            }
-        }
-
-re_config = {
-    'depth': {'level': 'logic', 'max_lines_per_file': 5000},
-    'workflow': {
-        'coverage_threshold': 99,
-        'resolution_threshold': 99,
-        'max_validate_iterations': 3,
-        'git_history_limit': 2500
-    },
-    'output': {
-        'generate_spec': False,
-        'generate_plan': False,
-        'generate_tasks': False
-    }
-}
-
-if overrides:
-    re_config['polyrepo'] = {'repos': overrides}
-
-config = {'re': re_config}
-
-os.makedirs('.specify/extensions/echelon', exist_ok=True)
-with open('.specify/extensions/echelon/local-config.yml', 'w') as f:
-    yaml.dump(config, f, default_flow_style=False)
-"
-```
-
-Proceed to Step 2b (invoke extraction).
-
-### Step 2: Write Mode 1 config (single-repo only)
-
-Write the survey profile to echelon's local config (layer 2 override):
-
-```bash
-mkdir -p .specify/extensions/echelon && cat > .specify/extensions/echelon/local-config.yml << 'EOF'
-re:
-  depth:
-    level: logic
-    max_lines_per_file: 5000
-  workflow:
-    coverage_threshold: 99
-    resolution_threshold: 99
-    max_validate_iterations: 3
-    git_history_limit: 2500
-  output:
-    generate_spec: false
-    generate_plan: false
-    generate_tasks: false
-EOF
-```
-
-### Step 2b: Invoke echelon re-extraction
+### Step 2: Invoke echelon re-extraction
 
 **MANDATORY — This step is NOT optional.** If you find yourself proceeding to Step 3 without having invoked the Skill tool, STOP and invoke it now. Manual code analysis is NOT a substitute for this step, regardless of execution mode, environment, or any other rationalization.
 
-Use the Skill tool to invoke the echelon re-extract command. The Mode 1 config is already active via `local-config.yml`:
+Use the Skill tool to invoke the echelon re-extract command. RE-ANALYZER will pass explicit runtime arguments to `run-analysis.sh`, using `RE_OUTPUT_DIR` for `--output` and the generated manifest for `--manifest`:
 
 ```
 speckit.echelon.re-extract
 ```
 
-When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. echelon's re-* commands will automatically read the local-config.yml overrides. In polyrepo mode, re-extract writes and prefers `workspace-manifest.json` when present, while retaining `repos-manifest.json` as a compatibility fallback for older runs.
+When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. In polyrepo mode, re-extract writes and prefers `workspace-manifest.json` when present, while retaining `repos-manifest.json` as a compatibility fallback for older runs.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 3 with the generated artifacts
@@ -254,12 +130,6 @@ RE_OUTPUT_DIR="${RE_OUTPUT_DIR:-runs/$(cat runs/.current 2>/dev/null)/re}"
 if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
   RE_OUTPUT_DIR=".specify/echelon/re"  # standalone fallback
 fi
-```
-
-Remove the config override first:
-
-```bash
-rm -f .specify/extensions/echelon/local-config.yml
 ```
 
 **Polyrepo mode — return:**
@@ -333,43 +203,21 @@ Repo: <repo or "N/A">
 Cached at: $SQUAD_DIR/golddigger-cache/<cache-key>.md
 ```
 
-### Step 2: Write Mode 2 config
+### Step 2: Invoke echelon re-extraction for this domain
 
-Write the deep-dive profile to echelon's local config (layer 2 override):
-
-```bash
-mkdir -p .specify/extensions/echelon && cat > .specify/extensions/echelon/local-config.yml << 'EOF'
-re:
-  depth:
-    level: full
-    max_lines_per_file: 5000
-  workflow:
-    coverage_threshold: 99
-    resolution_threshold: 99
-    max_validate_iterations: 5
-    git_history_limit: 2500
-  output:
-    generate_spec: true
-    generate_plan: false
-    generate_tasks: false
-EOF
-```
-
-### Step 3: Invoke echelon re-extraction for this domain
-
-**MANDATORY — This step is NOT optional.** The same enforcement as Mode 1 Step 2b applies here. You MUST invoke the Skill tool and receive a response before proceeding.
+**MANDATORY — This step is NOT optional.** The same enforcement as Mode 1 Step 2 applies here. You MUST invoke the Skill tool and receive a response before proceeding.
 
 ```
 speckit.echelon.re-extract
 ```
 
-Scope the extraction to the specific domain. In polyrepo mode, provide the repo subdirectory path: `{target_path}/{repo}`. echelon's re-* commands will automatically read the local-config.yml overrides.
+Scope the extraction to the specific domain. In polyrepo mode, provide the repo subdirectory path: `{target_path}/{repo}`. RE-ANALYZER will pass explicit runtime arguments to `run-analysis.sh`; do not write temporary config.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
-- **On success:** proceed to Step 4 with the generated domain spec
+- **On success:** proceed to Step 3 with the generated domain spec
 - **On error/timeout:** write `golddigger_status: "failed"`, note the error **verbatim** in `golddigger_notes`, exit cleanly
 
-### Step 4: Copy output to cache
+### Step 3: Copy output to cache
 
 Determine the cache path:
 - If `repo` is provided: `$SQUAD_DIR/golddigger-cache/{repo}--{domain}.md`
@@ -377,13 +225,7 @@ Determine the cache path:
 
 Copy the generated domain spec to the cache path.
 
-### Step 4b: Clean up config override
-
-```bash
-rm -f .specify/extensions/echelon/local-config.yml
-```
-
-### Step 5: Return completion status through state_updates
+### Step 4: Return completion status through state_updates
 
 Return only your status fields — speckit-echelon-commander (COMMANDER) handles the queue and completed-domains list:
 

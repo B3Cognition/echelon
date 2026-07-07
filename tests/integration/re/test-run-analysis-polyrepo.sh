@@ -122,6 +122,28 @@ assert_path_not_exists "single-repo fixture remains free of .codegraph" "$FIXTUR
 SUBDIRS_WITH_ANALYSIS=$(find "$TMPDIR1" -mindepth 2 -name "analysis.json" 2>/dev/null | wc -l | tr -d ' ')
 assert_eq "no subdirectory analysis.json files" "0" "$SUBDIRS_WITH_ANALYSIS"
 
+# ---------- Test 1b: Single-repo mode with explicit runtime args ----------
+
+echo ""
+echo "=== Test 1b: single-repo mode with explicit runtime args ==="
+
+TMPDIR1B=$(mktemp -d)
+trap 'rm -rf "$TMPDIR1" "$TMPDIR1B"' EXIT
+
+(cd "$FIXTURES_DIR/single-repo" && "$RUN_ANALYSIS" \
+    --output "$TMPDIR1B" \
+    --profile full \
+    --depth full \
+    --max-lines-per-file 5000 \
+    --git-history-limit 2500 \
+    2>/dev/null)
+
+assert_file_exists "explicit args analysis.json exists" "$TMPDIR1B/analysis.json"
+assert_json_field "explicit args record profile" "$TMPDIR1B/analysis.json" '.metadata.extraction_profile.profile' "full"
+assert_json_field "explicit args record depth" "$TMPDIR1B/analysis.json" '.metadata.extraction_profile.depth_level' "full"
+assert_json_field "explicit args record max lines" "$TMPDIR1B/analysis.json" '.metadata.extraction_profile.max_lines_per_file' "5000"
+assert_json_field "explicit args record git history limit" "$TMPDIR1B/analysis.json" '.metadata.extraction_profile.git_history_limit' "2500"
+
 # ---------- Test 2: Single-repo mode (manifest says single) — same behavior ----------
 
 echo ""

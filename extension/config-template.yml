@@ -304,7 +304,7 @@ discovery:
   # This saves Mode 2 roundtrips for small repos that are cheap to analyze fully.
   # Set to 0 to disable auto-promotion (all repos get signatures depth).
   # [range: 0-200] [default: 50]
-  polyrepo_full_depth_threshold: 50
+  polyrepo_full_depth_threshold: 100
 
   # Maximum number of git commits to analyze for hotspot and history analysis.
   # Higher values surface deeper evolutionary patterns at the cost of extraction time.
@@ -1334,6 +1334,10 @@ harness:
 # ─────────────────────────────────────────────────────────────────────────────
 
 re:
+  # Extraction profile passed to run-analysis.sh. Default is intentionally deep;
+  # use "survey" only when you explicitly want a cheaper first pass.
+  profile: full
+
 
   # ── Analysis ──────────────────────────────────────────────────────────────
   # Analysis scope - what to include/exclude
@@ -1398,7 +1402,7 @@ re:
     git_history: true
 
     # Number of commits to analyze
-    git_history_limit: 100
+    git_history_limit: 2500
 
     # CI/CD configs (GitHub Actions, GitLab CI, etc.)
     ci_cd: true
@@ -1441,12 +1445,12 @@ re:
     #   - All edge cases from code paths
     #   - Test assertion extraction
     #
-    level: signatures
+    level: full
 
     # Maximum lines to read per file
-    # With progressive context management, this can be higher (1000-2000)
-    # Without it, keep lower (300-500) to avoid overflow
-    max_lines_per_file: 500
+    # Default is intentionally high for brownfield reverse engineering.
+    # Lower this only when a specific workspace repeatedly exceeds context limits.
+    max_lines_per_file: 5000
 
     # Context management strategy (critical for large codebases)
     #
@@ -1816,15 +1820,15 @@ re:
 
     # Coverage threshold for verify/expand loop (0-100)
     # Loop repeats until this coverage percentage is reached
-    coverage_threshold: 80
+    coverage_threshold: 99
 
     # Resolution threshold for validate loop (0-100)
     # Loop repeats until this percentage of findings are auto-resolved
-    resolution_threshold: 80
+    resolution_threshold: 99
 
     # Max iterations for validate loop
     # Stops after this many iterations even if threshold not met
-    max_validate_iterations: 3
+    max_validate_iterations: 5
 
   # Polyrepo settings - for analyzing multiple repos under a top-level directory
   polyrepo:

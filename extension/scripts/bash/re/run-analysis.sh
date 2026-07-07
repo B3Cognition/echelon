@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Main analysis runner - combines all extraction scripts
-# Usage: run-analysis.sh [OUTPUT_DIR] [MANIFEST_PATH]
+# Usage:
+#   run-analysis.sh [OUTPUT_DIR] [MANIFEST_PATH]  # legacy positional form
+#   run-analysis.sh --output DIR --manifest PATH --profile full --depth full \
+#       --max-lines-per-file 5000 --git-history-limit 2500
 set -euo pipefail
 
 # Helper: resolve output directory, supporting echelon re-* config
@@ -15,8 +18,93 @@ if ! command -v jq &> /dev/null; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_DIR="${1:-$(re_dir)}"
-MANIFEST_PATH="${2:-}"
+OUTPUT_DIR=""
+MANIFEST_PATH=""
+PROFILE="${ECHELON_CFG_RE_PROFILE:-full}"
+DEPTH_LEVEL="${ECHELON_CFG_RE_DEPTH_LEVEL:-}"
+MAX_LINES_PER_FILE="${ECHELON_CFG_RE_DEPTH_MAX_LINES_PER_FILE:-5000}"
+GIT_HISTORY_LIMIT="${ECHELON_CFG_RE_SOURCES_GIT_HISTORY_LIMIT:-2500}"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage:
+  run-analysis.sh [OUTPUT_DIR] [MANIFEST_PATH]
+  run-analysis.sh --output DIR [--manifest PATH] [--profile full|survey|deep]
+                  [--depth metadata|signatures|logic|full]
+                  [--max-lines-per-file N] [--git-history-limit N]
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --output|--output-dir)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --manifest|--repos-manifest|--workspace-manifest)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            MANIFEST_PATH="$2"
+            shift 2
+            ;;
+        --profile)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            PROFILE="$2"
+            shift 2
+            ;;
+        --depth|--depth-level)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            DEPTH_LEVEL="$2"
+            shift 2
+            ;;
+        --max-lines-per-file)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            MAX_LINES_PER_FILE="$2"
+            shift 2
+            ;;
+        --git-history-limit)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            GIT_HISTORY_LIMIT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            exit 0
+            ;;
+        --*)
+            echo "run-analysis.sh: unknown argument: $1" >&2
+            usage
+            exit 64
+            ;;
+        *)
+            if [[ -z "$OUTPUT_DIR" ]]; then
+                OUTPUT_DIR="$1"
+            elif [[ -z "$MANIFEST_PATH" ]]; then
+                MANIFEST_PATH="$1"
+            else
+                echo "run-analysis.sh: unexpected positional argument: $1" >&2
+                usage
+                exit 64
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$OUTPUT_DIR" ]]; then
+    OUTPUT_DIR="$(re_dir)"
+fi
+if [[ -z "$DEPTH_LEVEL" ]]; then
+    case "$PROFILE" in
+        survey) DEPTH_LEVEL="logic" ;;
+        *) DEPTH_LEVEL="full" ;;
+    esac
+fi
+
+export ECHELON_CFG_RE_PROFILE="$PROFILE"
+export ECHELON_CFG_RE_DEPTH_LEVEL="$DEPTH_LEVEL"
+export ECHELON_CFG_RE_DEPTH_MAX_LINES_PER_FILE="$MAX_LINES_PER_FILE"
+export ECHELON_CFG_RE_SOURCES_GIT_HISTORY_LIMIT="$GIT_HISTORY_LIMIT"
 
 resolve_workspace_manifest() {
     local repos_manifest="$1"
@@ -238,6 +326,20 @@ PY
     done
 }
 
+extraction_profile_json() {
+    jq -n \
+        --arg profile "$PROFILE" \
+        --arg depth_level "$DEPTH_LEVEL" \
+        --argjson max_lines_per_file "$MAX_LINES_PER_FILE" \
+        --argjson git_history_limit "$GIT_HISTORY_LIMIT" \
+        '{
+            profile: $profile,
+            depth_level: $depth_level,
+            max_lines_per_file: $max_lines_per_file,
+            git_history_limit: $git_history_limit
+        }'
+}
+
 mkdir -p "$OUTPUT_DIR"
 # Resolve to absolute paths — required because polyrepo mode cd's into repo dirs
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
@@ -245,6 +347,7 @@ if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
     MANIFEST_PATH="$(cd "$(dirname "$MANIFEST_PATH")" && pwd)/$(basename "$MANIFEST_PATH")"
 fi
 WORKSPACE_MANIFEST="$(resolve_workspace_manifest "$MANIFEST_PATH")"
+EXTRACTION_PROFILE_JSON="$(extraction_profile_json)"
 
 # ---------- Determine mode ----------
 # If manifest exists and has repos, use manifest-driven mode (cd into each repo)
@@ -468,6 +571,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             --arg repo_name "$REPO_NAME" \
             --argjson total_files "$total_files" \
             --argjson total_lines "$total_lines" \
+            --argjson extraction_profile "$EXTRACTION_PROFILE_JSON" \
             --slurpfile structure "$REPO_OUTPUT/structure.json" \
             --slurpfile dependencies "$REPO_OUTPUT/dependencies.json" \
             --slurpfile git_history "$REPO_OUTPUT/git-history.json" \
@@ -477,7 +581,8 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
                 extracted_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
                 metadata: {
                     total_files: $total_files,
-                    total_lines: $total_lines
+                    total_lines: $total_lines,
+                    extraction_profile: $extraction_profile
                 },
                 structure: $structure[0],
                 dependencies: $dependencies[0],
@@ -534,11 +639,17 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             --argjson repo_count "$REPO_COUNT" \
             --argjson total_files "$total_files" \
             --argjson total_lines "$total_lines" \
+            --argjson extraction_profile "$EXTRACTION_PROFILE_JSON" \
             --argjson repos "$repo_analyses" \
             --arg cross_repo "$CROSS_REPO_PATH" \
             --arg manifest_path "$aggregate_manifest_path" \
             '{
-                metadata: { repo_count: $repo_count, total_files: $total_files, total_lines: $total_lines },
+                metadata: {
+                    repo_count: $repo_count,
+                    total_files: $total_files,
+                    total_lines: $total_lines,
+                    extraction_profile: $extraction_profile
+                },
                 repos: $repos,
                 cross_repo_path: $cross_repo,
                 manifest_path: $manifest_path
@@ -548,10 +659,16 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             --argjson repo_count "$REPO_COUNT" \
             --argjson total_files "$total_files" \
             --argjson total_lines "$total_lines" \
+            --argjson extraction_profile "$EXTRACTION_PROFILE_JSON" \
             --argjson repos "$repo_analyses" \
             --arg manifest_path "$aggregate_manifest_path" \
             '{
-                metadata: { repo_count: $repo_count, total_files: $total_files, total_lines: $total_lines },
+                metadata: {
+                    repo_count: $repo_count,
+                    total_files: $total_files,
+                    total_lines: $total_lines,
+                    extraction_profile: $extraction_profile
+                },
                 repos: $repos,
                 manifest_path: $manifest_path
             }' > "$OUTPUT_DIR/analysis.json"
@@ -617,6 +734,7 @@ echo "  Total lines: $total_lines" >&2
 jq -n \
     --argjson total_files "$total_files" \
     --argjson total_lines "$total_lines" \
+    --argjson extraction_profile "$EXTRACTION_PROFILE_JSON" \
     --slurpfile structure "$OUTPUT_DIR/structure.json" \
     --slurpfile dependencies "$OUTPUT_DIR/dependencies.json" \
     --slurpfile git_history "$OUTPUT_DIR/git-history.json" \
@@ -625,7 +743,8 @@ jq -n \
         extracted_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
         metadata: {
             total_files: $total_files,
-            total_lines: $total_lines
+            total_lines: $total_lines,
+            extraction_profile: $extraction_profile
         },
         structure: $structure[0],
         dependencies: $dependencies[0],

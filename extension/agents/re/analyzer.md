@@ -25,10 +25,7 @@ NEVER use multi-line Bash or Bash `ls`, `find`, `cat`, `echo`, or `grep` for ad 
 
 ## Configuration
 
-Read config values at point of use:
-```bash
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)"
-```
+Read stable defaults from Echelon config at point of use, then pass explicit runtime arguments to the RE scripts. The runtime output directory is never read from config during an active run; it comes from `state.json.output_dir` and should resolve to `runs/<run-id>/re`.
 
 ## Work Instructions
 
@@ -62,10 +59,21 @@ Also read the sibling `workspace-manifest.json` when present. Prefer workspace-m
 
 ### Step 4: Run Extraction Scripts
 
-Resolve config then run analysis:
+Resolve config values and pass them as explicit script arguments:
 
 ```bash
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)" && "$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" "$RE_OUTPUT_DIR" "$RE_OUTPUT_DIR/repos-manifest.json"
+RE_PROFILE=$(bash "$EXTENSION_PATH/scripts/bash/echelon-config-get.sh" re.profile 2>/dev/null || echo full)
+RE_DEPTH=$(bash "$EXTENSION_PATH/scripts/bash/echelon-config-get.sh" re.depth.level 2>/dev/null || echo full)
+RE_MAX_LINES=$(bash "$EXTENSION_PATH/scripts/bash/echelon-config-get.sh" re.depth.max_lines_per_file 2>/dev/null || bash "$EXTENSION_PATH/scripts/bash/echelon-config-get.sh" discovery.max_lines_per_file 2>/dev/null || echo 5000)
+RE_GIT_LIMIT=$(bash "$EXTENSION_PATH/scripts/bash/echelon-config-get.sh" re.sources.git_history_limit 2>/dev/null || bash "$EXTENSION_PATH/scripts/bash/echelon-config-get.sh" discovery.git_history_limit 2>/dev/null || echo 2500)
+
+"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" \
+  --output "$RE_OUTPUT_DIR" \
+  --manifest "$RE_OUTPUT_DIR/repos-manifest.json" \
+  --profile "$RE_PROFILE" \
+  --depth "$RE_DEPTH" \
+  --max-lines-per-file "$RE_MAX_LINES" \
+  --git-history-limit "$RE_GIT_LIMIT"
 ```
 
 The script produces:
