@@ -64,6 +64,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Benchmark baseline snapshots now stage tracked changes plus non-ignored
   untracked files without touching ignored `runs/`, avoiding `git add` failures
   in workspaces that correctly ignore runtime state.
+- **EGR-105 / #129 scoped fulfillment deferral** — `fulfillment.refresh_policy=scoped`
+  now treats successful scoped verification as deferred full evidence while
+  tasks remain incomplete, avoiding inner-fix/no-progress loops on
+  `fulfillment-report-scoped`; once task progress reaches the convergence
+  boundary, Ralph switches scoped policy to a full verify-spec refresh.
 - `echelon workspace init` now bootstraps lightweight workspace Git for Spec Kit
   workspaces when needed, committing `.gitignore`, `.echelon/config.yml`, and
   `specs/` as the initial workspace contract, so the documented `workspace init`

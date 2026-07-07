@@ -69,6 +69,7 @@ _NO_PROGRESS_THRESHOLD = 2
 _BANZAI_MILESTONE_DEFER_REASON = (
     "banzai milestone defers full verify until task completion"
 )
+_SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
 
 
 def _current_git_commit(worktree: Path) -> str | None:
@@ -898,7 +899,10 @@ class RalphController:
                 (
                     _is_fulfillment_refresh_deferred(final_verify)
                     and self._last_fulfillment_refresh_reason()
-                    == _BANZAI_MILESTONE_DEFER_REASON
+                    in {
+                        _BANZAI_MILESTONE_DEFER_REASON,
+                        _SCOPED_REFRESH_DEFER_REASON,
+                    }
                 )
                 or (
                     _is_only_fulfillment_gaps(final_verify)
@@ -1628,6 +1632,31 @@ class RalphController:
             }
         )
         if exit_code == 0:
+            if decision.get("action") == "scoped" and getattr(
+                refresh_result, "scope", ""
+            ) == "scoped":
+                self._record_fulfillment_refresh(
+                    {
+                        "status": "deferred",
+                        "reason": _SCOPED_REFRESH_DEFER_REASON,
+                        "scope": "full",
+                        "report_path": getattr(refresh_result, "report_path", None),
+                    }
+                )
+                failure = FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id="fulfillment-refresh-deferred",
+                    error=(
+                        "scoped fulfillment refresh completed; full verify-spec "
+                        "evidence is still required before convergence"
+                    ),
+                )
+                return VerifyResult(
+                    passed=False,
+                    failures=[failure],
+                    duration_s=verify_result.duration_s,
+                    token_usage=verify_result.token_usage,
+                )
             return verify_result
 
         if getattr(refresh_result, "status", "") == "provider_session_limit":
@@ -1675,12 +1704,14 @@ class RalphController:
 
     def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
         policy = self._config.fulfillment.refresh_policy
+        total, completed = self._task_progress_counts()
+        tasks_complete = total > 0 and completed >= total
         if policy == "scoped":
+            if tasks_complete or total <= 0:
+                return {"action": "full", "reason": "convergence boundary reached"}
             return {"action": "scoped", "reason": "fulfillment.refresh_policy=scoped"}
         if policy == "every_slice":
             return {"action": "full", "reason": "fulfillment.refresh_policy=every_slice"}
-        total, completed = self._task_progress_counts()
-        tasks_complete = total > 0 and completed >= total
         if policy != "convergence_only":
             if (
                 policy == "milestone"

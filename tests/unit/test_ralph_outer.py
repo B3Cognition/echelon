@@ -1139,7 +1139,8 @@ class TestOuterLoopConvergence:
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "tasks.md").write_text(
-            "- [ ] T-002 complexity=standard phase=build req=FR-001 depends=none\n",
+            "- [ ] T-002 complexity=standard phase=build req=FR-001 depends=none\n"
+            "- [ ] T-003 complexity=standard phase=build req=FR-002 depends=T-002\n",
             encoding="utf-8",
         )
         (spec_dir / "fulfillment-report.md").write_text(
@@ -1190,6 +1191,91 @@ class TestOuterLoopConvergence:
             completed_task_ids=["T-002"],
             changed_files=["src/a.py", "tests/test_a.py"],
         )
+
+    def test_scoped_fulfillment_policy_defers_full_refresh_without_feedback(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Scoped evidence is useful progress, not an inner-fix failure."""
+        from harness.build_result import BuildResult
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=demo req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=demo req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\n"
+            "spec_id: spec-001\n"
+            "verified_commit: head456\n"
+            "verify_scope: scoped\n"
+            "base_full_verify_commit: base123\n"
+            "---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n",
+            encoding="utf-8",
+        )
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=["T-001"],
+        )
+        build_runner.exec_feedback.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=[],
+            reason="nothing source-level to fix",
+        )
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed",
+            exit_code=0,
+            scope="scoped",
+            reason="scoped verify-spec completed",
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            mode="banzai",
+            llm_build_runner=build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        controller._config.fulfillment.refresh_policy = "scoped"
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = worktree
+        controller._changed_files_since_head = MagicMock(return_value=["src/a.py"])
+
+        result = controller.run_loop(max_outer=2, max_inner=3, build_prompt="build")
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "checkpoint_outer_cap"
+        assert result.outer_iterations == 2
+        assert result.final_verify is not None
+        assert result.final_verify.failures[0].id == "fulfillment-refresh-deferred"
+        build_runner.exec_feedback.assert_not_called()
+        assert build_runner.exec_build.call_count == 2
+        assert fulfillment_runner.refresh.call_count == 2
+        refresh = state_store.read()["fulfillment_refresh"]
+        assert refresh["status"] == "deferred"
+        assert refresh["scope"] == "full"
+        assert refresh["reason"] == "scoped fulfillment refresh completed"
+        captured = capsys.readouterr()
+        assert "fulfillment refresh: deferred" in captured.err
+        assert "scoped fulfillment refresh completed" in captured.err
 
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path
