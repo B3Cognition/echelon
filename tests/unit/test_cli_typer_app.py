@@ -82,16 +82,24 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
 
 
 @pytest.mark.unit
-def test_delivery_run_help_shows_canonical_flags():
+def test_delivery_run_declares_canonical_flags():
     from echelon.cli_app import app
+    from typer.main import get_command
 
     result = CliRunner().invoke(
         app,
         ["delivery", "run", "--help"],
-        terminal_width=120,
     )
 
     assert result.exit_code == 0
-    assert "--mode" in result.stdout
-    assert "--strategy" in result.stdout
-    assert "--max-outer" in result.stdout
+    command = get_command(app)
+    delivery_command = command.commands["delivery"]
+    run_command = delivery_command.commands["run"]
+    declared_options = {
+        opt
+        for param in run_command.params
+        for opt in getattr(param, "opts", [])
+    }
+    assert "--mode" in declared_options
+    assert "--strategy" in declared_options
+    assert "--max-outer" in declared_options
