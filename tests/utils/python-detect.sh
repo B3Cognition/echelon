@@ -8,17 +8,25 @@
 
 _repo_root="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 
-PYTHON=""
+_python_works() {
+  "$1" -c "import sys; import typer; sys.exit(0)" > /dev/null 2>&1
+}
+
+if [ -n "${PYTHON:-}" ] && _python_works "$PYTHON"; then
+  PYTHON="$PYTHON"
+else
+  PYTHON=""
+fi
 
 # Prefer project venv if it exists and works
-if [ -x "$_repo_root/.venv/bin/python" ] && \
-   "$_repo_root/.venv/bin/python" -c "import sys; sys.exit(0)" > /dev/null 2>&1; then
+if [ -z "$PYTHON" ] && [ -x "$_repo_root/.venv/bin/python" ] && \
+   _python_works "$_repo_root/.venv/bin/python"; then
   PYTHON="$_repo_root/.venv/bin/python"
 fi
 
 # Reuse the installed Echelon CLI venv when this checkout has no local venv.
 if [ -z "$PYTHON" ] && [ -x "$HOME/.echelon/venv/bin/python" ] && \
-   "$HOME/.echelon/venv/bin/python" -c "import sys; sys.exit(0)" > /dev/null 2>&1; then
+   _python_works "$HOME/.echelon/venv/bin/python"; then
   PYTHON="$HOME/.echelon/venv/bin/python"
 fi
 
@@ -26,7 +34,7 @@ fi
 if [ -z "$PYTHON" ]; then
   for _py_candidate in /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3 python3.12 python3 python; do
     if { [ -x "$_py_candidate" ] || command -v "$_py_candidate" > /dev/null 2>&1; } && \
-       "$_py_candidate" -c "import sys; sys.exit(0)" > /dev/null 2>&1; then
+       _python_works "$_py_candidate"; then
       PYTHON="$_py_candidate"
       break
     fi
@@ -34,8 +42,8 @@ if [ -z "$PYTHON" ]; then
 fi
 
 if [ -z "$PYTHON" ]; then
-  echo "ERROR: No working Python interpreter found. Tried: .venv/bin/python, ~/.echelon/venv/bin/python, /opt/homebrew/bin/python3.12, python3.12, python3, python" >&2
+  echo "ERROR: No working Python interpreter with Echelon dependencies found. Tried: inherited \$PYTHON, .venv/bin/python, ~/.echelon/venv/bin/python, /opt/homebrew/bin/python3.12, python3.12, python3, python" >&2
   exit 1
 fi
 
-unset _py_candidate _repo_root
+unset _py_candidate _python_works _repo_root

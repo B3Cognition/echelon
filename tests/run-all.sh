@@ -44,6 +44,7 @@ else
     fi
   done
 fi
+export PYTHON
 
 run_suite() {
   local suite_name="$1"

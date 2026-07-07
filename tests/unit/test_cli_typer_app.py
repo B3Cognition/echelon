@@ -85,7 +85,11 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
 def test_delivery_run_help_shows_canonical_flags():
     from echelon.cli_app import app
 
-    result = CliRunner().invoke(app, ["delivery", "run", "--help"])
+    result = CliRunner().invoke(
+        app,
+        ["delivery", "run", "--help"],
+        env={"COLUMNS": "120"},
+    )
 
     assert result.exit_code == 0
     assert "--mode" in result.stdout

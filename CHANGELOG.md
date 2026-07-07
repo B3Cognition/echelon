@@ -64,6 +64,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Benchmark baseline snapshots now stage tracked changes plus non-ignored
   untracked files without touching ignored `runs/`, avoiding `git add` failures
   in workspaces that correctly ignore runtime state.
+- **EGR-108 CI dependency drift** — GitHub Actions now handles Typer's vendored
+  Click exceptions for delivery/harness parse errors, stabilizes Typer help
+  output assertions under Rich terminal-width rendering, and exports the
+  CI-selected Python interpreter into shell suites so E2E tests use the same
+  environment that received `pip install -e ".[dev]"`.
 - **EGR-105 / #129 scoped fulfillment deferral** — `fulfillment.refresh_policy=scoped`
   now treats successful scoped verification as deferred full evidence while
   tasks remain incomplete, avoiding inner-fix/no-progress loops on

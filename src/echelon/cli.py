@@ -5970,9 +5970,17 @@ def main() -> None:
         from click import ClickException
         from echelon.cli_app import run as run_typer_cli
 
+        click_exceptions: tuple[type[BaseException], ...] = (ClickException,)
+        try:
+            from typer._click.exceptions import ClickException as TyperClickException
+
+            click_exceptions = (ClickException, TyperClickException)
+        except Exception:
+            pass
+
         try:
             run_typer_cli(args)
-        except ClickException as exc:
+        except click_exceptions as exc:
             exc.show()
             sys.exit(exc.exit_code)
         return
