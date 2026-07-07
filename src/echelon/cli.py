@@ -177,10 +177,63 @@ def _workspace_git_has_head(project_root: Path) -> bool:
     return result.returncode == 0
 
 
+def _workspace_git_has_only_init_owned_drift(project_root: Path) -> bool:
+    if not _workspace_git_present(project_root):
+        return False
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return False
+    allowed = {".echelon/config.yml", ".gitignore"}
+    for line in result.stdout.splitlines():
+        path = line[3:] if len(line) > 3 else ""
+        if path not in allowed:
+            return False
+    return True
+
+
+def _workspace_source_scaffold_needs_repair(project_root: Path) -> bool:
+    readme = project_root / "sources" / "README.md"
+    if not readme.exists():
+        return True
+    gitignore = project_root / ".gitignore"
+    text = gitignore.read_text(encoding="utf-8") if gitignore.exists() else ""
+    if "/sources/*" not in text or "!/sources/README.md" not in text:
+        return True
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", "sources/README.md"],
+        cwd=project_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return tracked.returncode != 0
+
+
 def _maybe_bootstrap_workspace_git(project_root: Path) -> None:
     """Initialize lightweight workspace Git after workspace init when possible."""
     has_head = _workspace_git_has_head(project_root)
     if has_head:
+        if not _workspace_source_scaffold_needs_repair(project_root):
+            return
+        from echelon.workspace_git_migration import migrate_workspace
+
+        commit_repair = _workspace_git_has_only_init_owned_drift(project_root)
+        result = migrate_workspace(project_root, write=True, commit=commit_repair)
+        if result.source_roots_scaffolded:
+            print("✓ source roots scaffolded: sources/ (clone/copy implementation repos there)")
+        if result.gitignore_updated or result.staged_paths:
+            staged = ", ".join(result.staged_paths) or "(none)"
+            print(f"✓ workspace contract repaired; staged: {staged}")
+        if result.committed:
+            print("✓ committed initial workspace contract")
+        elif result.staged_paths:
+            print("  workspace repair left staged because the worktree was not clean")
         return
     if not ((project_root / ".specify").exists() or (project_root / "specs").exists()):
         return

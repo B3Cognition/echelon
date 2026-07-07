@@ -209,6 +209,67 @@ def test_workspace_init_initializes_git_for_specify_workspace(
     assert staged == []
 
 
+def test_workspace_init_rerun_repairs_missing_sources_scaffold(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    (tmp_path / ".specify").mkdir()
+    _write_workspace_config(
+        tmp_path,
+        "  enabled: false\n  type: http\n  blue_port: 18080\n  green_port: 18081\n",
+    )
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n/.claude/\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "add", ".gitignore", ".echelon/config.yml"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test User",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "chore: initialize old workspace",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+
+    captured = capsys.readouterr()
+    assert "source roots scaffolded" in captured.out
+    assert "committed initial workspace contract" in captured.out
+    assert (tmp_path / "sources" / "README.md").exists()
+    gitignore = (tmp_path / ".gitignore").read_text(encoding="utf-8")
+    assert "/sources/*" in gitignore
+    assert "!/sources/README.md" in gitignore
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    assert "sources/README.md" in tracked
+    assert subprocess.run(
+        ["git", "status", "--short"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout == ""
+
+
 def test_workspace_init_rejects_invalid_llm_option(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.chdir(tmp_path)
 
