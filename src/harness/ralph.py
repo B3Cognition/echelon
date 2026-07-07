@@ -2183,6 +2183,7 @@ class RalphController:
                 + "".join(f"- {path}\n" for path in dirty_verify_artifacts)
                 + "Treat these as inherited verify-spec outputs. Do not hand-edit them in build slices; Ralph owns regeneration and commit/salvage.\n"
             )
+        progress_ledger_block = self._delivery_progress_ledger_block(state)
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -2214,8 +2215,82 @@ class RalphController:
             "Read it only when the build phase explicitly needs orchestration context.\n"
             "Do not search for state.json; use this exact state_file path.\n"
             "Do not write harness state directly; return state_updates in echelon_result.\n"
+            f"{progress_ledger_block}"
         )
         return f"{block}\n{prompt}"
+
+    def _delivery_progress_ledger_block(self, state: Dict[str, Any]) -> str:
+        """Render persisted delivery progress as read-only prompt context."""
+        build = state.get("build")
+        checkpoints = state.get("checkpoint_commits")
+        if not isinstance(build, dict) and not isinstance(checkpoints, list):
+            return ""
+
+        completed_ids: list[str] = []
+        total_tasks = None
+        completed_tasks = None
+        completed_pct = None
+        if isinstance(build, dict):
+            total_tasks = build.get("total_tasks")
+            completed_tasks = build.get("completed_tasks")
+            completed_pct = build.get("tasks_completed_pct")
+            task_results = build.get("task_results")
+            if isinstance(task_results, dict):
+                for task_id, result in task_results.items():
+                    if not isinstance(result, dict):
+                        continue
+                    status = str(result.get("status") or "").strip().upper()
+                    if status in {"DONE", "DONE_WITH_CONCERNS", "DEGRADED"}:
+                        completed_ids.append(str(task_id))
+
+        checkpoint_lines: list[str] = []
+        if isinstance(checkpoints, list):
+            for checkpoint in checkpoints:
+                if not isinstance(checkpoint, dict):
+                    continue
+                commit = str(checkpoint.get("commit") or "").strip()
+                short_commit = commit[:12] if commit else "(missing)"
+                outer = checkpoint.get("outer_iter", "?")
+                phase = str(checkpoint.get("phase") or "?").strip() or "?"
+                task_ids = checkpoint.get("task_ids")
+                if isinstance(task_ids, list) and task_ids:
+                    tasks = ",".join(str(task_id).strip() for task_id in task_ids)
+                else:
+                    tasks = "(none recorded)"
+                checkpoint_lines.append(
+                    f"- {short_commit} outer={outer} phase={phase} tasks={tasks}"
+                )
+
+        if not completed_ids and not checkpoint_lines and completed_tasks in (None, 0):
+            return ""
+
+        completed_ids = sorted(dict.fromkeys(completed_ids))
+        if total_tasks is not None and completed_tasks is not None:
+            pct = f" ({completed_pct}%)" if completed_pct is not None else ""
+            count_line = f"completed_tasks: {completed_tasks}/{total_tasks}{pct}"
+        elif completed_tasks is not None:
+            count_line = f"completed_tasks: {completed_tasks}"
+        else:
+            count_line = f"completed_tasks: {len(completed_ids)}"
+
+        lines = [
+            "\n## Delivery Progress Ledger",
+            "This ledger is Python-owned read-only context from harness state.",
+            count_line,
+            "completed_task_ids: "
+            + (", ".join(completed_ids) if completed_ids else "(none recorded)"),
+        ]
+        if checkpoint_lines:
+            lines.append("checkpoint_commits:")
+            lines.extend(checkpoint_lines)
+        lines.extend(
+            [
+                "Do not redo completed_task_ids; treat them as already implemented unless source/tests prove a regression.",
+                "Select only unchecked/open canonical tasks from tasks.md for the next build slice.",
+                "Stale or scoped fulfillment reports are Ralph-owned evidence refresh context; do not hand-edit or regenerate them in a build slice.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
 
     def _dirty_verify_artifacts(self, worktree_path: str) -> list[str]:
         try:

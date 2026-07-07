@@ -191,6 +191,7 @@ class TestCmdHarnessResume:
             _cmd_harness_resume(["001"])
 
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_blocker_escalation_resume_calls_run_without_redirecting_to_run(
         self,
@@ -213,6 +214,7 @@ class TestCmdHarnessResume:
             _cmd_harness_resume(["001", "mode=banzai"])
 
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         user_message = mock_run.call_args.args[0]
         assert "spec 001" in user_message
         assert "mode=banzai" in user_message
@@ -243,6 +245,7 @@ class TestCmdHarnessResume:
             _cmd_harness_resume(["001", "mode=banzai"])
 
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         err = capsys.readouterr().err
         assert "legacy branchless run detected; continuing for recovery only" in err
 
@@ -262,6 +265,7 @@ class TestCmdHarnessResume:
 
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_checkpoint_outer_cap_resumes_without_recovery(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
@@ -280,6 +284,7 @@ class TestCmdHarnessResume:
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
 
@@ -307,6 +312,7 @@ class TestCmdHarnessResume:
             _cmd_harness_resume(["001", "mode=banzai"])
 
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
         state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
@@ -368,6 +374,7 @@ class TestCmdHarnessResume:
 
         mock_recover.assert_not_called()
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_phase_a_build_incomplete_stays_blocked_when_preflight_fails(
         self,
@@ -428,6 +435,7 @@ class TestCmdHarnessResume:
 
         mock_recover.assert_called_once()
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_recoverable_resume_handles_docker_unavailable_gracefully(
         self,
@@ -534,6 +542,7 @@ class TestCmdHarnessResume:
 
         mock_recover.assert_called_once()
         mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_no_args_prints_help(self, tmp_path: Path, capsys) -> None:
         from echelon.cli import _cmd_harness_resume

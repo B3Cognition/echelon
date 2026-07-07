@@ -300,12 +300,17 @@ class StrategyCoordinator:
         try:
             existing = state_store.read()
             existing_status = existing.get("status")
-            should_resume = (
+            should_resume_running = (
                 not intent.reset
                 and existing_status in ("running", "interrupted")
             )
+            should_resume_blocked = (
+                not intent.reset
+                and intent.resume
+                and existing_status == "blocked"
+            )
 
-            if should_resume:
+            if should_resume_running:
                 logger.info(
                     "[%s/%s] Resuming from %s state (outer=%s)",
                     intent.spec_id, strategy_id,
@@ -313,6 +318,12 @@ class StrategyCoordinator:
                     existing.get("outer_iter", 0),
                 )
                 state_store.transition("running")
+            elif should_resume_blocked:
+                logger.info(
+                    "[%s/%s] Resuming from blocked state (outer=%s)",
+                    intent.spec_id, strategy_id,
+                    existing.get("outer_iter", 0),
+                )
             else:
                 state_store.initialize(
                     run_id=run_id,

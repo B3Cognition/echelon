@@ -1754,8 +1754,9 @@ def _cmd_harness_resume(args: list[str]) -> None:
     # for runs that pre-date build_id or were started without one.
     cwd = Path.cwd()
     marker = current_build_marker(cwd, spec_id)
+    build_id = marker.read_text().strip() if marker.exists() else ""
     if marker.exists():
-        state_dir = build_dir(cwd, marker.read_text().strip()) / "state"
+        state_dir = build_dir(cwd, build_id) / "state"
     else:
         state_dir = runs_dir(cwd) / "state"
     state_store = StateStore(state_dir, spec_id, strategy)
@@ -1851,7 +1852,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(user_message, provider, gitops)
+            run(
+                user_message,
+                provider,
+                gitops,
+                base_dir=str(cwd),
+                config=config,
+                resume_build_id=build_id or None,
+            )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -1911,7 +1919,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(user_message, provider, gitops)
+            run(
+                user_message,
+                provider,
+                gitops,
+                base_dir=str(cwd),
+                config=config,
+                resume_build_id=build_id or None,
+            )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -1940,7 +1955,6 @@ def _cmd_harness_resume(args: list[str]) -> None:
     if termination_reason in recoverable_reasons:
         from harness.recovery import HarnessRecoveryError, recover_blocked_run
 
-        build_id = marker.read_text().strip() if marker.exists() else ""
         try:
             recovered = recover_blocked_run(
                 project_dir=cwd,
@@ -1979,7 +1993,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
         try:
-            run(user_message, provider, gitops)
+            run(
+                user_message,
+                provider,
+                gitops,
+                base_dir=str(cwd),
+                config=config,
+                resume_build_id=build_id or None,
+            )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
@@ -2025,7 +2046,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
     )
     user_message = f"spec {spec_id} strategy={strategy} mode={mode} resume"
     try:
-        run(user_message, provider, gitops)
+        run(
+            user_message,
+            provider,
+            gitops,
+            base_dir=str(cwd),
+            config=config,
+            resume_build_id=build_id or None,
+        )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(

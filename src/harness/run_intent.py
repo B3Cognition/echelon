@@ -39,6 +39,7 @@ class RunIntent:
     strategies: List[str] = field(default_factory=lambda: ["default"])
     task_description: str = ""
     reset: bool = False
+    resume: bool = False
 
     def __post_init__(self) -> None:
         """Validate all fields after construction."""
@@ -138,6 +139,10 @@ _TASK_PATTERN = re.compile(
     r"task:\s*(.+)",
     re.IGNORECASE | re.DOTALL,
 )
+_RESUME_PATTERN = re.compile(
+    r"\bresume\b",
+    re.IGNORECASE,
+)
 
 
 def parse_intent(text: str) -> RunIntent:
@@ -215,6 +220,9 @@ def parse_intent(text: str) -> RunIntent:
     # Extract --reset flag
     reset = "--reset" in text
 
+    # Extract explicit continuation intent
+    resume = bool(_RESUME_PATTERN.search(text))
+
     return RunIntent(
         spec_id=spec_id,
         mode=mode,
@@ -226,4 +234,5 @@ def parse_intent(text: str) -> RunIntent:
         strategies=strategies,
         task_description=task_description,
         reset=reset,
+        resume=resume,
     )

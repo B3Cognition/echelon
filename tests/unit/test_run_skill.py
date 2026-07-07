@@ -158,6 +158,47 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
+    def test_resume_uses_existing_build_id(
+        self,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_config: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Resuming must continue the selected build directory instead of minting a new one."""
+        from harness.paths import current_build_marker
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import run
+
+        intent = RunIntent(spec_id="012", mode="semi", auto_merge=False)
+        mock_parse.return_value = intent
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_failed_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {},
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 0},
+        }
+        mock_coordinator_cls.return_value = coordinator_instance
+
+        gitops = MagicMock()
+        provider = MagicMock()
+
+        run(
+            "spec 012 resume",
+            provider=provider,
+            gitops=gitops,
+            base_dir=str(tmp_path),
+            resume_build_id="build-existing",
+        )
+
+        assert current_build_marker(tmp_path, "012").read_text(encoding="utf-8") == "build-existing"
+        assert mock_coordinator_cls.call_args.kwargs["build_id"] == "build-existing"
+
+    @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.load_config")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
     @patch("harness.land.land")
     def test_land_returns_false_logs_warning(
         self,

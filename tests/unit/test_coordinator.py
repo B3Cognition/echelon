@@ -667,14 +667,14 @@ class TestSmartResumeDetection:
         assert final_state["spec_file"] == str(spec_file)
         assert final_state["tasks_file"] == str(tasks_file)
 
-    def test_blocked_state_not_affected_by_resume_logic(self, tmp_path: Path) -> None:
-        """A blocked state with no escalation file is not resumed by the smart resume path;
-        it flows through to ralph (which handles blocked resume internally)."""
+    def test_blocked_state_preserved_for_explicit_resume(self, tmp_path: Path) -> None:
+        """Explicit resume leaves blocked state intact for Ralph's blocked-resume handler."""
         self._make_state_file(tmp_path, status="blocked", outer_iter=1)
 
         coord = _make_coordinator(tmp_path, should_pass=True)
         # No escalation_file in state, so the pre-flight guard passes
-        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False)
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=False, resume=True)
+        seen: dict[str, Any] = {}
 
         with patch("harness.coordinator.RalphController") as MockRalph:
             mock_controller = MagicMock()
@@ -683,11 +683,16 @@ class TestSmartResumeDetection:
                 outer_iterations=1, inner_iterations=1,
                 pr_url=None, tokens_used=0, final_verify=None,
             )
-            MockRalph.return_value = mock_controller
+
+            def _make_controller(**kwargs: Any) -> MagicMock:
+                seen["status_at_controller"] = kwargs["state_store"].read().get("status")
+                seen["outer_iter_at_controller"] = kwargs["state_store"].read().get("outer_iter")
+                return mock_controller
+
+            MockRalph.side_effect = _make_controller
 
             results = coord.start(intent)
 
-        # Should converge — blocked status falls through to fresh initialization;
-        # the sticky-escalation pre-flight guard (in start()) prevents this from
-        # wiping mid-run blocked state when an escalation_file is present.
         assert results[0].status == "converged"
+        assert seen["status_at_controller"] == "blocked"
+        assert seen["outer_iter_at_controller"] == 1

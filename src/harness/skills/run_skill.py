@@ -252,6 +252,7 @@ def run(
     gitops: Any,
     base_dir: str = ".",
     config: Any = None,
+    resume_build_id: str | None = None,
 ) -> None:
     """Execute /speckit-harness-run skill.
 
@@ -260,6 +261,7 @@ def run(
         provider: SandboxProvider instance.
         gitops: GitOpsManager instance.
         base_dir: Base directory for harness state.
+        resume_build_id: Existing build id to continue, when resuming.
     """
     # 1. Parse intent
     intent = parse_intent(user_message)
@@ -282,9 +284,9 @@ def run(
     except Exception as e:
         logger.warning("ensure_on_default_branch failed (continuing): %s", e)
 
-    # 4. Generate build ID and write .current-build marker
+    # 4. Generate or reuse build ID and write .current-build marker
     base_path = Path(base_dir).resolve()
-    build_id = make_build_id()
+    build_id = resume_build_id or make_build_id()
     rd = runs_dir(base_path)
     rd.mkdir(parents=True, exist_ok=True)
     current_build_marker(base_path, intent.spec_id).write_text(build_id)

@@ -508,6 +508,53 @@ class TestOuterLoopConvergence:
         assert f"source_root: {source}" in prompt
         assert "source_id: og-platform" in prompt
         assert "source_git_role: source" in prompt
+
+    def test_harness_context_includes_delivery_progress_ledger(
+        self, tmp_path: Path
+    ) -> None:
+        """Resumed build prompts must not force agents to rediscover completed work."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        state = state_store.read()
+        state["build"] = {
+            "total_tasks": 157,
+            "completed_tasks": 20,
+            "tasks_completed_pct": 13,
+            "task_results": {
+                "T-095": {"status": "DONE"},
+                "T-096": {"status": "DONE"},
+                "T-104": {"status": "DONE"},
+                "T-105": {"status": "DONE"},
+            },
+        }
+        state["checkpoint_commits"] = [
+            {
+                "commit": "7ba6d73cb75e22c93378fa56fc04c6bc241b6326",
+                "outer_iter": 0,
+                "phase": "build",
+                "task_ids": ["T-095", "T-096"],
+            },
+            {
+                "commit": "452ab3d5727b9eea9aa2080eaf65235e3229538e",
+                "outer_iter": 2,
+                "phase": "build",
+                "task_ids": ["T-104", "T-105"],
+            },
+        ]
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "## Delivery Progress Ledger" in prompt
+        assert "completed_tasks: 20/157 (13%)" in prompt
+        assert "completed_task_ids: T-095, T-096, T-104, T-105" in prompt
+        assert "checkpoint_commits:" in prompt
+        assert "- 7ba6d73cb75e outer=0 phase=build tasks=T-095,T-096" in prompt
+        assert "- 452ab3d5727b outer=2 phase=build tasks=T-104,T-105" in prompt
+        assert "Do not redo completed_task_ids" in prompt
+        assert "Select only unchecked/open canonical tasks" in prompt
+        assert "Stale or scoped fulfillment reports are Ralph-owned evidence refresh context" in prompt
         assert "Do not search for the application repo" in prompt
 
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:

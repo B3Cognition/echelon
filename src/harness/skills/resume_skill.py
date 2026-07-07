@@ -35,10 +35,6 @@ def resume(
         gitops: GitOpsManager instance.
         base_dir: Base directory for harness state.
     """
-    from harness.config import load_config
-    from harness.mode import ModeController
-    from harness.ralph import RalphController
-
     # 1. Parse spec_id and answer
     spec_id, strategy_id, answer = _parse_resume_input(user_message)
 
@@ -62,6 +58,7 @@ def resume(
         rd = runs_dir(base_path)
         builds = sorted(rd.glob("build-*/"), reverse=True) if rd.exists() else []
         _bdir = builds[0] if builds else _build_dir_fn(base_path, "")
+        _bid = _bdir.name if _bdir.name else ""
     state_dir = _bdir / "state"
     state_store = StateStore(state_dir, spec_id, strategy_id)
     state = state_store.read()
@@ -87,41 +84,24 @@ def resume(
     else:
         logger.info("No escalation file -- resuming from guided mode pause")
 
-    # 5. Acquire lock and re-launch
-    import uuid
-    run_id = state.get("run_id", str(uuid.uuid4()))
+    # 5. Re-enter the normal run/coordinator path so resume uses the same
+    # provider, LLM prompt, build id, and strategy wiring as delivery resume.
+    from harness.config import load_config
+    from harness.skills.run_skill import run
 
-    try:
-        state_store.acquire_lock(run_id)
-
-        config = load_config()
-        mode_controller = ModeController(state.get("mode", "semi"))
-
-        controller = RalphController(
-            provider=provider,
-            gitops=gitops,
-            state_store=state_store,
-            mode_controller=mode_controller,
-            escalation_handler=escalation_handler,
-            spec_id=spec_id,
-            strategy_id=strategy_id,
-            config=config,
-        )
-
-        result = controller.run_loop(
-            max_outer=state.get("max_outer", 5),
-            max_inner=state.get("max_inner", 3),
-            token_budget=state.get("token_budget"),
-            strategy_context=answer,
-        )
-
-        status_str = "CONVERGED" if result.status == "converged" else result.status.upper()
-        print(f"\nResume complete: {status_str}", file=sys.stderr)
-        if result.pr_url:
-            print(f"PR: {result.pr_url}", file=sys.stderr)
-
-    finally:
-        state_store.release_lock()
+    mode = state.get("mode", "semi")
+    run_message = (
+        f"spec {spec_id} strategy={strategy_id} mode={mode} resume\n\n"
+        f"task: {answer}"
+    )
+    run(
+        run_message,
+        provider=provider,
+        gitops=gitops,
+        base_dir=base_dir,
+        config=load_config(),
+        resume_build_id=_bid or None,
+    )
 
 
 def _parse_resume_input(text: str) -> tuple:

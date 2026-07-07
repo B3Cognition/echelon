@@ -26,6 +26,7 @@ class TestRunIntentConstruction:
         assert intent.auto_merge is True
         assert intent.kill_losers is False
         assert intent.strategies == ["default"]
+        assert intent.resume is False
 
     def test_all_fields(self) -> None:
         intent = RunIntent(
@@ -183,3 +184,8 @@ class TestParseIntent:
         """Absence of --reset flag leaves reset=False (default)."""
         intent = parse_intent("spec 001")
         assert intent.reset is False
+
+    def test_resume_flag_parsed_from_message(self) -> None:
+        """resume marks a run as an explicit continuation request."""
+        intent = parse_intent("spec 001 strategy=default mode=semi resume")
+        assert intent.resume is True
