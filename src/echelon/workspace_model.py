@@ -149,22 +149,32 @@ def count_source_files(path: Path) -> int:
 
 def _child_source_roots(root: Path) -> tuple[SourceRoot, ...]:
     sources: list[SourceRoot] = []
-    for child in sorted(root.iterdir(), key=lambda item: item.name):
-        if not child.is_dir() or child.name in IGNORED_SOURCE_DIRS:
-            continue
-        markers = project_markers(child)
-        git_present = has_git_marker(child)
-        if not markers and not git_present:
-            continue
-        sources.append(
-            SourceRoot(
-                id=child.name,
-                path=child.name,
-                git_present=git_present,
-                project_markers=markers,
-                source_file_count=count_source_files(child),
+    candidate_roots = [root]
+    sources_container = root / "sources"
+    if sources_container.is_dir():
+        candidate_roots.append(sources_container)
+
+    for candidate_root in candidate_roots:
+        for child in sorted(candidate_root.iterdir(), key=lambda item: item.name):
+            if not child.is_dir() or child.name in IGNORED_SOURCE_DIRS:
+                continue
+            markers = project_markers(child)
+            git_present = has_git_marker(child)
+            if not markers and not git_present:
+                continue
+            try:
+                rel_path = child.relative_to(root).as_posix()
+            except ValueError:
+                rel_path = child.name
+            sources.append(
+                SourceRoot(
+                    id=child.name,
+                    path=rel_path,
+                    git_present=git_present,
+                    project_markers=markers,
+                    source_file_count=count_source_files(child),
+                )
             )
-        )
     return tuple(sources)
 
 

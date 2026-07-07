@@ -106,8 +106,20 @@ for child in "$ROOT_DIR"/*/; do
     fi
 done
 
+if [[ -d "$ROOT_DIR/sources" ]]; then
+    for child in "$ROOT_DIR/sources"/*/; do
+        [[ -d "$child" ]] || continue
+        dir_name=$(basename "$child")
+        is_skipped "$dir_name" && continue
+        if check_markers "${child%/}"; then
+            CHILD_ENTRIES+=("$child")
+        fi
+    done
+fi
+
 # Scan entries: a wrapper with only .git at root and child project repos is a polyrepo.
 # A root with its own project markers remains single-repo unless explicitly analyzed as children.
+SCAN_ENTRIES=()
 if [[ "$ROOT_IS_REPO" == "true" && "$ROOT_HAS_NON_GIT_MARKER" == "true" ]]; then
     SCAN_ENTRIES=("$ROOT_DIR")
 elif [[ ${#CHILD_ENTRIES[@]} -gt 0 ]]; then

@@ -109,15 +109,20 @@ re:
 
 Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
 
-Read the workspace manifest first, falling back to the repos manifest, to determine if this is a polyrepo:
+Generate the manifests before mode detection when they are absent. Do not infer single-repo mode from missing manifests; missing manifests mean discovery has not run yet.
 
 ```bash
 RE_OUTPUT_DIR="${RE_OUTPUT_DIR:-runs/$(cat runs/.current 2>/dev/null)/re}"
 if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
   RE_OUTPUT_DIR=".specify/echelon/re"  # standalone fallback
 fi
+mkdir -p "$RE_OUTPUT_DIR"
 WORKSPACE_MANIFEST="$RE_OUTPUT_DIR/workspace-manifest.json"
 REPOS_MANIFEST="$RE_OUTPUT_DIR/repos-manifest.json"
+DISCOVER_REPOS="${EXTENSION_PATH:-.specify/extensions/echelon}/scripts/bash/re/discover-repos.sh"
+if [ ! -f "$WORKSPACE_MANIFEST" ] && [ ! -f "$REPOS_MANIFEST" ]; then
+    "$DISCOVER_REPOS" "$REPOS_MANIFEST"
+fi
 MANIFEST="$REPOS_MANIFEST"
 export MANIFEST
 if [ -f "$WORKSPACE_MANIFEST" ]; then
@@ -127,7 +132,8 @@ if [ -f "$WORKSPACE_MANIFEST" ]; then
 elif [ -f "$MANIFEST" ]; then
     MODE=$(jq -r '.mode // (if (.repo_count // 0) > 1 then "polyrepo" else "single" end)' "$MANIFEST")
 else
-    MODE="single"
+    echo "ERROR: no RE manifest available after discovery" >&2
+    exit 1
 fi
 echo "Detected mode: $MODE"
 ```

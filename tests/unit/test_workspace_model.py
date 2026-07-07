@@ -83,6 +83,26 @@ def test_polyrepo_workspace_uses_child_source_roots(tmp_path: Path) -> None:
     assert all(source.git_present for source in manifest.sources)
 
 
+def test_workspace_uses_sources_directory_children_as_source_roots(tmp_path: Path) -> None:
+    _git_dir(tmp_path)
+    (tmp_path / ".specify").mkdir()
+    (tmp_path / "specs").mkdir()
+    sources_dir = tmp_path / "sources"
+    for name, marker in [("spec-kit", "pyproject.toml"), ("ruler", "package.json")]:
+        repo = sources_dir / name
+        repo.mkdir(parents=True)
+        (repo / marker).write_text("{}\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert manifest.workspace.git_role == "orchestration"
+    assert [source.id for source in manifest.sources] == ["ruler", "spec-kit"]
+    assert [source.path for source in manifest.sources] == [
+        "sources/ruler",
+        "sources/spec-kit",
+    ]
+
+
 def test_configured_sources_override_auto_discovery(tmp_path: Path) -> None:
     _git_dir(tmp_path)
     (tmp_path / ".echelon").mkdir()

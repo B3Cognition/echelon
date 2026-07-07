@@ -116,6 +116,36 @@ assert_eq "workspace manifest has 3 sources" "3" "$WORKSPACE_SOURCES_LEN"
 WORKSPACE_SOURCE_PATHS=$(jq -r '.sources[].path' "$WORKSPACE_MANIFEST1" | sort | tr '\n' ',' | sed 's/,$//')
 assert_eq "workspace source paths" "repo-a,repo-b,repo-c" "$WORKSPACE_SOURCE_PATHS"
 
+# ---------- Test 1b: canonical sources/ landing zone ----------
+
+echo ""
+echo "=== Test 1b: sources/ landing zone detection ==="
+
+TMP_SOURCES_ROOT=$(mktemp -d)
+mkdir -p "$TMP_SOURCES_ROOT/.specify" "$TMP_SOURCES_ROOT/specs"
+mkdir -p "$TMP_SOURCES_ROOT/sources/spec-kit" "$TMP_SOURCES_ROOT/sources/ruler" "$TMP_SOURCES_ROOT/sources/agent-registry-starter"
+printf '[project]\nname = "spec-kit"\n' > "$TMP_SOURCES_ROOT/sources/spec-kit/pyproject.toml"
+printf '{"name":"ruler"}\n' > "$TMP_SOURCES_ROOT/sources/ruler/package.json"
+printf '{"name":"agent-registry-starter"}\n' > "$TMP_SOURCES_ROOT/sources/agent-registry-starter/package.json"
+TMPOUT1B_DIR=$(mktemp -d)
+TMPOUT1B="$TMPOUT1B_DIR/repos-manifest.json"
+trap 'rm -rf "$TMPOUT1_DIR" "$TMP_SOURCES_ROOT" "$TMPOUT1B_DIR"' EXIT
+
+(cd "$TMP_SOURCES_ROOT" && "$DISCOVER_SCRIPT" "$TMPOUT1B")
+
+MODE_1B=$(jq -r '.mode' "$TMPOUT1B")
+assert_eq "sources/ workspace mode is polyrepo" "polyrepo" "$MODE_1B"
+
+REPO_COUNT_1B=$(jq '.repo_count' "$TMPOUT1B")
+assert_eq "sources/ workspace repo_count is 3" "3" "$REPO_COUNT_1B"
+
+REPO_PATHS_1B=$(jq -r '.repos[].path' "$TMPOUT1B" | sed "s#^$TMP_SOURCES_ROOT/##" | sort | tr '\n' ',' | sed 's/,$//')
+assert_eq "sources/ workspace repo paths" "sources/agent-registry-starter,sources/ruler,sources/spec-kit" "$REPO_PATHS_1B"
+
+WORKSPACE_MANIFEST1B="$TMPOUT1B_DIR/workspace-manifest.json"
+WORKSPACE_SOURCE_PATHS_1B=$(jq -r '.sources[].path' "$WORKSPACE_MANIFEST1B" | sort | tr '\n' ',' | sed 's/,$//')
+assert_eq "sources/ workspace manifest source paths" "sources/agent-registry-starter,sources/ruler,sources/spec-kit" "$WORKSPACE_SOURCE_PATHS_1B"
+
 # Should NOT include .specify or not-a-repo
 NAMES_RAW=$(jq -r '.repos[].name' "$TMPOUT1")
 if echo "$NAMES_RAW" | grep -qF ".specify"; then
