@@ -85,7 +85,28 @@ def test_delivery_resume_canonical_flags_route_to_harness_resume(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr("echelon.cli._cmd_harness_resume", lambda args: calls.append(args))
 
-    run(["delivery", "resume", "001", "--mode", "banzai", "--strategy", "codegen"])
+    run([
+        "delivery",
+        "resume",
+        "001",
+        "Use the direct mapping",
+        "--mode",
+        "banzai",
+        "--strategy",
+        "codegen",
+    ])
+
+    assert calls == [["001", "Use the direct mapping", "mode=banzai", "strategy=codegen"]]
+
+
+@pytest.mark.unit
+def test_delivery_continue_canonical_flags_route_to_harness_continue(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_harness_continue", lambda args: calls.append(args))
+
+    run(["delivery", "continue", "001", "--mode", "banzai", "--strategy", "codegen"])
 
     assert calls == [["001", "mode=banzai", "strategy=codegen"]]
 

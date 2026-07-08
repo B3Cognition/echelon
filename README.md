@@ -314,7 +314,8 @@ podman machine start
 podman info
 ```
 
-Future `echelon delivery run` and `echelon delivery resume` commands read the
+Future `echelon delivery run`, `echelon delivery continue`, and
+`echelon delivery resume` commands read the
 persisted `harness.container_cli` value. If no value is configured, Echelon uses
 Docker.
 
@@ -638,7 +639,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon delivery init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
 | `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
 | `echelon delivery run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| `echelon delivery resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked loop after answering/fixing its blocker, including escalation, missing `verify_command`, checkpoint recovery, or repaired harness errors; prints `HARNESS HISTORY` |
+| `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
+| `echelon delivery resume <id> "<answer>"` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
 
 Legacy aliases may still exist for older scripts, but current docs and operator

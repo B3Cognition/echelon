@@ -270,6 +270,18 @@ def test_delivery_resume_routes_to_harness_resume(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.unit
+def test_delivery_continue_routes_to_harness_continue(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "continue", "001"])
+
+    with patch("echelon.cli._cmd_harness_continue") as mock_continue:
+        main()
+
+    mock_continue.assert_called_once_with(["001"])
+
+
+@pytest.mark.unit
 def test_delivery_land_routes_to_land(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
 

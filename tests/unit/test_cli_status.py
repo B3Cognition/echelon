@@ -85,7 +85,7 @@ def test_next_steps_report_latest_blocked_harness_build_before_phase_a_blockers(
     captured = capsys.readouterr()
     assert "HARNESS BUILD CHECKPOINTED" in captured.out
     assert "build_incomplete" in captured.out
-    assert "echelon delivery resume 001-demo" in captured.out
+    assert "echelon delivery continue 001-demo" in captured.out
     assert "constitution.md absent" not in captured.out
 
 
@@ -123,7 +123,7 @@ def test_next_steps_warn_when_dirty_checkout_blocks_harness_recovery(
 
     captured = capsys.readouterr()
     assert "tracked checkout changes block harness recovery" in captured.out
-    assert "commit or stash tracked changes, then echelon delivery resume 001-demo" in captured.out
+    assert "commit or stash tracked changes, then echelon delivery continue 001-demo" in captured.out
 
 
 def test_next_steps_report_salvage_commit_for_blocked_harness_build(
@@ -185,7 +185,7 @@ def test_next_steps_report_provider_session_limit_as_first_class_block(
     assert "abcdef123456" in captured.out
     assert "harness/001-demo/default/iter-0" in captured.out
     assert "not_run" in captured.out
-    assert "wait for provider reset, then echelon delivery resume 001-demo" in captured.out
+    assert "wait for provider reset, then echelon delivery continue 001-demo" in captured.out
 
 
 def test_next_steps_labels_running_harness_build_as_in_progress(

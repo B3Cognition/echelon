@@ -354,7 +354,7 @@ class TestRunSkillAutoLand:
         captured = capsys.readouterr()
         assert "◐ CHECKPOINTED" in captured.err
         assert "stopped: checkpoint recovery needed" in captured.err
-        assert "resume: echelon delivery resume 001-demo" in captured.err
+        assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 checkpointed" in captured.err
 
     def test_delivery_summary_renders_provider_session_limit_as_block(
@@ -403,7 +403,7 @@ class TestRunSkillAutoLand:
         assert "salvage commit: abcdef123456" in captured.err
         assert "salvage branch: harness/001-demo/default/iter-0" in captured.err
         assert "salvage verified: not_run" in captured.err
-        assert "resume: echelon delivery resume 001-demo" in captured.err
+        assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 provider-limited" in captured.err
         assert "CHECKPOINTED" not in captured.err
 
@@ -443,7 +443,7 @@ class TestRunSkillAutoLand:
         captured = capsys.readouterr()
         assert "◐ CHECKPOINTED" in captured.err
         assert "stopped: checkpoint continuation needed" in captured.err
-        assert "resume: echelon delivery resume 001-demo" in captured.err
+        assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "verify: deferred" in captured.err
         assert "verify: ✗ FAILED" not in captured.err
         assert "deferred [other] full verify-spec refresh deferred" in captured.err

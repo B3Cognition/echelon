@@ -294,10 +294,33 @@ def delivery_resume(
     mode: Optional[str] = typer.Option(None, "--mode"),
     strategy: Optional[str] = typer.Option(None, "--strategy"),
 ) -> None:
-    """Resume a blocked delivery run."""
+    """Resume a blocked delivery run with a human answer."""
     from echelon import cli as legacy_cli
 
     legacy_cli._cmd_harness_resume(
+        _merge_resume_args(
+            spec_id,
+            list(ctx.args),
+            mode=mode,
+            strategy=strategy,
+        )
+    )
+
+
+@delivery_app.command(
+    "continue",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def delivery_continue(
+    ctx: typer.Context,
+    spec_id: str,
+    mode: Optional[str] = typer.Option(None, "--mode"),
+    strategy: Optional[str] = typer.Option(None, "--strategy"),
+) -> None:
+    """Continue a blocked delivery run when no answer is needed."""
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_harness_continue(
         _merge_resume_args(
             spec_id,
             list(ctx.args),
@@ -319,6 +342,20 @@ def harness_resume(
 ) -> None:
     """Compatibility alias for delivery resume."""
     delivery_resume(ctx, spec_id, mode=mode, strategy=strategy)
+
+
+@harness_app.command(
+    "continue",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def harness_continue(
+    ctx: typer.Context,
+    spec_id: str,
+    mode: Optional[str] = typer.Option(None, "--mode"),
+    strategy: Optional[str] = typer.Option(None, "--strategy"),
+) -> None:
+    """Compatibility alias for delivery continue."""
+    delivery_continue(ctx, spec_id, mode=mode, strategy=strategy)
 
 
 @delivery_app.command(

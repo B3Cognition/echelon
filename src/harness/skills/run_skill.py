@@ -101,13 +101,13 @@ def _print_delivery_summary(
                         lines.append(f"salvage branch: {salvage_branch}")
                     if salvage_verified:
                         lines.append(f"salvage verified: {salvage_verified}")
-                    lines.append(f"resume: echelon delivery resume {intent.spec_id}")
+                    lines.append(f"continue: echelon delivery continue {intent.spec_id}")
                 elif checkpointed:
                     if reason == "checkpoint_outer_cap":
                         lines.append("stopped: checkpoint continuation needed")
                     else:
                         lines.append("stopped: checkpoint recovery needed")
-                    lines.append(f"resume: echelon delivery resume {intent.spec_id}")
+                    lines.append(f"continue: echelon delivery continue {intent.spec_id}")
                 else:
                     lines.append(f"stopped: {reason}")
                     if reason == "outer_cap":

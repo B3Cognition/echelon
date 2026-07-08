@@ -207,10 +207,13 @@ class TestCmdHarnessResume:
     ) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
         sd = _setup_build(tmp_path, "001")
+        escalation_file = tmp_path / "runs" / "build-test" / "escalation-default.md"
+        escalation_file.parent.mkdir(parents=True, exist_ok=True)
+        escalation_file.write_text("# Escalation\n\n## Question\n\nClarify?\n", encoding="utf-8")
         _write_state(sd, "001", "default", {
             "status": "blocked",
             "termination_reason": "blocker_escalation",
-            "escalation_file": str(tmp_path / "runs" / "build-test" / "escalation-default.md"),
+            "escalation_file": str(escalation_file),
         })
 
         with patch("pathlib.Path.cwd", return_value=tmp_path), \
@@ -218,7 +221,7 @@ class TestCmdHarnessResume:
              patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
              patch("harness.gitops.GitOpsManager.__init__", return_value=None):
             from echelon.cli import _cmd_harness_resume
-            _cmd_harness_resume(["001", "mode=banzai"])
+            _cmd_harness_resume(["001", "Use the recommended option", "mode=banzai"])
 
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
@@ -228,6 +231,7 @@ class TestCmdHarnessResume:
         err = capsys.readouterr().err
         assert "blocked for a different reason" not in err
         assert "Use 'echelon delivery run <spec_id>' to resume" not in err
+        assert "Use the recommended option" in escalation_file.read_text(encoding="utf-8")
 
     def test_branchless_legacy_resume_warns_and_continues(
         self,
@@ -317,6 +321,49 @@ class TestCmdHarnessResume:
         user_message = mock_run.call_args.args[0]
         assert "mode=banzai" in user_message
 
+    def test_delivery_continue_resumes_no_progress_without_answer(self, tmp_path: Path) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "no_progress",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001", "mode=banzai"])
+
+        mock_run.assert_called_once()
+        user_message = mock_run.call_args.args[0]
+        assert "mode=banzai" in user_message
+
+    def test_resume_without_answer_warns_to_use_continue_when_no_escalation(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "no_progress",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001"])
+
+        mock_run.assert_called_once()
+        err = capsys.readouterr().err
+        assert "delivery resume without an answer is deprecated" in err
+        assert "echelon delivery continue 001" in err
+
     def test_resume_records_positional_answer_for_escalation_file(
         self,
         tmp_path: Path,
@@ -343,6 +390,36 @@ class TestCmdHarnessResume:
         content = escalation_file.read_text(encoding="utf-8")
         assert "## Answer" in content
         assert "Use the current implementation and continue" in content
+
+    def test_resume_without_answer_stays_blocked_when_escalation_needs_answer(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        escalation_file = tmp_path / "runs" / _TEST_BUILD_ID / "escalations" / "001-default.md"
+        escalation_file.parent.mkdir(parents=True)
+        escalation_file.write_text("# Escalation\n\n## Question\n\nClarify?\n", encoding="utf-8")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "no_progress",
+            "escalation_file": str(escalation_file),
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_resume
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_resume(["001"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert 'echelon delivery resume 001 "<answer>"' in err
+        assert "echelon delivery continue 001" in err
 
     def test_harness_error_retries_after_phase_a_repair_and_refreshes_spec_paths(
         self,

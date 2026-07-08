@@ -114,8 +114,10 @@ Commands:
                     [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
                     Legacy key=value options remain accepted for compatibility.
-  delivery resume <spec_id> [--strategy <s>] [--mode <guided|semi|banzai>]
-                                            Resume a blocked delivery run.
+  delivery continue <spec_id> [--strategy <s>] [--mode <guided|semi|banzai>]
+                                            Continue a blocked delivery run without a new answer.
+  delivery resume <spec_id> "<answer>" [--strategy <s>] [--mode <guided|semi|banzai>]
+                                            Resume a blocked delivery run with a human answer.
   delivery checkpoint list <spec_id> [--strategy <s>]
                                             List delivery checkpoint/recovery commits.
   delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
@@ -806,14 +808,17 @@ def _cmd_harness(args: list[str]) -> None:
             "                                     mode: semi (default) | banzai | guided\n"
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
             "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Resume a blocked run after answering/fixing its blocker\n\n"
+            "                                     Resume a blocked run with a human answer\n"
+            "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
+            "                                     Continue a blocked/checkpointed run without a new answer\n\n"
             "Examples:\n"
             "  echelon delivery init\n"
             "  echelon delivery init https://github.com/org/repo\n"
             "  echelon delivery run 001\n"
             "  echelon delivery run 001 strategy=codegen\n"
             "  echelon delivery run 001 strategy=default mode=banzai max_outer=3\n"
-            "  echelon delivery resume 001\n"
+            "  echelon delivery continue 001\n"
+            "  echelon delivery resume 001 \"Use the simpler option\"\n"
         )
         return
 
@@ -824,6 +829,8 @@ def _cmd_harness(args: list[str]) -> None:
         _cmd_harness_run(args[1:])
     elif subcmd == "resume":
         _cmd_harness_resume(args[1:])
+    elif subcmd == "continue":
+        _cmd_harness_continue(args[1:])
     else:
         print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
         sys.exit(1)
@@ -842,7 +849,9 @@ def _cmd_delivery(args: list[str]) -> None:
             "                                     mode: semi (default) | banzai | guided\n"
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
             "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Resume a blocked delivery run\n"
+            "                                     Resume a blocked delivery run with a human answer\n"
+            "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
+            "                                     Continue a blocked/checkpointed delivery run without a new answer\n"
             "  checkpoint list <spec_id> [strategy=<s>]\n"
             "                                     List delivery checkpoint/recovery commits\n"
             "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
@@ -851,7 +860,8 @@ def _cmd_delivery(args: list[str]) -> None:
             "  echelon delivery run 001\n"
             "  echelon delivery run 001 strategy=codegen\n"
             "  echelon delivery run 001 mode=banzai max_outer=3\n"
-            "  echelon delivery resume 001\n"
+            "  echelon delivery continue 001\n"
+            "  echelon delivery resume 001 \"Use the simpler option\"\n"
             "  echelon delivery land 001\n"
         )
         return
@@ -863,6 +873,8 @@ def _cmd_delivery(args: list[str]) -> None:
         _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
     elif subcmd == "resume":
         _cmd_harness_resume(args[1:])
+    elif subcmd == "continue":
+        _cmd_harness_continue(args[1:])
     elif subcmd == "checkpoint":
         _cmd_delivery_checkpoint(args[1:])
     elif subcmd == "land":
@@ -1005,7 +1017,7 @@ def _harness_init_next_step(config_file: Path) -> str:
             "    verify_command: pytest\n"
             "    verify_command: npm test\n"
             "    verify_command: go test ./...\n"
-            "  then: echelon delivery resume <spec_id>  # if recovering a blocked run\n"
+            "  then: echelon delivery continue <spec_id>  # if recovering a blocked run\n"
             "        echelon delivery run <spec_id>     # for a new build"
         )
 
@@ -1855,23 +1867,24 @@ def _cmd_harness_resume(
     *,
     command_prefix: str = "echelon delivery resume",
     display_args: list[str] | None = None,
+    require_answer: bool = True,
 ) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if not args or args[0] in ("-h", "--help"):
         print(
-            "Usage: echelon delivery resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n\n"
-            "Resume a blocked delivery run after answering/fixing its blocker.\n"
+            f"Usage: {command_prefix} <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>] [answer]\n\n"
+            "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
             "checkpoint continuation, repaired harness_error, and recovery from\n"
             "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
             "  1. Fix the blocker shown by the previous delivery output.\n"
-            "     For blocker_escalation: append ## Answer to the escalation file.\n"
+            "     For blocker_escalation: pass the answer to 'echelon delivery resume'.\n"
             "     For verify_command_needed: add verify_command to echelon-config.yml\n"
             "     (or re-run 'echelon delivery init' to auto-detect high-confidence commands).\n"
-            "  2. Run: echelon delivery resume <spec_id>\n",
+            "  2. Run: echelon delivery continue <spec_id> when no answer is needed.\n",
         )
         return
 
@@ -2076,12 +2089,28 @@ def _cmd_harness_resume(
         sys.exit(1)
 
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
-    if resume_answer and state.get("escalation_file"):
+    escalation_file = state.get("escalation_file")
+    if resume_answer and escalation_file:
         from harness.escalation import EscalationHandler
 
         EscalationHandler(str(build_dir(harness_base_dir, build_id))).resume(
-            str(state["escalation_file"]),
+            str(escalation_file),
             resume_answer,
+        )
+    elif require_answer and escalation_file:
+        print(
+            f"✗ Spec {spec_id!r} is waiting for a delivery answer.\n"
+            f"  Escalation file: {escalation_file}\n"
+            f"  Answer with: echelon delivery resume {spec_id} \"<answer>\"\n"
+            f"  If no answer is needed, continue with: echelon delivery continue {spec_id}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    elif require_answer and not resume_answer:
+        print(
+            "delivery resume without an answer is deprecated; "
+            f"use echelon delivery continue {spec_id} when no answer is needed.",
+            file=sys.stderr,
         )
 
     if _is_phase_a_build_incomplete_retry(state):
@@ -2355,6 +2384,20 @@ def _cmd_harness_resume(
             command=rerun_command,
             exc=exc,
         )
+
+
+def _cmd_harness_continue(
+    args: list[str],
+    *,
+    command_prefix: str = "echelon delivery continue",
+    display_args: list[str] | None = None,
+) -> None:
+    _cmd_harness_resume(
+        args,
+        command_prefix=command_prefix,
+        display_args=display_args,
+        require_answer=False,
+    )
 
 
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
@@ -2954,7 +2997,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
         if build_status == "provider_session_limit":
-            fields.append(("next", f"wait for provider reset, then echelon delivery resume {spec_id}"))
+            fields.append(("next", f"wait for provider reset, then echelon delivery continue {spec_id}"))
             subtitle = "HARNESS PROVIDER SESSION LIMIT"
         elif is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
@@ -2967,11 +3010,11 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 fields.append(
                     (
                         "next",
-                        f"commit or stash tracked changes, then echelon delivery resume {spec_id}",
+                        f"commit or stash tracked changes, then echelon delivery continue {spec_id}",
                     )
                 )
             else:
-                fields.append(("next", f"echelon delivery resume {spec_id}"))
+                fields.append(("next", f"echelon delivery continue {spec_id}"))
         elif termination_reason == "docker_unavailable":
             fields.append(("fix", "start the configured container runtime and wait until it reports running"))
             fields.append(("next", f"echelon delivery run {spec_id}"))

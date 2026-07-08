@@ -587,7 +587,7 @@ class RalphController:
                                     ("meaning", meaning),
                                     (
                                         "next",
-                                        f"echelon delivery resume {self._spec_id}  (recover and finalize this build)",
+                                        f"echelon delivery continue {self._spec_id}  (recover and finalize this build)",
                                     ),
                                 ]
                             )
@@ -3412,7 +3412,7 @@ def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
              "  verify_command: swift test --package-path Packages/MyLib\n"
              "  verify_command: pytest\n"
              "  verify_command: go test ./..."),
-            ("resume with", f"echelon delivery resume {spec_id}"),
+            ("continue with", f"echelon delivery continue {spec_id}"),
             ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
@@ -3429,7 +3429,7 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
             ("strategy", strategy_id),
             ("file", escalation_file),
             ("answer with", f'echelon delivery resume {spec_id} "<answer>"'),
-            ("resume without answer", f"echelon delivery resume {spec_id}"),
+            ("continue without answer", f"echelon delivery continue {spec_id}"),
             ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
@@ -3584,7 +3584,7 @@ def _print_verify_spec_provider_session_limit_banner(
                 "meaning",
                 "Implementation progress was checkpointed, but full fulfillment evidence could not be refreshed.",
             ),
-            ("next", f"echelon delivery resume {spec_id}  (retry verification after provider reset)"),
+            ("next", f"echelon delivery continue {spec_id}  (retry verification after provider reset)"),
         ],
         file=sys.stderr,
     )

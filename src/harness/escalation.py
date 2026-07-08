@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
-def _resume_command(spec_id: str) -> str:
-    return f"echelon delivery resume {spec_id}"
+def _continue_command(spec_id: str) -> str:
+    return f"echelon delivery continue {spec_id}"
 
 
 def _resume_answer_command(spec_id: str) -> str:
@@ -38,7 +38,7 @@ def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str
             ("strategy", strategy_id),
             ("escalation", esc_file),
             ("answer with", _resume_answer_command(spec_id)),
-            ("resume without answer", _resume_command(spec_id)),
+            ("continue without answer", _continue_command(spec_id)),
             ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
@@ -360,7 +360,7 @@ def _print_banner(
             ("question", question),
             ("context", "see escalation file for full context"),
             ("answer with", _resume_answer_command(spec_id)),
-            ("resume without answer", _resume_command(spec_id)),
+            ("continue without answer", _continue_command(spec_id)),
         ],
         file=file,
     )

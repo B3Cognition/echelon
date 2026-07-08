@@ -95,8 +95,8 @@ def print_escalation_banner(
         header=f"BLOCKED -- {category}",
         body=body,
         footer=(
-            "Next step: append ## Answer to the escalation file, then run "
-            f"echelon delivery resume {spec_id}"
+            "Next step: answer with "
+            f"echelon delivery resume {spec_id} \"<answer>\""
         ),
         file=file,
     )
