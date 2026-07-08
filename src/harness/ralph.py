@@ -441,6 +441,7 @@ class RalphController:
                         ):
                             self._record_missing_marker_recovery(
                                 build_result,
+                                worktree_path=worktree_path,
                                 checkpoint=build_checkpoint,
                                 head_advanced=self._head_advanced(
                                     before_build_head,
@@ -2725,15 +2726,35 @@ class RalphController:
             return True
         if head_advanced:
             return True
+        if self._all_canonical_tasks_complete(worktree_path):
+            return True
         return self._has_confirmed_file_changes(worktree_path)
+
+    def _all_canonical_tasks_complete(self, worktree_path: str) -> bool:
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return False
+        tasks_path = spec_dir / "tasks.md"
+        if not tasks_path.exists():
+            return False
+        summary = summarize_task_progress(
+            tasks_path.read_text(encoding="utf-8", errors="replace")
+        )
+        return (
+            summary.valid
+            and summary.total_tasks > 0
+            and summary.completed_tasks >= summary.total_tasks
+        )
 
     def _record_missing_marker_recovery(
         self,
         build_result: Dict[str, Any],
         *,
+        worktree_path: str,
         checkpoint: Optional[Dict[str, Any]],
         head_advanced: bool = False,
     ) -> None:
+        all_tasks_complete = self._all_canonical_tasks_complete(worktree_path)
         state = self._state_store.read()
         recoveries = state.get("missing_marker_recoveries")
         if not isinstance(recoveries, list):
@@ -2744,14 +2765,21 @@ class RalphController:
                 "exit_code": build_result.get("exit_code"),
                 "checkpoint_commit": checkpoint.get("commit") if checkpoint else None,
                 "head_advanced": head_advanced,
+                "all_tasks_complete": all_tasks_complete,
                 "created_at": datetime.now(timezone.utc).isoformat(),
             }
         )
         state["missing_marker_recoveries"] = recoveries
         self._state_store.write(state)
+        reason = (
+            "all canonical tasks are already complete"
+            if all_tasks_complete
+            else "harness worktree progress was detected"
+        )
         logger.warning(
             "Build status marker missing after clean exit; continuing to verify "
-            "because harness worktree progress was detected"
+            "because %s",
+            reason,
         )
 
     def _record_cleanup_warning(self, operation: str, exc: Exception) -> None:

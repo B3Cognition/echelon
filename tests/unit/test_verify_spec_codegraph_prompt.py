@@ -110,6 +110,15 @@ def test_verify_spec_stage5_references_judgment_prepass() -> None:
     assert "fallback_ids" in text
 
 
+def test_verify_spec_stage5_forbids_llm_provenance_discovery() -> None:
+    text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+
+    assert "Ralph stamps `verified_commit` and `verified_at`" in text
+    assert "Do not inspect Echelon or harness source code" in text
+    assert "Do not search sibling repos under `sources/`" in text
+    assert "Do not add or repair provenance frontmatter by hand" in text
+
+
 def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:
     agent_dir = ROOT / "extension" / "agents" / "build"
     text = (agent_dir / "spec-guard.md").read_text(encoding="utf-8")

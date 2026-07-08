@@ -1742,6 +1742,68 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_missing_marker_continues_when_all_tasks_already_done(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A complete task ledger does not need a second LLM run to write marker."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        _write_no_impact_documentation_report(spec_dir)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="unknown",
+            impasse_file=None,
+            stdout="all tasks already complete; no changes",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="continue",
+        )
+
+        assert result.status == "converged"
+        captured = capsys.readouterr()
+        assert "missing build status marker" not in captured.err
+        recoveries = state_store.read()["missing_marker_recoveries"]
+        assert recoveries[-1]["all_tasks_complete"] is True
+        llm_build_runner.exec_build.assert_called_once()
+        gitops.commit.assert_called()
+
     def test_llm_build_recovers_completed_task_ids_from_final_output(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

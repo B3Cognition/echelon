@@ -93,6 +93,13 @@ Write:
 - `{spec_dir}/fulfillment-report.md`
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
 
+Ralph stamps `verified_commit` and `verified_at` after a successful
+verify-spec fulfillment refresh. Do not inspect Echelon or harness source code
+to discover fulfillment-report provenance format. Do not add or repair provenance frontmatter by hand. Do not search sibling repos under `sources/`
+for harness, fulfillment, or verify-spec implementation details; those repos
+are not part of the targeted implementation evidence unless they are the
+explicit delivery target.
+
 After SPEC-GUARD writes fallback-only fulfillment rows, assemble the final
 report with:
 
