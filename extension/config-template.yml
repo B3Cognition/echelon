@@ -1091,13 +1091,13 @@ endocrine:
 
 # =============================================================================
 # MEMPALACE — Per-project memory identity
-# Set by 'echelon init'. Never change once set for a given repo.
+# Set by 'echelon workspace init'. Never change once set for a given repo.
 # Two clones of the same repo should share the same wing name so they share
 # memory across test environments.
 # =============================================================================
 
 mempalace:
-  wing: ""   # Set by 'echelon init' — do not edit manually
+  wing: ""   # Set by 'echelon workspace init' — do not edit manually
 
 # =============================================================================
 # =============================================================================
@@ -1193,7 +1193,7 @@ harness:
   provider: "docker"
 
   # Docker-compatible CLI used by the docker provider: "docker" or "podman".
-  # Set by `ECHELON_CONTAINER_CLI=podman echelon harness init` when using Podman.
+  # Set by `ECHELON_CONTAINER_CLI=podman echelon delivery init` when using Podman.
   container_cli: "docker"
 
   # --- Docker Image ---
@@ -1207,7 +1207,7 @@ harness:
 
   # --- LLM Provider ---
 
-  # LLM CLI used by `echelon harness run` for build and review steps.
+  # LLM CLI used by `echelon delivery run` for build and review steps.
   # Overrides ECHELON_LLM env var when set.
   # Options: claude (default) | copilot | opencode | codex
   # llm:
@@ -1289,7 +1289,7 @@ harness:
 
   # --- App Runtime (brownfield browser/screenshot checks) ---
   #
-  # Written by `echelon harness init` only when Docker-backed startup is
+  # Written by `echelon delivery init` only when Docker-backed startup is
   # high-confidence. Leave disabled/absent for non-browser or unclear projects.
   #
   # Docker Compose example:

@@ -1,4 +1,4 @@
-"""Tests for echelon status next-step selection."""
+"""Tests for echelon spec status next-step selection."""
 
 from __future__ import annotations
 
@@ -85,7 +85,7 @@ def test_next_steps_report_latest_blocked_harness_build_before_phase_a_blockers(
     captured = capsys.readouterr()
     assert "HARNESS BUILD CHECKPOINTED" in captured.out
     assert "build_incomplete" in captured.out
-    assert "echelon harness resume 001-demo" in captured.out
+    assert "echelon delivery resume 001-demo" in captured.out
     assert "constitution.md absent" not in captured.out
 
 
@@ -123,7 +123,7 @@ def test_next_steps_warn_when_dirty_checkout_blocks_harness_recovery(
 
     captured = capsys.readouterr()
     assert "tracked checkout changes block harness recovery" in captured.out
-    assert "commit or stash tracked changes, then echelon harness resume 001-demo" in captured.out
+    assert "commit or stash tracked changes, then echelon delivery resume 001-demo" in captured.out
 
 
 def test_next_steps_report_salvage_commit_for_blocked_harness_build(
@@ -185,7 +185,7 @@ def test_next_steps_report_provider_session_limit_as_first_class_block(
     assert "abcdef123456" in captured.out
     assert "harness/001-demo/default/iter-0" in captured.out
     assert "not_run" in captured.out
-    assert "wait for provider reset, then echelon harness resume 001-demo" in captured.out
+    assert "wait for provider reset, then echelon delivery resume 001-demo" in captured.out
 
 
 def test_next_steps_labels_running_harness_build_as_in_progress(
@@ -204,7 +204,7 @@ def test_next_steps_labels_running_harness_build_as_in_progress(
     captured = capsys.readouterr()
     assert "HARNESS BUILD IN PROGRESS" in captured.out
     assert "HARNESS BUILD BLOCKED" not in captured.out
-    assert "echelon status" in captured.out
+    assert "echelon spec status" in captured.out
 
 
 def test_next_steps_for_docker_unavailable_tells_user_to_start_container_runtime(
@@ -224,7 +224,7 @@ def test_next_steps_for_docker_unavailable_tells_user_to_start_container_runtime
     captured = capsys.readouterr()
     assert "docker_unavailable" in captured.out
     assert "start the configured container runtime" in captured.out
-    assert "echelon harness run 001-demo" in captured.out
+    assert "echelon delivery run 001-demo" in captured.out
     assert "--reset" not in captured.out
 
 

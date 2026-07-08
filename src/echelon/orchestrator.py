@@ -1,4 +1,4 @@
-"""Multi-target orchestrator: run 'echelon harness run' in parallel across sub-repos."""
+"""Multi-target orchestrator: run 'echelon delivery run' in parallel across sub-repos."""
 from __future__ import annotations
 
 import os
@@ -79,7 +79,7 @@ def run_multi_target(
     source_git_roles: Optional[Mapping[str, str]] = None,
     command: str = "run",
 ) -> int:
-    """Run 'echelon harness <command> <spec_id> [extra_args]' per target.
+    """Run 'echelon delivery <command> <spec_id> [extra_args]' per target.
 
     Streams each target's stdout/stderr prefixed with [target-name].
     Returns 0 if all targets succeed, 1 if any fail.

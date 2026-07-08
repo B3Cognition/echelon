@@ -114,7 +114,7 @@ class StrategyCoordinator:
                     raise RuntimeError(
                         f"[{sid}] blocked — escalation pending. "
                         f"Append ## Answer to {existing['escalation_file']}, then run "
-                        f"echelon harness resume {intent.spec_id}; or pass --reset to discard."
+                        f"echelon delivery resume {intent.spec_id}; or pass --reset to discard."
                     )
 
         # Load strategy specs (build_command + context per strategy)

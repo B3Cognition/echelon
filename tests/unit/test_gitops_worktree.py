@@ -203,7 +203,7 @@ def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path
         gitops.sync_runtime_extension(worktree)
     except Exception as exc:
         assert ".specify/extensions/echelon" in str(exc)
-        assert "Run `echelon init`" in str(exc)
+        assert "Run `echelon workspace init`" in str(exc)
     else:
         raise AssertionError("expected missing runtime extension to fail")
 

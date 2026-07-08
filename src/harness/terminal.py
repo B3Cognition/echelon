@@ -96,7 +96,7 @@ def print_escalation_banner(
         body=body,
         footer=(
             "Next step: append ## Answer to the escalation file, then run "
-            f"echelon harness resume {spec_id}"
+            f"echelon delivery resume {spec_id}"
         ),
         file=file,
     )

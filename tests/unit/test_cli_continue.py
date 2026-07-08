@@ -1,4 +1,4 @@
-"""Tests for echelon continue phase selection."""
+"""Tests for echelon spec continue phase selection."""
 
 from __future__ import annotations
 
@@ -357,8 +357,8 @@ def test_continue_blocked_non_escalation_run_points_to_rewind(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     captured = capsys.readouterr()
-    assert 'echelon rewind phase3-sentinel' in captured.out
-    assert 'echelon resume "<your answer>"' not in captured.out
+    assert 'echelon spec rewind phase3-sentinel' in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
 def test_continue_retries_incomplete_phase_before_constitution(
@@ -413,7 +413,7 @@ def test_continue_blocks_new_branchless_workspace(
     assert exc.value.code == 2
     err = capsys.readouterr().err
     assert "workspace root is not a Git repo" in err
-    assert "echelon continue --mode banzai" in err
+    assert "echelon spec continue --mode banzai" in err
 
 
 def test_continue_allows_legacy_branchless_running_recovery(
@@ -482,7 +482,7 @@ def test_continue_retries_timeout_without_resume_dead_end(
     assert state["phase"] == "phase1-discover"
     assert state["status"] == "running"
     assert state["blocked_reason"] is None
-    assert 'echelon resume "<your answer>"' not in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
     assert calls == [["make terminal ascii art", "--mode", "semi"]]
 
 
@@ -551,8 +551,8 @@ def test_continue_points_retryable_phase3_failure_to_rewind(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     captured = capsys.readouterr()
-    assert "echelon rewind phase3-sentinel" in captured.out
-    assert 'echelon resume "<your answer>"' not in captured.out
+    assert "echelon spec rewind phase3-sentinel" in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
 def test_continue_manual_block_does_not_claim_human_resume(
@@ -573,8 +573,8 @@ def test_continue_manual_block_does_not_claim_human_resume(
 
     captured = capsys.readouterr()
     assert "Manual recovery required" in captured.out
-    assert "fix the blocker, then echelon continue" in captured.out
-    assert 'echelon resume "<your answer>"' not in captured.out
+    assert "fix the blocker, then echelon spec continue" in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
 def test_continue_retries_interrupted_phase(

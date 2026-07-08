@@ -72,13 +72,13 @@ if [ "$RESUME_MODE" -eq 0 ]; then
 
   if [ -n "${MISSING}" ]; then
     echo "[ECHELON CODEGEN] ERROR: Missing Phase A artifacts:${MISSING}"
-    echo "[ECHELON CODEGEN] Run echelon continue for ${FEATURE_PATH} first so Phase A republishes build inputs."
+    echo "[ECHELON CODEGEN] Run echelon spec continue for ${FEATURE_PATH} first so Phase A republishes build inputs."
     exit 1
   fi
 
   if grep -qE '\[PROJECT_NAME\]|\[PRINCIPLE_[0-9]+_NAME\]|\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' "${FEATURE_DIR}/constitution.md"; then
     echo "[ECHELON CODEGEN] ERROR: constitution.md contains unresolved template markers."
-    echo "[ECHELON CODEGEN] Run echelon continue for ${FEATURE_PATH} first so CHIEF repairs the canonical constitution and Phase A republishes the snapshot."
+    echo "[ECHELON CODEGEN] Run echelon spec continue for ${FEATURE_PATH} first so CHIEF repairs the canonical constitution and Phase A republishes the snapshot."
     exit 1
   fi
   echo "[ECHELON CODEGEN] Phase A artifacts verified ✓"

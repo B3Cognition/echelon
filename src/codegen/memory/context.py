@@ -23,7 +23,7 @@ def _read_wing_from_echelon_yml(project_dir: Path) -> str:
     if not echelon_yml.exists():
         sys.exit(
             f"echelon-config.yml not found at {echelon_yml}.\n"
-            "Run 'specify extension add echelon' then 'echelon init' to initialize this project."
+            "Run 'specify extension add echelon' then 'echelon workspace init' to initialize this project."
         )
     try:
         import yaml  # type: ignore[import]
@@ -34,7 +34,7 @@ def _read_wing_from_echelon_yml(project_dir: Path) -> str:
     wing = config.get("mempalace", {}).get("wing", "")
     if not wing:
         sys.exit(
-            "wing not set in echelon-config.yml — run 'echelon init' to configure it.\n"
+            "wing not set in echelon-config.yml — run 'echelon workspace init' to configure it.\n"
             "  Expected:\n"
             "    mempalace:\n"
             "      wing: <your-project-name>"

@@ -18,5 +18,5 @@ def test_readme_points_humans_to_artifacts_md() -> None:
 def test_readme_documents_artifacts_command() -> None:
     text = README.read_text(encoding="utf-8")
 
-    assert "echelon artifacts <id>" in text
+    assert "echelon spec artifacts <id>" in text
     assert "Generate or refresh" in text

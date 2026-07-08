@@ -414,10 +414,10 @@ The script handles: copying constitution.md, staging, conditional commit (skippe
 After `finalize-run.sh` succeeds, refresh the human artifact map deterministically:
 
 ```bash
-echelon artifacts "${SPEC_ID}"
+echelon spec artifacts "${SPEC_ID}"
 ```
 
-ALWAYS use `echelon artifacts` to generate `{spec_dir}/ARTIFACTS.md` after finalization. NEVER hand-author `ARTIFACTS.md`; it is Python-owned and overwritten on regeneration.
+ALWAYS use `echelon spec artifacts` to generate `{spec_dir}/ARTIFACTS.md` after finalization. NEVER hand-author `ARTIFACTS.md`; it is Python-owned and overwritten on regeneration.
 
 ### 12.11 Branch Stacking (Next Spec)
 

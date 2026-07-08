@@ -55,7 +55,7 @@ is reported only through `$HARNESS_BUILD_STATUS_FILE.completed_task_ids`; Ralph
 performs the deterministic `tasks.md` update after the build invocation returns.
 
 Do not use native task-planning tools such as TaskCreate or TaskUpdate under
-`echelon harness run`. They create provider-local todos only; Ralph does not
+`echelon delivery run`. They create provider-local todos only; Ralph does not
 consume them. Select work from canonical `tasks.md` rows and report progress
 only through `$HARNESS_BUILD_STATUS_FILE`.
 
@@ -76,7 +76,7 @@ progress identities. Expand them to exact canonical IDs such as
 
 ### Harness Build Quality Gate Sequencing
 
-When running under `echelon harness run`, follow build gate workflow transitions sequentially.
+When running under `echelon delivery run`, follow build gate workflow transitions sequentially.
 SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN are hard gates, not a parallel
 review batch. Run SPEC GUARD first; only after it passes, run CODE REVIEWER;
 only after CODE REVIEWER approves, run TEST GUARDIAN.
@@ -99,12 +99,12 @@ Stop only when: (a) the state machine reaches DONE, (b) a BLOCKED/ERROR conditio
 cannot be self-resolved, or (c) a human checkpoint is reached in `guided`/`semi`
 mode.
 
-Under `echelon harness run`, a verified slice with a written
+Under `echelon delivery run`, a verified slice with a written
 `$HARNESS_BUILD_STATUS_FILE` marker is also a valid stopping point. Do not keep
 selecting more tasks after writing the marker; that creates large uncheckpointed
 work and leaves Ralph waiting for a final marker that may never be reached.
 
-When invoked by `echelon harness run`, there is no external squad phase runner
+When invoked by `echelon delivery run`, there is no external squad phase runner
 consuming `echelon_result.state_updates.next_phase` from your final response.
 Returning `next_phase: build-2-implement` after `build-1-init` is not progress;
 it leaves Ralph without `.harness-build-status.json` and the build is marked

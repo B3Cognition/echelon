@@ -59,7 +59,7 @@ class TestEscalationBanner:
         assert "same_failure_repeat" in output
         assert "How to proceed?" in output
         assert "3 identical failures" in output
-        assert "echelon harness resume 001-demo" in output
+        assert "echelon delivery resume 001-demo" in output
         assert "/speckit-harness-resume" not in output
 
     def test_escalation_banner_to_stderr(self, capsys: pytest.CaptureFixture) -> None:

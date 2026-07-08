@@ -607,7 +607,7 @@ class TestOuterLoopConvergence:
 
         assert result.passed is False
         assert result.failures[0].id == "fulfillment-gaps"
-        assert "echelon reopen spec-001" in result.failures[0].error
+        assert "echelon spec reopen spec-001" in result.failures[0].error
 
     def test_fulfillment_gate_treats_unverified_as_blocking_for_harness(
         self, tmp_path: Path
@@ -1736,7 +1736,7 @@ class TestOuterLoopConvergence:
         captured = capsys.readouterr()
         assert "missing build status marker" in captured.err
         assert ".harness-build-status.json" in captured.err
-        assert "echelon harness resume spec-001" in captured.err
+        assert "echelon delivery resume spec-001" in captured.err
         assert "missing Phase A artifacts" not in captured.err
         assert provider.destroyed is True
         gitops.commit.assert_not_called()
@@ -2025,7 +2025,7 @@ class TestOuterLoopConvergence:
         assert "You've hit your session limit" in captured.err
         assert "9:10pm" in captured.err
         assert "retry after" in captured.err
-        assert "echelon harness resume spec-001" in captured.err
+        assert "echelon delivery resume spec-001" in captured.err
         assert "missing build status marker" not in captured.err
         assert "COMMANDER may have changed files, but did not write" not in captured.err
         state = state_store.read()
@@ -3274,7 +3274,7 @@ class TestPromptHelpers:
                     error=(
                         "fulfillment report is stale for current HEAD abc123: "
                         "/tmp/specs/001/fulfillment-report.md was verified at old456. "
-                        "Run `echelon verify-spec spec-001` before convergence."
+                        "Run `echelon spec verify spec-001` before convergence."
                     ),
                 )
             ],
@@ -3284,9 +3284,9 @@ class TestPromptHelpers:
 
         result = controller._make_feedback_prompt("spec 001", verify, inner_iter=1)
 
-        assert "Do not run `echelon verify-spec`" in result
+        assert "Do not run `echelon spec verify`" in result
         assert "Ralph owns fulfillment refresh" in result
-        assert "Run `echelon verify-spec spec-001` before convergence." in result
+        assert "Run `echelon spec verify spec-001` before convergence." in result
 
 
 @pytest.mark.unit
@@ -3429,7 +3429,7 @@ class TestVerifyCommandNeeded:
         err = capsys.readouterr().err
         assert "TEST RUNNER MISSING" in err
         assert "verify_command" in err
-        assert "echelon harness resume" in err
+        assert "echelon delivery resume" in err
 
     def test_state_written_as_blocked(self, tmp_path: Path) -> None:
         """Unknown project type → StateStore reflects blocked + verify_command_needed."""

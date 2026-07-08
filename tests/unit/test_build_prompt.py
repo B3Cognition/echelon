@@ -160,12 +160,12 @@ class TestBuildPromptBuilder:
             spec_content="spec",
             failures_output=(
                 "fulfillment report is stale for current HEAD abc123: "
-                "Run `echelon verify-spec 001` before convergence."
+                "Run `echelon spec verify 001` before convergence."
             ),
             outer_iter=1,
         )
 
-        assert "Do not run `echelon verify-spec`" in prompt
+        assert "Do not run `echelon spec verify`" in prompt
         assert "Ralph owns fulfillment refresh" in prompt
         assert "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`" in prompt
 

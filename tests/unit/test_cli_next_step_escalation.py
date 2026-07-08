@@ -53,9 +53,9 @@ def test_blocked_squad_escalation_prioritizes_resume(
 
     captured = capsys.readouterr()
     assert "RUN BLOCKED — answer required" in captured.out
-    assert 'echelon resume "<your answer>"' in captured.out
+    assert 'echelon spec resume "<your answer>"' in captured.out
     assert "Q1: confirm widget team intent?" in captured.out
-    assert "echelon continue" not in captured.out
+    assert "echelon spec continue" not in captured.out
 
 
 def test_ready_next_step_has_clear_subtitle_and_next_command(
@@ -88,7 +88,7 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     assert "HOW artifacts" in captured.out
     assert "tasks.md" in captured.out
     assert "next" in captured.out
-    assert "echelon harness run 001-demo" in captured.out
+    assert "echelon delivery run 001-demo" in captured.out
     assert "\n  build\n" not in captured.out
 
 
@@ -209,7 +209,7 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     assert "READY TO BUILD" not in captured.out
     assert "RUN BLOCKED" in captured.out
     assert "missing_echelon_result" in captured.out
-    assert "echelon rewind phase3-sentinel" in captured.out
+    assert "echelon spec rewind phase3-sentinel" in captured.out
 
 
 def test_blocked_incomplete_discover_prioritizes_retry_over_constitution(
@@ -278,7 +278,7 @@ def test_blocked_missing_result_retries_redispatched_completed_phase(
     assert "RUN BLOCKED" in captured.out
     assert "missing_echelon_result" in captured.out
     assert "phase1-why2" in captured.out
-    assert "echelon continue" in captured.out
+    assert "echelon spec continue" in captured.out
     assert "manual recovery required" not in captured.out
 
 
@@ -307,8 +307,8 @@ def test_blocked_timeout_next_step_uses_continue_not_resume(
     captured = capsys.readouterr()
     assert "RUN BLOCKED" in captured.out
     assert "agent_timeout" in captured.out
-    assert "echelon continue" in captured.out
-    assert 'echelon resume "<your answer>"' not in captured.out
+    assert "echelon spec continue" in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
 def test_interrupted_next_step_retries_interrupted_phase(
@@ -337,7 +337,7 @@ def test_interrupted_next_step_retries_interrupted_phase(
     captured = capsys.readouterr()
     assert "RUN INTERRUPTED" in captured.out
     assert "phase1-discover" in captured.out
-    assert "echelon continue" in captured.out
+    assert "echelon spec continue" in captured.out
     assert "phase1-constitution has not completed" not in captured.out
 
 
@@ -401,7 +401,7 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
 
     captured = capsys.readouterr()
     assert "READY TO BUILD" in captured.out
-    assert "echelon harness run 001-demo" in captured.out
+    assert "echelon delivery run 001-demo" in captured.out
     assert "BUILD BLOCKED" not in captured.out
     assert "WHY2 quality gates FAIL" not in captured.out
 

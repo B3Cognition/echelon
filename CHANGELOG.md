@@ -65,6 +65,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   workflow phase through normal squad state, journal, artifact, and constitution
   contracts without advancing the whole graph.
 
+### Changed
+
+- Operator-facing hints, recovery banners, prompts, README, and setup docs now
+  consistently recommend canonical `echelon workspace ...`,
+  `echelon spec ...`, and `echelon delivery ...` commands instead of legacy
+  top-level or `harness` aliases.
+
 ### Fixed
 
 - **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover

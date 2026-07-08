@@ -111,7 +111,7 @@ class BuildPromptBuilder:
         parts.append(
             f"## Action\nFix the failures listed above by editing files in {worktree_path} directly.\n"
             "Do not re-run the full build pipeline. Do not run git commands.\n"
-            "Do not run `echelon verify-spec`. Ralph owns fulfillment refresh and regeneration of verify-spec artifacts.\n"
+            "Do not run `echelon spec verify`. Ralph owns fulfillment refresh and regeneration of verify-spec artifacts.\n"
             "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`; treat them as read-only evidence.\n"
             "Edit only the files needed to fix the listed failures."
         )

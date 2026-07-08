@@ -145,7 +145,7 @@ def build_resume_metadata(
         "schema_version": SCHEMA_VERSION,
         "answered_at": now or _utc_now(),
         "answered_by": "user",
-        "source": "echelon resume",
+        "source": "echelon spec resume",
         "answer_type": answer_type,
         "answer_text": answer,
         "blocked_phase": _clean_string(decision.get("blocked_phase"))

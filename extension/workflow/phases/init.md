@@ -34,7 +34,7 @@ If this exits non-zero: **HARD STOP**. Always print the message below. Do not pr
   Run speckit.echelon.init first, then re-run speckit.echelon.run.
 ```
 
-> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon init`). Always leave `echelon.run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon.run` — it will fail on fresh projects that have not yet run a build.
+> **Note:** `validate-deploy.sh` is only relevant for `speckit.echelon.build` and `speckit.echelon.codegen` (it validates deploy infrastructure written by `echelon workspace init`). Always leave `echelon.run` startup deploy-neutral. Do NOT call `validate-deploy.sh` from `echelon.run` — it will fail on fresh projects that have not yet run a build.
 
 ### 1.1 Detect Greenfield vs Brownfield
 

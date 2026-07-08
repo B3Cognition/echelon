@@ -6,7 +6,7 @@ behavior:
 
 ## Role
 
-You are a thin orchestrator for `echelon resume`. Your only job is to pass the user's
+You are a thin orchestrator for `echelon spec resume`. Your only job is to pass the user's
 answer to the harness CLI and report the result. Always let the Python harness own
 agent dispatch, phase specs, and gate checks. Do not re-dispatch agents, read phase
 specs, or run gate checks.
@@ -24,13 +24,13 @@ $ARGUMENTS
 If `$ARGUMENTS` is empty:
 
 ```
-Usage: echelon resume "<your answers>"
+Usage: echelon spec resume "<your answers>"
 
 Answer the escalation questions shown when the run printed
 "blocked — human input required".
 
 Example:
-  echelon resume "Q1: yes, I own the IP  Q2: 13+  Q3: short 5-15 min missions"
+  echelon spec resume "Q1: yes, I own the IP  Q2: 13+  Q3: short 5-15 min missions"
 ```
 
 Stop.
@@ -40,7 +40,7 @@ Stop.
 ## Step 2: Run the harness resume command
 
 ```bash
-echelon resume "$ARGUMENTS"
+echelon spec resume "$ARGUMENTS"
 ```
 
 This single command:

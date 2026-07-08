@@ -80,7 +80,7 @@ def prepare_rewind(
         f"  from: {head[:7]} current HEAD\n"
         f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint\n\n"
         f"Backup branch:\n  {backup_ref}\n\n"
-        f"Continue with:\n  echelon rewind {checkpoint.phase} --confirm"
+        f"Continue with:\n  echelon spec rewind {checkpoint.phase} --confirm"
     )
     if not confirm:
         return RewindResult(

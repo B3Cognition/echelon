@@ -6,7 +6,7 @@
 
 ## Harness Continuity Rule
 
-When this phase is executed by `echelon harness run`, Ralph invokes one
+When this phase is executed by `echelon delivery run`, Ralph invokes one
 LLM-backed build process and waits for `.harness-build-status.json`.
 Ralph does not consume `next_phase` from the final message and does not
 automatically re-dispatch `build-2-implement` after this response.
@@ -40,7 +40,7 @@ PROJECT_ROOT=$(pwd)
 echo "PROJECT_ROOT=${PROJECT_ROOT}"
 ```
 
-When running under `echelon harness run`, use the exact paths provided in the
+When running under `echelon delivery run`, use the exact paths provided in the
 prompt's `Harness Context`:
 
 - `worktree` / `target_repo_worktree` — implementation project root for code reads, searches, edits, and tests
@@ -106,7 +106,7 @@ unresolved constitution template markers.
 If `constitution.md`, `tasks.md`, or `spec.md` is missing, or if
 `constitution.md` contains unresolved template markers such as
 `[PROJECT_NAME]`, `[PRINCIPLE_1_NAME]`, or `[CONSTITUTION_VERSION]`, STOP with
-error: "Phase A artifacts are not build-ready. Run `echelon continue` first."
+error: "Phase A artifacts are not build-ready. Run `echelon spec continue` first."
 
 ### 1.2 Parse Tasks
 

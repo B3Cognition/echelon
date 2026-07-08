@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resume_command(spec_id: str) -> str:
-    return f"echelon harness resume {spec_id}"
+    return f"echelon delivery resume {spec_id}"
 
 
 def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
@@ -35,7 +35,7 @@ def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str
             ("escalation", esc_file),
             ("answer in", "Append a ## Answer section to the escalation file."),
             ("resume with", _resume_command(spec_id)),
-            ("discard with", f"echelon harness run {spec_id} --reset"),
+            ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
     )

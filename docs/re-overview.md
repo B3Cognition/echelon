@@ -77,10 +77,10 @@ Each validation iteration uses a progressively deeper search strategy:
 
 ## Output structure
 
-During an active `echelon run`, RE runtime artifacts are written under `runs/<run-id>/re/`. Standalone `re-*` commands use `.specify/echelon/re/` unless `re.output.directory` overrides it.
+During an active `echelon spec run`, RE runtime artifacts are written under `runs/<run-id>/re/`. Standalone `re-*` commands use `.specify/echelon/re/` unless `re.output.directory` overrides it.
 
 ```text
-runs/<run-id>/re/                  # active echelon run
+runs/<run-id>/re/                  # active echelon spec run
 # or .specify/echelon/re/          # standalone re-* default
 ├── analysis.json                     # Structured codebase data (files, deps, git history, configs)
 ├── codegraph-analysis.json           # Optional full structural graph (Node.js + CodeGraph bridge)

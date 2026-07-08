@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.0.0** — 54 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.0.0** — 54 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon workspace init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -29,9 +29,9 @@ specify extension add --dev ~/echelon/extension
 
 | Tool | Purpose |
 | ---- | ------- |
-| `echelon` | Main CLI — init, run, bugfix, build, review, change, codegen |
-| `echelon harness` | Build harness subcommands — init, run |
-| `echelon spec` | Spec metadata subcommands — target |
+| `echelon` | Main CLI — workspace, spec, phase, delivery, benchmark, stack |
+| `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
+| `echelon spec` | Spec lifecycle subcommands — run, status, target, verify, reopen |
 | `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
 | `understanding` | Requirements quality metrics |
 
@@ -47,7 +47,7 @@ specify extension update --dev ~/echelon/extension
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
 
-Terminal `echelon status`, `echelon run`, `echelon continue`, and `echelon resume`
+Terminal `echelon spec status`, `echelon spec run`, `echelon spec continue`, and `echelon spec resume`
 warn when the installed project extension under `.specify/extensions/echelon`
 differs from a trusted source extension. In a dev checkout this is detected
 automatically; otherwise set `ECHELON_EXTENSION_SOURCE` to your Echelon repo or
@@ -147,7 +147,7 @@ compatibility contract.
 ### Other echelon commands
 
 ```bash
-echelon change  001 "scope change description"   # mid-build spec change
+echelon spec change 001 "scope change description" # mid-build spec change
 echelon codegen 001                              # SOAR pipeline directly (no harness)
 echelon build   001                              # agent-driven build (no harness)
 echelon delivery init                            # auto-detect high-confidence verify_command, if possible
@@ -198,7 +198,7 @@ The active squad workspace is run-local: agents read and write
 `runs/<run>/specs/<id>`. The canonical `specs/<id>` folder is the published spec
 folder used by humans and by Phase B. The build harness reads canonical `specs/<id>`
 and should not consume run-local staging paths. When a squad run is
-continued after artifacts were already published, `echelon continue` syncs
+continued after artifacts were already published, `echelon spec continue` syncs
 missing canonical artifacts back into the active run copy; it never guesses the newest `specs/*` directory.
 
 Use rewind when a resumed squad run reports `missing_echelon_result`,
@@ -206,8 +206,8 @@ Use rewind when a resumed squad run reports `missing_echelon_result`,
 proper context:
 
 ```bash
-echelon rewind phase3-sentinel
-echelon continue
+echelon spec rewind phase3-sentinel
+echelon spec continue
 ```
 
 Safe rewind targets are intentionally narrow. They reset the active run state and
@@ -241,7 +241,7 @@ This path has no dependency on the `echelon` CLI tool or the `ECHELON_LLM` env v
 
 ### Terminal CLI (`echelon` / `harness` commands)
 
-When you run `echelon run "..."` from the terminal, the `echelon` CLI:
+When you run `echelon spec run "..."` from the terminal, the `echelon` CLI:
 
 1. Locates the skill file for the selected provider (Claude, Copilot, or Opencode)
 2. Strips the YAML frontmatter (which is meaningful only to spec-kit, not to the LLM)
@@ -267,10 +267,10 @@ All `echelon` and `harness` CLI commands are provider-agnostic. Set the `ECHELON
 ```bash
 # Use Copilot for all echelon commands
 export ECHELON_LLM=copilot
-echelon run "Build a photo album app"
+echelon spec run "Build a photo album app"
 
 # Use Opencode for a single command
-ECHELON_LLM=opencode echelon bugfix 001 "upload button broken on Safari"
+ECHELON_LLM=opencode echelon spec bugfix 001 "upload button broken on Safari"
 ```
 
 Skill files are placed in the right location automatically by `specify extension add` after `specify init --integration <tool>`. Each provider's skill files are rewritten for that tool's conventions — do not copy them between providers manually.
@@ -352,7 +352,7 @@ Start with `specs/<id>-*/ARTIFACTS.md`. Echelon generates this file deterministi
 Refresh it manually with:
 
 ```bash
-echelon artifacts <id>
+echelon spec artifacts <id>
 ```
 
 **Two-repo (advanced):** A dedicated control-plane repo manages one or more target repos. Useful when build infrastructure should be separate from product code, or when managing multiple products from one place.
@@ -641,8 +641,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon delivery resume <id>` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked loop after answering/fixing its blocker, including escalation, missing `verify_command`, checkpoint recovery, or repaired harness errors; prints `HARNESS HISTORY` |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
 
-`echelon harness init|run|resume` and `echelon land` remain compatibility
-aliases for existing scripts and documentation history.
+Legacy aliases may still exist for older scripts, but current docs and operator
+guidance use the `spec` and `delivery` namespaces.
 
 ## Codegen Pipeline
 
@@ -695,14 +695,14 @@ speckit.echelon.codegen 001-photo-album --resume
 
 #### Wing
 
-The wing is your project's stable identity in MemPalace. It is set once during `echelon init` and written to `echelon-config.yml`:
+The wing is your project's stable identity in MemPalace. It is set once during `echelon workspace init` and written to `echelon-config.yml`:
 
 ```yaml
 mempalace:
-  wing: my-app   # set by echelon init — do not change
+  wing: my-app   # set by echelon workspace init — do not change
 ```
 
-`echelon init` auto-suggests a wing name from your git remote URL (e.g. `my-app` from `github.com/org/my-app`), falling back to `{dirname}-{hash6}` if no remote exists. It checks for collision with other projects before writing.
+`echelon workspace init` auto-suggests a wing name from your git remote URL (e.g. `my-app` from `github.com/org/my-app`), falling back to `{dirname}-{hash6}` if no remote exists. It checks for collision with other projects before writing.
 
 **Wing portability:** all clones of the same repo should use the same wing name so they share mined requirements across machines and teammates. The wing is committed in `echelon-config.yml` — clones inherit it automatically.
 
@@ -1023,7 +1023,7 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 ## Requirements
 
 - **spec-kit** >= 0.4.2 (required)
-- **Claude CLI** (`claude`) — required for `echelon run`, `echelon bugfix`, and other LLM commands
+- **Claude CLI** (`claude`) — required for `echelon spec run`, `echelon spec bugfix`, and other LLM commands
 - **uv** (required — install via `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - **Docker** (required for `echelon delivery run` — sandbox verification runs in Docker)
 - **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
@@ -1075,7 +1075,7 @@ src/
 ├── echelon/             # echelon CLI (entry point: echelon) — terminal-invokable skills
 ├── codegen/             # SOAR build pipeline CLI (entry point: codegen)
 ├── understanding/       # Requirements quality metrics CLI (entry point: understanding)
-└── harness/             # Build harness library (invoked via: echelon harness)
+└── harness/             # Build harness library (invoked via: echelon delivery)
     ├── provider.py        SandboxProvider abstract interface
     ├── docker_provider.py DockerWorktreeProvider — Docker sandbox lifecycle
     ├── llm_provider.py    ClaudeCliProvider — claude -p subprocess for LLM build
@@ -1185,7 +1185,7 @@ Echelon includes native brownfield extraction for reverse-engineering existing c
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.re-analyze` | Extract structured data from codebase → `runs/<run-id>/re/analysis.json` during `echelon run`, or `.specify/echelon/re/analysis.json` standalone, plus optional CodeGraph artifacts |
+| `speckit.echelon.re-analyze` | Extract structured data from codebase → `runs/<run-id>/re/analysis.json` during `echelon spec run`, or `.specify/echelon/re/analysis.json` standalone, plus optional CodeGraph artifacts |
 | `speckit.echelon.re-specify` | Generate domain specs with coverage tracking |
 | `speckit.echelon.re-verify` | Verify spec coverage; identify orphan files |
 | `speckit.echelon.re-expand` | Fill coverage gaps from orphan file clusters |

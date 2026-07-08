@@ -302,7 +302,7 @@ If an existing `spec_dir` is provided and exists on disk:
 6. Preserve the same `spec_id`, `spec_dir`, and feature branch in your
    `echelon_result.state_updates`.
 
-This guard exists because `echelon resume` re-dispatches the blocked phase after
+This guard exists because `echelon spec resume` re-dispatches the blocked phase after
 human input. If the original CARTOGRAPHER pass already created branch
 `NNN-feature` and `specs/NNN-feature/`, a second `speckit.specify` call allocates
 another branch number and forks the same spec across multiple branches.

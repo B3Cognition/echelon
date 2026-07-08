@@ -30,7 +30,7 @@ Requires `harness.init` to have been run first in the implementation repo.
 
 In a workspace/polyrepo root, the spec frontmatter `targets:` is authoritative.
 Normal implementation specs use exactly one source root. If `targets:` is
-missing, `echelon harness run` resolves source roots before local harness
+missing, `echelon delivery run` resolves source roots before local harness
 checks: a single source root is used automatically; multiple source roots stop
 with deterministic candidates. Resolve the block with
 `echelon spec target <spec_id> <source-path>`. For a new implementation repo,

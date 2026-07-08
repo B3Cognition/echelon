@@ -737,13 +737,13 @@ endocrine:
 
 # =============================================================================
 # MEMPALACE — Per-project memory identity
-# Set by 'echelon init'. Never change once set for a given repo.
+# Set by 'echelon workspace init'. Never change once set for a given repo.
 # Two clones of the same repo should share the same wing name so they share
 # memory across test environments.
 # =============================================================================
 
 mempalace:
-  wing: ""   # Set by 'echelon init' — do not edit manually
+  wing: ""   # Set by 'echelon workspace init' — do not edit manually
 
 # =============================================================================
 # STACKS — Opt-in technology profiles

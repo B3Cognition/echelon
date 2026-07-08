@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # finalize-run.sh — Commit spec artifacts to feature branch and return to default branch.
-# Called as the terminal step of echelon run (phase4-document §12.10b).
+# Called as the terminal step of echelon spec run (phase4-document §12.10b).
 # Usage: finalize-run.sh <PROJECT_ROOT> <SPEC_ID> <FEATURE_NAME> <RUN_ID>
 set -euo pipefail
 
@@ -19,7 +19,7 @@ CONSTITUTION_DST="${SPEC_DIR}/constitution.md"
 if [ -f "${CONSTITUTION_SRC}" ]; then
   if grep -qE '\[PROJECT_NAME\]|\[PRINCIPLE_[0-9]+_NAME\]|\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' "${CONSTITUTION_SRC}"; then
     echo "[FINALIZE] ERROR: .specify/memory/constitution.md contains unresolved template markers"
-    echo "[FINALIZE] Run echelon continue so CHIEF invokes speckit.constitution before publishing the snapshot"
+    echo "[FINALIZE] Run echelon spec continue so CHIEF invokes speckit.constitution before publishing the snapshot"
     exit 1
   fi
   cp "${CONSTITUTION_SRC}" "${CONSTITUTION_DST}"
@@ -38,7 +38,7 @@ if git -C "${PROJECT_ROOT}" diff --cached --quiet; then
   echo "[FINALIZE] Nothing to commit — artifacts already up to date"
 else
   git -C "${PROJECT_ROOT}" commit -m \
-    "feat(spec): echelon run artifacts for ${SPEC_ID}-${FEATURE_NAME} [skip ci]
+    "feat(spec): echelon spec run artifacts for ${SPEC_ID}-${FEATURE_NAME} [skip ci]
 
 Squad run complete. Spec, tasks, plan, architecture, and all specialist
 outputs committed to feature branch so harness.build can create clean

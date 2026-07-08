@@ -33,7 +33,7 @@ Read stable defaults from Echelon config at point of use, then pass explicit run
 
 Verify the workspace looks like a project root. Check for `.git`, `package.json`, `pyproject.toml`, `go.mod`, or `Cargo.toml`. If none are present, note a warning but continue.
 
-Read `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir` (default `.specify/echelon/re` for standalone RE, `runs/<run-id>/re` during an active echelon run).
+Read `state.json` from the context pack and set `RE_OUTPUT_DIR = state.output_dir` (default `.specify/echelon/re` for standalone RE, `runs/<run-id>/re` during an active echelon spec run).
 
 **Manifest preference**: Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
 

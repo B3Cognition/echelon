@@ -41,7 +41,7 @@ except ImportError:
 # NOTE: "run" is intentionally absent — it is handled by the Python harness
 # (_cmd_run) and must never fall through to the skill-based LLM path.
 # Keeping "run" here would cause infinite recursion: skill → claude -p →
-# echelon.run.md → "echelon run" → skill → ... (155 nested processes).
+# echelon.run.md → "echelon spec run" → skill → ... (155 nested processes).
 SKILL_MAP = {
     "bugfix":  "echelon.bugfix",
     "build":   "echelon.build",
@@ -120,13 +120,6 @@ Commands:
   delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
                                             Land a spec: merge PR/branch, clean up.
-
-Compatibility aliases:
-  init, run, status, continue, resume, rewind
-  bugfix, verify-spec, reopen, build, review, change, codegen, artifacts
-  harness init|run|resume                    Alias for delivery init|run|resume.
-  land <spec_id> [...]                       Alias for delivery land.
-  cicd                                      Retired; use 'echelon delivery init'.
 
 Skill file locations (auto-detected from ECHELON_LLM env var):
   Claude   : .claude/skills/speckit-echelon-<cmd>/[Ss]kill.md
@@ -648,7 +641,7 @@ def _cmd_init(
     _banner("ECHELON INIT — COMPLETE", [
         ("Config",       str(echelon_cfg)),
         ("Deploy state", deploy_state_label),
-        ("Next step",    "echelon run <description>"),
+        ("Next step",    "echelon spec run <description>"),
     ])
 
 
@@ -852,9 +845,6 @@ def _cmd_delivery(args: list[str]) -> None:
             "  checkpoint list <spec_id> [strategy=<s>]\n"
             "                                     List delivery checkpoint/recovery commits\n"
             "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
-            "Compatibility aliases:\n"
-            "  echelon harness init|run|resume\n"
-            "  echelon land <spec_id> [options...]\n\n"
             "Examples:\n"
             "  echelon delivery init\n"
             "  echelon delivery run 001\n"
@@ -903,7 +893,7 @@ def _print_missing_spec_target_error(spec_id: str, *, command_prefix: str = "ech
 def _cmd_harness_init(
     args: list[str],
     *,
-    command_prefix: str = "echelon harness init",
+    command_prefix: str = "echelon delivery init",
 ) -> None:
     import logging
     import os
@@ -936,7 +926,7 @@ def _cmd_harness_init(
             bind_mount_ack=bind_mount_ack,
         )
     except InitError as e:
-        print(f"✗ echelon harness init failed: {e}", file=sys.stderr)
+        print(f"✗ {command_prefix} failed: {e}", file=sys.stderr)
         sys.exit(1)
 
     config_file = _project_echelon_config(Path(base_dir))
@@ -1342,14 +1332,14 @@ def _workspace_target_dispatch_metadata(target: HarnessWorkspaceTarget) -> dict[
 def _cmd_harness_run(
     args: list[str],
     *,
-    command_prefix: str = "echelon harness run",
+    command_prefix: str = "echelon delivery run",
     display_args: list[str] | None = None,
 ) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if not args:
-        print("echelon harness run: missing spec_id\n", file=sys.stderr)
+        print(f"{command_prefix}: missing spec_id\n", file=sys.stderr)
         sys.exit(1)
 
     rerun_command = _command_display(command_prefix, display_args or args)
@@ -1537,7 +1527,7 @@ def _cmd_harness_run(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
             f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
-            "  Fix: run 'echelon harness init' first, or add 'targets:' to your spec.",
+            "  Fix: run 'echelon delivery init' first, or add 'targets:' to your spec.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1548,7 +1538,7 @@ def _cmd_harness_run(
         print(
             "✗ Harness mirror not initialised for this project.\n"
             f"  Expected: {mirror_path}\n"
-            "  Fix: run 'echelon harness init' to create the mirror.",
+            "  Fix: run 'echelon delivery init' to create the mirror.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -1663,8 +1653,8 @@ def _block_if_harness_phase_a_not_ready(spec_dir: Path, spec_id: str) -> None:
         f"  Spec dir: {spec_dir}\n"
         "  Blockers:\n"
         f"{blockers}\n"
-        "  Fix: run 'echelon continue' to republish Phase A artifacts, then rerun:\n"
-        f"       echelon harness run {spec_id}",
+        "  Fix: run 'echelon spec continue' to republish Phase A artifacts, then rerun:\n"
+        f"       echelon delivery run {spec_id}",
         file=sys.stderr,
     )
     sys.exit(1)
@@ -1837,7 +1827,7 @@ def _is_phase_a_build_incomplete_retry(state: dict) -> bool:
 def _cmd_harness_resume(
     args: list[str],
     *,
-    command_prefix: str = "echelon harness resume",
+    command_prefix: str = "echelon delivery resume",
     display_args: list[str] | None = None,
 ) -> None:
     import logging
@@ -1845,17 +1835,17 @@ def _cmd_harness_resume(
 
     if not args or args[0] in ("-h", "--help"):
         print(
-            "Usage: echelon harness resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n\n"
-            "Resume a blocked harness run after answering/fixing its blocker.\n"
+            "Usage: echelon delivery resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n\n"
+            "Resume a blocked delivery run after answering/fixing its blocker.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
             "checkpoint continuation, repaired harness_error, and recovery from\n"
             "build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
-            "  1. Fix the blocker shown by the previous harness output.\n"
+            "  1. Fix the blocker shown by the previous delivery output.\n"
             "     For blocker_escalation: append ## Answer to the escalation file.\n"
             "     For verify_command_needed: add verify_command to echelon-config.yml\n"
-            "     (or re-run 'echelon harness init' to auto-detect high-confidence commands).\n"
-            "  2. Run: echelon harness resume <spec_id>\n",
+            "     (or re-run 'echelon delivery init' to auto-detect high-confidence commands).\n"
+            "  2. Run: echelon delivery resume <spec_id>\n",
         )
         return
 
@@ -1975,7 +1965,7 @@ def _cmd_harness_resume(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
             f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
-            "  Fix: run 'echelon harness init' first.",
+            "  Fix: run 'echelon delivery init' first.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2022,7 +2012,7 @@ def _cmd_harness_resume(
     if not state:
         print(
             f"✗ No harness state found for spec {spec_id!r} (strategy={strategy!r}).\n"
-            "  Run 'echelon harness run <spec_id>' to start a new run.",
+            "  Run 'echelon delivery run <spec_id>' to start a new run.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2043,7 +2033,7 @@ def _cmd_harness_resume(
     if current_status != "blocked" and termination_reason not in recoverable_reasons:
         print(
             f"✗ Spec {spec_id!r} is not blocked (status={current_status!r}).\n"
-            "  Use 'echelon harness run <spec_id>' to start or continue.",
+            "  Use 'echelon delivery run <spec_id>' to start or continue.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2056,9 +2046,9 @@ def _cmd_harness_resume(
     }:
         print(
             f"✗ Spec {spec_id!r} is blocked for unsupported resume reason: {termination_reason!r}.\n"
-            f"  Inspect with: echelon status\n"
-            f"  After fixing the blocker, retry: echelon harness resume {spec_id}\n"
-            f"  To discard this blocked harness state and start fresh: echelon harness run {spec_id} --reset",
+            f"  Inspect with: echelon spec status\n"
+            f"  After fixing the blocker, retry: echelon delivery resume {spec_id}\n"
+            f"  To discard this blocked delivery state and start fresh: echelon delivery run {spec_id} --reset",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -2076,7 +2066,7 @@ def _cmd_harness_resume(
                 f"✗ Spec {spec_id!r} is still blocked after Phase A repair.\n"
                 "  Resume preflight failed:\n"
                 + "".join(f"  - {blocker}\n" for blocker in blockers)
-                + f"  Fix the blockers, then re-run: echelon harness resume {spec_id}",
+                + f"  Fix the blockers, then re-run: echelon delivery resume {spec_id}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -2119,7 +2109,7 @@ def _cmd_harness_resume(
                     f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
                     f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon harness resume {spec_id}",
+                    f"       echelon delivery resume {spec_id}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -2143,7 +2133,7 @@ def _cmd_harness_resume(
                 f"✗ Spec {spec_id!r} is still blocked after the previous harness error.\n"
                 "  Resume preflight failed:\n"
                 + "".join(f"  - {blocker}\n" for blocker in blockers)
-                + f"  Fix the blockers, then re-run: echelon harness resume {spec_id}",
+                + f"  Fix the blockers, then re-run: echelon delivery resume {spec_id}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -2186,7 +2176,7 @@ def _cmd_harness_resume(
                     f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
                     f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon harness resume {spec_id}",
+                    f"       echelon delivery resume {spec_id}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -2272,7 +2262,7 @@ def _cmd_harness_resume(
                     f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
                     f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon harness resume {spec_id}",
+                    f"       echelon delivery resume {spec_id}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -2325,7 +2315,7 @@ def _cmd_harness_resume(
                 f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
                 f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                f"       echelon harness resume {spec_id}",
+                f"       echelon delivery resume {spec_id}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -2457,7 +2447,7 @@ def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
     blocked_reason = str(run_state.get("blocked_reason") or "").strip()
     phase_id = _last_incomplete_dispatch_phase(run_state)
     if _is_retryable_dispatch_block_reason(blocked_reason) and phase_id in _SAFE_REWIND_PHASES:
-        return f"echelon rewind {phase_id}"
+        return f"echelon spec rewind {phase_id}"
     return None
 
 
@@ -2498,13 +2488,13 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
                 "retry_phase",
                 reason="interrupted",
                 phase=retry_phase,
-                command="echelon continue",
+                command="echelon spec continue",
                 note="will retry the interrupted phase",
             )
         return _RunRecoveryAction(
             "manual_recovery",
             reason="interrupted",
-            command="echelon run --next-phase <phase-id>",
+            command="echelon spec run --next-phase <phase-id>",
             note="interrupted run does not record a retryable phase",
         )
 
@@ -2515,7 +2505,7 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
         return _RunRecoveryAction(
             "human_resume",
             reason=reason or "human answer required",
-            command='echelon resume "<your answer>"',
+            command='echelon spec resume "<your answer>"',
             note=str(run_state.get("escalation_question") or "").strip(),
         )
 
@@ -2536,7 +2526,7 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             "retry_phase",
             reason=reason,
             phase=retry_phase,
-            command="echelon continue",
+            command="echelon spec continue",
             note="will retry the failed phase; it was not marked complete",
         )
 
@@ -2544,7 +2534,7 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
         return _RunRecoveryAction(
             "manual_recovery",
             reason=reason,
-            command="increase analysis.token_budget_k, then echelon continue",
+            command="increase analysis.token_budget_k, then echelon spec continue",
             note="the run cannot continue until the configured budget is higher",
         )
 
@@ -2552,8 +2542,8 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
         return _RunRecoveryAction(
             "manual_recovery",
             reason=reason,
-            command="echelon run --next-phase <phase-id>",
-            note="choose a valid phase from echelon status output",
+            command="echelon spec run --next-phase <phase-id>",
+            note="choose a valid phase from echelon spec status output",
         )
 
     if not reason:
@@ -2562,7 +2552,7 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
     return _RunRecoveryAction(
         "manual_recovery",
         reason=reason,
-        command="fix the blocker, then echelon continue",
+        command="fix the blocker, then echelon spec continue",
         note="no human question, safe rewind target, or retryable dispatch was recorded",
     )
 
@@ -2901,9 +2891,9 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if harness_status == "converged":
             if pr_url:
                 fields.append(("PR", pr_url))
-                fields.append(("next", f"echelon land {spec_id}"))
+                fields.append(("next", f"echelon delivery land {spec_id}"))
             else:
-                fields.append(("next", f"echelon land {spec_id}"))
+                fields.append(("next", f"echelon delivery land {spec_id}"))
             _banner("NEXT STEP", fields, subtitle="Harness build converged — ready to land")
             return
         fields.append(("harness status", harness_status))
@@ -2935,7 +2925,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields.append(("salvage verified", salvage_verified))
         is_checkpoint = termination_reason in _HARNESS_CHECKPOINT_REASONS
         if build_status == "provider_session_limit":
-            fields.append(("next", f"wait for provider reset, then echelon harness resume {spec_id}"))
+            fields.append(("next", f"wait for provider reset, then echelon delivery resume {spec_id}"))
             subtitle = "HARNESS PROVIDER SESSION LIMIT"
         elif is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
@@ -2948,20 +2938,20 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 fields.append(
                     (
                         "next",
-                        f"commit or stash tracked changes, then echelon harness resume {spec_id}",
+                        f"commit or stash tracked changes, then echelon delivery resume {spec_id}",
                     )
                 )
             else:
-                fields.append(("next", f"echelon harness resume {spec_id}"))
+                fields.append(("next", f"echelon delivery resume {spec_id}"))
         elif termination_reason == "docker_unavailable":
             fields.append(("fix", "start the configured container runtime and wait until it reports running"))
-            fields.append(("next", f"echelon harness run {spec_id}"))
+            fields.append(("next", f"echelon delivery run {spec_id}"))
             subtitle = "HARNESS BUILD BLOCKED"
         elif harness_status in {"running", "in_progress"}:
-            fields.append(("next", "echelon status"))
+            fields.append(("next", "echelon spec status"))
             subtitle = "HARNESS BUILD IN PROGRESS"
         else:
-            fields.append(("next", f"echelon harness run {spec_id} --reset"))
+            fields.append(("next", f"echelon delivery run {spec_id} --reset"))
             subtitle = "HARNESS BUILD BLOCKED"
         if is_checkpoint and build_status != "provider_session_limit":
             subtitle = "HARNESS BUILD CHECKPOINTED"
@@ -2995,7 +2985,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 ("reason", action.reason),
                 ("phase", action.phase or "?"),
                 ("next", action.command),
-                ("then", "echelon continue"),
+                ("then", "echelon spec continue"),
             ]
             _banner("NEXT STEP", fields, subtitle="RUN BLOCKED")
             return
@@ -3034,13 +3024,13 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     if current_state and "phase1-constitution" not in completed_phases:
         blockers.append(
             "phase1-constitution has not completed in this run\n"
-            "     → echelon continue\n"
+            "     → echelon spec continue\n"
             "       (CHIEF will invoke speckit.constitution and record provenance)"
         )
     elif not const_path.exists():
         blockers.append(
             "constitution.md absent\n"
-            "     → echelon continue\n"
+            "     → echelon spec continue\n"
             "       (CHIEF will invoke speckit.constitution and fill it)"
         )
     else:
@@ -3050,7 +3040,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 "unresolved constitution template markers remain: "
                 + ", ".join(markers)
                 + "\n"
-                "     → echelon continue\n"
+                "     → echelon spec continue\n"
                 "       (CHIEF will repair constitution.md before continuing)"
             )
         else:
@@ -3140,7 +3130,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             else:
                 blockers.append(
                     f"WHY2 quality gates FAIL: {fail_detail}\n"
-                    f"     → echelon continue\n"
+                    f"     → echelon spec continue\n"
                     f"       (CARTOGRAPHER amendment pass, then WHY2 re-validates)"
                 )
         if borderline:
@@ -3152,7 +3142,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             if not tasks_exist_in_spec:
                 blockers.append(
                     "WHY2 BLOCKED — spec.md absent: CARTOGRAPHER has not written it yet\n"
-                    "     → echelon continue\n"
+                    "     → echelon spec continue\n"
                     "       (CARTOGRAPHER will write spec.md, then WHY2 re-validates)"
                 )
         if not hard_fails and not borderline and qg_verdict not in ("FAIL", "BLOCKED"):
@@ -3182,7 +3172,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         missing_str = ", ".join(dict.fromkeys(how_missing))  # dedup, preserve order
         blockers.append(
             f"HOW phase not run — {missing_str} absent\n"
-            f"     → echelon continue\n"
+            f"     → echelon spec continue\n"
             f"       (ARCHITECT commits stack, data-model, contracts)"
         )
     elif why2_passed:
@@ -3197,7 +3187,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     if why2_passed and not tasks_present:
         blockers.append(
             "tasks.md absent — ORCHESTRATOR (phase3-plan) has not run\n"
-            "     → echelon continue"
+            "     → echelon spec continue"
         )
 
     readiness_state = dict(run_state or current_state)
@@ -3251,19 +3241,19 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 for il in improvement_lines[:6]:
                     msg_lines.append(f"    {il}")
             msg_lines.append(
-                "  → echelon resume \"<tell CARTOGRAPHER what to fix>\"\n"
+                "  → echelon spec resume \"<tell CARTOGRAPHER what to fix>\"\n"
                 "    e.g. \"Fix structure: split compound FRs, add numeric thresholds\""
             )
             warnings.append("\n".join(msg_lines))
         elif escalation_q:
             warnings.append(
                 f"Run blocked: {escalation_q}\n"
-                "     → echelon resume \"<your answer>\""
+                "     → echelon spec resume \"<your answer>\""
             )
         else:
             warnings.append(
                 "Run blocked\n"
-                "     → echelon resume \"<your answer>\""
+                "     → echelon spec resume \"<your answer>\""
             )
 
     # ── Print ──────────────────────────────────────────────────────────────
@@ -3273,7 +3263,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     if _phase_a_buildable(result_status, blockers):
         if ready_items:
             fields.append(("ready", "\n".join(f"✓ {item}" for item in ready_items)))
-        harness_cmd = f"echelon harness run {newest_spec_id}" if newest_spec_id else "echelon harness run <spec-id>"
+        harness_cmd = f"echelon delivery run {newest_spec_id}" if newest_spec_id else "echelon delivery run <spec-id>"
         fields.append(("next", harness_cmd))
         if warnings:
             fields.append(("warnings", "\n".join(f"⚠ {w}" for w in warnings)))
@@ -3545,7 +3535,7 @@ def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -
 
     fields.append(("details", str(candidates[0] / "staging" / "issues.md")))
     if user_gated:
-        fields.append(("answer", "echelon resume \"<your answers>\""))
+        fields.append(("answer", "echelon spec resume \"<your answers>\""))
 
     _banner("OPEN ISSUES", fields, subtitle=f"from {run_label}")
 
@@ -3741,7 +3731,7 @@ def _enforce_project_config_compatibility(project_root: Path) -> None:
             ("expected", issue.expected),
             ("why", "Tasks Lexicon validation must read the derived requirements artifact."),
             ("fix", f"edit config and set {issue.path}: {issue.expected}"),
-            ("then", "echelon run \"<task>\" or echelon continue"),
+            ("then", "echelon spec run \"<task>\" or echelon spec continue"),
         ],
         subtitle="Refusing to dispatch agents with stale Lexicon task config",
         file=sys.stderr,
@@ -3807,7 +3797,7 @@ def _cmd_run(
 
     _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
-    _workspace_git_preflight(project_root, command_name="echelon run")
+    _workspace_git_preflight(project_root, command_name="echelon spec run")
 
     # Parse optional flags
     mode = "semi"
@@ -3816,7 +3806,7 @@ def _cmd_run(
     message_parts: list[str] = []
     i = 0
     while i < len(args):
-        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon run")
+        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon spec run")
         if parsed_mode is not None:
             mode = parsed_mode
             i = next_i
@@ -3835,7 +3825,7 @@ def _cmd_run(
     message = " ".join(message_parts)
     _workspace_git_preflight_for_squad_run(
         project_root,
-        command_name=_command_display("echelon run", args),
+        command_name=_command_display("echelon spec run", args),
         user_message=message,
         reset=reset,
     )
@@ -4511,7 +4501,7 @@ def _cmd_status(project_root: Path) -> None:
     if not run_dir or not state:
         _banner("RUN STATE", [
             ("Status", "No active run found"),
-            ("Next",   'echelon run "<task description>"'),
+            ("Next",   'echelon spec run "<task description>"'),
         ])
     else:
         run_status = state.get("status", "unknown")
@@ -4551,9 +4541,9 @@ def _cmd_status(project_root: Path) -> None:
         if elapsed:
             fields.append(("Started", elapsed))
         if run_status in ("running", "in_progress"):
-            fields.append(("Next", "echelon continue"))
+            fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
-            fields.append(("Next", 'echelon resume "<your answer>"'))
+            fields.append(("Next", 'echelon spec resume "<your answer>"'))
 
         _banner("RUN STATE", fields)
 
@@ -4589,12 +4579,12 @@ def _cmd_continue(
     """Resume or advance a squad run without requiring the user to know phase names.
 
     Behaviour by current run status:
-    - running / in_progress: re-invokes echelon run with the same message (resumes)
-    - blocked:               prints echelon resume guidance and exits
+    - running / in_progress: re-invokes echelon spec run with the same message (resumes)
+    - blocked:               prints echelon spec resume guidance and exits
     - done / interrupted:    determines the next actionable phase from the build-
                              readiness analysis and starts a new run there, reusing
                              the original task message and mode from state.json
-    - nothing found:         prints guidance to start a fresh echelon run
+    - nothing found:         prints guidance to start a fresh echelon spec run
     """
     import json as _json
 
@@ -4604,7 +4594,7 @@ def _cmd_continue(
     mode_override = ""
     i = 0
     while i < len(args):
-        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon continue")
+        parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon spec continue")
         if parsed_mode is not None:
             mode_override = parsed_mode
             i = next_i
@@ -4615,11 +4605,11 @@ def _cmd_continue(
     if not squad_dir or not (squad_dir / "state.json").exists():
         _workspace_git_preflight(
             project_root,
-            command_name=_command_display("echelon continue", args),
+            command_name=_command_display("echelon spec continue", args),
         )
         print(
             "No prior run found in this project.\n"
-            "Start a new run:  echelon run \"<task description>\"",
+            "Start a new run:  echelon spec run \"<task description>\"",
             flush=True,
         )
         return
@@ -4632,12 +4622,12 @@ def _cmd_continue(
     if not _workspace_git_present(project_root):
         if status in ("running", "in_progress"):
             _print_legacy_branchless_recovery_notice(
-                _command_display("echelon continue", args)
+                _command_display("echelon spec continue", args)
             )
         else:
             _workspace_git_preflight(
                 project_root,
-                command_name=_command_display("echelon continue", args),
+                command_name=_command_display("echelon spec continue", args),
             )
 
     prepared_state, _ = _ensure_active_continue_spec_context(
@@ -4690,7 +4680,7 @@ def _cmd_continue(
             [
                 ("blocked by", action.reason),
                 ("recover with", action.command),
-                ("then", "echelon continue"),
+                ("then", "echelon spec continue"),
             ],
             subtitle="Run paused. Deterministic recovery required.",
         )
@@ -4720,7 +4710,7 @@ def _cmd_continue(
         )
         return
 
-    # terminal-blocked: the consecutive-fail guard fired. echelon resume recorded the
+    # terminal-blocked: the consecutive-fail guard fired. echelon spec resume recorded the
     # user's answer but left phase=terminal-blocked (a TERMINAL_PHASE). The controller
     # would exit immediately from that phase, so we repair state here — advance the
     # phase to the next runnable one — before resuming in the SAME squad dir.
@@ -4729,7 +4719,7 @@ def _cmd_continue(
         if next_phase is None:
             print(
                 "Build is ready — nothing left to do in Phase A.\n\n"
-                "  echelon harness run <spec-id>",
+                "  echelon delivery run <spec-id>",
                 flush=True,
             )
             return
@@ -4737,7 +4727,7 @@ def _cmd_continue(
         return
 
     if status in ("running", "in_progress"):
-        # Live run — let echelon run pick it up (same message → same dir → resume)
+        # Live run — let echelon spec run pick it up (same message → same dir → resume)
         print(f"[squad] Resuming active run in {squad_dir.name}…", flush=True)
         _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
         return
@@ -4747,7 +4737,7 @@ def _cmd_continue(
     if next_phase is None:
         print(
             "Build is ready — nothing left to do in Phase A.\n\n"
-            "  echelon harness run <spec-id>",
+            "  echelon delivery run <spec-id>",
             flush=True,
         )
         return
@@ -4763,7 +4753,7 @@ def _cmd_rewind(
     positional = [arg for arg in args if arg != "--confirm"]
     if len(positional) != 1:
         print(
-            "Usage: echelon rewind <phase-id> [--confirm]\n"
+            "Usage: echelon spec rewind <phase-id> [--confirm]\n"
             f"Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
             file=sys.stderr,
         )
@@ -4864,7 +4854,7 @@ def _cmd_rewind(
         ("phase", target),
         ("spec dir", spec_dir_ref),
         ("cleaned", ", ".join(removed) if removed else "(none)"),
-        ("next step", "echelon continue"),
+        ("next step", "echelon spec continue"),
     ]
     _banner("REWIND PREPARED", details)
 
@@ -5220,7 +5210,7 @@ def _cmd_phase(
         [
             ("phase", result.phase),
             ("artifacts", str(target_spec_dir or run_dir)),
-            ("next", "echelon continue"),
+            ("next", "echelon spec continue"),
         ],
     )
 
@@ -5246,9 +5236,9 @@ def _cmd_resume(
     answer = " ".join(args).strip()
     if not answer:
         print(
-            "Usage: echelon resume \"<your answers>\"\n"
+            "Usage: echelon spec resume \"<your answers>\"\n"
             "  Answer the escalation questions shown when the run was blocked.\n"
-            "  Example: echelon resume \"Q1: yes, I own the IP  Q2: 13+  Q3: short missions\"",
+            "  Example: echelon spec resume \"Q1: yes, I own the IP  Q2: 13+  Q3: short missions\"",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5256,7 +5246,7 @@ def _cmd_resume(
     squad_dir = _find_current_run_dir(project_root)
     if squad_dir is None:
         print("✗ No active squad run found.", file=sys.stderr)
-        print("  Start a run with: echelon run \"<task>\"", file=sys.stderr)
+        print("  Start a run with: echelon spec run \"<task>\"", file=sys.stderr)
         sys.exit(1)
 
     store = SquadStateStore(squad_dir)
@@ -5274,7 +5264,7 @@ def _cmd_resume(
     if not escalation_q:
         print(
             "✗ Run is blocked but no escalation question found.\n"
-            "  Use: echelon run --next-phase <phase-id>  to recover manually",
+            "  Use: echelon spec run --next-phase <phase-id>  to recover manually",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -5299,7 +5289,7 @@ def _cmd_resume(
     clarifications_file = staging_dir / "user-clarifications.md"
     clarifications_file.write_text(
         f"# User Clarifications\n\n"
-        f"> Provided via `echelon resume` in response to the escalation block.\n\n"
+        f"> Provided via `echelon spec resume` in response to the escalation block.\n\n"
         f"## Questions asked\n\n"
         f"{escalation_q}\n\n"
         f"## User answers\n\n"
@@ -5356,13 +5346,13 @@ def _cmd_resume(
 
     # terminal-blocked is a TERMINAL_PHASE in the squad controller — running the
     # controller from there is always a silent no-op that returns "done" immediately.
-    # Instead, record the answer and tell the user to run `echelon continue`.
+    # Instead, record the answer and tell the user to run `echelon spec continue`.
     if blocked_phase == "terminal-blocked":
         _banner("SQUAD RESUMED", [
             ("answer", (answer[:60] + "…") if len(answer) > 60 else answer),
             ("status", "unblocked — answer recorded"),
             ("next", "continuing"),
-            ("note", "delegating to echelon continue"),
+            ("note", "delegating to echelon spec continue"),
             ("artifacts", str(squad_dir)),
         ])
         _cmd_continue([], project_root=project_root, ext_dir=ext_dir)
@@ -6029,7 +6019,7 @@ def _cmd_workspace(args: list[str]) -> None:
 
 def _cmd_artifacts(args: list[str]) -> None:
     if not args:
-        print("echelon artifacts: missing spec_id", file=sys.stderr)
+        print("echelon spec artifacts: missing spec_id", file=sys.stderr)
         sys.exit(1)
 
     from echelon.artifact_index import write_artifact_index
@@ -6503,7 +6493,7 @@ def main() -> None:
         if not cfg_file.exists():
             print(
                 f"✗ Project not initialized — config not found: {cfg_file}\n"
-                "  Run: echelon init",
+                "  Run: echelon workspace init",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -6513,7 +6503,7 @@ def main() -> None:
     if command == "resume":
         if os.environ.get("ECHELON_SQUAD_ACTIVE"):
             print(
-                "✗ echelon resume: refusing nested invocation (ECHELON_SQUAD_ACTIVE is set).",
+                "✗ echelon spec resume: refusing nested invocation (ECHELON_SQUAD_ACTIVE is set).",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -6532,9 +6522,9 @@ def main() -> None:
     if command == "run":
         if os.environ.get("ECHELON_SQUAD_ACTIVE"):
             print(
-                "✗ echelon run: refusing nested invocation — already inside a squad "
+                "✗ echelon spec run: refusing nested invocation — already inside a squad "
                 "agent dispatch (ECHELON_SQUAD_ACTIVE is set).\n"
-                "  Squad agents must not call 'echelon run'. "
+                "  Squad agents must not call 'echelon spec run'. "
                 "Return echelon_result: from your agent instead.",
                 file=sys.stderr,
             )
@@ -6552,7 +6542,7 @@ def main() -> None:
         if not cfg_file.exists():
             print(
                 f"✗ Project not initialized — config not found: {cfg_file}\n"
-                "  Run: echelon init",
+                "  Run: echelon workspace init",
                 file=sys.stderr,
             )
             sys.exit(1)

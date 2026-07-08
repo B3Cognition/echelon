@@ -137,7 +137,7 @@ Print a summary:
 
 ```
 ╔══════════════════════════════════════════╗
-║         echelon init — complete          ║
+║    echelon workspace init — complete     ║
 ╚══════════════════════════════════════════╝
 
   config       → {ECHELON_CONFIG}

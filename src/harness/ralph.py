@@ -564,7 +564,7 @@ class RalphController:
                                     ("meaning", meaning),
                                     (
                                         "next",
-                                        f"echelon harness resume {self._spec_id}  (recover and finalize this build)",
+                                        f"echelon delivery resume {self._spec_id}  (recover and finalize this build)",
                                     ),
                                 ]
                             )
@@ -844,7 +844,7 @@ class RalphController:
                                     "instructions are unclear.\n\n"
                                     "Please review the build output above and either:\n"
                                     "1. Append clarification under ## Answer in the escalation "
-                                    f"file and run echelon harness resume {self._spec_id}\n"
+                                    f"file and run echelon delivery resume {self._spec_id}\n"
                                     "2. Reset and restart with --reset flag"
                                 ),
                                 last_verify_result=_verify_to_dict(
@@ -1389,7 +1389,7 @@ class RalphController:
             id="fulfillment-gaps",
             error=(
                 f"fulfillment report has unresolved statuses ({statuses}): {report}. "
-                f"Run `echelon reopen {self._spec_id}` or continue the harness loop "
+                f"Run `echelon spec reopen {self._spec_id}` or continue the delivery loop "
                 "with fulfillment-gaps.md as mandatory implementation context."
             ),
         )
@@ -1739,7 +1739,7 @@ class RalphController:
             category=FailureCategory.OTHER,
             id="verify-spec-failed",
             error=(
-                f"`echelon verify-spec {self._spec_id}` failed with exit code "
+                f"`echelon spec verify {self._spec_id}` failed with exit code "
                 f"{exit_code}; fulfillment could not be refreshed."
             ),
         )
@@ -2564,7 +2564,7 @@ class RalphController:
         return (
             f"{base}\n\n"
             "Ralph owns fulfillment refresh and verify-spec regeneration. "
-            "Do not run `echelon verify-spec`. "
+            "Do not run `echelon spec verify`. "
             "Do not hand-edit `fulfillment-report.md` or `fulfillment-gaps.md`. "
             "If a failure mentions stale/scoped fulfillment evidence, treat it as "
             "read-only context and fix source/tests or stop after writing the harness status marker.\n\n"
@@ -3280,13 +3280,13 @@ def _print_verify_command_needed_banner(spec_id: str, strategy_id: str) -> None:
             ("strategy", strategy_id),
             ("problem",
              "The harness could not detect a test runner in the built worktree.\n"
-             "Run 'echelon harness init' to auto-detect high-confidence verification, or add\n"
+             "Run 'echelon delivery init' to auto-detect high-confidence verification, or add\n"
              "verify_command manually to echelon-config.yml, for example:\n\n"
              "  verify_command: swift test --package-path Packages/MyLib\n"
              "  verify_command: pytest\n"
              "  verify_command: go test ./..."),
-            ("resume with", f"echelon harness resume {spec_id}"),
-            ("discard with", f"echelon harness run {spec_id} --reset"),
+            ("resume with", f"echelon delivery resume {spec_id}"),
+            ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
     )
@@ -3302,8 +3302,8 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
             ("strategy", strategy_id),
             ("file", escalation_file),
             ("answer in", "Append a ## Answer section to the escalation file."),
-            ("resume with", f"echelon harness resume {spec_id}"),
-            ("discard with", f"echelon harness run {spec_id} --reset"),
+            ("resume with", f"echelon delivery resume {spec_id}"),
+            ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
     )
@@ -3450,7 +3450,7 @@ def _print_verify_spec_provider_session_limit_banner(
                 "meaning",
                 "Implementation progress was checkpointed, but full fulfillment evidence could not be refreshed.",
             ),
-            ("next", f"echelon harness resume {spec_id}  (retry verification after provider reset)"),
+            ("next", f"echelon delivery resume {spec_id}  (retry verification after provider reset)"),
         ],
         file=sys.stderr,
     )
@@ -3512,7 +3512,7 @@ def _print_containment_violation_banner(
             ("changed", changed or "(status changed, no changed lines captured)"),
             (
                 "next",
-                f"inspect/salvage the out-of-worktree changes, then rerun: echelon harness run {spec_id}",
+                f"inspect/salvage the out-of-worktree changes, then rerun: echelon delivery run {spec_id}",
             ),
         ],
         file=sys.stderr,

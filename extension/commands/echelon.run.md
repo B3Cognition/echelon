@@ -30,12 +30,12 @@ if ! command -v echelon >/dev/null 2>&1; then
 fi
 
 # echelon CLI version — must be >= 2.2.0 (Python harness, ECHELON_SQUAD_ACTIVE guard)
-# Older builds have no --version flag and route 'echelon run' through the skill path,
-# causing infinite recursion (echelon.run.md → echelon run → echelon.run.md → ...).
+# Older builds have no --version flag and route 'echelon spec run' through the skill path,
+# causing infinite recursion (echelon.run.md → echelon spec run → echelon.run.md → ...).
 ECHELON_VER=$(echelon --version 2>/dev/null | awk '{print $2}')
 if [ -z "$ECHELON_VER" ]; then
   echo "✗ echelon CLI is outdated (pre-2.2.0 — no --version support)." >&2
-  echo "  An old build will recurse infinitely when 'echelon run' is invoked." >&2
+  echo "  An old build will recurse infinitely when 'echelon spec run' is invoked." >&2
   echo "  Run: bash ~/.echelon/install.sh" >&2
   exit 1
 fi
@@ -52,7 +52,7 @@ echo "✓ Extension: ${ECHELON_EXT}"
 # Project initialized
 if [ ! -f "${ECHELON_CONFIG}" ]; then
   echo "✗ Project not initialized — config not found: ${ECHELON_CONFIG}" >&2
-  echo "  Run: echelon init" >&2
+  echo "  Run: echelon workspace init" >&2
   exit 1
 fi
 echo "✓ Config: ${ECHELON_CONFIG}"
@@ -65,7 +65,7 @@ echo "✓ Config: ${ECHELON_CONFIG}"
 Run this command **synchronously in the foreground** using the Bash tool — do NOT use `run_in_background`. The harness streams phase progress and agent output directly to the terminal; running in background silences all of that and sends output to a temp file instead.
 
 ```bash
-cd "${PROJECT_ROOT}" && echelon run "$@"
+cd "${PROJECT_ROOT}" && echelon spec run "$@"
 ```
 
 This command delegates entirely to the Python squad harness (`src/harness/squad.py`).

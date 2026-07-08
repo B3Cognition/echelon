@@ -15,7 +15,7 @@ All brownfield extraction (re-* commands) configuration lives under the `re:` to
 - `re.workflow.max_validate_iterations` — max validate iterations (default: 3)
 
 ### Output
-- `re.output.directory` — where standalone analysis artifacts land (default: `.specify/echelon/re`). During an active `echelon run`, the default is redirected to `runs/<run-id>/re` so run-local artifacts stay with the run.
+- `re.output.directory` — where standalone analysis artifacts land (default: `.specify/echelon/re`). During an active `echelon spec run`, the default is redirected to `runs/<run-id>/re` so run-local artifacts stay with the run.
 - `re.output.generate_spec` / `generate_plan` / `generate_tasks` — toggle artifact generation (all default: true)
 
 ### Sources

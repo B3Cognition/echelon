@@ -1,7 +1,7 @@
 """Tests for _cmd_harness_run argument parsing in cli.py.
 
 Covers the free-text task description capture introduced to fix the bug
-where 'echelon harness run 013 strategy=codegen "do X"' silently dropped "do X".
+where 'echelon delivery run 013 strategy=codegen "do X"' silently dropped "do X".
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ class TestHarnessRunTaskFormatErrors:
         assert exc.value.code == 2
         err = capsys.readouterr().err
         assert "workspace root is not a Git repo" in err
-        assert "echelon harness run 003 mode=banzai strategy=soar 'finish slice'" in err
+        assert "echelon delivery run 003 mode=banzai strategy=soar 'finish slice'" in err
 
     def test_harness_run_snapshots_spec_before_preflight_exit(
         self,
@@ -254,7 +254,7 @@ class TestHarnessRunTaskFormatErrors:
 
         mock_run.assert_not_called()
         err = capsys.readouterr().err
-        assert "echelon harness run 003 mode=banzai strategy=soar 'finish slice'" in err
+        assert "echelon delivery run 003 mode=banzai strategy=soar 'finish slice'" in err
 
     def test_invalid_plan_format_exits_with_migration_guidance(
         self,
@@ -340,7 +340,7 @@ class TestHarnessRunTaskFormatErrors:
         err = capsys.readouterr().err
         assert "Docker is not running" in err
         assert "start Docker" in err
-        assert "echelon harness run 003" in err
+        assert "echelon delivery run 003" in err
         assert "Traceback" not in err
 
     def test_harness_run_accepts_canonical_workspace_config(
@@ -460,7 +460,7 @@ class TestHarnessRunTaskFormatErrors:
         err = capsys.readouterr().err
         assert "Phase A build inputs are not ready" in err
         assert "constitution.md contains unresolved template markers" in err
-        assert "echelon continue" in err
+        assert "echelon spec continue" in err
 
 
 @pytest.mark.unit

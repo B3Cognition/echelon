@@ -152,7 +152,7 @@ def harness_init(ctx: typer.Context) -> None:
 
     legacy_cli._cmd_harness_init(
         list(ctx.args),
-        command_prefix="echelon harness init",
+        command_prefix="echelon delivery init",
     )
 
 
@@ -268,7 +268,7 @@ def harness_run(
             kill_losers=kill_losers,
             reset=reset,
         ),
-        command_prefix="echelon harness run",
+        command_prefix="echelon delivery run",
         display_args=_display_run_args(
             spec_id,
             list(ctx.args),

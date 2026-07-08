@@ -139,7 +139,7 @@ class TestLand:
 
         assert warning is not None
         assert "MISSING" in warning
-        assert "echelon reopen 001" in warning
+        assert "echelon spec reopen 001" in warning
 
     def test_fulfillment_warning_strict_treats_unverified_as_blocking(
         self, tmp_path: Path
@@ -179,7 +179,7 @@ class TestLand:
 
         assert warning is not None
         assert "scoped fulfillment report" in warning
-        assert "echelon verify-spec 001" in warning
+        assert "echelon spec verify 001" in warning
 
     def test_land_blocks_fulfillment_gaps_before_merge(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-demo"
@@ -208,7 +208,7 @@ class TestLand:
         assert banner.call_args.args[0] == "LAND — FULFILLMENT GAPS BLOCKED"
         fields = dict(banner.call_args.args[1])
         assert "DEVIATED" in fields["problem"]
-        assert "echelon reopen 042" in fields["next step"]
+        assert "echelon spec reopen 042" in fields["next step"]
 
     def test_land_blocks_when_spec_not_ready_to_land(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "042-demo"
@@ -714,7 +714,7 @@ class TestLand:
         banner.assert_called_once()
         assert banner.call_args.args[0] == "LAND — ACTION NEEDED"
         fields = dict(banner.call_args.args[1])
-        assert fields["next step"] == "re-run after checks/branch protection clear: echelon land 042"
+        assert fields["next step"] == "re-run after checks/branch protection clear: echelon delivery land 042"
 
     def test_returns_false_when_preparation_blocks_on_semantic_conflict(
         self, tmp_path: Path

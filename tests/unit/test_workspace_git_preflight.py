@@ -17,7 +17,7 @@ def test_branchless_polyrepo_workspace_blocks_with_init_recipe(
     (source / "package.json").write_text("{}", encoding="utf-8")
 
     with pytest.raises(SystemExit) as exc:
-        _workspace_git_preflight(tmp_path, command_name="echelon harness run")
+        _workspace_git_preflight(tmp_path, command_name="echelon delivery run")
 
     assert exc.value.code == 2
     err = capsys.readouterr().err
@@ -28,7 +28,7 @@ def test_branchless_polyrepo_workspace_blocks_with_init_recipe(
     assert "/runs/" in err
     assert "git add .gitignore specs" in err
     assert "git add .gitignore .specify specs" not in err
-    assert "echelon harness run" in err
+    assert "echelon delivery run" in err
 
 
 def test_git_backed_polyrepo_workspace_passes(tmp_path: Path) -> None:
@@ -38,11 +38,11 @@ def test_git_backed_polyrepo_workspace_passes(tmp_path: Path) -> None:
     (source / ".git").mkdir()
     (source / "package.json").write_text("{}", encoding="utf-8")
 
-    _workspace_git_preflight(tmp_path, command_name="echelon harness run")
+    _workspace_git_preflight(tmp_path, command_name="echelon delivery run")
 
 
 def test_single_repo_workspace_passes(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
 
-    _workspace_git_preflight(tmp_path, command_name="echelon run")
+    _workspace_git_preflight(tmp_path, command_name="echelon spec run")

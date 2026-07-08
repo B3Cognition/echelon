@@ -292,7 +292,7 @@ def test_harness_namespace_remains_compatibility_alias(monkeypatch: pytest.Monke
 
     mock_run.assert_called_once_with(
         ["001"],
-        command_prefix="echelon harness run",
+        command_prefix="echelon delivery run",
         display_args=["001"],
     )
 

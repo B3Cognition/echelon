@@ -172,8 +172,8 @@ def _blocked_banner(phase: str, reason: str, question: str) -> None:
             ("phase", phase),
             ("reason", reason),
             ("question", question),
-            ("answer with", "echelon resume \"<your answer>\""),
-            ("discard with", "echelon run --reset \"<new task>\""),
+            ("answer with", "echelon spec resume \"<your answer>\""),
+            ("discard with", "echelon spec run --reset \"<new task>\""),
         ],
     )
 
@@ -383,8 +383,8 @@ class SquadController:
                          f"Edit {config_path}:\n"
                          f"  analysis:\n"
                          f"    token_budget_k: <increase this value>"),
-                        ("then re-run", "echelon run"),
-                        ("or discard", "echelon run --reset"),
+                        ("then re-run", "echelon spec run"),
+                        ("or discard", "echelon spec run --reset"),
                     ],
                 )
                 return SquadResult(
@@ -427,9 +427,9 @@ class SquadController:
                     "SQUAD — BLOCKED",
                     [
                         ("reason", blocked_reason),
-                        ("recover", "echelon run --next-phase <phase-id>"),
+                        ("recover", "echelon spec run --next-phase <phase-id>"),
                         ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
-                        ("discard", "echelon run --reset"),
+                        ("discard", "echelon spec run --reset"),
                     ],
                 )
                 return SquadResult(
@@ -462,7 +462,7 @@ class SquadController:
                 )
                 force_resume = True
             else:
-                # semi / guided: stop and require echelon resume
+                # semi / guided: stop and require echelon spec resume
                 _blocked_banner(
                     phase=existing.get("phase", "?"),
                     reason=existing.get("blocked_reason", ""),
@@ -983,7 +983,7 @@ class SquadController:
             "## Handoff",
             "",
             f"- Artifacts: {artifact_count} files in `{published_spec_dir.name}/`",
-            "- Ready for: `echelon harness run <spec-id>`",
+            "- Ready for: `echelon delivery run <spec-id>`",
             "- Application source files modified by Phase A: none",
             "",
         ]

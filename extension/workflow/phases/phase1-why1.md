@@ -86,4 +86,4 @@ Those keep routing to DISCOVER as normal.
 The harness reads `escalation_question` and either:
 
 - **banzai mode** → dispatches COMMANDER for best-judgment answers, run continues
-- **semi/guided mode** → stops the run; user answers via `echelon resume "<answers>"`
+- **semi/guided mode** → stops the run; user answers via `echelon spec resume "<answers>"`

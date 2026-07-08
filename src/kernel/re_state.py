@@ -19,7 +19,7 @@ def resolve_re_output_dir(
     """Return the RE output directory for the current execution context.
 
     Standalone re-* commands use the configured/default `.specify/echelon/re`
-    location. When that default is in effect and an active echelon run exists,
+    location. When that default is in effect and an active echelon spec run exists,
     RE artifacts belong to the active run directory under `runs/<run-id>/re`.
     """
     configured = configured_output_dir or DEFAULT_RE_OUTPUT_DIR

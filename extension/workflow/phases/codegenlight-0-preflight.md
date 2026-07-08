@@ -13,11 +13,11 @@ try:
     c = yaml.safe_load(open('echelon-config.yml'))
     w = (c or {}).get('mempalace', {}).get('wing', '')
     if not w:
-        print('ERROR: wing not set in echelon-config.yml — run: echelon init', file=sys.stderr)
+        print('ERROR: wing not set in echelon-config.yml — run: echelon workspace init', file=sys.stderr)
         sys.exit(1)
     print(w)
 except FileNotFoundError:
-    print('ERROR: echelon-config.yml not found — run: echelon init', file=sys.stderr)
+    print('ERROR: echelon-config.yml not found — run: echelon workspace init', file=sys.stderr)
     sys.exit(1)
 " 2>&1) || exit 1
 if echo "$WING" | grep -q "^ERROR:"; then

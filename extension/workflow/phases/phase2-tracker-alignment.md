@@ -39,7 +39,7 @@ TRACKER must emit one of these canonical `echelon_result.verdict` values:
 
 When emitting `STOP_AND_ASK`, return `status: blocked`, a concise
 `blocked_reason`, and a concrete `escalation_question` in
-`echelon_result.state_updates` so `echelon resume "<answer>"` can recover the
+`echelon_result.state_updates` so `echelon spec resume "<answer>"` can recover the
 run deterministically.
 
 The workflow still accepts legacy `DRIFTING` and `ESCALATE` verdicts for compatibility, but new outputs must use the canonical values above.

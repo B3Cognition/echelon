@@ -54,7 +54,7 @@ compatibility, but new outputs must use the canonical values above.
 
 When emitting `STOP_AND_ASK`, return `status: blocked`, a concise
 `blocked_reason`, and a concrete `escalation_question` in
-`echelon_result.state_updates` so `echelon resume "<answer>"` can recover the
+`echelon_result.state_updates` so `echelon spec resume "<answer>"` can recover the
 run deterministically.
 
 **Transition:** `phases[phase1-why1]` — see `workflow/definition.yaml`

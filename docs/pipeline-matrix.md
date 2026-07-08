@@ -38,8 +38,8 @@ Echelon's supported dual-artifact contract is:
 
 | Pipeline | Trigger | Build engine | Consumes | Current status |
 |---|---|---|---|---|
-| Default harness strategy | `echelon harness run <id>` | Echelon squad build via `echelon.build` | Published Phase A artifacts under `specs/<id>-*/` | Primary supported path |
-| Codegen harness strategy | `echelon harness run <id> strategy=codegen` | SOAR CQ-ISC pipeline via `echelon.codegen` | Same published Phase A artifacts; mines requirements into MemPalace | Alternative build path with stricter quality gates |
+| Default delivery strategy | `echelon delivery run <id>` | Echelon squad build via `echelon.build` | Published Phase A artifacts under `specs/<id>-*/` | Primary supported path |
+| Codegen delivery strategy | `echelon delivery run <id> strategy=codegen` | SOAR CQ-ISC pipeline via `echelon.codegen` | Same published Phase A artifacts; mines requirements into MemPalace | Alternative build path with stricter quality gates |
 | Direct build command | `echelon build <id>` | Echelon build skill outside harness | Phase A artifacts | Advanced/manual |
 | Direct codegen command | `echelon codegen <id>` | SOAR pipeline outside harness | Phase A artifacts | Advanced/manual |
 

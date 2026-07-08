@@ -286,7 +286,7 @@ class GitOpsManager:
         """
         if not self._mirror_path.exists():
             raise GitOpsError(
-                f"Mirror does not exist at {self._mirror_path}. Run 'echelon harness init' to create it.",
+                f"Mirror does not exist at {self._mirror_path}. Run 'echelon delivery init' to create it.",
                 command="fetch_mirror",
             )
         try:
@@ -374,7 +374,7 @@ class GitOpsManager:
         """
         if not self._mirror_path.exists():
             raise GitOpsError(
-                f"Mirror does not exist at {self._mirror_path}. Run 'echelon harness init' to create it.",
+                f"Mirror does not exist at {self._mirror_path}. Run 'echelon delivery init' to create it.",
                 command="create_worktree",
             )
 
@@ -605,7 +605,7 @@ class GitOpsManager:
                 "Harness runtime extension is missing. Expected "
                 f"{source / 'agents' / 'control' / 'commander.md'} and "
                 f"{source / 'workflow' / 'definition.yaml'}. "
-                "Run `echelon init` from the project root before `echelon harness run`.",
+                "Run `echelon workspace init` from the project root before `echelon delivery run`.",
                 command="sync_runtime_extension",
             )
 

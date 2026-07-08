@@ -107,7 +107,7 @@ Write `{spec_dir}/reopen-{n}.md` summarizing:
 - source gaps file
 - gaps converted
 - tasks appended
-- next command: `echelon harness run {spec_id}`
+- next command: `echelon delivery run {spec_id}`
 
 ## Output
 

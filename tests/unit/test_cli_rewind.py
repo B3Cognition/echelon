@@ -96,7 +96,7 @@ def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
     captured = capsys.readouterr()
     assert "REWIND PREPARED" in captured.out
     assert "phase3-sentinel" in captured.out
-    assert "echelon continue" in captured.out
+    assert "echelon spec continue" in captured.out
 
 
 def test_rewind_phase3_sentinel_cleans_run_local_shadow_outputs(

@@ -195,7 +195,7 @@ Progress reconciliation:
 If no reopen summaries exist but fulfillment gaps exist, recommend:
 
 ```bash
-echelon reopen {spec_id}
+echelon spec reopen {spec_id}
 ```
 
 ## Output

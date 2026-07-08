@@ -43,7 +43,7 @@ specify extension add --dev ~/echelon/extension
 ```bash
 # Check CLIs are on PATH (may need a terminal restart after install)
 echelon --help
-echelon harness --help
+echelon delivery --help
 codegen --help
 understanding version
 
@@ -61,14 +61,14 @@ bash ~/echelon/scripts/bash/dry-run.sh
 
 ## Per-project setup: wing provisioning
 
-`echelon init` sets up a project for codegen use. Among other things, it provisions the **MemPalace wing** — your project's stable identity in the shared memory store — and writes it to `echelon-config.yml`.
+`echelon workspace init` sets up a project for codegen use. Among other things, it provisions the **MemPalace wing** — your project's stable identity in the shared memory store — and writes it to `.echelon/config.yml`.
 
 ```bash
 cd ~/my-project
-echelon init
+echelon workspace init
 ```
 
-`echelon init` will prompt:
+`echelon workspace init` will prompt:
 
 ```text
 Wing name for MemPalace memory [my-project]: ▌
@@ -80,15 +80,15 @@ Press Enter to accept the auto-suggestion (derived from your git remote URL, e.g
 
 - Set it once, never change it for a given repo
 - All clones of the same repo should use the same wing (they inherit it automatically via `echelon-config.yml`)
-- Two different repos must use different wings — `echelon init` warns you if a collision is detected
+- Two different repos must use different wings — `echelon workspace init` warns you if a collision is detected
 
-Re-running `echelon init` on an already-configured project is safe — if the wing is already set, the step is skipped.
+Re-running `echelon workspace init` on an already-configured project is safe — if the wing is already set, the step is skipped.
 
 ---
 
 ## Mine requirements into MemPalace
 
-After `echelon init`, mine your spec files so the codegen RE phase can retrieve requirements semantically:
+After `echelon workspace init`, mine your spec files so the codegen RE phase can retrieve requirements semantically:
 
 ```bash
 # Mine a single spec file

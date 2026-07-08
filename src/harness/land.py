@@ -540,7 +540,7 @@ def land(
                 ("spec", spec_id),
                 ("problem", "PR merge blocked by branch protection, checks, or conflicts"),
                 ("PR", pr_url),
-                ("next step", f"re-run after checks/branch protection clear: echelon land {spec_id}"),
+                ("next step", f"re-run after checks/branch protection clear: echelon delivery land {spec_id}"),
             ],
             subtitle="Feature branch was prepared, but Echelon will not bypass the PR.",
         )
@@ -582,7 +582,7 @@ def land(
                 ("problem", "direct merge into default branch failed (conflicts?)"),
                 ("next step", f"git merge --no-ff {feature_branch}  # resolve conflicts, then re-run"),
             ],
-            subtitle="Resolve conflicts manually, then re-run: echelon land " + spec_id,
+            subtitle="Resolve conflicts manually, then re-run: echelon delivery land " + spec_id,
         )
         return False
 
@@ -594,7 +594,7 @@ def land(
                 ("spec", spec_id),
                 ("branch", default_branch),
                 ("problem", "local merge succeeded, but pushing the default branch failed"),
-                ("next step", f"git push origin {default_branch}  # then re-run: echelon land {spec_id}"),
+                ("next step", f"git push origin {default_branch}  # then re-run: echelon delivery land {spec_id}"),
             ],
             subtitle="Echelon stopped before cleanup so the feature branch remains recoverable.",
         )
@@ -625,7 +625,7 @@ def _clean_generated_drift_before_direct_merge(spec_id: str, project_dir: Path) 
                 ("spec", spec_id),
                 ("problem", "tracked changes remain after verification"),
                 ("files", "\n".join(unsafe)),
-                ("next step", f"commit or stash these files, then re-run: echelon land {spec_id}"),
+                ("next step", f"commit or stash these files, then re-run: echelon delivery land {spec_id}"),
             ],
             subtitle="Echelon will only discard known generated verification drift.",
         )
@@ -700,7 +700,7 @@ def _checkout_default_for_landing_cleanup(
             ("spec", spec_id),
             ("branch", default_branch),
             ("problem", "feature branch is already merged, but Echelon could not switch to the default branch for cleanup"),
-            ("next step", f"fix the checkout problem, then re-run: echelon land {spec_id} --continue"),
+            ("next step", f"fix the checkout problem, then re-run: echelon delivery land {spec_id} --continue"),
         ],
         subtitle="Echelon stopped before deleting the local feature branch.",
     )
@@ -747,7 +747,7 @@ def _check_ready_before_land(
             [
                 ("spec", spec_id),
                 ("problem", status_warning),
-                ("next step", f"rerun harness or verify-spec, then: echelon land {spec_id}"),
+                ("next step", f"rerun delivery or spec verification, then: echelon delivery land {spec_id}"),
             ],
             subtitle="Echelon stopped before landing a spec that is not marked ready.",
         )
@@ -809,9 +809,9 @@ def _prepare_for_land(
                 (detail_label, detail_value),
                 (
                     "next step",
-                    f"resolve conflicts, then run: echelon land {spec_id} --continue"
+                    f"resolve conflicts, then run: echelon delivery land {spec_id} --continue"
                     if has_conflicts
-                    else f"resolve the reported problem, then run: echelon land {spec_id} --continue",
+                    else f"resolve the reported problem, then run: echelon delivery land {spec_id} --continue",
                 ),
             ],
             subtitle=(
@@ -840,7 +840,7 @@ def _verify_before_land(
             ("spec", spec_id),
             ("problem", "verification command failed"),
             ("output", output or "(no output)"),
-            ("next step", f"fix verification failures, then re-run: echelon land {spec_id}"),
+            ("next step", f"fix verification failures, then re-run: echelon delivery land {spec_id}"),
         ],
         subtitle="Echelon stopped before merging or changing landing state.",
     )
@@ -871,8 +871,8 @@ def _check_fulfillment_before_land(
             [
                 ("spec", spec_id),
                 ("problem", fulfillment_warning),
-                ("next step", f"echelon reopen {spec_id}  # then rerun harness and land"),
-                ("override", f"echelon land {spec_id} --allow-fulfillment-gaps"),
+                ("next step", f"echelon spec reopen {spec_id}  # then rerun delivery and land"),
+                ("override", f"echelon delivery land {spec_id} --allow-fulfillment-gaps"),
             ],
             subtitle="Echelon stopped before landing incomplete spec coverage.",
         )
@@ -904,7 +904,7 @@ def _fulfillment_warning(
             if (spec_dir / "spec.md").exists():
                 return (
                     f"no fulfillment report found for {spec_dir}. "
-                    f"Rerun `echelon verify-spec {spec_id}` before landing."
+                    f"Rerun `echelon spec verify {spec_id}` before landing."
                 )
             return None
 
@@ -928,14 +928,14 @@ def _fulfillment_warning(
             verified_commit = metadata.get("verified_commit") or "(missing)"
             return (
                 f"fulfillment report is stale for current HEAD {current_commit}: {report} "
-                f"was verified at {verified_commit}. Rerun `echelon verify-spec {spec_id}`."
+                f"was verified at {verified_commit}. Rerun `echelon spec verify {spec_id}`."
             )
 
         metadata = read_fulfillment_metadata(report)
         if metadata.get("verify_scope") == "scoped":
             return (
                 f"latest fulfillment report is a scoped fulfillment report: {report}. "
-                f"Run full `echelon verify-spec {spec_id}` before landing."
+                f"Run full `echelon spec verify {spec_id}` before landing."
             )
 
         if not fulfillment_has_blocking_gaps(report, strict=strict):
@@ -944,7 +944,7 @@ def _fulfillment_warning(
     statuses = ", ".join(sorted(blocking_statuses(strict)))
     return (
         f"fulfillment report has unresolved statuses ({statuses}): {report}. "
-        f"Run `echelon reopen {spec_id}` or rerun `echelon verify-spec {spec_id}`."
+        f"Run `echelon spec reopen {spec_id}` or rerun `echelon spec verify {spec_id}`."
     )
 
 
@@ -1200,7 +1200,7 @@ def _finish_landing(
             [
                 ("branch", feature_branch),
                 ("problem", f"origin/HEAD still points to {feature_branch}"),
-                ("next step", f"change default branch to {default_branch}, then rerun: echelon land {spec_id}"),
+                ("next step", f"change default branch to {default_branch}, then rerun: echelon delivery land {spec_id}"),
                 ("manual cleanup", f"git push origin --delete {feature_branch}"),
             ],
             subtitle="Echelon stopped before deleting a branch that the remote still treats as default.",

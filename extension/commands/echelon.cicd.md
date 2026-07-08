@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.cicd
-description: "Retired. Re-run echelon harness init to auto-detect high-confidence verify_command values."
+description: "Retired. Re-run echelon delivery init to auto-detect high-confidence verify_command values."
 behavior:
   invocation: manual
 ---
@@ -15,10 +15,10 @@ deploy config, or create CI workflow files from this command.
 For harness verification setup, run:
 
 ```bash
-echelon harness init
+echelon delivery init
 ```
 
-`echelon harness init` writes a top-level `verify_command` only when it can make
+`echelon delivery init` writes a top-level `verify_command` only when it can make
 a high-confidence deterministic choice. If detection is ambiguous, add
 `verify_command` manually to `.specify/extensions/echelon/echelon-config.yml`,
 for example:
