@@ -1820,6 +1820,36 @@ def _is_phase_a_build_incomplete_retry(state: dict) -> bool:
     )
 
 
+def _parse_harness_resume_args(args: list[str]) -> tuple[str, dict[str, str], str]:
+    spec_id = args[0]
+    kv: dict[str, str] = {}
+    answer_parts: list[str] = []
+    i = 1
+    while i < len(args):
+        arg = args[i]
+        if arg in {"--mode", "--strategy"} and i + 1 < len(args):
+            kv[arg.removeprefix("--")] = args[i + 1].strip()
+            i += 2
+            continue
+        if arg.startswith("--mode="):
+            kv["mode"] = arg.partition("=")[2].strip()
+        elif arg.startswith("--strategy="):
+            kv["strategy"] = arg.partition("=")[2].strip()
+        elif "=" in arg:
+            key, _, value = arg.partition("=")
+            key = key.strip()
+            if key in {"mode", "strategy"}:
+                kv[key] = value.strip()
+            elif key == "answer":
+                answer_parts.append(value.strip())
+            else:
+                answer_parts.append(arg)
+        else:
+            answer_parts.append(arg)
+        i += 1
+    return spec_id, kv, " ".join(part for part in answer_parts if part).strip()
+
+
 def _cmd_harness_resume(
     args: list[str],
     *,
@@ -1846,12 +1876,7 @@ def _cmd_harness_resume(
         return
 
     rerun_command = _command_display(command_prefix, display_args or args)
-    spec_id = args[0]
-    kv: dict[str, str] = {}
-    for arg in args[1:]:
-        if "=" in arg:
-            k, _, v = arg.partition("=")
-            kv[k.strip()] = v.strip()
+    spec_id, kv, resume_answer = _parse_harness_resume_args(args)
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
 
@@ -2023,7 +2048,7 @@ def _cmd_harness_resume(
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
     recoverable_reasons = {"build_incomplete", "publish_failed"}
-    continuation_reasons = {"blocker_escalation", "checkpoint_outer_cap"}
+    continuation_reasons = {"blocker_escalation", "checkpoint_outer_cap", "no_progress"}
     retryable_error_reasons = {"harness_error"}
 
     if current_status != "blocked" and termination_reason not in recoverable_reasons:
@@ -2042,7 +2067,8 @@ def _cmd_harness_resume(
     }:
         print(
             f"✗ Spec {spec_id!r} is blocked for unsupported resume reason: {termination_reason!r}.\n"
-            f"  Inspect with: echelon spec status\n"
+            f"  This is delivery state, not spec-planning state.\n"
+            f"  State file: {state_store.state_file}\n"
             f"  After fixing the blocker, retry: echelon delivery resume {spec_id}\n"
             f"  To discard this blocked delivery state and start fresh: echelon delivery run {spec_id} --reset",
             file=sys.stderr,
@@ -2050,6 +2076,13 @@ def _cmd_harness_resume(
         sys.exit(1)
 
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
+    if resume_answer and state.get("escalation_file"):
+        from harness.escalation import EscalationHandler
+
+        EscalationHandler(str(build_dir(harness_base_dir, build_id))).resume(
+            str(state["escalation_file"]),
+            resume_answer,
+        )
 
     if _is_phase_a_build_incomplete_retry(state):
         blockers = _harness_error_resume_blockers(
