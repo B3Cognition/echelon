@@ -125,9 +125,9 @@ class TestCmdHarnessResume:
         assert rc == 1
         err = capsys.readouterr().err
         assert "unsupported resume reason" in err
-        assert "echelon harness resume 001" in err
-        assert "echelon harness run 001 --reset" in err
-        assert "Use 'echelon harness run <spec_id>' to resume" not in err
+        assert "echelon delivery resume 001" in err
+        assert "echelon delivery run 001 --reset" in err
+        assert "Use 'echelon delivery run <spec_id>' to resume" not in err
 
     def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
         _make_echelon_yml(tmp_path)   # no verify_command
@@ -225,7 +225,7 @@ class TestCmdHarnessResume:
         assert "mode=banzai" in user_message
         err = capsys.readouterr().err
         assert "blocked for a different reason" not in err
-        assert "Use 'echelon harness run <spec_id>' to resume" not in err
+        assert "Use 'echelon delivery run <spec_id>' to resume" not in err
 
     def test_branchless_legacy_resume_warns_and_continues(
         self,
@@ -525,7 +525,7 @@ class TestCmdHarnessResume:
         assert state["termination_reason"] == "docker_unavailable"
         err = capsys.readouterr().err
         assert "Docker is not running or is unreachable" in err
-        assert "echelon harness resume 001" in err
+        assert "echelon delivery resume 001" in err
         assert "Traceback" not in err
 
     def test_recoverable_resume_marks_unexpected_harness_error_blocked(
@@ -562,7 +562,7 @@ class TestCmdHarnessResume:
         assert "fatal: invalid reference" in state["harness_error"]
         err = capsys.readouterr().err
         assert "Harness run failed before completion" in err
-        assert "echelon harness resume 001" in err
+        assert "echelon delivery resume 001" in err
         assert "Traceback" not in err
 
     def test_recoverable_reason_recovers_even_when_status_was_overwritten_done(
@@ -599,4 +599,4 @@ class TestCmdHarnessResume:
         _cmd_harness_resume([])
         out = capsys.readouterr().out
         assert "verify_command" in out
-        assert "echelon harness resume" in out
+        assert "echelon delivery resume" in out
