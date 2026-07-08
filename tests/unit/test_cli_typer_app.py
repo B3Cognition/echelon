@@ -11,7 +11,10 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
     from echelon.cli_app import run
 
     calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args: calls.append(args))
+    monkeypatch.setattr(
+        "echelon.cli._cmd_harness_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
 
     run([
         "delivery",
@@ -50,7 +53,10 @@ def test_delivery_run_legacy_key_value_args_still_route(monkeypatch):
     from echelon.cli_app import run
 
     calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args: calls.append(args))
+    monkeypatch.setattr(
+        "echelon.cli._cmd_harness_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
 
     run(["delivery", "run", "001", "mode=banzai", "strategy=codegen", "max_outer=3"])
 
@@ -62,7 +68,10 @@ def test_delivery_run_canonical_flags_take_precedence_over_legacy_args(monkeypat
     from echelon.cli_app import run
 
     calls: list[list[str]] = []
-    monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args: calls.append(args))
+    monkeypatch.setattr(
+        "echelon.cli._cmd_harness_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
 
     run(["delivery", "run", "001", "mode=semi", "--mode", "banzai"])
 

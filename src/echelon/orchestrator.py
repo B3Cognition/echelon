@@ -77,8 +77,9 @@ def run_multi_target(
     workspace_git_role: Optional[str] = None,
     source_ids: Optional[Mapping[str, str]] = None,
     source_git_roles: Optional[Mapping[str, str]] = None,
+    command: str = "run",
 ) -> int:
-    """Run 'echelon harness run <spec_id> [extra_args]' in each target in parallel.
+    """Run 'echelon harness <command> <spec_id> [extra_args]' per target.
 
     Streams each target's stdout/stderr prefixed with [target-name].
     Returns 0 if all targets succeed, 1 if any fail.
@@ -109,7 +110,7 @@ def run_multi_target(
             or ("source" if target_workspace_root == target_resolved and source_id == "." else "orchestration")
         )
         source_git_role = source_git_roles.get(target_key, "source")
-        cmd = [echelon_bin, "harness", "run", spec_id] + extra_args
+        cmd = [echelon_bin, "harness", command, spec_id] + extra_args
         env = os.environ.copy()
         env["ECHELON_POLYREPO_ROOT"] = str(target_workspace_root)
         env["ECHELON_TARGET_REPO_PATH"] = str(target_resolved)

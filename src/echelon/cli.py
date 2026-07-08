@@ -1772,7 +1772,12 @@ def _is_phase_a_build_incomplete_retry(state: dict) -> bool:
     )
 
 
-def _cmd_harness_resume(args: list[str]) -> None:
+def _cmd_harness_resume(
+    args: list[str],
+    *,
+    command_prefix: str = "echelon harness resume",
+    display_args: list[str] | None = None,
+) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -1792,6 +1797,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         return
 
+    rerun_command = _command_display(command_prefix, display_args or args)
     spec_id = args[0]
     kv: dict[str, str] = {}
     for arg in args[1:]:
@@ -1805,45 +1811,131 @@ def _cmd_harness_resume(args: list[str]) -> None:
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
     from harness.paths import build_dir, current_build_marker, runs_dir
+    from harness.spec_frontmatter import find_spec_dir, read_frontmatter
     from harness.state import StateStore
 
-    echelon_yml = _project_echelon_config(Path.cwd())
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
+    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    cwd = Path.cwd()
+    spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else cwd
+    harness_base_dir = cwd
+    config_root = cwd
+    if target_env and polyrepo_env:
+        config_root = Path(polyrepo_env).resolve()
+        harness_base_dir = (
+            config_root
+            / "runs"
+            / "targets"
+            / (target_name_env or Path(target_env).resolve().name)
+        )
+        _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
+
+    spec_dir = find_spec_dir(spec_id, spec_search_root)
+    if spec_dir is not None and not target_env:
+        from echelon.orchestrator import (
+            run_multi_target,
+            validate_single_target,
+            validate_targets,
+        )
+
+        resolved_spec_id = spec_dir.name
+        polyrepo_root = spec_dir.parent.parent
+        frontmatter = read_frontmatter(spec_dir)
+        targets_rel: list[str] = frontmatter.get("targets") or []
+        if targets_rel:
+            if len(targets_rel) == 1:
+                workspace_target = _resolve_harness_workspace_target(
+                    polyrepo_root,
+                    targets_rel[0],
+                    spec_dir=spec_dir,
+                    spec_id=resolved_spec_id,
+                    rerun_command=rerun_command,
+                )
+                target_rel = (
+                    "."
+                    if workspace_target.source_root == workspace_target.workspace_root
+                    else workspace_target.source_root.relative_to(
+                        workspace_target.workspace_root
+                    ).as_posix()
+                )
+                target = validate_single_target([target_rel], polyrepo_root)
+                sys.exit(
+                    run_multi_target(
+                        spec_id,
+                        [target],
+                        args[1:],
+                        command="resume",
+                        **_workspace_target_dispatch_metadata(workspace_target),
+                    )
+                )
+
+            targets = validate_targets(targets_rel, polyrepo_root)
+            source_ids: dict[str, str] = {}
+            source_git_roles: dict[str, str] = {}
+            for target in targets:
+                target_metadata = _source_dispatch_metadata(
+                    target=target,
+                    polyrepo_root=polyrepo_root,
+                    source_id=None,
+                )
+                source_ids.update(target_metadata["source_ids"])
+                source_git_roles.update(target_metadata["source_git_roles"])
+            sys.exit(
+                run_multi_target(
+                    spec_id,
+                    targets,
+                    args[1:],
+                    workspace_root=polyrepo_root.resolve(),
+                    workspace_git_role="orchestration",
+                    source_ids=source_ids,
+                    source_git_roles=source_git_roles,
+                    command="resume",
+                )
+            )
+
+    echelon_yml = _project_echelon_config(config_root)
     if not echelon_yml.exists():
         print(
             "✗ Harness not initialised for this project.\n"
             f"  Expected: {echelon_yml}\n"
-            f"  Legacy fallback: {Path.cwd() / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
+            f"  Legacy fallback: {config_root / '.specify' / 'extensions' / 'echelon' / 'echelon-config.yml'}\n"
             "  Fix: run 'echelon harness init' first.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     try:
-        config = load_config()
+        config = load_config(project_root=config_root, squad_only=bool(target_env))
     except HarnessValidationError as e:
         print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
         sys.exit(1)
+    if target_env:
+        config.target_repo = str(Path(target_env).resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.
-    cwd = Path.cwd()
-    marker = current_build_marker(cwd, spec_id)
+    marker = current_build_marker(harness_base_dir, spec_id)
     build_id = marker.read_text().strip() if marker.exists() else ""
     if marker.exists():
-        state_dir = build_dir(cwd, build_id) / "state"
+        state_dir = build_dir(harness_base_dir, build_id) / "state"
     else:
-        state_dir = runs_dir(cwd) / "state"
+        state_dir = runs_dir(harness_base_dir) / "state"
     state_store = StateStore(state_dir, spec_id, strategy)
     state = state_store.read()
     if not _workspace_git_present(cwd):
         if state:
             _print_legacy_branchless_recovery_notice(
-                _command_display("echelon harness resume", args)
+                rerun_command
             )
         else:
             _workspace_git_preflight(
                 cwd,
-                command_name=_command_display("echelon harness resume", args),
+                command_name=rerun_command,
             )
 
     if not state:
@@ -1855,7 +1947,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
         sys.exit(1)
 
     state, resolved_spec_dir, spec_paths_refreshed = _refresh_harness_state_spec_paths(
-        project_root=cwd,
+        project_root=spec_search_root,
         spec_id=spec_id,
         state=state,
         state_store=state_store,
@@ -1890,11 +1982,11 @@ def _cmd_harness_resume(args: list[str]) -> None:
         )
         sys.exit(1)
 
-    gitops = GitOpsManager(config)
+    gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
 
     if _is_phase_a_build_incomplete_retry(state):
         blockers = _harness_error_resume_blockers(
-            project_root=cwd,
+            project_root=spec_search_root,
             spec_id=spec_id,
             spec_dir=resolved_spec_dir,
         )
@@ -1930,14 +2022,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 user_message,
                 provider,
                 gitops,
-                base_dir=str(cwd),
+                base_dir=str(harness_base_dir),
                 config=config,
                 resume_build_id=build_id or None,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
-                    cwd,
+                    harness_base_dir,
                     spec_id,
                     strategy,
                     "docker_unavailable",
@@ -1951,17 +2043,17 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 )
                 sys.exit(1)
             _print_harness_error_and_exit(
-                project_root=cwd,
+                project_root=harness_base_dir,
                 spec_id=spec_id,
                 strategy=strategy,
-                command="echelon harness resume",
+                command=rerun_command,
                 exc=exc,
             )
         return
 
     if termination_reason in retryable_error_reasons:
         blockers = _harness_error_resume_blockers(
-            project_root=cwd,
+            project_root=spec_search_root,
             spec_id=spec_id,
             spec_dir=resolved_spec_dir,
         )
@@ -1997,14 +2089,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 user_message,
                 provider,
                 gitops,
-                base_dir=str(cwd),
+                base_dir=str(harness_base_dir),
                 config=config,
                 resume_build_id=build_id or None,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
-                    cwd,
+                    harness_base_dir,
                     spec_id,
                     strategy,
                     "docker_unavailable",
@@ -2018,10 +2110,10 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 )
                 sys.exit(1)
             _print_harness_error_and_exit(
-                project_root=cwd,
+                project_root=harness_base_dir,
                 spec_id=spec_id,
                 strategy=strategy,
-                command="echelon harness resume",
+                command=rerun_command,
                 exc=exc,
             )
         return
@@ -2031,7 +2123,7 @@ def _cmd_harness_resume(args: list[str]) -> None:
 
         try:
             recovered = recover_blocked_run(
-                project_dir=cwd,
+                project_dir=harness_base_dir,
                 spec_id=spec_id,
                 strategy_id=strategy,
                 state=state,
@@ -2071,14 +2163,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 user_message,
                 provider,
                 gitops,
-                base_dir=str(cwd),
+                base_dir=str(harness_base_dir),
                 config=config,
                 resume_build_id=build_id or None,
             )
         except Exception as exc:
             if _is_docker_unavailable_error(exc):
                 _mark_current_harness_state_blocked(
-                    cwd,
+                    harness_base_dir,
                     spec_id,
                     strategy,
                     "docker_unavailable",
@@ -2092,10 +2184,10 @@ def _cmd_harness_resume(args: list[str]) -> None:
                 )
                 sys.exit(1)
             _print_harness_error_and_exit(
-                project_root=cwd,
+                project_root=harness_base_dir,
                 spec_id=spec_id,
                 strategy=strategy,
-                command="echelon harness resume",
+                command=rerun_command,
                 exc=exc,
             )
         return
@@ -2124,14 +2216,14 @@ def _cmd_harness_resume(args: list[str]) -> None:
             user_message,
             provider,
             gitops,
-            base_dir=str(cwd),
+            base_dir=str(harness_base_dir),
             config=config,
             resume_build_id=build_id or None,
         )
     except Exception as exc:
         if _is_docker_unavailable_error(exc):
             _mark_current_harness_state_blocked(
-                cwd,
+                harness_base_dir,
                 spec_id,
                 strategy,
                 "docker_unavailable",
@@ -2145,10 +2237,10 @@ def _cmd_harness_resume(args: list[str]) -> None:
             )
             sys.exit(1)
         _print_harness_error_and_exit(
-            project_root=cwd,
+            project_root=harness_base_dir,
             spec_id=spec_id,
             strategy=strategy,
-            command="echelon harness resume",
+            command=rerun_command,
             exc=exc,
         )
 
