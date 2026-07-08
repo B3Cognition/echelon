@@ -129,17 +129,14 @@ def read_frontmatter(spec_dir: Path) -> Dict[str, Any]:
     targets = read_targets(spec_dir)
     if targets and "targets" not in data:
         data["targets"] = targets
-    if targets and "targets_file" not in data:
-        data["targets_file"] = TARGETS_FILENAME
     return data
 
 
 def write_targets(spec_dir: Path, targets: List[str]) -> Path:
     """Write (or replace) canonical target entries in spec_dir/targets.yml.
 
-    Creates a frontmatter block if none exists so spec.md points to
-    ``targets_file: targets.yml``. Returns the modified targets.yml path.
-    Preserves all other frontmatter keys and removes legacy inline targets.
+    Returns the modified targets.yml path. Preserves all other frontmatter
+    keys and removes legacy inline targets when a frontmatter block exists.
     """
     md = _find_spec_md(spec_dir)
     if md is None:
@@ -189,10 +186,12 @@ def write_targets(spec_dir: Path, targets: List[str]) -> Path:
         data = {}
 
     data.pop("targets", None)
-    data["targets_file"] = TARGETS_FILENAME
-    front = yaml.dump(data, default_flow_style=False, sort_keys=False,
-                      allow_unicode=True).rstrip()
-    md.write_text(f"---\n{front}\n---\n{body}", encoding="utf-8")
+    if data:
+        front = yaml.dump(data, default_flow_style=False, sort_keys=False,
+                          allow_unicode=True).rstrip()
+        md.write_text(f"---\n{front}\n---\n{body}", encoding="utf-8")
+    elif m:
+        md.write_text(body, encoding="utf-8")
     return targets_path
 
 

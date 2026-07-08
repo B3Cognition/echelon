@@ -56,7 +56,7 @@ class TestCliSpecTarget:
         md = next(spec_dir.glob("*.md"))
         content = md.read_text(encoding="utf-8")
         assert content.count("targets:") == 0
-        assert content.count("targets_file: targets.yml") == 1
+        assert "targets_file:" not in content
         assert read_targets(spec_dir) == ["new-repo"]
 
     def test_spec_not_found_exits_one(self, tmp_path: Path) -> None:

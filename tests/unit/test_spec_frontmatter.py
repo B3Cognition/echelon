@@ -60,7 +60,7 @@ class TestWriteTargets:
         write_targets(spec_dir, ["og-platform"])
         data = read_frontmatter(spec_dir)
         assert data["targets"] == ["og-platform"]
-        assert data["targets_file"] == "targets.yml"
+        assert "targets_file" not in data
         assert read_targets(spec_dir) == ["og-platform"]
         assert (spec_dir / "targets.yml").exists()
 
@@ -70,7 +70,7 @@ class TestWriteTargets:
         assert read_frontmatter(spec_dir)["targets"] == ["new-repo"]
         content = (spec_dir / "spec.md").read_text(encoding="utf-8")
         assert "\ntargets:\n" not in content
-        assert "targets_file: targets.yml" in content
+        assert "targets_file:" not in content
         assert read_target_entries(spec_dir)[0]["path"] == "new-repo"
 
     def test_preserves_body_content(self, tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ class TestWriteTargets:
         md = next(spec_dir.glob("*.md"))
         text = md.read_text(encoding="utf-8")
         assert text.count("targets:") == 0
-        assert text.count("targets_file: targets.yml") == 1
+        assert "targets_file:" not in text
         assert read_targets(spec_dir) == ["c"]
 
     def test_no_md_file_raises(self, tmp_path: Path) -> None:
