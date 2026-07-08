@@ -66,7 +66,22 @@ fixture tests as measured runtime evidence.
 
 ## Expected Output
 
-- evidence map per requirement.
+- `{verify_run_dir}/implementation-map.md` with exactly this parser-conformant
+  9-column table schema:
+
+```markdown
+| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
+|----|-------------------------|---------------|--------------------|---------------|-------------------|-------------------|------------|-------|
+| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |
+```
+
+- `Evidence Kind` must be one of `source_and_test`, `source_only`,
+  `test_only`, `measured_runtime`, `assertion_only`, `missing`, or `meta`.
+- `Evidence Strength` must be `strong`, `medium`, `weak`, or `none`; do not write `source_and_test_strong` in `Evidence Strength`. Use `Evidence Kind=source_and_test` plus `Evidence Strength=strong` instead.
+- `Runtime Threshold` must be literal `true` or `false`.
+- `Confidence` must be `high`, `medium`, `low`, or `none`.
+- Do not inspect Echelon source code to discover this schema; this phase
+  contract is authoritative.
 - separate `unmapped_candidate` notes for any candidate row not present in
   `{verify_run_dir}/canonical-requirements.json`.
 - `{verify_run_dir}/codegraph-evidence-map.json`

@@ -59,6 +59,25 @@ NEVER add extra implementation-map rows for non-inventory IDs; record them separ
 7. Mark confidence as `high`, `medium`, `low`, or `none` based only on cited evidence. For runtime thresholds, keep assertion-only gates at `low`/fallback unless measured CI/runtime artifacts are cited.
 8. If source inspection suggests a non-inventory item, record it as `unmapped_candidate` outside the implementation map table.
 
+## Parser Contract
+
+`{verify_run_dir}/implementation-map.md` is read by a deterministic Python
+prepass. Write exactly this 9-column table schema:
+
+```markdown
+| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
+|----|-------------------------|---------------|--------------------|---------------|-------------------|-------------------|------------|-------|
+| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |
+```
+
+- `Evidence Kind` must be one of `source_and_test`, `source_only`,
+  `test_only`, `measured_runtime`, `assertion_only`, `missing`, or `meta`.
+- `Evidence Strength` must be `strong`, `medium`, `weak`, or `none`; do not write `source_and_test_strong` in `Evidence Strength`. Use `Evidence Kind=source_and_test` plus `Evidence Strength=strong` instead.
+- `Runtime Threshold` must be literal `true` or `false`.
+- `Confidence` must be `high`, `medium`, `low`, or `none`.
+- Do not inspect Echelon source code to discover this schema; this agent
+  contract is authoritative.
+
 ## Output Block
 
 Write `{verify_run_dir}/implementation-map.md`:
@@ -68,7 +87,7 @@ Write `{verify_run_dir}/implementation-map.md`:
 
 | ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
 |----|-------------------------|---------------|--------------------|---------------|-------------------|-------------------|------------|-------|
-| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | moderate | false | medium | ... |
+| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |
 ```
 
 Return `verdict: DONE` when every checklist item has been mapped or explicitly recorded as no evidence found.

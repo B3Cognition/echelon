@@ -84,6 +84,25 @@ def test_verify_spec_preserves_runtime_evidence_semantics() -> None:
         assert "assertion_only" in lowered
 
 
+def test_verify_spec_stage4_states_parser_conformant_map_schema() -> None:
+    phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    mapper_text = (
+        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (phase_text, mapper_text):
+        assert (
+            "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | "
+            "Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |"
+        ) in text
+        assert "Evidence Strength` must be `strong`, `medium`, `weak`, or `none`" in text
+        assert "do not write `source_and_test_strong` in `Evidence Strength`" in text
+        assert "`Evidence Kind=source_and_test` plus `Evidence Strength=strong`" in text
+        assert "| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |" in text
+        assert "Do not inspect Echelon source code to discover this schema" in text
+        assert "moderate" not in text
+
+
 def test_verify_spec_stage5_references_judgment_prepass() -> None:
     text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
 
