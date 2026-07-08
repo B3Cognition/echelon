@@ -47,10 +47,10 @@ delivery starts.
 Set only when running under harness — use as the harness-mode signal. Write `done`
 for useful verified progress even when the overall spec still has remaining tasks.
 
-**`HARNESS_SOURCE_DIR`** — Absolute path to the harness Python source (`src/harness/`).
-If you need to understand harness internals (e.g., why verify failed), read files there
-directly — do NOT search the filesystem. Key files: `ralph.py` (outer/inner loop),
-`gitops.py` (git ops), `config.py` (config schema).
+Do not inspect, read, or search for harness source, Ralph code, `ralph.py`,
+`fulfillment_runner.py`, or Echelon implementation internals. Ralph owns
+harness decisions and provides build-slice context through this prompt, the
+named spec inputs, and `HARNESS_BUILD_STATUS_FILE`.
 
 ---
 

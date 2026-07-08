@@ -374,7 +374,7 @@ class TestOuterLoopConvergence:
         assert (worktree_spec_dir / "tasks.md").read_text(encoding="utf-8") == "# Live Tasks\n"
         assert str(live_spec_dir) not in prompt
 
-    def test_harness_context_names_harness_source_without_searching(
+    def test_harness_context_does_not_expose_harness_source(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
@@ -385,8 +385,10 @@ class TestOuterLoopConvergence:
 
         prompt = controller._with_harness_context("body", str(worktree))
 
-        assert f"harness_source_dir: {harness_source}" in prompt
-        assert "Do not search for harness source, Ralph code, or ralph.py" in prompt
+        assert str(harness_source) not in prompt
+        assert "harness_source_dir" not in prompt
+        assert "Do not inspect, read, or search for harness source" in prompt
+        assert "Ralph owns harness decisions" in prompt
 
     def test_harness_context_labels_dirty_verify_owned_artifacts(
         self, tmp_path: Path

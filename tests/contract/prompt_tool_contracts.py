@@ -112,6 +112,8 @@ def _is_non_executable_reference(line: str) -> bool:
         return True
     if "`build`:" in line and "`start`:" in line:
         return True
+    if re.match(r"\d+\.\s+\*\*first (?:dry|real) run\*\*", lowered):
+        return True
     return False
 
 

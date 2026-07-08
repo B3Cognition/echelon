@@ -41,7 +41,6 @@ class LlmBuildRunner:
                 "HARNESS_WORKTREE": worktree_path,
                 "PROJECT_ROOT": worktree_path,
                 "SPEC_KIT_ROOT": worktree_path,
-                "HARNESS_SOURCE_DIR": str(Path(__file__).resolve().parent),
             },
         )
         duration_ms = int((time.monotonic() - start) * 1000)

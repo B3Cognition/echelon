@@ -57,6 +57,19 @@ def test_accepts_nearby_fenced_command_contract(tmp_path: Path) -> None:
     assert scan_prompt_tool_contracts(tmp_path, [prompt]) == []
 
 
+def test_accepts_documentation_checklist_command_requirements(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "4. **First dry run** - the safest preview command, what it checks, "
+        "and what output or exit behavior to expect.\n"
+        "5. **First real run** - the command that performs the primary workflow "
+        "locally and the expected output, generated files, state changes, or service URL.\n",
+        encoding="utf-8",
+    )
+
+    assert scan_prompt_tool_contracts(tmp_path, [prompt]) == []
+
+
 def test_current_agent_and_phase_prompts_have_contracted_tool_references() -> None:
     root = Path(__file__).resolve().parents[2]
 

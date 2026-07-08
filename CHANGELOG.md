@@ -80,6 +80,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rediscover completion. The verify-spec judgment phase also forbids agents
   from inspecting harness source or sibling `sources/` repos to infer
   fulfillment-report provenance that Ralph owns.
+- **EGR-116 / #142 harness source prompt boundary** — build-agent execution no
+  longer receives `HARNESS_SOURCE_DIR`, and Ralph's harness context now forbids
+  reading or searching harness implementation files instead of pointing agents
+  at `src/harness`.
 - **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover
   from a clean preserved build worktree whose committed output uses normal
   feature commit subjects instead of harness/checkpoint metadata, allowing the

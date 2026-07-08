@@ -931,7 +931,8 @@ source_git_role: {source_git_role}
 Do not search for the application repo. Use source_root as the implementation checkout.
 ```
 
-Preserve existing `HARNESS_SOURCE_DIR` instructions that prevent searching for Ralph/harness code.
+Superseded by EGR-116: build agents should not receive `HARNESS_SOURCE_DIR` or
+instructions to read Ralph/harness code.
 
 - [x] **Step 6: Run tests and verify they pass**
 

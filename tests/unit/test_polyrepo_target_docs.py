@@ -34,6 +34,17 @@ def test_harness_command_docs_document_target_preflight_and_recovery() -> None:
 
 
 @pytest.mark.unit
+def test_harness_command_docs_do_not_expose_harness_source_dir() -> None:
+    run_doc = (ROOT / "extension/commands/echelon.harness-run.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "HARNESS_SOURCE_DIR" not in run_doc
+    assert "read files there" not in run_doc
+    assert "Do not inspect, read, or search for harness source" in run_doc
+
+
+@pytest.mark.unit
 def test_workspace_model_docs_define_single_repo_as_one_source_root() -> None:
     text = (ROOT / "docs/workspace-model.md").read_text(encoding="utf-8")
 
