@@ -127,7 +127,51 @@ def test_delivery_run_routes_to_harness_run(monkeypatch: pytest.MonkeyPatch) -> 
     with patch("echelon.cli._cmd_harness_run") as mock_run:
         main()
 
-    mock_run.assert_called_once_with(["001", "strategy=codegen"])
+    mock_run.assert_called_once_with(
+        ["001", "strategy=codegen"],
+        command_prefix="echelon delivery run",
+        display_args=["001", "strategy=codegen"],
+    )
+
+
+@pytest.mark.unit
+def test_delivery_run_multiple_source_roots_reports_delivery_rerun_command(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import main
+
+    (tmp_path / ".git").mkdir()
+    spec_dir = tmp_path / "specs" / "001-feature"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+        encoding="utf-8",
+    )
+    for name in ["ruler", "spec-kit-skills-agents"]:
+        source = tmp_path / "sources" / name
+        (source / ".git").mkdir(parents=True)
+        (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["echelon", "delivery", "run", "--mode=banzai", "001-feature"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "Multiple source roots found; choose one before running delivery" in err
+    assert "For a new implementation repo:" in err
+    assert "mkdir -p sources/<new-repo>" in err
+    assert "echelon spec target 001-feature <source-path>" in err
+    assert "Then rerun:  echelon delivery run 001-feature --mode=banzai" in err
+    assert "echelon harness run" not in err
 
 
 @pytest.mark.unit
@@ -163,7 +207,11 @@ def test_harness_namespace_remains_compatibility_alias(monkeypatch: pytest.Monke
     with patch("echelon.cli._cmd_harness_run") as mock_run:
         main()
 
-    mock_run.assert_called_once_with(["001"])
+    mock_run.assert_called_once_with(
+        ["001"],
+        command_prefix="echelon harness run",
+        display_args=["001"],
+    )
 
 
 @pytest.mark.unit

@@ -75,6 +75,39 @@ def _merge_run_args(
     return args
 
 
+def _display_run_args(
+    spec_id: str,
+    legacy_args: list[str] | None,
+    *,
+    mode: str | None,
+    strategy: str | None,
+    max_outer: int | None,
+    max_inner: int | None,
+    token_budget: int | None,
+    auto_merge: bool | None,
+    kill_losers: bool,
+    reset: bool,
+) -> list[str]:
+    args = [spec_id, *(legacy_args or [])]
+    if mode is not None:
+        args.append(f"--mode={mode}")
+    if strategy is not None:
+        args.append(f"--strategy={strategy}")
+    if max_outer is not None:
+        args.append(f"--max-outer={max_outer}")
+    if max_inner is not None:
+        args.append(f"--max-inner={max_inner}")
+    if token_budget is not None:
+        args.append(f"--token-budget={token_budget}")
+    if auto_merge is not None:
+        args.append("--auto-merge" if auto_merge else "--no-auto-merge")
+    if kill_losers:
+        args.append("--kill-losers")
+    if reset:
+        args.append("--reset")
+    return args
+
+
 def _merge_resume_args(
     spec_id: str,
     legacy_args: list[str] | None,
@@ -174,7 +207,20 @@ def delivery_run(
             auto_merge=auto_merge,
             kill_losers=kill_losers,
             reset=reset,
-        )
+        ),
+        command_prefix="echelon delivery run",
+        display_args=_display_run_args(
+            spec_id,
+            list(ctx.args),
+            mode=mode,
+            strategy=strategy,
+            max_outer=max_outer,
+            max_inner=max_inner,
+            token_budget=token_budget,
+            auto_merge=auto_merge,
+            kill_losers=kill_losers,
+            reset=reset,
+        ),
     )
 
 
@@ -195,17 +241,34 @@ def harness_run(
     reset: bool = typer.Option(False, "--reset"),
 ) -> None:
     """Compatibility alias for delivery run."""
-    delivery_run(
-        ctx,
-        spec_id,
-        mode=mode,
-        strategy=strategy,
-        max_outer=max_outer,
-        max_inner=max_inner,
-        token_budget=token_budget,
-        auto_merge=auto_merge,
-        kill_losers=kill_losers,
-        reset=reset,
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_harness_run(
+        _merge_run_args(
+            spec_id,
+            list(ctx.args),
+            mode=mode,
+            strategy=strategy,
+            max_outer=max_outer,
+            max_inner=max_inner,
+            token_budget=token_budget,
+            auto_merge=auto_merge,
+            kill_losers=kill_losers,
+            reset=reset,
+        ),
+        command_prefix="echelon harness run",
+        display_args=_display_run_args(
+            spec_id,
+            list(ctx.args),
+            mode=mode,
+            strategy=strategy,
+            max_outer=max_outer,
+            max_inner=max_inner,
+            token_budget=token_budget,
+            auto_merge=auto_merge,
+            kill_losers=kill_losers,
+            reset=reset,
+        ),
     )
 
 

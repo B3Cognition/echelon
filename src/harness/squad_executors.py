@@ -607,6 +607,8 @@ class PhaseExecutor(ABC):
                         str(self._project_root), prompt
                     )
                     result = self._validate_result_state_updates(node, result)
+                    if entry.get("id") == "golddigger_mode1":
+                        self._downgrade_golddigger_complete_without_re_specs(result)
                     if result.blocked:
                         return result
                     self._write_journal_entries(result, node.id)
@@ -615,6 +617,40 @@ class PhaseExecutor(ABC):
                         s[k] = v
                         state_store.save(s)
         return None
+
+    def _downgrade_golddigger_complete_without_re_specs(
+        self, result: "SquadAgentResult"
+    ) -> None:
+        """Do not let analysis-only brownfield extraction masquerade as full RE."""
+        updates = result.state_updates
+        status = str(updates.get("golddigger_status") or "").strip().lower()
+        if status != "complete":
+            return
+
+        overview = self._project_root / "specs" / "000-re-overview" / "overview.md"
+        domain_specs = list((self._project_root / "specs").glob("[0-9][0-9][0-9]-re-*/spec.md"))
+        if overview.exists() and domain_specs:
+            return
+
+        if not isinstance(result.echelon_result, dict):
+            return
+        mutable_updates = result.echelon_result.setdefault("state_updates", {})
+        if not isinstance(mutable_updates, dict):
+            return
+        mutable_updates["golddigger_status"] = "partial"
+        notes = mutable_updates.get("golddigger_notes")
+        if not isinstance(notes, list):
+            notes = []
+        missing: list[str] = []
+        if not overview.exists():
+            missing.append("specs/000-re-overview/overview.md")
+        if not domain_specs:
+            missing.append("specs/[0-9][0-9][0-9]-re-*/spec.md")
+        notes.append(
+            "GOLDDIGGER reported complete, but reverse-engineering specs are missing: "
+            + ", ".join(missing)
+        )
+        mutable_updates["golddigger_notes"] = notes
 
     def _normalize_golddigger_request(self, request: object) -> dict:
         if isinstance(request, str):
@@ -835,7 +871,7 @@ class PhaseExecutor(ABC):
                 + "</context>\n\n"
                 + "<instructions>\n"
                 + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
-                + f"Run **Mode {entry.get('mode', 1)} (Survey)** for target path `{self._project_root}`. "
+                + f"Run **Mode {entry.get('mode', 1)} (Full Reverse Engineering)** for target path `{self._project_root}`. "
                 + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
                 + "</instructions>\n"
                 + _allowed_state_updates_contract(allowed_state_updates)

@@ -506,7 +506,7 @@ File: agents/exploration/scout.md
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
-| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives native brownfield re-* extraction (Mode 1: survey, Mode 2: deep dive) |
+| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives native brownfield re-* extraction (Mode 1: full reverse engineering, Mode 2: deep dive) |
 | **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge base |
 | **CARTOGRAPHER** | WHAT | Writes testable requirements via spec-kit |
 | **SAGE** | WHY | Adversarial critic, quality gates via Understanding CLI |
@@ -569,7 +569,7 @@ File: agents/exploration/scout.md
 
 When analyzing an existing codebase, the squad uses a two-phase extraction pipeline:
 
-1. **GOLDDIGGER Mode 1 (Survey)** runs `speckit.echelon.re-analyze` at signature level → writes artifact paths to `state.json.golddigger_artifacts`
+1. **GOLDDIGGER Mode 1 (Full Reverse Engineering)** runs `speckit.echelon.re-extract` at full depth → writes analysis, manifest, CodeGraph, and RE spec paths to `state.json.golddigger_artifacts`
 2. If `speckit.echelon.re-extract` skill invocation succeeds:
    - **SCOUT** reads artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping
    - **GOLDDIGGER Mode 2 (Deep Dive)** runs on-demand when Phase 1 agents need deeper analysis of specific domains

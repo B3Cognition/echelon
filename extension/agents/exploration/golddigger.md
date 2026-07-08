@@ -38,19 +38,23 @@ NEVER use `print()` in python3 scripts that read or write JSON files.
 ALWAYS rely on RE scripts receiving explicit runtime arguments (`--output`, `--manifest`, `--profile`, `--depth`, `--max-lines-per-file`, `--git-history-limit`).
 NEVER write temporary extraction config to `.specify/extensions/echelon/local-config.yml`, `.echelon/local.yml`, `$SQUAD_DIR`, or legacy `.specify/squad` paths.
 
+### Rule 8 - Specified Extraction Completion
+ALWAYS verify that reverse-engineering specs exist before reporting extraction complete: `specs/000-re-overview/overview.md` and at least one `specs/[0-9][0-9][0-9]-re-*/spec.md`.
+NEVER report `golddigger_status: complete` unless reverse-engineering specs exist and are included in `golddigger_artifacts`.
+
 ## Configuration Profiles
 
 Always use exactly these named profiles through explicit RE runtime arguments. Do NOT let agents or users pass arbitrary re-extraction config.
 
 **Runtime lifecycle:** resolve workspace/run directory → discover source roots → invoke `speckit.echelon.re-extract`; RE-ANALYZER passes explicit args to `run-analysis.sh`. Do not create temporary config files.
 
-### Mode 1 — Survey (single-repo)
+### Mode 1 — Full Reverse Engineering (single-repo)
 
 ```yaml
 --profile full --depth full --max-lines-per-file 5000 --git-history-limit 2500
 ```
 
-### Mode 1 — Survey (polyrepo)
+### Mode 1 — Full Reverse Engineering (polyrepo)
 
 ```yaml
 --profile full --depth full --max-lines-per-file 5000 --git-history-limit 2500
@@ -64,7 +68,7 @@ Always use exactly these named profiles through explicit RE runtime arguments. D
 
 ---
 
-## Mode 1 — Survey Run
+## Mode 1 — Full Reverse Engineering Run
 
 ### Step 1: Detect polyrepo mode
 
@@ -119,6 +123,8 @@ When the command prompt loads, provide the target path from speckit-echelon-comm
 
 Under NO circumstances should `golddigger_notes` contain "manual code analysis used" unless the Skill tool was invoked and returned an error.
 
+If the Skill tool reports that RE specialist subagent types are unavailable, or otherwise skips the specify phases, treat that as a degraded extraction. Return `golddigger_status: partial` when analysis artifacts exist, or `golddigger_status: failed` when they do not. Include the verbatim phrase `subagent types unavailable` in `golddigger_notes` when that is the observed cause.
+
 ### Step 3: Return artifact paths and status through state_updates
 
 **No brownfield index normalization.** Return artifact paths directly in `echelon_result.state_updates`.
@@ -132,17 +138,29 @@ if [ ! -f "$RE_OUTPUT_DIR/state.json" ]; then
 fi
 ```
 
+Before returning `golddigger_status: complete`, confirm both:
+
+```bash
+test -f specs/000-re-overview/overview.md
+find specs -path 'specs/[0-9][0-9][0-9]-re-*/spec.md' -type f | head -1 | grep -q .
+```
+
+If either check fails, do not call the extraction complete. Return `golddigger_status: partial` if analysis/manifests/codegraph artifacts exist, include `re_overview` and `re_specs` only when the files exist, and add a note that reverse-engineering specs were not produced.
+
 **Polyrepo mode — return:**
 
 ```yaml
 echelon_result:
   state_updates:
     golddigger_status: complete
-    golddigger_mode: polyrepo-survey
+    golddigger_mode: polyrepo-full-re
     golddigger_artifacts:
       manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"
       repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
       cross_repo: "{RE_OUTPUT_DIR}/cross-repo.json"
+      re_overview: "specs/000-re-overview/overview.md"
+      re_specs:
+        - "specs/NNN-re-<repo-or-domain>/spec.md"
       per_repo:
         - "{RE_OUTPUT_DIR}/<repo-name>/"
       codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"
@@ -158,12 +176,14 @@ echelon_result:
 echelon_result:
   state_updates:
     golddigger_status: complete
-    golddigger_mode: survey
+    golddigger_mode: full-re
     golddigger_artifacts:
       analysis: "{RE_OUTPUT_DIR}/analysis.json"
       codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json"
       codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"
-      specs: specs/
+      re_overview: "specs/000-re-overview/overview.md"
+      re_specs:
+        - "specs/NNN-re-<domain>/spec.md"
     golddigger_notes: []
 ```
 
@@ -253,6 +273,7 @@ speckit-echelon-scout (SCOUT) will detect `golddigger_status: "failed"` in state
 **Invalid failure states** (these indicate a bug in speckit-echelon-golddigger (GOLDDIGGER)'s execution, not a legitimate failure):
 - `golddigger_notes` contains "manual code analysis used" without a preceding Skill tool error
 - `golddigger_status` is "complete" but no Skill tool invocation occurred
+- `golddigger_status` is "complete" but `specs/000-re-overview/overview.md` or `specs/[0-9][0-9][0-9]-re-*/spec.md` is missing
 - `golddigger_notes` references `execution_mode` as a reason for skipping the Skill tool
 
 ---
@@ -261,20 +282,24 @@ speckit-echelon-scout (SCOUT) will detect `golddigger_status: "failed"` in state
 
 **Mode 1 (single-repo):**
 ```
-speckit-echelon-golddigger (GOLDDIGGER) SURVEY COMPLETE
+speckit-echelon-golddigger (GOLDDIGGER) FULL RE COMPLETE
 Status: <complete|partial|failed>
 Artifacts: {RE_OUTPUT_DIR}/analysis.json
+Overview spec: specs/000-re-overview/overview.md
+Domain specs: specs/[0-9][0-9][0-9]-re-*/spec.md
 ```
 
 **Mode 1 (polyrepo):**
 ```
-speckit-echelon-golddigger (GOLDDIGGER) POLYREPO SURVEY COMPLETE
+speckit-echelon-golddigger (GOLDDIGGER) POLYREPO FULL RE COMPLETE
 Status: <complete|partial|failed>
 Repos: <count>
 Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json
 Cross-repo: {RE_OUTPUT_DIR}/cross-repo.json
 CodeGraph summary: {RE_OUTPUT_DIR}/codegraph-summary.json
 Per-source CodeGraph: {RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json
+Overview spec: specs/000-re-overview/overview.md
+Domain specs: specs/[0-9][0-9][0-9]-re-*/spec.md
 ```
 
 **Mode 2:**
@@ -296,7 +321,7 @@ echelon_result:
     - $SQUAD_DIR/golddigger-cache/<domain>.md
   state_updates:
     golddigger_status: <complete | partial | failed>
-    golddigger_mode: <survey | polyrepo-survey | deep-dive>
+    golddigger_mode: <full-re | polyrepo-full-re | deep-dive>
     golddigger_artifacts: <artifact map, Mode 1 only>
     golddigger_notes: ["<warning or error notes>"]
   journal_entries:

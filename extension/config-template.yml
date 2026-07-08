@@ -300,7 +300,7 @@ discovery:
   min_reference_architectures: 3
 
   # Polyrepo: repos with fewer source files than this threshold
-  # are auto-promoted to full depth during GOLDDIGGER Mode 1 survey.
+  # are auto-promoted to full depth during GOLDDIGGER Mode 1 extraction.
   # This saves Mode 2 roundtrips for small repos that are cheap to analyze fully.
   # Set to 0 to disable auto-promotion (all repos get signatures depth).
   # [range: 0-200] [default: 50]

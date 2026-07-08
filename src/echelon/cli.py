@@ -864,7 +864,7 @@ def _cmd_delivery(args: list[str]) -> None:
     if subcmd == "init":
         _cmd_harness_init(args[1:], command_prefix="echelon delivery init")
     elif subcmd == "run":
-        _cmd_harness_run(args[1:])
+        _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
     elif subcmd == "resume":
         _cmd_harness_resume(args[1:])
     elif subcmd == "land":
@@ -1200,6 +1200,15 @@ def _resolve_harness_workspace_target(
     def _candidate_lines() -> str:
         return _target_candidate_lines(result.candidates)
 
+    command_label = "delivery" if (rerun_command or "").startswith("echelon delivery ") else "harness"
+    new_repo_hint = (
+        "\n\n"
+        "  For a new implementation repo:\n"
+        "    mkdir -p sources/<new-repo>\n"
+        "    git -C sources/<new-repo> init\n"
+        f"    echelon spec target {spec_id or '<spec-id>'} sources/<new-repo>"
+    )
+
     if result.decision == "no_source_roots":
         print(
             "✗ No source roots found; harness build needs at least one implementation source root.\n\n"
@@ -1212,10 +1221,11 @@ def _resolve_harness_workspace_target(
     if result.decision == "multiple_source_roots_need_target":
         spec_ref = spec_id or "<spec-id>"
         print(
-            "✗ Multiple source roots found; choose one before running harness.\n\n"
+            f"✗ Multiple source roots found; choose one before running {command_label}.\n\n"
             "  Source roots:\n"
             f"{_candidate_lines()}\n\n"
             f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            + new_repo_hint
             + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
             file=sys.stderr,
         )
@@ -1284,7 +1294,12 @@ def _workspace_target_dispatch_metadata(target: HarnessWorkspaceTarget) -> dict[
     }
 
 
-def _cmd_harness_run(args: list[str]) -> None:
+def _cmd_harness_run(
+    args: list[str],
+    *,
+    command_prefix: str = "echelon harness run",
+    display_args: list[str] | None = None,
+) -> None:
     import logging
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -1292,7 +1307,7 @@ def _cmd_harness_run(args: list[str]) -> None:
         print("echelon harness run: missing spec_id\n", file=sys.stderr)
         sys.exit(1)
 
-    rerun_command = _command_display("echelon harness run", args)
+    rerun_command = _command_display(command_prefix, display_args or args)
     _workspace_git_preflight(Path.cwd(), command_name=rerun_command)
 
     spec_id = args[0]

@@ -257,7 +257,7 @@ If this command exits non-zero (extension not installed): skip speckit-echelon-g
 
 If echelon (with re-* commands) is installed:
 
-1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Survey) before DISCOVER:
+1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Full Reverse Engineering) before DISCOVER:
    - Use the Agent tool
    - `target_path` is `${PROJECT_ROOT}` (the absolute project root established in step 1.0 — the polyrepo root directory)
    - `run_id` is `state.json.run_id`
@@ -273,7 +273,7 @@ If echelon (with re-* commands) is installed:
 
      <instructions>
      You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
-     Run **Mode 1 (Survey)** for target path `${PROJECT_ROOT}`. Your context: run_id is `{run_id}`, mode is brownfield.
+     Run **Mode 1 (Full Reverse Engineering)** for target path `${PROJECT_ROOT}`. Your context: run_id is `{run_id}`, mode is brownfield.
      </instructions>
      ```
 

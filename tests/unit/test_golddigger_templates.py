@@ -36,3 +36,23 @@ class TestGolddiggerTemplates:
         assert "--output" in text
         assert "--manifest" in text
         assert "RE_OUTPUT_DIR" in text
+
+    def test_golddigger_complete_requires_reverse_engineering_specs(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "specs/000-re-overview/overview.md" in text
+        assert "specs/[0-9][0-9][0-9]-re-*/spec.md" in text
+        assert "NEVER report `golddigger_status: complete` unless reverse-engineering specs exist" in text
+        assert "re_overview" in text
+        assert "re_specs" in text
+        assert "subagent types unavailable" in text
+        assert "golddigger_status: partial" in text
+
+    def test_golddigger_mode1_is_not_described_as_survey_only(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "Mode 1 — Full Reverse Engineering" in text
+        assert "FULL RE COMPLETE" in text
+        assert "POLYREPO FULL RE COMPLETE" in text
+        assert "SURVEY COMPLETE" not in text
+        assert "polyrepo-survey" not in text
