@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -67,6 +68,23 @@ def _write_fixture(tmp_path: Path, codegraph_symbols: list[dict]) -> tuple[Path,
         encoding="utf-8",
     )
     return audit, analysis, tasks
+
+
+def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "harness", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
 
 
 def test_codegraph_evidence_map_prefers_structural_evidence(tmp_path: Path):
@@ -456,3 +474,28 @@ def test_write_codegraph_evidence_map_cli(tmp_path: Path):
     assert "OK: wrote CodeGraph evidence map" in completed.stdout
     assert out_json.is_file()
     assert out_md.is_file()
+
+
+def test_write_codegraph_evidence_map_cli_reports_missing_audit_without_traceback(
+    tmp_path: Path,
+):
+    analysis = tmp_path / "codegraph-analysis.json"
+    analysis.write_text('{"symbols":[],"call_graph":[]}\n', encoding="utf-8")
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text("# Tasks\n", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "write-codegraph-evidence-map",
+            str(tmp_path / "requirement-audit.md"),
+            str(analysis),
+            str(tasks),
+            str(tmp_path / "codegraph-evidence-map.json"),
+            str(tmp_path / "codegraph-evidence-map.md"),
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "missing required input:" in completed.stderr
+    assert "requirement-audit.md" in completed.stderr
+    assert "Traceback" not in completed.stderr

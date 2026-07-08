@@ -23,8 +23,12 @@ report.
 without `--reconcile`, set `dry_run: true` but keep `reconcile: false` and do
 not mutate any artifacts.
 Create a verification runtime directory:
-- active run: `runs/<run-id>/verify-spec/{spec_id}/`
+- active run: read `runs/.current` exactly once and use
+  `runs/<run-id>/verify-spec/{spec_id}/`
 - no active run: `runs/verify-spec-{spec_id}-{timestamp}/`
+Do not list, sort, or search `runs/` to infer the latest run. `runs/.current`
+is the only active-run pointer; if it is absent or points to a missing
+directory, create the timestamped no-active-run directory above.
 
 ## State
 

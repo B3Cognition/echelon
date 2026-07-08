@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 from harness.judgment_prepass import (
     assemble_full_report,
@@ -9,6 +12,23 @@ from harness.judgment_prepass import (
     build_judgment_prepass,
     write_judgment_prepass,
 )
+
+
+def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "harness", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
 
 
 def test_write_judgment_prepass_emits_rows_and_fallback_summary(tmp_path: Path):
@@ -54,6 +74,28 @@ def test_write_judgment_prepass_emits_rows_and_fallback_summary(tmp_path: Path):
     by_id = {row["id"]: row for row in payload["rows"]}
     assert by_id["FR-001"]["proposed_status"] == "IMPLEMENTED"
     assert by_id["NFR-002"]["proposed_status"] == "UNVERIFIED"
+
+
+def test_write_judgment_prepass_cli_reports_missing_map_without_traceback(
+    tmp_path: Path,
+):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+
+    completed = _run_harness(
+        ["write-judgment-prepass", str(spec_dir), str(verify_run_dir)]
+    )
+
+    assert completed.returncode == 2
+    assert "missing required input:" in completed.stderr
+    assert "implementation-map.md" in completed.stderr
+    assert "Traceback" not in completed.stderr
 
 
 def test_prepass_marks_blank_evidence_rows_missing(tmp_path: Path):

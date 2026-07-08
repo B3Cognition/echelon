@@ -24,6 +24,10 @@ def _resume_command(spec_id: str) -> str:
     return f"echelon delivery resume {spec_id}"
 
 
+def _resume_answer_command(spec_id: str) -> str:
+    return f'echelon delivery resume {spec_id} "<answer>"'
+
+
 def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
     """Print a structured blocked banner to stderr when an escalation is still pending."""
     from echelon.ui import banner as _banner
@@ -33,8 +37,8 @@ def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str
             ("spec", spec_id),
             ("strategy", strategy_id),
             ("escalation", esc_file),
-            ("answer in", "Append a ## Answer section to the escalation file."),
-            ("resume with", _resume_command(spec_id)),
+            ("answer with", _resume_answer_command(spec_id)),
+            ("resume without answer", _resume_command(spec_id)),
             ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,
@@ -329,8 +333,8 @@ def _render_escalation_file(
     lines.append("---")
     lines.append("")
     lines.append(
-        f"*To resume, append a `## Answer` section to this file, then run "
-        f"`{_resume_command(spec_id)}`.*"
+        f"*To resume with an answer, run `{_resume_answer_command(spec_id)}`. "
+        f"The CLI will record the answer in this file.*"
     )
     lines.append("")
 
@@ -354,9 +358,9 @@ def _print_banner(
         f"HARNESS — BLOCKED ({category})",
         [
             ("question", question),
-            ("context", context[:200] + ("..." if len(context) > 200 else "")),
-            ("answer in", "Append a ## Answer section to the escalation file."),
-            ("resume with", _resume_command(spec_id)),
+            ("context", "see escalation file for full context"),
+            ("answer with", _resume_answer_command(spec_id)),
+            ("resume without answer", _resume_command(spec_id)),
         ],
         file=file,
     )

@@ -29,6 +29,11 @@ python -m harness write-judgment-prepass "{spec_dir}" "{verify_run_dir}"
 This writes `{verify_run_dir}/judgment-prepass.json` and
 `{verify_run_dir}/judgment-prepass.md`.
 
+If the command exits non-zero, hard stop with BLOCKED. Do not inspect Echelon or
+harness source code to infer the prepass format, do not hand-write
+`judgment-prepass.json`, and do not dispatch SPEC-GUARD until the required
+upstream inputs exist.
+
 If `fallback_ids` in `judgment-prepass.json` is empty, skip SPEC-GUARD and
 assemble the final report directly with:
 

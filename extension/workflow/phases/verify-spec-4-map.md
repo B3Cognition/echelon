@@ -37,6 +37,12 @@ the pre-map, record `codegraph_evidence_map: skipped_degraded_codegraph` in
 `state.json`, and tell IMPLEMENTATION-MAPPER to perform the previous manual
 mapping path.
 
+If the command exits non-zero for any other reason, especially a missing
+`requirement-audit.md`, `tasks.md`, or `codegraph-analysis.json`, hard stop with
+BLOCKED. Do not hand-write missing upstream phase artifacts, do not inspect
+Echelon or harness source code to infer file formats, and do not dispatch
+IMPLEMENTATION-MAPPER until the required input exists.
+
 ## Dispatch Prompt
 
 Map checklist items to concrete source, test, route, UI, configuration, and

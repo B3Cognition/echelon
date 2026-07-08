@@ -235,6 +235,19 @@ class FulfillmentRunner:
                 else None
             )
             report_path = str(report) if report is not None else None
+            if (
+                report is None
+                or commit is None
+                or not fulfillment_report_is_current(report, current_commit=commit)
+            ):
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="full",
+                    reason="full verify-spec report was not stamped for current HEAD",
+                    cache_key=cache_key,
+                    report_path=report_path,
+                )
             return FulfillmentRefreshResult(
                 status="refreshed",
                 exit_code=0,

@@ -85,6 +85,8 @@ class TestEscalationFileCreation:
         assert "## Recommended Answer" in content
         assert "## Last Verify Result" in content
         assert "echelon delivery resume 012" in content
+        assert 'echelon delivery resume 012 "<answer>"' in content
+        assert "append a `## Answer` section" not in content
         assert "/speckit-harness-resume" not in content
 
     def test_file_contains_machine_readable_decision_metadata(
@@ -120,6 +122,9 @@ class TestEscalationFileCreation:
         assert "BLOCKED" in captured.err
         assert "same_failure_repeat" in captured.err
         assert "echelon delivery resume 012" in captured.err
+        assert 'echelon delivery resume 012 "<answer>"' in captured.err
+        assert "Append a ## Answer section" not in captured.err
+        assert "..." not in captured.err
         assert "/speckit-harness-resume" not in captured.err
 
     def test_all_valid_categories_accepted(

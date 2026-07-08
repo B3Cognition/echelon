@@ -866,8 +866,8 @@ class RalphController:
                                     "This usually means the LLM is stuck or the build "
                                     "instructions are unclear.\n\n"
                                     "Please review the build output above and either:\n"
-                                    "1. Append clarification under ## Answer in the escalation "
-                                    f"file and run echelon delivery resume {self._spec_id}\n"
+                                    f"1. Run echelon delivery resume {self._spec_id} "
+                                    '"<clarification>"\n'
                                     "2. Reset and restart with --reset flag"
                                 ),
                                 last_verify_result=_verify_to_dict(
@@ -3428,8 +3428,8 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
             ("spec", spec_id),
             ("strategy", strategy_id),
             ("file", escalation_file),
-            ("answer in", "Append a ## Answer section to the escalation file."),
-            ("resume with", f"echelon delivery resume {spec_id}"),
+            ("answer with", f'echelon delivery resume {spec_id} "<answer>"'),
+            ("resume without answer", f"echelon delivery resume {spec_id}"),
             ("discard with", f"echelon delivery run {spec_id} --reset"),
         ],
         file=sys.stderr,

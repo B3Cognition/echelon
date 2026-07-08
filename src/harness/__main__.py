@@ -255,9 +255,16 @@ def _write_judgment_prepass() -> None:
 
     from harness.judgment_prepass import write_judgment_prepass
 
+    verify_run_dir = Path(sys.argv[3]).resolve()
+    _require_inputs(
+        [
+            verify_run_dir / "canonical-requirements.json",
+            verify_run_dir / "implementation-map.md",
+        ]
+    )
     result = write_judgment_prepass(
         spec_dir=Path(sys.argv[2]).resolve(),
-        verify_run_dir=Path(sys.argv[3]).resolve(),
+        verify_run_dir=verify_run_dir,
     )
     print(
         f"OK: wrote judgment pre-pass to {result.json_path} "
@@ -280,6 +287,13 @@ def _assemble_fulfillment_report() -> None:
     from harness.judgment_prepass import assemble_fulfillment_report
 
     state_path = Path(sys.argv[6]).resolve() if len(sys.argv) == 7 else None
+    _require_inputs(
+        [
+            Path(sys.argv[2]).resolve(),
+            Path(sys.argv[3]).resolve(),
+            Path(sys.argv[4]).resolve(),
+        ]
+    )
     assemble_fulfillment_report(
         canonical_inventory_path=Path(sys.argv[2]).resolve(),
         judgment_prepass_path=Path(sys.argv[3]).resolve(),
@@ -486,6 +500,13 @@ def _write_codegraph_evidence_map() -> None:
 
     from harness.codegraph_evidence_mapper import write_codegraph_evidence_map
 
+    _require_inputs(
+        [
+            Path(sys.argv[2]),
+            Path(sys.argv[3]),
+            Path(sys.argv[4]),
+        ]
+    )
     result = write_codegraph_evidence_map(
         requirement_audit_path=Path(sys.argv[2]),
         codegraph_analysis_path=Path(sys.argv[3]),
@@ -499,6 +520,13 @@ def _write_codegraph_evidence_map() -> None:
         f"{result.out_json_path} and {result.out_md_path} "
         f"({result.total_requirements} requirements)"
     )
+
+
+def _require_inputs(paths: list[Path]) -> None:
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        print(f"missing required input: {missing[0]}", file=sys.stderr)
+        sys.exit(2)
 
 
 def _migrate_tasks() -> None:

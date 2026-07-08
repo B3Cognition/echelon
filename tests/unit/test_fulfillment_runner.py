@@ -52,11 +52,20 @@ def _write_matching_report(report) -> None:
 class TestFulfillmentRunner:
     def test_refresh_builds_verify_spec_prompt_and_runs_provider(self, tmp_path):
         _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
         provider = MagicMock()
         provider.cli = "claude"
-        provider.exec_prompt.return_value = 0
 
-        result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text("# Fulfillment\n", encoding="utf-8")
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
 
         assert result.exit_code == 0
         assert result.status == "refreshed"
@@ -144,6 +153,35 @@ class TestFulfillmentRunner:
         assert isinstance(metadata["spec_input_hash"], str)
         assert isinstance(metadata["implementation_input_hash"], str)
         assert isinstance(metadata["verify_cache_key"], str)
+
+    def test_refresh_rejects_success_when_report_is_not_current_after_stamp(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text("# Fulfillment\n", encoding="utf-8")
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with (
+            patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"),
+            patch("harness.fulfillment_runner._stamp_latest_report"),
+        ):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.exit_code == 2
+        assert result.status == "failed"
+        assert result.reason == "full verify-spec report was not stamped for current HEAD"
+        assert result.report_path == str(report)
+        assert read_fulfillment_metadata(report) == {}
 
     def test_refresh_rejects_report_with_ids_not_in_requirement_audit(self, tmp_path):
         skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-verify-spec"

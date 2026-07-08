@@ -32,6 +32,13 @@ def test_verify_spec_init_accepts_scoped_verify_arguments() -> None:
     assert "`base_full_verify_commit`" in text
 
 
+def test_verify_spec_init_uses_runs_current_without_latest_run_search() -> None:
+    text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
+
+    assert "read `runs/.current` exactly once" in text
+    assert "Do not list, sort, or search `runs/` to infer the latest run" in text
+
+
 def test_verify_spec_codegraph_uses_deterministic_harness_command() -> None:
     text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
 
@@ -108,6 +115,18 @@ def test_verify_spec_stage5_references_judgment_prepass() -> None:
 
     assert "judgment-prepass.json" in text
     assert "fallback_ids" in text
+
+
+def test_verify_spec_stage4_and_stage5_stop_on_missing_deterministic_inputs() -> None:
+    map_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    judge_text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+
+    for text in (map_text, judge_text):
+        lowered = text.lower()
+        assert "hard stop with" in lowered
+        assert "blocked" in lowered
+        assert "do not inspect echelon" in lowered
+        assert "do not hand-write" in lowered
 
 
 def test_verify_spec_stage5_forbids_llm_provenance_discovery() -> None:
