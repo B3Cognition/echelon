@@ -30,7 +30,7 @@ Use the Agent tool:
 
   <instructions>
   You are TECH WRITER. Read agents/build/tech-writer.md for your complete protocol.
-  Decide whether documentation updates are required. If required, update repo-root README.md and CHANGELOG.md. Always write {spec_dir}/documentation-impact-report.md with machine-readable frontmatter. Return journal entries in echelon_result.journal_entries.
+  Decide whether documentation updates are required. If required, update repo-root README.md and CHANGELOG.md. Treat README.md as a first-run manual for a first-time local user: include install, minimal configuration, first dry run, first real run, expected output, troubleshooting, and development commands when evidence supports them. Always write {spec_dir}/documentation-impact-report.md with machine-readable frontmatter. Return journal entries in echelon_result.journal_entries.
   </instructions>
   ```
 
@@ -40,7 +40,8 @@ speckit-echelon-tech-writer (TECH WRITER) must:
 
 1. Write `{spec_dir}/documentation-impact-report.md`.
 2. Update or create `README.md` and `CHANGELOG.md` when documentation impact is required.
-3. Use Keep a Changelog-style `[Unreleased]` entries when `CHANGELOG.md` is created or updated.
-4. Return `echelon_result.verdict: DONE`.
+3. Make a newly created or substantially rewritten `README.md` a first-run local manual, not just a product overview.
+4. Use Keep a Changelog-style `[Unreleased]` entries when `CHANGELOG.md` is created or updated.
+5. Return `echelon_result.verdict: DONE`.
 
 If TECH WRITER returns BLOCKED or omits `documentation-impact-report.md`, route to rework before `build-8-finalize`.

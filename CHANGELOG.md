@@ -61,6 +61,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-112 / #136 TECH WRITER first-run README manuals** — TECH WRITER now
+  treats newly created or substantially rewritten READMEs as first-run local
+  manuals, requiring evidence-backed prerequisites, minimal configuration, dry
+  run, real run, expected output, troubleshooting, development commands, and
+  deeper-doc links instead of product-overview-only updates.
 - Benchmark baseline snapshots now stage tracked changes plus non-ignored
   untracked files without touching ignored `runs/`, avoiding `git add` failures
   in workspaces that correctly ignore runtime state.

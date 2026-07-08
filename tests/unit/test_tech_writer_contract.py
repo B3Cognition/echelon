@@ -70,6 +70,21 @@ def test_tech_writer_agent_declares_required_result_contract() -> None:
     assert "  journal_entries:" in text
 
 
+def test_tech_writer_readme_contract_requires_first_run_manual() -> None:
+    text = (ROOT / "extension/agents/build/tech-writer.md").read_text(encoding="utf-8")
+    lowered = text.lower()
+
+    assert "README First-Run Manual Contract" in text
+    assert "first-time local user" in lowered
+    assert "prerequisites" in lowered
+    assert "minimal working configuration" in lowered
+    assert "first dry run" in lowered
+    assert "first real run" in lowered
+    assert "expected output" in lowered
+    assert "troubleshooting" in lowered
+    assert "Avoid product-overview-only README updates" in text
+
+
 def test_build_finalize_consumes_documentation_gate() -> None:
     text = (ROOT / "extension/workflow/phases/build-8-finalize.md").read_text(
         encoding="utf-8"
