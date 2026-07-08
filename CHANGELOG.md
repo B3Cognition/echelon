@@ -83,7 +83,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-116 / #142 harness source prompt boundary** — build-agent execution no
   longer receives `HARNESS_SOURCE_DIR`, and Ralph's harness context now forbids
   reading or searching harness implementation files instead of pointing agents
-  at `src/harness`.
+  at `src/harness`. The prompt tool-contract scanner now rejects future agent
+  or phase prompts that instruct LLMs to find/read/search harness internals.
 - **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover
   from a clean preserved build worktree whose committed output uses normal
   feature commit subjects instead of harness/checkpoint metadata, allowing the

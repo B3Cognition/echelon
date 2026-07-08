@@ -70,6 +70,43 @@ def test_accepts_documentation_checklist_command_requirements(tmp_path: Path) ->
     assert scan_prompt_tool_contracts(tmp_path, [prompt]) == []
 
 
+def test_flags_harness_internal_discovery_instruction(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Find harness files that reference fulfillment-report verified-at.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "harness_internal_discovery"
+
+
+def test_flags_direct_harness_source_read_instruction(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Read src/harness/fulfillment_runner.py to discover the provenance format.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "harness_internal_discovery"
+
+
+def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Do not inspect, read, or search for harness source, Ralph code, "
+        "ralph.py, fulfillment_runner.py, or Echelon implementation internals.\n",
+        encoding="utf-8",
+    )
+
+    assert scan_prompt_tool_contracts(tmp_path, [prompt]) == []
+
+
 def test_current_agent_and_phase_prompts_have_contracted_tool_references() -> None:
     root = Path(__file__).resolve().parents[2]
 

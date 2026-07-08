@@ -72,6 +72,18 @@ FENCED_COMMAND_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
+    r"\b(?:find|search|read|inspect|open|grep|list)\b"
+    r".{0,160}\b(?:"
+    r"harness (?:source|files?|internals?)|"
+    r"Ralph code|"
+    r"src/harness|"
+    r"ralph\.py|"
+    r"fulfillment_runner\.py"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -117,6 +129,17 @@ def _is_non_executable_reference(line: str) -> bool:
     return False
 
 
+def _is_negative_boundary(line: str) -> bool:
+    lowered = line.strip().lower()
+    return bool(
+        re.search(
+            r"\b(?:do not|never|must not)\b.{0,120}\b"
+            r"(?:find|search|read|inspect|open|grep|list)\b",
+            lowered,
+        )
+    )
+
+
 def scan_prompt_tool_contracts(
     root: Path,
     paths: list[Path] | None = None,
@@ -138,6 +161,18 @@ def scan_prompt_tool_contracts(
         for index, line in enumerate(lines):
             stripped = line.strip()
             if not stripped or stripped.startswith("#"):
+                continue
+            if HARNESS_INTERNAL_DISCOVERY_RE.search(stripped):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="harness_internal_discovery",
+                        text=stripped,
+                    )
+                )
                 continue
             if not EXECUTABLE_REFERENCE_RE.search(stripped):
                 continue
