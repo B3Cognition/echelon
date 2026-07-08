@@ -1108,7 +1108,7 @@ def _format_missing_verify_command_resume_message(config_file: Path, spec_id: st
             f"  detection: {detail}\n\n"
             f"  Add a top-level verify_command to {config_file}, for example:\n"
             f"{examples}\n\n"
-            f"  Then re-run:  echelon delivery resume {spec_id}"
+            f"  Then re-run:  echelon delivery continue {spec_id}"
         )
 
     return (
@@ -1116,8 +1116,97 @@ def _format_missing_verify_command_resume_message(config_file: Path, spec_id: st
         "  Option 1 — auto-detect once:  echelon delivery init\n"
         "  Option 2 — manual:            add a top-level verify_command to echelon-config.yml:\n"
         f"{examples}\n\n"
-        f"  Then re-run:  echelon delivery resume {spec_id}"
+        f"  Then re-run:  echelon delivery continue {spec_id}"
     )
+
+
+def _run_git_quiet(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _clean_git_branch_name(line: str) -> str:
+    return line.strip().removeprefix("*").strip()
+
+
+def _target_feature_branch_candidates(target_repo: Path, spec_id: str) -> list[str]:
+    if not (target_repo / ".git").exists():
+        return []
+    result = _run_git_quiet(["branch", "--list", spec_id, f"{spec_id}-*"], cwd=target_repo)
+    if result.returncode != 0:
+        return []
+    branches: list[str] = []
+    for line in result.stdout.splitlines():
+        branch = _clean_git_branch_name(line)
+        if branch and branch not in branches:
+            branches.append(branch)
+    return branches
+
+
+def _detect_verify_command_from_git_ref(target_repo: Path, git_ref: str) -> str | None:
+    import tempfile
+
+    from harness.verify_detection import detect_verify_command
+
+    rev = _run_git_quiet(["rev-parse", "--verify", f"{git_ref}^{{commit}}"], cwd=target_repo)
+    if rev.returncode != 0:
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="echelon-verify-detect-") as tmp:
+        worktree = Path(tmp) / "worktree"
+        added = _run_git_quiet(
+            ["worktree", "add", "--detach", str(worktree), rev.stdout.strip()],
+            cwd=target_repo,
+        )
+        if added.returncode != 0:
+            return None
+        try:
+            detected = detect_verify_command(worktree)
+            if detected.confidence == "high" and detected.command:
+                return detected.command
+            return None
+        finally:
+            _run_git_quiet(["worktree", "remove", "--force", str(worktree)], cwd=target_repo)
+            _run_git_quiet(["worktree", "prune"], cwd=target_repo)
+
+
+def _apply_target_verify_command_detection(
+    config: object,
+    *,
+    target_repo: Path | None,
+    spec_id: str,
+) -> None:
+    """Populate runtime verify_command from the actual delivery target."""
+    if getattr(config, "verify_command", None) or target_repo is None:
+        return
+    if not target_repo.exists():
+        return
+
+    from harness.verify_detection import detect_verify_command
+
+    detected = detect_verify_command(target_repo)
+    if detected.confidence == "high" and detected.command:
+        config.verify_command = detected.command
+        print(
+            f"Detected verify_command from delivery target: {detected.command}",
+            file=sys.stderr,
+        )
+        return
+
+    for branch in _target_feature_branch_candidates(target_repo, spec_id):
+        command = _detect_verify_command_from_git_ref(target_repo, branch)
+        if command:
+            config.verify_command = command
+            print(
+                f"Detected verify_command from delivery target branch {branch}: {command}",
+                file=sys.stderr,
+            )
+            return
 
 
 def _cmd_cicd(args: list[str]) -> None:
@@ -1562,12 +1651,23 @@ def _cmd_harness_run(
             config.target_default_branch = "main"
         if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
             config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=direct_target_path.resolve(),
+            spec_id=spec_id,
+        )
     elif target_env:
-        config.target_repo = str(Path(target_env).resolve())
+        target_repo_path = Path(target_env).resolve()
+        config.target_repo = str(target_repo_path)
         if not getattr(config, "target_default_branch", None):
             config.target_default_branch = "main"
         if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
             config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=target_repo_path,
+            spec_id=spec_id,
+        )
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -2015,12 +2115,23 @@ def _cmd_harness_resume(
             config.target_default_branch = "main"
         if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
             config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=direct_target_path.resolve(),
+            spec_id=spec_id,
+        )
     elif target_env:
-        config.target_repo = str(Path(target_env).resolve())
+        target_repo_path = Path(target_env).resolve()
+        config.target_repo = str(target_repo_path)
         if not getattr(config, "target_default_branch", None):
             config.target_default_branch = "main"
         if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
             config.provider = "docker"
+        _apply_target_verify_command_detection(
+            config,
+            target_repo=target_repo_path,
+            spec_id=spec_id,
+        )
 
     # Resolve state_dir from the current-build marker; fall back to runs/state/
     # for runs that pre-date build_id or were started without one.

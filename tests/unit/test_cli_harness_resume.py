@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -181,7 +182,7 @@ class TestCmdHarnessResume:
         assert "no high-confidence test runner detected" in err
         assert "Add a top-level verify_command" in err
         assert "echelon delivery init" not in err
-        assert "echelon delivery resume 001" in err
+        assert "echelon delivery continue 001" in err
 
     def test_valid_resume_prints_banner_and_calls_run(self, tmp_path: Path) -> None:
         _make_echelon_yml(tmp_path, verify_command="pytest")
@@ -614,6 +615,69 @@ class TestCmdHarnessResume:
         mock_recover.assert_called_once()
         assert mock_recover.call_args.kwargs["project_dir"] == source
         mock_run.assert_called_once()
+
+    def test_target_resume_detects_verify_command_from_feature_branch(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        polyrepo = tmp_path / "workspace"
+        source = polyrepo / "sources" / "prosaic"
+        harness_base = polyrepo / "runs" / "targets" / "prosaic"
+        source.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=source, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=source, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=source, check=True)
+        (source / "README.md").write_text("# Prosaic\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=source, check=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=source, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "switch", "-c", "001-prose-distribution-engine"],
+            cwd=source,
+            check=True,
+            capture_output=True,
+        )
+        (source / "package.json").write_text(
+            json.dumps({"scripts": {"test": "jest"}}),
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "package.json"], cwd=source, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", "add app"],
+            cwd=source,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(["git", "switch", "main"], cwd=source, check=True, capture_output=True)
+
+        _make_echelon_yml(polyrepo)
+        _make_phase_a_spec(polyrepo, "001-prose-distribution-engine")
+        sd = _setup_build(harness_base, "001-prose-distribution-engine")
+        _write_state(sd, "001-prose-distribution-engine", "default", {
+            "status": "blocked",
+            "termination_reason": "verify_command_needed",
+            "target_path": str(source),
+            "source_root": str(source),
+            "workspace_root": str(polyrepo),
+        })
+
+        env = {
+            "ECHELON_TARGET_REPO_PATH": str(source),
+            "ECHELON_TARGET_REPO_NAME": "prosaic",
+            "ECHELON_POLYREPO_ROOT": str(polyrepo),
+        }
+        from echelon import cli as echelon_cli
+
+        with patch.dict("os.environ", env, clear=False), \
+             patch("pathlib.Path.cwd", return_value=harness_base), \
+             patch("echelon.cli._sync_polyrepo_runtime_extension"), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            echelon_cli._cmd_harness_resume(["001-prose-distribution-engine", "mode=banzai"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["config"].verify_command == "npm test"
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_recoverable_resume_handles_docker_unavailable_gracefully(
         self,
