@@ -378,10 +378,10 @@ def init_harness(
     base_dir: Optional[str] = None,
     bind_mount_ack: bool = False,
 ) -> HarnessConfig:
-    """Initialize the harness against a target repository.
+    """Initialize delivery runtime settings.
 
     Args:
-        target_repo: URL or local path to the target repository.
+        target_repo: URL or local path used only for init-time fingerprinting.
         base_dir: Base directory for harness files. Defaults to cwd.
         bind_mount_ack: Whether the user acknowledges bind-mount limitation.
 
@@ -556,8 +556,6 @@ def init_harness(
         existing = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
 
     harness_data = {
-        "target_repo": config.target_repo,
-        "target_default_branch": config.target_default_branch,
         "provider": config.provider,
         "container_cli": config.container_cli,
         "detected_language": fp.language,

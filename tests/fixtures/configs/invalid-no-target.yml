@@ -1,2 +1,2 @@
-target_default_branch: "main"
+target_repo: "git@github.com:example/payments.git"
 provider: "docker"

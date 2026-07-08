@@ -4,7 +4,7 @@ Coverage:
   Validation (via _parse_config — no filesystem):
     - Valid minimal dict loads with all defaults
     - Valid full dict preserves all fields
-    - Missing target_repo raises ValidationError
+    - target_repo raises migration ValidationError
     - Invalid provider raises ValidationError
     - Invalid semver range raises ValidationError
 
@@ -46,14 +46,10 @@ CONFIG_TEMPLATE = ROOT / "extension" / "config-template.yml"
 # ---------------------------------------------------------------------------
 
 MINIMAL = {
-    "target_repo": "git@github.com:example/payments.git",
-    "target_default_branch": "main",
     "provider": "docker",
 }
 
 FULL = {
-    "target_repo": "git@github.com:example/payments.git",
-    "target_default_branch": "main",
     "provider": "docker",
     "base_image": "node:20-slim",
     "resource_limits": {
@@ -109,7 +105,7 @@ class TestParseConfigValid:
     def test_minimal_loads_with_defaults(self) -> None:
         config = _parse_config(MINIMAL)
         assert isinstance(config, HarnessConfig)
-        assert config.target_repo == "git@github.com:example/payments.git"
+        assert config.target_repo == ""
         assert config.target_default_branch == "main"
         assert config.provider == "docker"
         assert config.container_cli == "docker"
@@ -199,15 +195,9 @@ class TestParseConfigValid:
 
 @pytest.mark.unit
 class TestParseConfigInvalid:
-    def test_missing_target_repo_raises(self) -> None:
-        data = {**MINIMAL}
-        del data["target_repo"]
-        with pytest.raises(ValidationError, match="target_repo"):
-            _parse_config(data)
-
-    def test_empty_target_repo_raises(self) -> None:
-        with pytest.raises(ValidationError, match="target_repo"):
-            _parse_config({**MINIMAL, "target_repo": "  "})
+    def test_target_repo_is_rejected_with_spec_target_hint(self) -> None:
+        with pytest.raises(ValidationError, match="echelon spec target"):
+            _parse_config({**MINIMAL, "target_repo": "git@example.com:app/repo.git"})
 
     def test_invalid_provider_raises(self) -> None:
         with pytest.raises(ValidationError, match="provider"):
@@ -344,7 +334,7 @@ class TestLoadConfigCascade:
         _write_yaml(ext / "echelon-config.yml", {"harness": MINIMAL})
         monkeypatch.chdir(tmp_path)
         config = load_config()  # no project_root — falls back to cwd
-        assert config.target_repo == MINIMAL["target_repo"]
+        assert config.target_repo == ""
 
     def test_canonical_project_config_applied(self, tmp_path: Path) -> None:
         cfg_dir = _echelon_dir(tmp_path)
@@ -355,7 +345,7 @@ class TestLoadConfigCascade:
 
         config = load_config(tmp_path)
 
-        assert config.target_repo == MINIMAL["target_repo"]
+        assert config.target_repo == ""
         assert config.resource_limits.memory == "6g"
 
     def test_canonical_project_config_wins_over_legacy(self, tmp_path: Path) -> None:
@@ -398,18 +388,14 @@ class TestLoadConfigCascade:
         config = get_full_resolved_config(tmp_path)
 
         assert config["analysis"]["enabled"] is True
-        assert config["harness"]["target_repo"] == MINIMAL["target_repo"]
+        assert config["harness"]["provider"] == "docker"
 
 
 @pytest.mark.unit
 class TestVisualTestsConfig:
     def test_visual_tests_defaults(self) -> None:
         """visual_tests block absent → all defaults applied."""
-        cfg = _parse_config({
-            "target_repo": "https://github.com/x/y",
-            "target_default_branch": "main",
-            "provider": "docker",
-        })
+        cfg = _parse_config(MINIMAL)
         assert cfg.visual_tests.enabled is False
         assert cfg.visual_tests.serve_command == "npm run preview"
         assert cfg.visual_tests.test_command == "npx playwright test --reporter=json"
@@ -420,8 +406,6 @@ class TestVisualTestsConfig:
     def test_visual_tests_enabled_flag(self) -> None:
         """visual_tests.enabled and serve_command can be overridden."""
         cfg = _parse_config({
-            "target_repo": "https://github.com/x/y",
-            "target_default_branch": "main",
             "provider": "docker",
             "visual_tests": {"enabled": True, "serve_command": "npm run dev"},
         })
@@ -435,8 +419,6 @@ class TestVisualTestsConfig:
 def test_app_runtime_config_parsed() -> None:
     """harness.app block is parsed for brownfield Docker-backed app runtime."""
     cfg = _parse_config({
-        "target_repo": "https://github.com/x/y",
-        "target_default_branch": "main",
         "provider": "docker",
         "app": {
             "enabled": True,
@@ -458,8 +440,6 @@ def test_app_runtime_config_parsed() -> None:
 def test_app_runtime_command_profile_parsed() -> None:
     """harness.app supports explicit command profiles for brownfield apps."""
     cfg = _parse_config({
-        "target_repo": "https://github.com/x/y",
-        "target_default_branch": "main",
         "provider": "docker",
         "app": {
             "enabled": True,
@@ -487,8 +467,6 @@ def test_app_runtime_command_profile_parsed() -> None:
 def test_app_runtime_command_profile_accepts_single_command_strings() -> None:
     """Single command values are normalized to one-item lists."""
     cfg = _parse_config({
-        "target_repo": "https://github.com/x/y",
-        "target_default_branch": "main",
         "provider": "docker",
         "app": {
             "enabled": True,
@@ -511,11 +489,7 @@ def test_app_runtime_command_profile_accepts_single_command_strings() -> None:
 
 def test_llm_defaults():
     """LlmConfig has correct defaults when section absent."""
-    config = _parse_config({
-        "target_repo": ".",
-        "target_default_branch": "main",
-        "provider": "docker",
-    })
+    config = _parse_config(MINIMAL)
     assert config.llm.timeout_ms == 10_800_000
     assert config.llm.config_dir is None
 
@@ -523,8 +497,6 @@ def test_llm_defaults():
 def test_llm_config_dir_set():
     """LlmConfig.config_dir is read from config."""
     config = _parse_config({
-        "target_repo": ".",
-        "target_default_branch": "main",
         "provider": "docker",
         "llm": {"config_dir": "/home/user/.config/claude-work"},
     })
@@ -534,8 +506,6 @@ def test_llm_config_dir_set():
 def test_llm_timeout_ms_set():
     """LlmConfig.timeout_ms is read from config."""
     config = _parse_config({
-        "target_repo": ".",
-        "target_default_branch": "main",
         "provider": "docker",
         "llm": {"timeout_ms": 600_000},
     })
@@ -543,11 +513,7 @@ def test_llm_timeout_ms_set():
 
 
 def test_llm_tool_policy_defaults_deny_unsafe_host_execution() -> None:
-    config = _parse_config({
-        "target_repo": ".",
-        "target_default_branch": "main",
-        "provider": "docker",
-    })
+    config = _parse_config(MINIMAL)
 
     assert config.llm.tool_policy.file_boundary == "workspace"
     assert config.llm.tool_policy.network_boundary == "harness_allowlist"
@@ -557,8 +523,6 @@ def test_llm_tool_policy_defaults_deny_unsafe_host_execution() -> None:
 def test_llm_tool_policy_config_override_requires_approval_metadata() -> None:
     with pytest.raises(ValidationError, match="approval_reason"):
         _parse_config({
-            "target_repo": ".",
-            "target_default_branch": "main",
             "provider": "docker",
             "llm": {
                 "tool_policy": {
@@ -570,8 +534,6 @@ def test_llm_tool_policy_config_override_requires_approval_metadata() -> None:
 
 def test_llm_tool_policy_config_override_accepts_approved_unsafe_mode() -> None:
     config = _parse_config({
-        "target_repo": ".",
-        "target_default_branch": "main",
         "provider": "docker",
         "llm": {
             "tool_policy": {
@@ -598,8 +560,6 @@ def test_load_config_inherits_top_level_llm_defaults_into_harness_section(
         "    allow_unsafe_host_execution: true\n"
         "    approval_reason: Operator approved disposable harness worktree.\n"
         "harness:\n"
-        "  target_repo: .\n"
-        "  target_default_branch: main\n"
         "  provider: docker\n"
         "  llm:\n"
         "    cli: claude\n",
@@ -621,8 +581,6 @@ def test_load_config_harness_llm_overrides_top_level_llm_defaults(tmp_path: Path
         "  cli: claude\n"
         "  timeout_ms: 600000\n"
         "harness:\n"
-        "  target_repo: .\n"
-        "  target_default_branch: main\n"
         "  provider: docker\n"
         "  llm:\n"
         "    cli: codex\n",

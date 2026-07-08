@@ -24,7 +24,7 @@ class TestHarnessInitVerifyCommand:
         config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         config_file.parent.mkdir(parents=True)
         config_file.write_text(
-            "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+            "harness:\n  provider: docker\n",
             encoding="utf-8",
         )
         (tmp_path / "package.json").write_text(
@@ -45,7 +45,7 @@ class TestHarnessInitVerifyCommand:
         config_file.parent.mkdir(parents=True)
         config_file.write_text(
             "verify_command: custom test\n"
-            "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+            "harness:\n  provider: docker\n",
             encoding="utf-8",
         )
         (tmp_path / "go.mod").write_text("module example.test/app\ngo 1.22\n", encoding="utf-8")
@@ -62,7 +62,7 @@ class TestHarnessInitVerifyCommand:
         config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         config_file.parent.mkdir(parents=True)
         config_file.write_text(
-            "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+            "harness:\n  provider: docker\n",
             encoding="utf-8",
         )
         (tmp_path / "package.json").write_text(
@@ -86,8 +86,6 @@ def test_load_config_reads_top_level_verify_command_with_harness_section(tmp_pat
     config_file.write_text(
         "verify_command: pytest\n"
         "harness:\n"
-        "  target_repo: .\n"
-        "  target_default_branch: main\n"
         "  provider: docker\n",
         encoding="utf-8",
     )
@@ -109,7 +107,7 @@ def test_harness_init_preserves_legacy_config_for_legacy_workspace(tmp_path: Pat
     legacy = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     legacy.parent.mkdir(parents=True)
     legacy.write_text(
-        "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+        "harness:\n  provider: docker\n",
         encoding="utf-8",
     )
 

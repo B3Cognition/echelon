@@ -320,23 +320,29 @@ Docker.
 
 ### Deployment Models
 
-**Single-repo (recommended):** Install harness in the same repo you are building. Specs, code, and harness config all live together.
+**Workspace repo (recommended):** Initialize Echelon in a lightweight workspace Git repo. Specs and Echelon runtime config live at the workspace root; implementation repos live under `sources/` and are selected per spec.
 
 ```
 my-project/
   .git
-  src/
+  .echelon/
+    config.yml             ← runtime settings only; no implementation target
+  sources/
+    app/
+      .git
+      src/
   specs/
     001-feature/           ← echelon Phase A artifacts
       spec.md
       tasks.md
       constitution.md      ← published snapshot from spec-kit memory
-  .specify/
-    extensions/            ← local runtime/config, usually gitignored
-      echelon/             ← echelon config
-      harness/
-        config.yml         ← target_repo: "."
-        mirror.git/        ← local bare clone of this repo
+  runs/                    ← mirrors, worktrees, and run state
+```
+
+Set the implementation repo on the spec:
+
+```bash
+echelon spec target 001-feature sources/app
 ```
 
 ### How to read a spec folder

@@ -122,24 +122,30 @@ def _merge_resume_args(
     ]
 
 
-@delivery_app.command("init")
-def delivery_init(target_repo: Optional[str] = typer.Argument(None)) -> None:
+@delivery_app.command(
+    "init",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def delivery_init(ctx: typer.Context) -> None:
     """Initialize delivery environment: sandbox, mirror, verify."""
     from echelon import cli as legacy_cli
 
     legacy_cli._cmd_harness_init(
-        [target_repo] if target_repo else [],
+        list(ctx.args),
         command_prefix="echelon delivery init",
     )
 
 
-@harness_app.command("init")
-def harness_init(target_repo: Optional[str] = typer.Argument(None)) -> None:
+@harness_app.command(
+    "init",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def harness_init(ctx: typer.Context) -> None:
     """Compatibility alias for delivery init."""
     from echelon import cli as legacy_cli
 
     legacy_cli._cmd_harness_init(
-        [target_repo] if target_repo else [],
+        list(ctx.args),
         command_prefix="echelon harness init",
     )
 

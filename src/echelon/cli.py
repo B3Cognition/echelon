@@ -109,7 +109,7 @@ Commands:
   stack preflight [--stack <id>] [--target-archetype <id>] [--from-detect <path>] [--probe-tools] [--json]
                                             Check selected stack commands, registries, and tool probes.
 
-  delivery init [<target_repo>]              Initialize delivery environment: sandbox, mirror, verify.
+  delivery init                              Initialize delivery environment: sandbox, mirror, verify.
   delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
                     [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
@@ -779,7 +779,7 @@ def _cmd_land(args: list[str]) -> None:
     try:
         config = load_config()
     except HarnessValidationError as e:
-        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        _print_harness_config_error(e)
         sys.exit(1)
     gitops = GitOpsManager(config)
 
@@ -804,7 +804,7 @@ def _cmd_harness(args: list[str]) -> None:
             "Usage: echelon harness <subcommand> [args...]\n"
             "Compatibility alias for: echelon delivery <subcommand> [args...]\n\n"
             "Subcommands:\n"
-            "  init   [<target_repo>]             Initialize delivery environment — config, mirror, verify\n"
+            "  init                              Initialize delivery environment — config, mirror, verify\n"
             "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
             "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
             "                                     Run build→verify→PR loop\n"
@@ -840,7 +840,7 @@ def _cmd_delivery(args: list[str]) -> None:
             "Usage: echelon delivery <subcommand> [args...]\n\n"
             "Delivery is Echelon Phase B: build, verify, recover, review, and land a completed spec.\n\n"
             "Subcommands:\n"
-            "  init   [<target_repo>]             Initialize delivery environment — sandbox, mirror, verify\n"
+            "  init                              Initialize delivery environment — sandbox, mirror, verify\n"
             "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
             "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
             "                                     Run build→verify→PR loop\n"
@@ -876,6 +876,25 @@ def _cmd_delivery(args: list[str]) -> None:
         sys.exit(1)
 
 
+def _print_harness_config_error(error: Exception) -> None:
+    field_path = getattr(error, "field_path", None)
+    if field_path == "target_repo":
+        print(f"✗ Harness config error: {error}", file=sys.stderr)
+        return
+    print(f"✗ Harness config error: {error}\n  Fix: re-run 'echelon delivery init'.", file=sys.stderr)
+
+
+def _print_missing_spec_target_error(spec_id: str, *, command_prefix: str = "echelon delivery run") -> None:
+    print(
+        f"✗ Spec '{spec_id}' has no implementation target.\n\n"
+        "  Set the target in spec frontmatter:\n"
+        f"    echelon spec target {spec_id} <source-path>\n"
+        f"    echelon spec target {spec_id} sources/<new-repo> --init\n\n"
+        f"  Then rerun: {command_prefix} {spec_id}",
+        file=sys.stderr,
+    )
+
+
 def _cmd_harness_init(
     args: list[str],
     *,
@@ -885,7 +904,18 @@ def _cmd_harness_init(
     import os
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    target_repo = args[0] if args else "."
+    if args:
+        print(
+            f"✗ {command_prefix} no longer accepts a target repository.\n\n"
+            "  Implementation targets are declared per spec:\n"
+            "    echelon spec target <spec_id> <source-path>\n"
+            "    echelon spec target <spec_id> sources/<new-repo> --init\n\n"
+            f"  Then rerun: {command_prefix}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    target_repo = "."
     base_dir = str(Path.cwd())
     _workspace_git_preflight(
         Path(base_dir),
@@ -928,7 +958,6 @@ def _cmd_harness_init(
             pass
 
     fields = [
-        ("Target repo", config.target_repo),
         ("Config",      str(config_file)),
         ("Mirror",      str(mirror_dir)),
         ("Provider",    config.provider),
@@ -1192,6 +1221,15 @@ def _resolve_harness_workspace_target(
     from echelon.workspace_model import SourceRoot, discover_workspace
 
     manifest = discover_workspace(project_root)
+    if explicit_target == ".":
+        return HarnessWorkspaceTarget(
+            workspace_root=manifest.workspace.root,
+            workspace_git_role="source",
+            source_root=manifest.workspace.root,
+            source_id=".",
+            source_git_role="source",
+        )
+
     result = detect_target(
         spec_dir=spec_dir or project_root,
         polyrepo_root=project_root,
@@ -1368,6 +1406,7 @@ def _cmd_harness_run(
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
     target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    direct_target_path: Path | None = None
     spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else Path.cwd()
     harness_base_dir = Path.cwd()
     config_root = Path.cwd()
@@ -1412,38 +1451,42 @@ def _cmd_harness_run(
                 )
                 if target_rel != targets_rel[0]:
                     write_targets(spec_dir, [target_rel])
-                target = validate_single_target([target_rel], polyrepo_root)
-                sys.exit(run_multi_target(
-                    spec_id,
-                    [target],
-                    args[1:],
-                    **_workspace_target_dispatch_metadata(workspace_target),
-                ))
+                if workspace_target.source_root == workspace_target.workspace_root:
+                    direct_target_path = workspace_target.source_root
+                else:
+                    target = validate_single_target([target_rel], polyrepo_root)
+                    sys.exit(run_multi_target(
+                        spec_id,
+                        [target],
+                        args[1:],
+                        **_workspace_target_dispatch_metadata(workspace_target),
+                    ))
 
-            # A spec may declare multiple targets. Multiple targets dispatch
-            # to each sub-repo in parallel via run_multi_target (the polyrepo
-            # design documented in CLAUDE.md).
-            targets = validate_targets(targets_rel, polyrepo_root)
-            _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-            source_ids: dict[str, str] = {}
-            source_git_roles: dict[str, str] = {}
-            for target in targets:
-                target_metadata = _source_dispatch_metadata(
-                    target=target,
-                    polyrepo_root=polyrepo_root,
-                    source_id=None,
-                )
-                source_ids.update(target_metadata["source_ids"])
-                source_git_roles.update(target_metadata["source_git_roles"])
-            dispatch_metadata: dict[str, object] = {
-                "workspace_root": polyrepo_root.resolve(),
-                "workspace_git_role": "orchestration",
-                "source_ids": source_ids,
-                "source_git_roles": source_git_roles,
-            }
-            sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
+            else:
+                # A spec may declare multiple targets. Multiple targets dispatch
+                # to each sub-repo in parallel via run_multi_target (the polyrepo
+                # design documented in CLAUDE.md).
+                targets = validate_targets(targets_rel, polyrepo_root)
+                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
+                source_ids: dict[str, str] = {}
+                source_git_roles: dict[str, str] = {}
+                for target in targets:
+                    target_metadata = _source_dispatch_metadata(
+                        target=target,
+                        polyrepo_root=polyrepo_root,
+                        source_id=None,
+                    )
+                    source_ids.update(target_metadata["source_ids"])
+                    source_git_roles.update(target_metadata["source_git_roles"])
+                dispatch_metadata: dict[str, object] = {
+                    "workspace_root": polyrepo_root.resolve(),
+                    "workspace_git_role": "orchestration",
+                    "source_ids": source_ids,
+                    "source_git_roles": source_git_roles,
+                }
+                sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
-        if not target_env:
+        if not target_env and direct_target_path is None:
             workspace_target = _resolve_harness_workspace_target(
                 polyrepo_root,
                 None,
@@ -1466,6 +1509,14 @@ def _cmd_harness_run(
                     args[1:],
                     **_workspace_target_dispatch_metadata(workspace_target),
                 ))
+
+            if direct_target_path is None:
+                _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+                sys.exit(1)
+
+    if not target_env and direct_target_path is None:
+        _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+        sys.exit(1)
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
@@ -1500,9 +1551,15 @@ def _cmd_harness_run(
     try:
         config = load_config(project_root=config_root, squad_only=bool(target_env))
     except HarnessValidationError as e:
-        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        _print_harness_config_error(e)
         sys.exit(1)
-    if target_env:
+    if direct_target_path is not None:
+        config.target_repo = str(direct_target_path.resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+    elif target_env:
         config.target_repo = str(Path(target_env).resolve())
         if not getattr(config, "target_default_branch", None):
             config.target_default_branch = "main"
@@ -1817,6 +1874,7 @@ def _cmd_harness_resume(
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
     target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    direct_target_path: Path | None = None
     cwd = Path.cwd()
     spec_search_root = Path(polyrepo_env).resolve() if polyrepo_env else cwd
     harness_base_dir = cwd
@@ -1859,40 +1917,52 @@ def _cmd_harness_resume(
                         workspace_target.workspace_root
                     ).as_posix()
                 )
-                target = validate_single_target([target_rel], polyrepo_root)
-                sys.exit(
-                    run_multi_target(
-                        spec_id,
-                        [target],
-                        args[1:],
-                        command="resume",
-                        **_workspace_target_dispatch_metadata(workspace_target),
+                if workspace_target.source_root == workspace_target.workspace_root:
+                    direct_target_path = workspace_target.source_root
+                else:
+                    target = validate_single_target([target_rel], polyrepo_root)
+                    sys.exit(
+                        run_multi_target(
+                            spec_id,
+                            [target],
+                            args[1:],
+                            command="resume",
+                            **_workspace_target_dispatch_metadata(workspace_target),
+                        )
                     )
-                )
 
-            targets = validate_targets(targets_rel, polyrepo_root)
-            source_ids: dict[str, str] = {}
-            source_git_roles: dict[str, str] = {}
-            for target in targets:
-                target_metadata = _source_dispatch_metadata(
-                    target=target,
-                    polyrepo_root=polyrepo_root,
-                    source_id=None,
-                )
-                source_ids.update(target_metadata["source_ids"])
-                source_git_roles.update(target_metadata["source_git_roles"])
-            sys.exit(
-                run_multi_target(
-                    spec_id,
-                    targets,
-                    args[1:],
-                    workspace_root=polyrepo_root.resolve(),
-                    workspace_git_role="orchestration",
-                    source_ids=source_ids,
-                    source_git_roles=source_git_roles,
-                    command="resume",
-                )
-            )
+            else:
+                targets = validate_targets(targets_rel, polyrepo_root)
+                source_ids: dict[str, str] = {}
+                source_git_roles: dict[str, str] = {}
+                for target in targets:
+                    target_metadata = _source_dispatch_metadata(
+                        target=target,
+                        polyrepo_root=polyrepo_root,
+                        source_id=None,
+                    )
+                    source_ids.update(target_metadata["source_ids"])
+                    source_git_roles.update(target_metadata["source_git_roles"])
+                    sys.exit(
+                        run_multi_target(
+                            spec_id,
+                            targets,
+                            args[1:],
+                            workspace_root=polyrepo_root.resolve(),
+                            workspace_git_role="orchestration",
+                            source_ids=source_ids,
+                            source_git_roles=source_git_roles,
+                            command="resume",
+                        )
+                    )
+
+            if direct_target_path is None:
+                _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+                sys.exit(1)
+
+    if not target_env and direct_target_path is None:
+        _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+        sys.exit(1)
 
     echelon_yml = _project_echelon_config(config_root)
     if not echelon_yml.exists():
@@ -1908,9 +1978,15 @@ def _cmd_harness_resume(
     try:
         config = load_config(project_root=config_root, squad_only=bool(target_env))
     except HarnessValidationError as e:
-        print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
+        _print_harness_config_error(e)
         sys.exit(1)
-    if target_env:
+    if direct_target_path is not None:
+        config.target_repo = str(direct_target_path.resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+    elif target_env:
         config.target_repo = str(Path(target_env).resolve())
         if not getattr(config, "target_default_branch", None):
             config.target_default_branch = "main"

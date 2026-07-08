@@ -1,4 +1,2 @@
-target_repo: "git@github.com:example/payments.git"
-target_default_branch: "main"
 provider: "docker"
 echelon_version_range: "not a semver range!!!"

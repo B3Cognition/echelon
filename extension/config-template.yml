@@ -1175,7 +1175,7 @@ stacks:
   target_archetypes: []
 
 # =============================================================================
-# HARNESS — Sandbox execution substrate (echelon harness run / echelon harness init)
+# HARNESS — Sandbox execution substrate (echelon delivery run / echelon delivery init)
 # =============================================================================
 #
 # Environment variables override all file settings:
@@ -1183,15 +1183,9 @@ stacks:
 #   e.g. SPECKIT_HARNESS_RESOURCE_LIMITS_MEMORY=8g
 
 harness:
-  # --- Required (set by `echelon harness init`) ---
-
-  # URL or path of the target repository to build/test/verify inside the sandbox.
-  # Use "." for single-repo (harness installed in the same repo you are building).
-  # Use a remote URL for the two-repo model (separate control-plane repo).
-  target_repo: "https://github.com/your-org/your-repo"
-
-  # Default branch of the target repository
-  target_default_branch: "main"
+  # Implementation targets are declared in spec frontmatter, not here:
+  #   echelon spec target <spec_id> <source-path>
+  #   echelon spec target <spec_id> sources/<new-repo> --init
 
   # Sandbox provider
   # Phase 1: "docker" (production-ready)

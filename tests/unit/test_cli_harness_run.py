@@ -48,6 +48,9 @@ src/
 """
 
 
+SPEC_WITH_LOCAL_TARGET = "---\ntargets:\n  - .\n---\n# Spec\n"
+
+
 def _write_phase_a_build_inputs(spec_dir: Path) -> None:
     spec_dir.mkdir(parents=True, exist_ok=True)
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
@@ -57,6 +60,8 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
             content = "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
         elif name == "constitution.md":
             content = "# Constitution\n\nReal project rules.\n"
+        elif name == "spec.md":
+            content = SPEC_WITH_LOCAL_TARGET
         else:
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
@@ -153,7 +158,7 @@ class TestHarnessRunTaskFormatErrors:
     ) -> None:
         spec_dir = tmp_path / "specs" / "003-test"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
         (spec_dir / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
             encoding="utf-8",
@@ -166,11 +171,11 @@ class TestHarnessRunTaskFormatErrors:
         with pytest.raises(SystemExit) as exc:
             _cmd_harness_run(["003"])
 
-        assert exc.value.code == 2
+        assert exc.value.code == 1
         capsys.readouterr()
         snapshots = list((tmp_path / "runs" / "spec-snapshots").glob("003-test-*"))
         assert len(snapshots) == 1
-        assert (snapshots[0] / "spec" / "spec.md").read_text(encoding="utf-8") == "# Spec\n"
+        assert (snapshots[0] / "spec" / "spec.md").read_text(encoding="utf-8") == SPEC_WITH_LOCAL_TARGET
         assert (snapshots[0] / "spec" / "tasks.md").exists()
         manifest = snapshots[0] / "snapshot.json"
         assert manifest.exists()
@@ -191,7 +196,7 @@ class TestHarnessRunTaskFormatErrors:
 
         spec_dir = tmp_path / "specs" / "003-test"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
         (spec_dir / "tasks.md").write_text("### T-001: Legacy task\n", encoding="utf-8")
 
         monkeypatch.chdir(tmp_path)
@@ -231,7 +236,7 @@ class TestHarnessRunTaskFormatErrors:
 
         spec_dir = tmp_path / "specs" / "003-test"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
         (spec_dir / "tasks.md").write_text("### T-001: Legacy task\n", encoding="utf-8")
 
         monkeypatch.chdir(tmp_path)
@@ -267,7 +272,7 @@ class TestHarnessRunTaskFormatErrors:
 
         spec_dir = tmp_path / "specs" / "003-test"
         spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
         (spec_dir / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
             encoding="utf-8",

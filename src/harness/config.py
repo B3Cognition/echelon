@@ -9,9 +9,9 @@ Implements Echelon's migration config cascade:
   4. Local      — ``.echelon/local.yml`` or legacy ``local-config.yml`` (gitignored)
   5. Env vars   — ``SPECKIT_HARNESS_<SECTION>_<KEY>``                  (CI/secrets)
 
-Layers are deep-merged in precedence order; required fields
-(``target_repo``, ``target_default_branch``, ``provider``) must be
-present after merging.
+Layers are deep-merged in precedence order. Implementation targets are not read
+from config; delivery commands resolve them from spec frontmatter ``targets:``
+and inject the concrete runtime target after resolution.
 
 Per ADR-001: Python for orchestration. Per ADR-002: JSON/YAML for config.
 """
@@ -195,9 +195,9 @@ class StacksConfig:
 @dataclass
 class HarnessConfig:
     """Complete harness configuration."""
-    target_repo: str
-    target_default_branch: str
-    provider: str
+    target_repo: str = ""
+    target_default_branch: str = "main"
+    provider: str = "docker"
 
     # Optional fields with defaults
     container_cli: str = "docker"
@@ -360,6 +360,18 @@ def _validate_required(data: Dict[str, Any], field_name: str) -> str:
             field_path=field_name,
         )
     return str(value)
+
+
+def _reject_config_target_repo(data: Dict[str, Any]) -> None:
+    if "target_repo" not in data:
+        return
+    raise ValidationError(
+        "harness.target_repo is no longer supported. "
+        "Set the implementation target in spec frontmatter instead: "
+        "echelon spec target <spec_id> <source-path>, then remove target_repo "
+        "from .echelon/config.yml.",
+        field_path="target_repo",
+    )
 
 
 def _validate_provider(provider: str) -> str:
@@ -617,27 +629,24 @@ def _parse_config(data: Dict[str, Any], squad_only: bool = False) -> HarnessConf
 
     Args:
         data: Merged config dict.
-        squad_only: When True, skip validation of build-harness-only required
-            fields (target_repo, target_default_branch, provider). The squad
-            run (Phase A) never uses these fields — they are only needed for
-            the build harness (Phase B / echelon harness run).
+        squad_only: Retained for callers that load orchestration config during
+            target-dispatched runs. User-authored target_repo remains invalid;
+            concrete target_repo is injected after spec target resolution.
 
     Raises:
         ValidationError: If required fields are missing or invalid after merging.
     """
-    if squad_only:
-        target_repo = data.get("target_repo", "")
-        target_default_branch = data.get("target_default_branch", "main")
-        provider = data.get("provider", "github")
-        if provider:
-            try:
-                provider = _validate_provider(provider)
-            except ValidationError:
-                provider = "github"
-    else:
-        target_repo = _validate_required(data, "target_repo")
-        target_default_branch = _validate_required(data, "target_default_branch")
-        provider = _validate_provider(_validate_required(data, "provider"))
+    _reject_config_target_repo(data)
+    target_repo = ""
+    target_default_branch = str(data.get("target_default_branch") or "main")
+    provider = data.get("provider", "docker")
+    try:
+        provider = _validate_provider(str(provider))
+    except ValidationError:
+        if squad_only:
+            provider = "docker"
+        else:
+            raise
 
     echelon_version_range = data.get("echelon_version_range")
     if echelon_version_range is not None:
@@ -687,9 +696,9 @@ def load_config(
 
     Args:
         project_root: Root of the spec-kit project. Defaults to ``Path.cwd()``.
-        squad_only: When True, skip validation of build-harness-only required
-            fields. Pass True from the squad run (echelon run / Phase A) which
-            only needs llm + budget config and never touches target_repo etc.
+        squad_only: When True, tolerate non-delivery config during target
+            dispatch. Implementation targets still come from spec frontmatter,
+            not from target_repo config.
 
     Returns:
         Validated ``HarnessConfig`` dataclass.

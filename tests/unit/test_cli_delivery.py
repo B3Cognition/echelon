@@ -83,12 +83,33 @@ def test_checkpoint_help_documents_subcommands_and_exits_zero(
 def test_delivery_init_routes_to_harness_init(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
 
-    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "init", "app"])
+    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "init"])
 
     with patch("echelon.cli._cmd_harness_init") as mock_init:
         main()
 
-    mock_init.assert_called_once_with(["app"], command_prefix="echelon delivery init")
+    mock_init.assert_called_once_with([], command_prefix="echelon delivery init")
+
+
+@pytest.mark.unit
+def test_delivery_init_rejects_target_argument(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import main
+
+    (tmp_path / ".git").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "init", "sources/app"])
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "no longer accepts a target repository" in captured.err
+    assert "echelon spec target <spec_id> <source-path>" in captured.err
 
 
 @pytest.mark.unit

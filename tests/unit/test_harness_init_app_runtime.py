@@ -18,7 +18,7 @@ class TestHarnessInitAppRuntime:
         config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         config_file.parent.mkdir(parents=True)
         config_file.write_text(
-            "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+            "harness:\n  provider: docker\n",
             encoding="utf-8",
         )
         (tmp_path / "Dockerfile").write_text("FROM nginx:alpine\nEXPOSE 80\n", encoding="utf-8")
@@ -36,8 +36,6 @@ class TestHarnessInitAppRuntime:
         config_file.parent.mkdir(parents=True)
         config_file.write_text(
             "harness:\n"
-            "  target_repo: .\n"
-            "  target_default_branch: main\n"
             "  provider: docker\n"
             "  app:\n"
             "    enabled: true\n"
@@ -58,7 +56,7 @@ class TestHarnessInitAppRuntime:
         config_file = tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
         config_file.parent.mkdir(parents=True)
         config_file.write_text(
-            "harness:\n  target_repo: .\n  target_default_branch: main\n  provider: docker\n",
+            "harness:\n  provider: docker\n",
             encoding="utf-8",
         )
         (tmp_path / "docker-compose.yml").write_text(

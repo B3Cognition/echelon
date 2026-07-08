@@ -23,6 +23,12 @@ def _write_state(state_dir: Path, spec_id: str, strategy: str, state: dict) -> N
 def _setup_build(base: Path, spec_id: str) -> Path:
     """Write current-build marker and return the build's state_dir."""
     from harness.paths import build_dir, current_build_marker
+    spec_dir = base / "specs" / f"{spec_id}-demo"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "spec.md").write_text(
+        "---\ntargets:\n  - .\n---\n# Spec\n",
+        encoding="utf-8",
+    )
     marker = current_build_marker(base, spec_id)
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(_TEST_BUILD_ID)
@@ -46,13 +52,11 @@ def _make_echelon_yml(
         else base / ".specify" / "extensions" / "echelon" / "echelon-config.yml"
     )
     config_file.parent.mkdir(parents=True, exist_ok=True)
-    content = "autonomy:\n  mode: banzai\ntarget_repo: .\ntarget_default_branch: main\nprovider: docker\n"
+    content = "autonomy:\n  mode: banzai\nprovider: docker\n"
     if verify_command:
         content += f"verify_command: {verify_command}\n"
     if verify_detection or verify_reason:
         content += "harness:\n"
-        content += "  target_repo: .\n"
-        content += "  target_default_branch: main\n"
         content += "  provider: docker\n"
         if verify_detection:
             content += f"  verify_command_detection: {verify_detection}\n"
@@ -67,7 +71,8 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
     spec_dir = base / "specs" / spec_dir_name
     spec_dir.mkdir(parents=True, exist_ok=True)
     for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = "---\ntargets:\n  - .\n---\n# Spec\n" if name == "spec.md" else f"# {name}\n"
+        (spec_dir / name).write_text(content, encoding="utf-8")
     tasks = (
         "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
         if canonical_tasks
