@@ -107,8 +107,24 @@ def recover_blocked_run(
         strategy_id=strategy_id,
     )
     if commit is None:
+        commit = _find_delivery_branch_head(
+            repo=mirror_path,
+            ref=target_branch,
+        )
+    if commit is None:
+        target_head = _find_delivery_branch_head(
+            repo=project_dir,
+            ref=target_branch,
+        )
+        if target_head is not None:
+            return RecoveryResult(
+                source="target_branch",
+                commit=target_head,
+                target_branch=target_branch,
+                applied=False,
+            )
         raise HarnessRecoveryError(
-            f"No committed strategy result found on mirror branch {target_branch!r}"
+            f"No committed strategy result found on branch {target_branch!r}"
         )
 
     return _apply_commit(
@@ -276,6 +292,47 @@ def _find_strategy_commit(
         if _looks_like_strategy_commit(subject, spec_id, strategy_id):
             return commit
     return None
+
+
+def _find_delivery_branch_head(*, repo: Path, ref: str) -> Optional[str]:
+    head = _run_git(
+        ["rev-parse", "--verify", "--quiet", ref],
+        cwd=str(repo),
+        check=False,
+    )
+    if head.returncode != 0:
+        return None
+    commit = head.stdout.strip()
+    if not commit:
+        return None
+    if not _commit_changes_delivery_files(repo, commit):
+        return None
+    return commit
+
+
+def _commit_changes_delivery_files(repo: Path, commit: str) -> bool:
+    result = _run_git(
+        ["diff-tree", "--no-commit-id", "--name-only", "-r", commit],
+        cwd=str(repo),
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    for raw_path in result.stdout.splitlines():
+        path = raw_path.strip()
+        if path and not _is_recovery_metadata_path(path):
+            return True
+    return False
+
+
+def _is_recovery_metadata_path(path: str) -> bool:
+    return (
+        path == BUILD_STATUS_FILENAME
+        or path.startswith(".echelon/")
+        or path.startswith(".specify/")
+        or path.startswith("runs/")
+        or path.startswith("specs/")
+    )
 
 
 def _looks_like_strategy_commit(subject: str, spec_id: str, strategy_id: str) -> bool:

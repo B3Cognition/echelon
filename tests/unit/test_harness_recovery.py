@@ -96,6 +96,87 @@ def test_recover_blocked_run_cherry_picks_last_strategy_commit_from_mirror(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_uses_ordinary_delivery_commit_from_mirror(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "specs/001-feature/spec.md", "spec\n", "spec scaffold")
+    scaffold = _git(project, "rev-parse", "HEAD")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    producer = tmp_path / "producer"
+    _git(tmp_path, "clone", str(mirror), str(producer))
+    _git(producer, "config", "user.email", "test@example.com")
+    _git(producer, "config", "user.name", "Test User")
+    _git(producer, "checkout", "001-feature")
+    recovered = _commit_file(
+        producer,
+        "src/parser.ts",
+        "export const parse = () => true;\n",
+        "fix: implement parser",
+    )
+    _git(producer, "push", "origin", "001-feature")
+
+    _git(project, "checkout", "001-feature")
+    assert _git(project, "rev-parse", "HEAD") == scaffold
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={"termination_reason": "build_incomplete"},
+        gitops=_make_gitops(project),
+    )
+
+    assert result.source == "mirror"
+    assert result.commit == recovered
+    assert result.applied is True
+    assert (project / "src" / "parser.ts").read_text(encoding="utf-8") == (
+        "export const parse = () => true;\n"
+    )
+
+
+@pytest.mark.unit
+def test_recover_blocked_run_reports_existing_ordinary_delivery_branch_head(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "specs/001-feature/spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    recovered = _commit_file(
+        project,
+        "src/parser.ts",
+        "export const parse = () => true;\n",
+        "fix: implement parser",
+    )
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={"termination_reason": "build_incomplete"},
+        gitops=_make_gitops(project),
+    )
+
+    assert result.source == "target_branch"
+    assert result.commit == recovered
+    assert result.applied is False
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_prefers_preserved_worktree(
     tmp_path: Path,
 ) -> None:
