@@ -70,6 +70,13 @@ _BANZAI_MILESTONE_DEFER_REASON = (
     "banzai milestone defers full verify until task completion"
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
+_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS = {
+    "documentation-impact-report-missing",
+    "documentation-impact-report-invalid",
+    "documentation-not-applicable-without-reason",
+    "documentation-required-report-incomplete",
+    "changelog-format-not-declared",
+}
 
 
 def _current_git_commit(worktree: Path) -> str | None:
@@ -794,7 +801,10 @@ class RalphController:
                     if inner_result.get("blocked"):
                         return self._finalize(
                             status="blocked",
-                            reason="blocker_escalation",
+                            reason=str(
+                                inner_result.get("blocked_reason")
+                                or "blocker_escalation"
+                            ),
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -964,6 +974,17 @@ class RalphController:
         current_verify = verify_result
 
         for inner_iter in range(1, max_inner + 1):
+            if self._is_external_spec_artifact_failure(current_verify):
+                self._print_external_spec_artifact_blocker(current_verify)
+                return {
+                    "converged": False,
+                    "blocked": True,
+                    "blocked_reason": "external_spec_artifact_missing",
+                    "inner_count": inner_iter - 1,
+                    "tokens_used": tokens_used,
+                    "final_verify": current_verify,
+                }
+
             # Check termination (covers both SIGINT and coordinator cancel)
             termination = self._check_termination(tokens_used, token_budget)
             if termination:
@@ -1402,6 +1423,45 @@ class RalphController:
             failures=[gate.failure],
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
+        )
+
+    def _is_external_spec_artifact_failure(self, verify_result: VerifyResult) -> bool:
+        """Return True when a verifier failure points at Ralph-owned spec artifacts."""
+        if verify_result.passed or self._spec_artifacts_mode() != "external":
+            return False
+        return any(
+            failure.id in _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS
+            for failure in verify_result.failures
+        )
+
+    def _print_external_spec_artifact_blocker(
+        self,
+        verify_result: VerifyResult,
+    ) -> None:
+        from echelon.ui import banner as _ui_banner
+
+        details = "\n".join(
+            f"[{failure.category.value}] {failure.id}: {failure.error}"
+            for failure in verify_result.failures
+            if failure.id in _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS
+        )
+        _ui_banner(
+            "HARNESS — RALPH-OWNED SPEC ARTIFACT MISSING",
+            [
+                ("spec", self._spec_id),
+                ("strategy", self._strategy_id),
+                (
+                    "why",
+                    "Ralph-owned external spec artifact is missing or invalid",
+                ),
+                (
+                    "meaning",
+                    "The target build agent cannot legally fix this because "
+                    "external spec artifacts are read-only in delivery worktrees",
+                ),
+                ("failure", details),
+            ],
+            file=sys.stderr,
         )
 
     def _apply_task_progress_gate(

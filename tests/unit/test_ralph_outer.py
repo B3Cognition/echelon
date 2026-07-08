@@ -790,6 +790,71 @@ class TestOuterLoopConvergence:
 
         assert result.passed
 
+    def test_external_missing_documentation_report_blocks_without_inner_fix(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """External spec artifacts are Ralph-owned, not target build fixes."""
+        from harness.build_result import BuildResult
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+            task_ids=["T-001"],
+        )
+        llm_build_runner.exec_feedback.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=100,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "runs" / "targets" / "target" / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("# Target\n", encoding="utf-8")
+        _commit_all(worktree)
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["target_repo"] = "target"
+        state["target_path"] = str(workspace / "sources" / "target")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
+        gitops.base_dir = workspace
+        gitops.create_worktree.return_value = str(worktree)
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        controller._fulfillment_runner = None
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=3,
+            build_prompt="implement T-001",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "external_spec_artifact_missing"
+        llm_build_runner.exec_feedback.assert_not_called()
+        captured = capsys.readouterr()
+        assert "Ralph-owned external spec artifact" in captured.err
+
     def test_task_progress_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Ralph does not converge when state progress disagrees with tasks.md."""
         controller, provider, gitops, state_store = _make_controller(

@@ -35,6 +35,7 @@ VALID_TERMINATION_REASONS = {
     "ready_status_failed",
     "verify_command_needed",
     "containment_violation",
+    "external_spec_artifact_missing",
 }
 
 
