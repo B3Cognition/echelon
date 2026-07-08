@@ -95,9 +95,6 @@ Commands:
   phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
-  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
-                    [--run-id <id>] [--message <msg>]
-                                            Compatibility alias for spec checkpoint.
 
   benchmark list                            List experimental benchmark fixtures and variants.
   benchmark show [latest|<summary-path-or-run-dir>]
@@ -126,7 +123,7 @@ Commands:
 
 Compatibility aliases:
   init, run, status, continue, resume, rewind
-  checkpoint, bugfix, verify-spec, reopen, build, review, change, codegen, artifacts
+  bugfix, verify-spec, reopen, build, review, change, codegen, artifacts
   harness init|run|resume                    Alias for delivery init|run|resume.
   land <spec_id> [...]                       Alias for delivery land.
   cicd                                      Retired; use 'echelon delivery init'.
@@ -6511,12 +6508,6 @@ def main() -> None:
             )
             sys.exit(1)
         _cmd_phase(args[1:], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if command == "checkpoint":
-        from echelon.checkpoint_cli import run_checkpoint_command
-
-        run_checkpoint_command(args[1:], project_root=Path.cwd())
         return
 
     if command == "resume":

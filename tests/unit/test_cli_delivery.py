@@ -60,7 +60,7 @@ def test_phase_help_does_not_require_installed_extension(
 
 
 @pytest.mark.unit
-def test_checkpoint_help_documents_subcommands_and_exits_zero(
+def test_top_level_checkpoint_is_not_a_compatibility_alias(
     capsys: pytest.CaptureFixture[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -71,14 +71,10 @@ def test_checkpoint_help_documents_subcommands_and_exits_zero(
     with pytest.raises(SystemExit) as exc:
         main()
 
-    assert exc.value.code == 0
+    assert exc.value.code == 1
     captured = capsys.readouterr()
-    assert "echelon spec checkpoint list" in captured.out
-    assert "echelon spec checkpoint accept --phase <phase-id>" in captured.out
-    assert "echelon spec checkpoint commit --phase <phase-id>" in captured.out
-    assert "Compatibility alias: echelon checkpoint" in captured.out
-    assert "--run-id <id>" in captured.out
-    assert "--message <msg>" in captured.out
+    assert "unknown command 'checkpoint'" in captured.err
+    assert "echelon spec checkpoint list" not in captured.out
 
 
 @pytest.mark.unit

@@ -2,7 +2,7 @@
 
 ## Summary
 
-Echelon should use Git-backed checkpoints for Phase A/spec recovery, but checkpoints must be spec-scoped, explicit, and safe around manual edits. Users should discover available recovery points with `echelon checkpoint list`, not by guessing phase names or scanning Git history. Every commit created by Echelon, across workspace init, spec work, delivery, recovery, landing, and migrations, must carry machine-parseable attribution trailers so downstream reporting can measure Echelon-authored work.
+Echelon should use Git-backed checkpoints for Phase A/spec recovery, but checkpoints must be spec-scoped, explicit, and safe around manual edits. Users should discover available recovery points with `echelon spec checkpoint list`, not by guessing phase names or scanning Git history. Every commit created by Echelon, across workspace init, spec work, delivery, recovery, landing, and migrations, must carry machine-parseable attribution trailers so downstream reporting can measure Echelon-authored work.
 
 ## Goals
 
@@ -72,7 +72,7 @@ The ledger must not be part of the artifact restore set for the checkpoint it de
 3. Record that SHA in run state and the spec-scoped checkpoint ledger.
 4. If the ledger is tracked, commit the ledger update separately as checkpoint metadata.
 
-Rewind moves the active spec branch back to the recorded artifact commit, not to the later metadata commit. `echelon checkpoint list` reads the latest ledger from active run state or the spec-scoped ledger for the selected spec.
+Rewind moves the active spec branch back to the recorded artifact commit, not to the later metadata commit. `echelon spec checkpoint list` reads the latest ledger from active run state or the spec-scoped ledger for the selected spec.
 
 Each entry records:
 
@@ -129,14 +129,14 @@ Manual artifact edits detected for spec 001-demo:
 These edits are not part of an Echelon checkpoint.
 
 Options:
-  echelon checkpoint commit --spec 001 --message "refine tasks after review"
-  echelon checkpoint accept --spec 001
+  echelon spec checkpoint commit --spec 001 --message "refine tasks after review"
+  echelon spec checkpoint accept --spec 001
   git commit ...
 ```
 
-`echelon checkpoint accept` should not commit dirty files. It records the current `HEAD` as a user-accepted checkpoint only when the relevant artifacts are already clean and committed.
+`echelon spec checkpoint accept` should not commit dirty files. It records the current `HEAD` as a user-accepted checkpoint only when the relevant artifacts are already clean and committed.
 
-`echelon checkpoint commit --message ...` is the explicit command that commits manual edits with required Echelon attribution trailers. This lets users intentionally move the checkpoint baseline without Echelon guessing.
+`echelon spec checkpoint commit --message ...` is the explicit command that commits manual edits with required Echelon attribution trailers. This lets users intentionally move the checkpoint baseline without Echelon guessing.
 
 Raw `git commit` remains allowed, but Echelon should classify it as a user-authored baseline unless the required Echelon trailers are present.
 
@@ -144,18 +144,18 @@ Raw `git commit` remains allowed, but Echelon should classify it as a user-autho
 
 `echelon phase list` remains the workflow catalog. It answers: which phases exist?
 
-`echelon checkpoint list` is the recovery catalog. It answers: which recovery points exist for this spec?
+`echelon spec checkpoint list` is the recovery catalog. It answers: which recovery points exist for this spec?
 
 Commands:
 
 ```text
-echelon checkpoint list
-echelon checkpoint list --spec 001
-echelon checkpoint show <checkpoint-id>
-echelon checkpoint accept --spec 001
-echelon checkpoint commit --spec 001 --message "<message>"
-echelon rewind <phase-id>
-echelon rewind --to checkpoint:<checkpoint-id>
+echelon spec checkpoint list
+echelon spec checkpoint list --spec 001
+echelon spec checkpoint show <checkpoint-id>
+echelon spec checkpoint accept --spec 001
+echelon spec checkpoint commit --spec 001 --message "<message>"
+echelon spec rewind <phase-id>
+echelon spec rewind --to checkpoint:<checkpoint-id>
 ```
 
 Example output:
@@ -180,8 +180,7 @@ If no active spec can be resolved:
 No active spec resolved.
 
 Use:
-  echelon checkpoint list --spec 001
-  echelon phase list
+  echelon spec checkpoint list --spec 001
 ```
 
 If the checkpoint belongs to a different spec:
@@ -307,7 +306,7 @@ Suggested modules:
   Reads and writes spec-scoped checkpoint metadata, resolves active spec checkpoints, detects dirty relevant paths, and creates phase checkpoint commits.
 
 - `src/echelon/checkpoint_cli.py`
-  Implements `echelon checkpoint list/show/accept/commit`.
+  Implements `echelon spec checkpoint list/show/accept/commit`.
 
 - `src/echelon/rewind.py`
   Moves rewind logic out of `cli.py`, validates spec branch state, creates backup refs, and moves the branch to recorded checkpoint commits.

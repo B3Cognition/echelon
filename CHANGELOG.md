@@ -10,8 +10,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `echelon spec checkpoint list|accept|commit` and
   `echelon delivery checkpoint list <spec_id>` commands so Phase A artifact
   checkpoints and delivery recovery checkpoints are discoverable in their own
-  lifecycle namespaces. The legacy top-level `echelon checkpoint` command
-  remains a compatibility alias for spec checkpoints.
+  lifecycle namespaces. The ambiguous legacy top-level `echelon checkpoint`
+  command was removed instead of retained as an alias.
 - **EGR-102 / #126 stack detection** — added `echelon stack detect` for
   deterministic source-tree and RE-artifact stack evidence, YAML/JSON/text
   reports under `runs/stack-detect/**`, conservative current-vs-modernization

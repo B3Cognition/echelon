@@ -20,7 +20,6 @@ _USAGE = (
     "  echelon spec checkpoint accept --phase <phase-id> [--spec <id>] [--run-id <id>]\n"
     "  echelon spec checkpoint commit --phase <phase-id> [--spec <id>] "
     "[--run-id <id>] [--message <msg>]\n"
-    "\nCompatibility alias: echelon checkpoint ...\n"
 )
 
 
