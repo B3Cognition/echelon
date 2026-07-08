@@ -77,6 +77,21 @@ class TestSquadStateStore:
         assert ld["phase_id"] == "init"
         assert ld["verdict"] == "DONE"
 
+    def test_advance_records_result_repair_telemetry(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        result = _result("DONE")
+        result.result_repair_used = True
+        result.result_repair_reason = "malformed_echelon_result"
+
+        store.advance("init", "phase1-discover", result)
+
+        ld = store.load()["last_dispatch"]
+        assert ld["result_repair"] == {
+            "used": True,
+            "reason": "malformed_echelon_result",
+        }
+
     def test_advance_records_completed_phase_provenance(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")

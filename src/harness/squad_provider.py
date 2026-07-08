@@ -24,6 +24,8 @@ class SquadAgentResult:
     duration_ms: int
     timed_out: bool
     cost_usd: float = 0.0
+    result_repair_used: bool = False
+    result_repair_reason: Optional[str] = None
 
     @property
     def verdict(self) -> Optional[str]:
@@ -62,11 +64,10 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
     whichever starts later in the text (most likely to be the actual
     agent output rather than a template or quoted example).
 
-    Attempts full parse first. If YAML fails (commonly due to complex
-    journal_entries content), retries with journal_entries stripped so
-    that verdict and state_updates — the routing-critical fields — are
-    still extracted. Journal entries are handled separately by
-    _write_journal_entries, so losing them here is safe.
+    The block is parsed as one atomic contract. If any part of the final
+    echelon_result is malformed — including journal_entries or trailing prose —
+    extraction fails so the controller blocks instead of routing on a partial
+    payload.
     """
     _FENCE = "```echelon_result"
     yaml_idx = raw.rfind("echelon_result:")
@@ -102,22 +103,7 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
             pass
         return None
 
-    # Full parse — preferred.
-    result = _parse(snippet)
-    if result is not None:
-        return result
-
-    # Retry without journal_entries — routing fields (verdict, state_updates)
-    # appear before journal_entries in the block, so stripping journal_entries
-    # lets the rest parse correctly even when entries have YAML formatting errors.
-    for journal_key in ("  journal_entries:", "journal_entries:"):
-        je_idx = snippet.find(f"\n{journal_key}")
-        if je_idx != -1:
-            result = _parse(snippet[:je_idx])
-            if result is not None:
-                return result
-
-    return None
+    return _parse(snippet)
 
 
 def _validation_block_result(reason: str, debug_path: Optional[str] = None) -> dict:
@@ -170,12 +156,104 @@ def _validate_or_block_echelon_result(
         return _validation_block_result(str(exc), debug_path)
 
 
+def _echelon_result_repair_reason(raw: str) -> str:
+    return (
+        "malformed_echelon_result"
+        if "echelon_result:" in raw or "```echelon_result" in raw
+        else "missing_echelon_result"
+    )
+
+
+def _echelon_result_schema_error(echelon_result: object) -> Optional[str]:
+    try:
+        validate_echelon_result(echelon_result)
+    except EchelonResultValidationError as exc:
+        return str(exc)
+    return None
+
+
+def _build_echelon_result_repair_prompt(
+    raw: str,
+    reason: str,
+    detail: Optional[str] = None,
+    allowed_state_update_keys: Optional[object] = None,
+) -> str:
+    raw_tail = raw[-12000:]
+    detail_block = f"Validation error: {detail}\n\n" if detail else ""
+    allowed_block = ""
+    if allowed_state_update_keys is not None:
+        if isinstance(allowed_state_update_keys, (list, tuple, set, frozenset)):
+            allowed = ", ".join(f"`{key}`" for key in allowed_state_update_keys)
+            allowed_block = f"Allowed state_updates keys: {allowed or 'none'}.\n\n"
+        else:
+            allowed_block = "Allowed state_updates keys: not declared for this phase.\n\n"
+    return (
+        "You are repairing an Echelon squad agent control payload.\n\n"
+        "Rules:\n"
+        "- Do not modify files.\n"
+        "- Do not rerun the phase.\n"
+        "- Do not produce prose before or after the YAML block.\n"
+        "- Return only one unfenced YAML block rooted at `echelon_result:`.\n"
+        "- Use `state_updates: {}` when no state changes are needed.\n"
+        "- Use `journal_entries: []` when no valid journal entries can be reconstructed.\n\n"
+        f"Repair reason: {reason}\n"
+        f"{detail_block}"
+        f"{allowed_block}"
+        "Original agent output tail:\n"
+        "```text\n"
+        f"{raw_tail}\n"
+        "```\n\n"
+        "Required output shape:\n"
+        "echelon_result:\n"
+        "  verdict: <DONE|COMPLETE|PASS|FAIL|BLOCKED|KILL|DEFER>\n"
+        "  output_files: []\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n"
+    )
+
+
 class SquadCliProvider(AICodingCliProvider):
     """Extends AICodingCliProvider with exec_agent() for squad phase dispatch.
 
     Inherits CLI selection (claude/copilot/opencode/codex via ECHELON_LLM env var).
     Adds output capture + echelon_result: extraction on top of streaming.
     """
+
+    supports_echelon_result_repair = True
+
+    def repair_echelon_result(
+        self,
+        project_root: str,
+        raw: str,
+        reason: str,
+        detail: Optional[str] = None,
+        *,
+        timeout_ms: Optional[int] = None,
+        allowed_state_update_keys: Optional[object] = None,
+    ) -> Optional[dict]:
+        repair_prompt = _build_echelon_result_repair_prompt(
+            raw,
+            reason,
+            detail,
+            allowed_state_update_keys,
+        )
+        repair_backend_result = self.run_agent_result(
+            project_root,
+            repair_prompt,
+            timeout_ms=timeout_ms,
+        )
+        if repair_backend_result.exit_code != 0 or repair_backend_result.timed_out:
+            return None
+        repaired = _extract_echelon_result(repair_backend_result.stdout)
+        if repaired is None:
+            return None
+        try:
+            return validate_echelon_result(
+                repaired,
+                allowed_state_update_keys=allowed_state_update_keys,
+            )
+        except EchelonResultValidationError:
+            return None
 
     def exec_agent(
         self,
@@ -194,6 +272,43 @@ class SquadCliProvider(AICodingCliProvider):
         raw = backend_result.stdout
         timed_out = backend_result.timed_out
         echelon_result = _extract_echelon_result(raw)
+        repair_used = False
+        repair_reason: Optional[str] = None
+        repair_detail: Optional[str] = None
+        if exit_code == 0 and not timed_out:
+            if echelon_result is None:
+                repair_reason = _echelon_result_repair_reason(raw)
+            else:
+                repair_detail = _echelon_result_schema_error(echelon_result)
+                if repair_detail:
+                    repair_reason = "schema_invalid_echelon_result"
+            repair_prompt = (
+                _build_echelon_result_repair_prompt(
+                    raw,
+                    repair_reason,
+                    repair_detail,
+                )
+                if repair_reason
+                else ""
+            )
+        if repair_reason:
+            repair_backend_result = self.run_agent_result(
+                project_root,
+                repair_prompt,
+                timeout_ms=timeout_ms,
+            )
+            repair_used = True
+            raw = backend_result.stdout
+            timed_out = backend_result.timed_out
+            exit_code = backend_result.exit_code
+            if (
+                repair_backend_result.exit_code == 0
+                and not repair_backend_result.timed_out
+            ):
+                repaired = _extract_echelon_result(repair_backend_result.stdout)
+                if repaired is not None:
+                    echelon_result = repaired
+            backend_result.cost_usd += repair_backend_result.cost_usd
         echelon_result = _validate_or_block_echelon_result(
             echelon_result,
             raw,
@@ -214,4 +329,6 @@ class SquadCliProvider(AICodingCliProvider):
             duration_ms=duration_ms,
             timed_out=timed_out,
             cost_usd=backend_result.cost_usd,
+            result_repair_used=repair_used,
+            result_repair_reason=repair_reason,
         )

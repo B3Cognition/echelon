@@ -325,23 +325,26 @@ Blocked tasks resolved: <count> (consensus only)
 ## Output Block
 
 Include one `decision` entry per significant task grouping, dependency, or priority decision.
+The block below must be the final response content; do not write completion
+summaries, bullets, or sign-off text after it.
 
 echelon_result:
   verdict: COMPLETE
   output_files:
     - {spec_dir}/tasks.md
     - {spec_dir}/critical-path.md
+    - {spec_dir}/risk-matrix.md
+    - {spec_dir}/dependencies.md
   state_updates: {}
   journal_entries:
     - type: decision
-      phase: <phase3-plan | phase3-consensus>
-      agent: speckit-echelon-orchestrator (ORCHESTRATOR)
       data:
         artifact: "tasks.md"
         section: "<task group or dependency area>"
         reasoning: "<why tasks are grouped or ordered this way>"
         rationale: "<constraint or dependency principle>"
         alternatives_considered: []
+        confidence: <0.0-1.0>
 
 ---
 

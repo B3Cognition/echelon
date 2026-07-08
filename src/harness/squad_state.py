@@ -196,6 +196,11 @@ class SquadStateStore:
             "verdict": result.verdict,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
+        if result.result_repair_used:
+            state["last_dispatch"]["result_repair"] = {
+                "used": True,
+                "reason": result.result_repair_reason or "unknown",
+            }
         if manual_phase_run:
             state["last_dispatch"]["manual_phase_run"] = True
             manual_runs = state.get("manual_phase_runs")

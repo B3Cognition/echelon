@@ -82,6 +82,22 @@ echelon_result:
         raw = "echelon_result:\n  verdict: [unclosed"
         assert _extract_echelon_result(raw) is None
 
+    def test_returns_none_when_journal_entries_make_result_malformed(self):
+        raw = """echelon_result:
+  verdict: COMPLETE
+  output_files:
+    - specs/013/tasks.md
+  state_updates:
+    tasks_lexicon_pass: false
+    tasks_lexicon_attempts: 3
+  journal_entries:
+    - type: decision
+      data:
+        artifact: tasks.md
+        reasoning: "unterminated
+"""
+        assert _extract_echelon_result(raw) is None
+
     def test_extracts_last_occurrence(self):
         raw = """echelon_result:
   verdict: FAIL

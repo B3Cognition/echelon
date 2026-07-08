@@ -372,6 +372,33 @@ class PhaseExecutor(ABC):
             )
             return result
         except EchelonResultValidationError as exc:
+            repair = (
+                getattr(self._provider, "repair_echelon_result", None)
+                if getattr(self._provider, "supports_echelon_result_repair", False) is True
+                else None
+            )
+            if (
+                callable(repair)
+                and result.exit_code == 0
+                and not result.timed_out
+            ):
+                allowed_keys = (
+                    getattr(node, "allowed_state_updates", None)
+                    if allowed_state_updates is None
+                    else allowed_state_updates
+                )
+                repaired = repair(
+                    str(self._project_root),
+                    result.raw_output,
+                    "schema_invalid_echelon_result",
+                    str(exc),
+                    allowed_state_update_keys=allowed_keys,
+                )
+                if repaired is not None:
+                    result.echelon_result = repaired
+                    result.result_repair_used = True
+                    result.result_repair_reason = "schema_invalid_echelon_result"
+                    return result
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={

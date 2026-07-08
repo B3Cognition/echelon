@@ -61,6 +61,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-114 / #138 squad result repair** — clean-exit squad agent
+  dispatches now get one no-edit repair invocation when the final
+  `echelon_result` is missing, malformed, or schema-invalid. Repaired payloads
+  are still validated through the normal schema and phase allowlist path, and
+  successful advances record `last_dispatch.result_repair`; timeout and
+  nonzero exits continue to block without repair.
 - **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover
   from a clean preserved build worktree whose committed output uses normal
   feature commit subjects instead of harness/checkpoint metadata, allowing the

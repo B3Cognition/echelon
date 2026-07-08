@@ -68,11 +68,13 @@ class TestOrchestratorTemplates:
             "  output_files:\n"
             "    - {spec_dir}/tasks.md\n"
             "    - {spec_dir}/critical-path.md\n"
+            "    - {spec_dir}/risk-matrix.md\n"
+            "    - {spec_dir}/dependencies.md\n"
             "  state_updates: {}\n"
             "  journal_entries:\n"
             in text
         )
-        assert "agent: speckit-echelon-orchestrator (ORCHESTRATOR)" in text
+        assert "      agent: speckit-echelon-orchestrator (ORCHESTRATOR)" not in text
         assert "agent: PLAN" not in text
 
     def test_phase3_plan_dispatch_includes_templates(self) -> None:

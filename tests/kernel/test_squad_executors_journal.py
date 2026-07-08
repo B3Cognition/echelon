@@ -1341,6 +1341,36 @@ def test_blocked_validation_result_preserves_original_error(tmp_path):
     )
 
 
+def test_state_update_allowlist_failure_uses_result_repair_when_available(tmp_path):
+    ex = _executor(tmp_path)
+    ex._provider.supports_echelon_result_repair = True
+    ex._provider.repair_echelon_result.return_value = {
+        "verdict": "DONE",
+        "state_updates": {"allowed_key": True},
+        "journal_entries": [],
+    }
+    node = SimpleNamespace(id="phase-test", allowed_state_updates=["allowed_key"])
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"unexpected": True},
+            "journal_entries": [],
+        },
+        raw_output="echelon_result:\n  verdict: DONE\n  state_updates:\n    unexpected: true\n",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    validated = ex._validate_result_state_updates(node, result)
+
+    assert validated.verdict == "DONE"
+    assert validated.state_updates == {"allowed_key": True}
+    assert validated.result_repair_used is True
+    assert validated.result_repair_reason == "schema_invalid_echelon_result"
+    ex._provider.repair_echelon_result.assert_called_once()
+
+
 def test_conditional_sequential_prompt_includes_allowed_state_updates(tmp_path):
     """Conditional sequential dispatches no longer send raw agent text only."""
     squad_dir = tmp_path / "squad" / "run-test"
