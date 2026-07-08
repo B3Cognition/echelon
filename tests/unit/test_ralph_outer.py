@@ -1677,6 +1677,78 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_recovers_completed_task_ids_from_final_output(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Final JSON completed_task_ids can recover a missing status marker."""
+        from harness.llm_build_runner import LlmBuildRunner
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        tasks_path = spec_dir / "tasks.md"
+        tasks_path.write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        _write_no_impact_documentation_report(spec_dir)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        class FinalJsonExecutor:
+            last_stdout = ""
+            last_stderr = ""
+            last_token_usage = 123
+
+            def exec_prompt(self, worktree_path: str, prompt: str, *, extra_env=None):
+                Path(worktree_path, "generated.txt").write_text(
+                    "verified implementation\n",
+                    encoding="utf-8",
+                )
+                self.last_stdout = (
+                    "Build slice complete.\n"
+                    "```json\n"
+                    '{"status":"complete","state_updates":{"completed_task_ids":["T-001"]}}\n'
+                    "```\n"
+                )
+                return 0
+
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=LlmBuildRunner(FinalJsonExecutor()),
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement T-001",
+        )
+
+        assert result.status == "converged"
+        assert "- [x] T-001" in tasks_path.read_text(encoding="utf-8")
+        captured = capsys.readouterr()
+        assert "missing build status marker" not in captured.err
+        assert state_store.read()["build"]["task_results"]["T-001"]["status"] == "DONE"
+        gitops.commit.assert_called()
+        gitops.push.assert_called_once_with(str(worktree), "main")
+
     def test_llm_build_permission_denied_reports_host_tool_policy_blocker(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

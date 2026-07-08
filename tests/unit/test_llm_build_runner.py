@@ -83,6 +83,24 @@ class TestLlmBuildRunner:
         assert result.stdout == "You've hit your session limit"
         assert result.stderr == "resets 9:10pm"
 
+    def test_exec_build_recovers_done_status_from_final_json_when_marker_missing(
+        self, tmp_path
+    ):
+        executor = _executor(returncode=0)
+        executor.last_stdout = (
+            "Build complete.\n"
+            "```json\n"
+            '{"status":"complete","state_updates":{"completed_task_ids":["T-001","T-002"]}}\n'
+            "```\n"
+        )
+
+        result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        assert result.status == "done"
+        assert result.succeeded is True
+        assert result.task_ids == ["T-001", "T-002"]
+        assert "final JSON output" in (result.reason or "")
+
     def test_exec_feedback_delegates_to_build_semantics(self, tmp_path):
         executor = _executor(status={"status": "done"})
 

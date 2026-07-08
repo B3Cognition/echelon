@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
+
+from kernel.task_contract import TASK_ID_PATTERN
 
 # Filename written by build-8-finalize (and codegen-7-deliver) to signal build outcome.
 BUILD_STATUS_FILENAME = ".harness-build-status.json"
@@ -16,6 +19,17 @@ _DONE_STATUS_ALIASES = {
     "partial",
     "progress",
 }
+_OUTPUT_DONE_STATUSES = _DONE_STATUS_ALIASES | {
+    "complete",
+    "completed",
+    "pass",
+    "passed",
+}
+_OUTPUT_JSON_FENCE_RE = re.compile(
+    r"```(?:json)?\s*(?P<body>\{.*?\})\s*```",
+    re.IGNORECASE | re.DOTALL,
+)
+_TASK_ID_RE = re.compile(rf"^{TASK_ID_PATTERN}$")
 
 
 def _normalize_status(status: object) -> str:
@@ -110,4 +124,108 @@ def _task_ids(data: dict[str, object]) -> list[str]:
         task_id = str(value).strip()
         if task_id:
             ids.append(task_id)
+    return ids
+
+
+def recover_done_result_from_output(
+    *,
+    stdout: str,
+    stderr: str,
+    exit_code: int,
+    duration_ms: int,
+) -> Optional[BuildResult]:
+    """Recover a successful build result from explicit final JSON output.
+
+    This is a narrow missing-marker escape hatch. It accepts only valid JSON
+    objects that declare a successful status and canonical completed task IDs.
+    Prose summaries such as ``completed_task_ids: [...]`` are intentionally not
+    interpreted.
+    """
+    if exit_code != 0:
+        return None
+    for data in _output_json_objects(stdout, stderr):
+        for payload in _candidate_payloads(data):
+            if not _is_done_status(payload.get("status")):
+                continue
+            task_ids = _task_ids_from_output_payload(payload)
+            if not task_ids:
+                continue
+            return BuildResult(
+                exit_code=exit_code,
+                status="done",
+                impasse_file=None,
+                reason=(
+                    "recovered completed_task_ids from final JSON output after "
+                    f"missing {BUILD_STATUS_FILENAME}"
+                ),
+                task_ids=task_ids,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+                token_usage=0,
+            )
+    return None
+
+
+def _output_json_objects(stdout: str, stderr: str) -> Iterable[dict[str, object]]:
+    text = "\n".join(part for part in (stdout, stderr) if part)
+    seen: set[str] = set()
+    for match in _OUTPUT_JSON_FENCE_RE.finditer(text):
+        body = match.group("body").strip()
+        if body in seen:
+            continue
+        seen.add(body)
+        parsed = _parse_json_object(body)
+        if parsed is not None:
+            yield parsed
+
+    stripped = text.strip()
+    if stripped.startswith("{") and stripped.endswith("}") and stripped not in seen:
+        parsed = _parse_json_object(stripped)
+        if parsed is not None:
+            yield parsed
+
+
+def _parse_json_object(raw: str) -> Optional[dict[str, object]]:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _candidate_payloads(data: dict[str, object]) -> Iterable[dict[str, object]]:
+    yield data
+    nested = data.get("echelon_result")
+    if isinstance(nested, dict):
+        yield nested
+
+
+def _is_done_status(status: object) -> bool:
+    raw = str(status or "unknown").strip().lower().replace("-", "_")
+    return raw in _OUTPUT_DONE_STATUSES
+
+
+def _task_ids_from_output_payload(data: dict[str, object]) -> list[str]:
+    task_ids = _canonical_task_ids(_task_ids(data))
+    if task_ids:
+        return task_ids
+    state_updates = data.get("state_updates")
+    if isinstance(state_updates, dict):
+        return _canonical_task_ids(_task_ids(state_updates))
+    return []
+
+
+def _canonical_task_ids(values: list[str]) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not _TASK_ID_RE.fullmatch(value):
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        ids.append(value)
     return ids

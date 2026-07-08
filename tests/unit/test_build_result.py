@@ -1,7 +1,7 @@
 """Tests for BuildResult dataclass."""
 from __future__ import annotations
 import pytest
-from harness.build_result import BuildResult
+from harness.build_result import BuildResult, recover_done_result_from_output
 
 
 @pytest.mark.unit
@@ -83,3 +83,51 @@ class TestBuildResult:
         p.write_text('"done"')  # valid JSON, but not an object
         r = BuildResult.from_status_file(p, exit_code=0, stdout="", stderr="", duration_ms=50)
         assert r.status == "unknown"
+
+    def test_recovers_completed_task_ids_from_final_json_output(self):
+        stdout = """
+Build slice complete.
+
+```json
+{
+  "status": "complete",
+  "state_updates": {
+    "last_verify_result": "pass",
+    "completed_task_ids": ["T-001", "T-002", " "]
+  },
+  "verification": {"tests": "passed"}
+}
+```
+"""
+
+        r = recover_done_result_from_output(
+            stdout=stdout,
+            stderr="",
+            exit_code=0,
+            duration_ms=50,
+        )
+
+        assert r is not None
+        assert r.status == "done"
+        assert r.task_ids == ["T-001", "T-002"]
+        assert "final JSON output" in (r.reason or "")
+
+    def test_does_not_recover_from_prose_only_task_ids(self):
+        r = recover_done_result_from_output(
+            stdout='completed_task_ids: ["T-001"]',
+            stderr="",
+            exit_code=0,
+            duration_ms=50,
+        )
+
+        assert r is None
+
+    def test_does_not_recover_failed_json_status(self):
+        r = recover_done_result_from_output(
+            stdout='```json\n{"status":"blocked","completed_task_ids":["T-001"]}\n```',
+            stderr="",
+            exit_code=0,
+            duration_ms=50,
+        )
+
+        assert r is None
