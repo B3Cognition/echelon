@@ -539,6 +539,50 @@ class TestOuterLoopConvergence:
         assert f"source_root: {source}" in prompt
         assert "source_id: og-platform" in prompt
         assert "source_git_role: source" in prompt
+        assert "forbidden_source_roots:" not in prompt
+
+    def test_harness_context_reports_forbidden_sibling_source_roots(
+        self, tmp_path: Path
+    ) -> None:
+        """Targeted delivery prompts must identify sibling sources as off-limits."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        target = workspace / "sources" / "prosaic"
+        sibling_a = workspace / "sources" / "ruler"
+        sibling_b = workspace / "sources" / "spec-kit-skills-agents"
+        worktree = (
+            tmp_path
+            / "runs"
+            / "targets"
+            / "prosaic"
+            / "runs"
+            / "build-1"
+            / "worktrees"
+            / "default"
+            / "iter-0"
+        )
+        for path in (target, sibling_a, sibling_b, worktree):
+            path.mkdir(parents=True)
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["workspace_git_role"] = "workspace"
+        state["source_root"] = str(target)
+        state["source_id"] = "prosaic"
+        state["source_git_role"] = "source"
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "forbidden_source_roots:" in prompt
+        assert f"- {sibling_a}" in prompt
+        assert f"- {sibling_b}" in prompt
+        forbidden_block = prompt.split("forbidden_source_roots:", 1)[1].split(
+            "Use `worktree`",
+            1,
+        )[0]
+        assert str(target) not in forbidden_block
+        assert "Do not inspect, read, list, grep, or search sibling source roots" in prompt
 
     def test_harness_context_includes_delivery_progress_ledger(
         self, tmp_path: Path

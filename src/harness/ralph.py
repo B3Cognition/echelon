@@ -2232,6 +2232,23 @@ class RalphController:
         source_root = state.get("source_root") or worktree_path
         source_id = state.get("source_id") or Path(str(source_root)).name
         source_git_role = state.get("source_git_role") or "source"
+        forbidden_source_roots = self._forbidden_sibling_source_roots(
+            workspace_root=workspace_root,
+            source_root=source_root,
+        )
+        forbidden_source_roots_block = ""
+        forbidden_source_roots_instruction = ""
+        if forbidden_source_roots:
+            forbidden_source_roots_block = (
+                "forbidden_source_roots:\n"
+                + "".join(f"- {path}\n" for path in forbidden_source_roots)
+            )
+            forbidden_source_roots_instruction = (
+                "Do not inspect, read, list, grep, or search sibling source roots "
+                "listed under `forbidden_source_roots`; they are "
+                "reverse-engineering context only and not part of the targeted "
+                "build slice.\n"
+            )
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
         spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
         tasks_file_text = str(spec_dir / "tasks.md" if spec_dir is not None else "MISSING")
@@ -2255,6 +2272,7 @@ class RalphController:
             f"source_root: {source_root}\n"
             f"source_id: {source_id}\n"
             f"source_git_role: {source_git_role}\n"
+            f"{forbidden_source_roots_block}"
             f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"
             f"spec_file: {spec_file_text}\n"
@@ -2264,6 +2282,7 @@ class RalphController:
             f"state_dir: {self._state_store.state_dir}\n"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
             "Use `source_root` only as source identity/context; implementation edits must stay in `worktree`.\n"
+            f"{forbidden_source_roots_instruction}"
             "Do not search for the application repo; it is named here and mirrored by `worktree`.\n"
             "Use `workspace_root` only for Echelon/spec orchestration unless `source_root` is the same path.\n"
             "Use `spec_dir`, `spec_file`, and `tasks_file` as read-only inputs for understanding the requested work.\n"
@@ -2280,6 +2299,33 @@ class RalphController:
             f"{progress_ledger_block}"
         )
         return f"{block}\n{prompt}"
+
+    def _forbidden_sibling_source_roots(
+        self,
+        *,
+        workspace_root: object,
+        source_root: object,
+    ) -> list[str]:
+        workspace_path = Path(str(workspace_root)).expanduser()
+        source_path = Path(str(source_root)).expanduser()
+        sources_dir = workspace_path / "sources"
+        if not sources_dir.is_dir():
+            return []
+        try:
+            resolved_source = source_path.resolve()
+        except OSError:
+            resolved_source = source_path.absolute()
+
+        forbidden: list[str] = []
+        for candidate in sorted(path for path in sources_dir.iterdir() if path.is_dir()):
+            try:
+                resolved_candidate = candidate.resolve()
+            except OSError:
+                resolved_candidate = candidate.absolute()
+            if resolved_candidate == resolved_source:
+                continue
+            forbidden.append(str(candidate))
+        return forbidden
 
     def _delivery_progress_ledger_block(self, state: Dict[str, Any]) -> str:
         """Render persisted delivery progress as read-only prompt context."""
