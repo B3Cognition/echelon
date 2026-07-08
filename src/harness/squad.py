@@ -87,6 +87,20 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
 logger = logging.getLogger(__name__)
 
 
+def _spec_id_from_phase_a_dir(spec_dir: Path) -> str:
+    if spec_dir.name.startswith("spec-"):
+        return spec_dir.name.removeprefix("spec-")
+    return spec_dir.name
+
+
+def _checkpoint_spec_id_from_state(state: dict, spec_dir: Path) -> str:
+    spec_dir_id = _spec_id_from_phase_a_dir(spec_dir)
+    state_spec_id = str(state.get("spec_id") or "").strip()
+    if state_spec_id and spec_dir_id.startswith(f"{state_spec_id}-"):
+        return spec_dir_id
+    return state_spec_id or spec_dir_id
+
+
 def _state_autonomy_mode(state: dict, fallback: str) -> str:
     autonomy = state.get("autonomy_mode")
     if isinstance(autonomy, str) and autonomy:
@@ -1097,7 +1111,7 @@ class SquadController:
                 phase=phase,
                 next_phase=next_phase,
                 run_id=str(state.get("run_id") or ""),
-                spec_id=str(state.get("spec_id") or spec_dir.name),
+                spec_id=_checkpoint_spec_id_from_state(state, spec_dir),
             )
         except Exception as exc:
             logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
