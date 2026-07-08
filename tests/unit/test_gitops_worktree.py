@@ -122,6 +122,60 @@ def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
     assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
 
 
+def test_sync_runtime_extension_repairs_missing_codegraph_deps_when_runtime_ready(tmp_path):
+    """Stale ready worktrees still get CodeGraph Node deps refreshed."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "node" / "re" / "node_modules" / "web-tree-sitter").mkdir(
+        parents=True
+    )
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n",
+        encoding="utf-8",
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (
+        source
+        / "scripts"
+        / "node"
+        / "re"
+        / "node_modules"
+        / "web-tree-sitter"
+        / "package.json"
+    ).write_text('{"name":"web-tree-sitter"}\n', encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    dest = worktree / ".specify" / "extensions" / "echelon"
+    (dest / "agents" / "control").mkdir(parents=True)
+    (dest / "workflow").mkdir(parents=True)
+    (dest / "agents" / "control" / "commander.md").write_text(
+        "stale commander\n",
+        encoding="utf-8",
+    )
+    (dest / "workflow" / "definition.yaml").write_text(
+        "stale workflow\n",
+        encoding="utf-8",
+    )
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    copied = (
+        dest
+        / "scripts"
+        / "node"
+        / "re"
+        / "node_modules"
+        / "web-tree-sitter"
+        / "package.json"
+    )
+    assert copied.read_text(encoding="utf-8") == '{"name":"web-tree-sitter"}\n'
+
+
 def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
     """Delivery worktrees should not expose workspace migration helper source."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

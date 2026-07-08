@@ -628,6 +628,8 @@ class GitOpsManager:
         dest = worktree / RUNTIME_EXTENSION_REL
 
         if self._runtime_extension_ready(dest):
+            if source.exists():
+                self._sync_codegraph_node_modules(source, dest)
             self._sync_claude_command_skills(dest, worktree)
             self._sync_claude_agents(dest, worktree)
             self._exclude_runtime_extension(worktree)
