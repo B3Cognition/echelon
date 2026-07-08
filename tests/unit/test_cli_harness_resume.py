@@ -442,6 +442,51 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
+    def test_target_resume_recovers_against_source_repo_not_target_harness_dir(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        polyrepo = tmp_path / "workspace"
+        source = polyrepo / "sources" / "prosaic"
+        harness_base = polyrepo / "runs" / "targets" / "prosaic"
+        source.mkdir(parents=True)
+        _make_echelon_yml(polyrepo)
+        _make_phase_a_spec(polyrepo, "001-prose-distribution-engine")
+        sd = _setup_build(harness_base, "001-prose-distribution-engine")
+        _write_state(sd, "001-prose-distribution-engine", "default", {
+            "status": "blocked",
+            "termination_reason": "build_incomplete",
+            "target_path": str(source),
+            "source_root": str(source),
+            "workspace_root": str(polyrepo),
+        })
+
+        env = {
+            "ECHELON_TARGET_REPO_PATH": str(source),
+            "ECHELON_TARGET_REPO_NAME": "prosaic",
+            "ECHELON_POLYREPO_ROOT": str(polyrepo),
+        }
+        with patch.dict("os.environ", env, clear=False), \
+             patch("pathlib.Path.cwd", return_value=harness_base), \
+             patch("echelon.cli._sync_polyrepo_runtime_extension"), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            mock_recover.return_value = MagicMock(
+                source="target_branch",
+                commit="abc123",
+                target_branch="001-prose-distribution-engine",
+                applied=False,
+                backed_up_untracked=(),
+            )
+            from echelon.cli import _cmd_harness_resume
+            _cmd_harness_resume(["001-prose-distribution-engine"])
+
+        mock_recover.assert_called_once()
+        assert mock_recover.call_args.kwargs["project_dir"] == source
+        mock_run.assert_called_once()
+
     def test_recoverable_resume_handles_docker_unavailable_gracefully(
         self,
         tmp_path: Path,

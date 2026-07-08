@@ -2197,9 +2197,21 @@ def _cmd_harness_resume(
     if termination_reason in recoverable_reasons:
         from harness.recovery import HarnessRecoveryError, recover_blocked_run
 
+        recovery_project_dir = Path(
+            str(
+                state.get("target_repo_path")
+                or state.get("target_path")
+                or state.get("source_root")
+                or config.target_repo
+                or harness_base_dir
+            )
+        )
+        if not recovery_project_dir.is_absolute():
+            recovery_project_dir = (config_root / recovery_project_dir).resolve()
+
         try:
             recovered = recover_blocked_run(
-                project_dir=harness_base_dir,
+                project_dir=recovery_project_dir,
                 spec_id=spec_id,
                 strategy_id=strategy,
                 state=state,
