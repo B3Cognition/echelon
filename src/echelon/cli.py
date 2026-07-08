@@ -26,6 +26,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from harness.gitops import runtime_extension_copy_ignore
 from harness.phase_a_readiness import validate_phase_a_readiness
 
 try:
@@ -1146,12 +1147,7 @@ def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path
         source,
         dest,
         dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(
-            ".git",
-            "__pycache__",
-            ".pytest_cache",
-            "node_modules",
-        ),
+        ignore=runtime_extension_copy_ignore(source),
     )
 
 

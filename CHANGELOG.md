@@ -90,6 +90,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `forbidden_source_roots` and tells build agents not to inspect, read, list,
   grep, or search those roots during targeted delivery. Ralph also blocks a
   build when the LLM transcript shows tool access to a forbidden sibling root.
+- **EGR-117 / #141 reduced target-visible runtime extension surface** — delivery
+  worktree runtime sync no longer copies workspace migration helper source from
+  `.specify/extensions/echelon/scripts/python`, and polyrepo wrapper sync uses
+  the same runtime-extension ignore policy.
 - **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover
   from a clean preserved build worktree whose committed output uses normal
   feature commit subjects instead of harness/checkpoint metadata, allowing the

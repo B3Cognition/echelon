@@ -122,6 +122,35 @@ def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
     assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
 
 
+def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
+    """Delivery worktrees should not expose workspace migration helper source."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "python").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "scripts" / "python" / "migrate_workspace_git.py").write_text(
+        "print('migration helper')\n", encoding="utf-8"
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime = worktree / ".specify" / "extensions" / "echelon"
+    assert (runtime / "agents" / "control" / "commander.md").exists()
+    assert (runtime / "workflow" / "definition.yaml").exists()
+    assert not (runtime / "scripts" / "python").exists()
+
+
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

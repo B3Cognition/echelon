@@ -39,6 +39,15 @@ RUNTIME_EXTENSION_REQUIRED = (
     Path("workflow") / "definition.yaml",
 )
 RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
+RUNTIME_EXTENSION_EXCLUDED_PATHS = (
+    Path("scripts") / "python",
+)
+RUNTIME_EXTENSION_EXCLUDED_NAMES = (
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    "node_modules",
+)
 
 
 def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
@@ -75,6 +84,30 @@ def _claude_agent_from_runtime_agent(agent_file: Path, agent_name: str) -> str:
         "---\n\n"
         f"{raw.rstrip()}\n"
     )
+
+
+def runtime_extension_copy_ignore(source_root: Path):
+    """Return a copytree ignore callable for target-visible runtime extension sync."""
+    source_root = source_root.resolve()
+    name_ignore = shutil.ignore_patterns(*RUNTIME_EXTENSION_EXCLUDED_NAMES)
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        ignored = set(name_ignore(directory, names))
+        current = Path(directory).resolve()
+        for name in names:
+            candidate = current / name
+            try:
+                relative = candidate.relative_to(source_root)
+            except ValueError:
+                continue
+            if any(
+                relative == excluded or relative.is_relative_to(excluded)
+                for excluded in RUNTIME_EXTENSION_EXCLUDED_PATHS
+            ):
+                ignored.add(name)
+        return ignored
+
+    return ignore
 
 
 def _first_heading(markdown: str) -> str | None:
@@ -614,12 +647,7 @@ class GitOpsManager:
             source,
             dest,
             dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns(
-                ".git",
-                "__pycache__",
-                ".pytest_cache",
-                "node_modules",
-            ),
+            ignore=runtime_extension_copy_ignore(source),
         )
         self._sync_codegraph_node_modules(source, dest)
         self._sync_claude_command_skills(dest, worktree)
