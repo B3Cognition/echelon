@@ -1685,6 +1685,7 @@ class RalphController:
             )
 
         refresh_kwargs: dict[str, object] = {
+            "spec_dir": self._find_spec_dir(worktree_path),
             "orchestration_root": (
                 getattr(self._gitops, "base_dir", None)
                 if self._spec_artifacts_mode() == "external"

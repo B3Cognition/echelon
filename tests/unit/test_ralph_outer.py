@@ -1214,6 +1214,7 @@ class TestOuterLoopConvergence:
             worktree_path: str,
             spec_id: str,
             *,
+            spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
         ) -> int:
             (spec_dir / "fulfillment-report.md").write_text(
@@ -1245,6 +1246,7 @@ class TestOuterLoopConvergence:
         fulfillment_runner.refresh.assert_called_once_with(
             str(worktree),
             "spec-001",
+            spec_dir=spec_dir,
             orchestration_root=None,
         )
         assert result.status == "failed"
@@ -1373,6 +1375,7 @@ class TestOuterLoopConvergence:
         fulfillment_runner.refresh.assert_called_once_with(
             str(worktree),
             "spec-001",
+            spec_dir=spec_dir,
             orchestration_root=None,
             scope="scoped",
             completed_task_ids=["T-002"],
@@ -1640,6 +1643,7 @@ class TestOuterLoopConvergence:
             worktree_path: str,
             spec_id: str,
             *,
+            spec_dir: Path | str | None = None,
             orchestration_root: Path | str | None = None,
         ) -> int:
             (spec_dir / "fulfillment-report.md").write_text(
@@ -1727,6 +1731,7 @@ class TestOuterLoopConvergence:
             str(worktree),
             "spec-001",
             orchestration_root=orchestration_root,
+            spec_dir=spec_dir,
         )
 
     def test_publish_failure_blocks_and_preserves_worktree(self, tmp_path: Path) -> None:

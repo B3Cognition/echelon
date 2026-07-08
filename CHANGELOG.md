@@ -79,7 +79,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   tasks already marked done, instead of paying for another LLM turn only to
   rediscover completion. The verify-spec judgment phase also forbids agents
   from inspecting harness source or sibling `sources/` repos to infer
-  fulfillment-report provenance that Ralph owns.
+  fulfillment-report provenance that Ralph owns. Ralph now passes the resolved
+  spec directory into fulfillment refreshes so verify-spec does not need to
+  locate `specs/<id>-*` from inside target delivery worktrees.
 - **EGR-116 / #142 harness source prompt boundary** — build-agent execution no
   longer receives `HARNESS_SOURCE_DIR`, and Ralph's harness context now forbids
   reading or searching harness implementation files instead of pointing agents

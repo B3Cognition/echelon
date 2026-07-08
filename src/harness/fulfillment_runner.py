@@ -108,15 +108,25 @@ class FulfillmentRunner:
         worktree_path: str,
         spec_id: str,
         *,
+        spec_dir: Path | str | None = None,
         orchestration_root: Path | str | None = None,
         scope: str = "full",
         completed_task_ids: list[str] | tuple[str, ...] | None = None,
         changed_files: list[str] | tuple[str, ...] | None = None,
     ) -> FulfillmentRefreshResult:
         worktree = Path(worktree_path)
-        spec_dir = _resolve_spec_dir(spec_id, Path(worktree_path), orchestration_root)
+        resolved_spec_dir = _resolve_spec_dir(
+            spec_id,
+            Path(worktree_path),
+            orchestration_root,
+            explicit_spec_dir=spec_dir,
+        )
         commit = _current_git_commit(worktree)
-        spec_input_hash = _spec_input_hash(spec_dir) if spec_dir is not None else None
+        spec_input_hash = (
+            _spec_input_hash(resolved_spec_dir)
+            if resolved_spec_dir is not None
+            else None
+        )
         implementation_input_hash = _implementation_input_hash(worktree)
         cache_key = _verify_cache_key(
             spec_id=spec_id,
@@ -124,14 +134,18 @@ class FulfillmentRunner:
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
         )
-        report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
+        report = (
+            latest_fulfillment_report(resolved_spec_dir)
+            if resolved_spec_dir is not None
+            else None
+        )
         report_path = str(report) if report is not None else None
         if scope == "scoped":
             return self._refresh_scoped(
                 worktree_path=worktree_path,
                 worktree=worktree,
                 spec_id=spec_id,
-                spec_dir=spec_dir,
+                spec_dir=resolved_spec_dir,
                 commit=commit,
                 report=report,
                 report_path=report_path,
@@ -141,7 +155,7 @@ class FulfillmentRunner:
         if _latest_full_report_matches_cache(
             worktree,
             spec_id,
-            spec_dir=spec_dir,
+            spec_dir=resolved_spec_dir,
             commit=commit,
             spec_input_hash=spec_input_hash,
             implementation_input_hash=implementation_input_hash,
@@ -173,8 +187,8 @@ class FulfillmentRunner:
             )
 
         arguments = spec_id
-        if spec_dir is not None:
-            arguments = f"{spec_id} spec_dir={spec_dir}"
+        if resolved_spec_dir is not None:
+            arguments = f"{spec_id} spec_dir={resolved_spec_dir}"
 
         prompt = build_skill_prompt(skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
@@ -196,7 +210,7 @@ class FulfillmentRunner:
             if not _latest_report_matches_latest_audit(
                 worktree,
                 spec_id,
-                spec_dir=spec_dir,
+                spec_dir=resolved_spec_dir,
             ):
                 return FulfillmentRefreshResult(
                     status="failed",
@@ -209,13 +223,17 @@ class FulfillmentRunner:
             _stamp_latest_report(
                 worktree,
                 spec_id,
-                spec_dir=spec_dir,
+                spec_dir=resolved_spec_dir,
                 commit=commit,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
                 cache_key=cache_key,
             )
-            report = latest_fulfillment_report(spec_dir) if spec_dir is not None else None
+            report = (
+                latest_fulfillment_report(resolved_spec_dir)
+                if resolved_spec_dir is not None
+                else None
+            )
             report_path = str(report) if report is not None else None
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -368,7 +386,14 @@ def _resolve_spec_dir(
     spec_id: str,
     worktree: Path,
     orchestration_root: Path | str | None,
+    *,
+    explicit_spec_dir: Path | str | None = None,
 ) -> Path | None:
+    if explicit_spec_dir is not None:
+        candidate = Path(explicit_spec_dir)
+        if not candidate.is_absolute() and orchestration_root is not None:
+            candidate = Path(orchestration_root) / candidate
+        return candidate
     if orchestration_root is not None:
         spec_dir = find_spec_dir(spec_id, Path(orchestration_root))
         if spec_dir is not None:
