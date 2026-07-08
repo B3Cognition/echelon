@@ -2206,10 +2206,12 @@ class RalphController:
             "Use `source_root` only as source identity/context; implementation edits must stay in `worktree`.\n"
             "Do not search for the application repo; it is named here and mirrored by `worktree`.\n"
             "Use `workspace_root` only for Echelon/spec orchestration unless `source_root` is the same path.\n"
-            "Use `spec_dir`, `spec_file`, and `tasks_file` for spec artifacts and progress/report updates.\n"
+            "Use `spec_dir`, `spec_file`, and `tasks_file` as read-only inputs for understanding the requested work.\n"
+            "Do not edit `tasks_file`, `spec_file`, or any file under `spec_dir` for progress tracking during a build slice.\n"
+            "Report completed progress only by writing `completed_task_ids` to the harness build status marker; Ralph owns task progress writes.\n"
             "Do not search for harness source, Ralph code, or ralph.py. If harness internals are needed, read files under `harness_source_dir` directly.\n"
-            "When `spec_artifacts_mode` is `worktree`, spec artifact writes must stay under `worktree`.\n"
-            "When `spec_artifacts_mode` is `external`, spec artifact writes may use the external `spec_dir` path.\n"
+            "When `spec_artifacts_mode` is `worktree`, inherited spec artifacts still remain Ralph-owned for progress writes.\n"
+            "When `spec_artifacts_mode` is `external`, external spec artifacts are read-only inputs; never write to them from the build agent.\n"
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "The harness state file is owned by Ralph and may be outside the worktree.\n"
             "Read it only when the build phase explicitly needs orchestration context.\n"
@@ -3445,10 +3447,13 @@ def _print_containment_violation_banner(
             ("worktree", str(violation.get("worktree_path") or "")),
             (
                 "why",
-                "The LLM build changed the real target repo while Ralph was managing an isolated worktree.",
+                "The LLM build changed files outside the isolated worktree while Ralph was managing that worktree.",
             ),
             ("changed", changed or "(status changed, no changed lines captured)"),
-            ("next", f"inspect/salvage the real repo changes, then rerun: echelon harness run {spec_id}"),
+            (
+                "next",
+                f"inspect/salvage the out-of-worktree changes, then rerun: echelon harness run {spec_id}",
+            ),
         ],
         file=sys.stderr,
     )

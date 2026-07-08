@@ -486,6 +486,35 @@ class TestOuterLoopConvergence:
         assert f"tasks_file: {tasks_file}" in prompt
         assert "spec_dir: MISSING" not in prompt
 
+    def test_external_harness_context_keeps_spec_artifacts_read_only(
+        self, tmp_path: Path
+    ) -> None:
+        """Target builds must report task IDs instead of editing external tasks.md."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        spec_dir = tmp_path / "workspace" / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("- [ ] T-001 req=FR-001\n", encoding="utf-8")
+        state = state_store.read()
+        state["target_repo"] = "target-app"
+        state["target_path"] = str(tmp_path / "workspace" / "sources" / "target-app")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state_store.write(state)
+
+        prompt = controller._with_harness_context(
+            "body",
+            str(tmp_path / "workspace" / "runs" / "targets" / "target-app" / "worktree"),
+        )
+
+        assert "spec_artifacts_mode: external" in prompt
+        assert "read-only inputs" in prompt
+        assert "Do not edit `tasks_file`" in prompt
+        assert "completed_task_ids" in prompt
+        assert "progress/report updates" not in prompt
+        assert "external `spec_dir` path" not in prompt
+
     def test_harness_context_names_workspace_and_source_roots(self, tmp_path: Path) -> None:
         """Build prompts must distinguish orchestration workspace from source root."""
         controller, _provider, _gitops, state_store = _make_controller(tmp_path)
@@ -2029,6 +2058,8 @@ class TestOuterLoopConvergence:
         captured = capsys.readouterr()
         assert "CONTAINMENT VIOLATION" in captured.err
         assert "escaped.txt" in captured.err
+        assert "outside the isolated worktree" in captured.err
+        assert "real target repo" not in captured.err
         assert state_store.read()["termination_reason"] == "containment_violation"
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()

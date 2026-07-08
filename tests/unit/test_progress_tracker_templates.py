@@ -24,3 +24,11 @@ class TestProgressTrackerTemplates:
 
         assert "Append to `{spec_dir}/progress-report.md`" in text
         assert "Update `{spec_dir}/process-metrics.md`" in text
+
+    def test_progress_phase_defers_task_marking_to_ralph_under_harness(self) -> None:
+        text = PHASE.read_text(encoding="utf-8")
+
+        assert "When `HARNESS_BUILD_STATUS_FILE` is set" in text
+        assert "do not execute this section" in text
+        assert "Ralph owns canonical `tasks.md` progress writes" in text
+        assert "never call\n`python -m harness mark-task-progress`" in text

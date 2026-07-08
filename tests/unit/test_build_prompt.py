@@ -60,6 +60,18 @@ class TestBuildPromptBuilder:
         assert '"status": "blocked"' in prompt
         assert '"status": "impasse"' not in prompt
 
+    def test_build_prompt_forbids_direct_task_file_progress_edits(self):
+        prompt = self.builder.build_prompt(
+            worktree_path="/wt/001",
+            spec_content="spec",
+            tasks_content="tasks",
+            build_skill="speckit.echelon.build",
+        )
+
+        assert "Do not edit `tasks.md`" in prompt
+        assert "Ralph owns task progress writes" in prompt
+        assert "completed_task_ids" in prompt
+
     def test_build_prompt_forbids_native_task_planning_tools_and_group_ids(self):
         prompt = self.builder.build_prompt(
             worktree_path="/wt/001",

@@ -47,6 +47,13 @@ in the slice; Ralph marks those rows DONE in `tasks.md` before verify. Ralph
 owns the outer loop: it will verify, commit, and invoke the next build slice
 when more tasks remain.
 
+Never edit `tasks.md`, `spec.md`, `progress-report.md`, or other spec artifacts
+to record build progress during a harness build slice. Treat spec artifact paths
+as read-only inputs unless the command is explicitly a spec-authoring,
+reopen/reconcile, or verify-spec reconcile command. For delivery builds, progress
+is reported only through `$HARNESS_BUILD_STATUS_FILE.completed_task_ids`; Ralph
+performs the deterministic `tasks.md` update after the build invocation returns.
+
 Do not use native task-planning tools such as TaskCreate or TaskUpdate under
 `echelon harness run`. They create provider-local todos only; Ralph does not
 consume them. Select work from canonical `tasks.md` rows and report progress

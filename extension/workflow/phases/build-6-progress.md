@@ -101,9 +101,19 @@ speckit-echelon-modeler (MODELER) incrementally updates `mental-model-code.md` t
 - Emit warning in build log: `[speckit-echelon-modeler (MODELER) ALERT] Invariant violation detected: {violation}. Tests pass but contract may be broken — review before next phase.`
 - Always track violations for speckit-echelon-integrator (INTEGRATOR) to resolve at phase boundaries. Do NOT block task progression.
 
-### 6.4 Update tasks.md (speckit-echelon-commander (COMMANDER) — mandatory after every task)
+### 6.4 Update tasks.md (standalone build only)
 
-**This is a speckit-echelon-commander (COMMANDER) action.** After §6.3 state update, reflect task completion in `tasks.md` so the file remains a human-readable source of truth (not just state.json).
+When `HARNESS_BUILD_STATUS_FILE` is set, **do not execute this section**. In
+harness delivery runs, Ralph owns canonical `tasks.md` progress writes after
+the build invocation returns. Report completed task rows only by writing exact
+`completed_task_ids` to `$HARNESS_BUILD_STATUS_FILE`; never call
+`python -m harness mark-task-progress` and never edit `{spec_dir}/tasks.md`
+directly from the build agent.
+
+When `HARNESS_BUILD_STATUS_FILE` is not set, this is a
+speckit-echelon-commander (COMMANDER) action. After §6.3 state update, reflect
+task completion in `tasks.md` so the file remains a human-readable source of
+truth (not just state.json).
 
 1. Derive the task's final status from `build.task_results.{task_id}.status`:
    - `DONE` or `DONE_WITH_CONCERNS` → `DONE`
@@ -128,4 +138,5 @@ python -m harness validate-task-progress "{spec_dir}/tasks.md" "{state_json_path
 
 If validation fails, fix `tasks.md` and the returned `build` state update before continuing.
 
-**Always execute this step.** A tasks.md where canonical rows and build state disagree is a silent lie to every developer who reads it.
+**Always execute this step in standalone build mode.** In harness mode, the same
+integrity requirement is enforced by Ralph after it applies `completed_task_ids`.
