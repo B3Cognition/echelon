@@ -88,7 +88,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-118 / #144 targeted source-root containment reporting** — Ralph's build
   context now reports sibling workspace `sources/*` directories as
   `forbidden_source_roots` and tells build agents not to inspect, read, list,
-  grep, or search those roots during targeted delivery.
+  grep, or search those roots during targeted delivery. Ralph also blocks a
+  build when the LLM transcript shows tool access to a forbidden sibling root.
 - **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover
   from a clean preserved build worktree whose committed output uses normal
   feature commit subjects instead of harness/checkpoint metadata, allowing the

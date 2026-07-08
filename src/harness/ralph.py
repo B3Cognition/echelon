@@ -334,6 +334,29 @@ class RalphController:
                         prompt=iter_prompt,
                     )
                     after_build_head = self._current_head(worktree_path)
+                    source_root_violation = self._detect_forbidden_source_root_access(
+                        before_build_state,
+                        build_result,
+                    )
+                    if source_root_violation is not None:
+                        preserve_worktree = True
+                        _print_source_root_containment_violation_banner(
+                            self._spec_id,
+                            self._strategy_id,
+                            source_root_violation,
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason="containment_violation",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=None,
+                            extra_state={
+                                "source_root_containment_violation": source_root_violation,
+                            },
+                        )
                     containment_violation = _detect_containment_violation(
                         containment_before,
                         getattr(self._gitops, "base_dir", None),
@@ -2327,6 +2350,36 @@ class RalphController:
             forbidden.append(str(candidate))
         return forbidden
 
+    def _detect_forbidden_source_root_access(
+        self,
+        state: Dict[str, Any],
+        build_result: Dict[str, Any],
+    ) -> Optional[Dict[str, str]]:
+        forbidden_roots = self._forbidden_sibling_source_roots(
+            workspace_root=state.get("workspace_root") or "",
+            source_root=state.get("source_root") or "",
+        )
+        if not forbidden_roots:
+            return None
+        text = "\n".join(
+            str(build_result.get(key) or "") for key in ("stdout", "stderr")
+        )
+        if not text.strip():
+            return None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or not _looks_like_tool_access_line(line):
+                continue
+            for root in forbidden_roots:
+                if root in line:
+                    return {
+                        "workspace_root": str(state.get("workspace_root") or ""),
+                        "source_root": str(state.get("source_root") or ""),
+                        "forbidden_root": root,
+                        "matched_line": line,
+                    }
+        return None
+
     def _delivery_progress_ledger_block(self, state: Dict[str, Any]) -> str:
         """Render persisted delivery progress as read-only prompt context."""
         build = state.get("build")
@@ -3566,6 +3619,48 @@ def _is_verify_owned_artifact(path: str) -> bool:
 def _status_delta(before: List[str], after: List[str]) -> List[str]:
     before_set = set(before)
     return [line for line in after if line not in before_set]
+
+
+_TOOL_ACCESS_LINE_RE = re.compile(
+    r"(?:"
+    r"▷\s*(?:Read|Bash|Grep|Glob|Find|Search|List|Open)|"
+    r"\b(?:Read|Bash|Grep|Glob|Find|Search|List|Open):|"
+    r"\b(?:cat|rg|grep|find|ls)\s+"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_tool_access_line(line: str) -> bool:
+    return bool(_TOOL_ACCESS_LINE_RE.search(line))
+
+
+def _print_source_root_containment_violation_banner(
+    spec_id: str,
+    strategy_id: str,
+    violation: Dict[str, str],
+) -> None:
+    from echelon.ui import banner as _ui_banner
+
+    _ui_banner(
+        "HARNESS — SOURCE ROOT CONTAINMENT VIOLATION",
+        [
+            ("spec", spec_id),
+            ("strategy", strategy_id),
+            ("source_root", violation.get("source_root", "")),
+            ("forbidden_root", violation.get("forbidden_root", "")),
+            (
+                "why",
+                "The LLM build transcript shows access to a sibling workspace source root outside the targeted build slice.",
+            ),
+            ("matched", violation.get("matched_line", "")),
+            (
+                "next",
+                f"inspect the run output, then rerun after narrowing context: echelon delivery run {spec_id}",
+            ),
+        ],
+        file=sys.stderr,
+    )
 
 
 def _print_containment_violation_banner(
