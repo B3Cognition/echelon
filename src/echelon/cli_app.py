@@ -142,6 +142,14 @@ def delivery_init(ctx: typer.Context) -> None:
     )
 
 
+@delivery_app.command("target")
+def delivery_target(spec_id: str) -> None:
+    """Prepare delivery metadata for a spec's declared target repo."""
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_delivery_target([spec_id])
+
+
 @harness_app.command(
     "init",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},

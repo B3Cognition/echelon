@@ -17,7 +17,7 @@ from echelon.ui import banner as _banner
 
 from harness.gitops import _run_git
 from harness.paths import runs_dir
-from harness.spec_frontmatter import find_spec_dir, read_frontmatter, write_status
+from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets, write_status
 from kernel.fulfillment import (
     blocking_statuses,
     fulfillment_report_is_current,
@@ -438,8 +438,7 @@ def _find_pr_url_all_builds(spec_id: str, project_dir: Path) -> Optional[str]:
 
 def resolve_land_repo(project_dir: Path, spec_dir: Path) -> Path:
     """Return the repo where git land operations should run for a spec."""
-    frontmatter = read_frontmatter(spec_dir)
-    targets = frontmatter.get("targets") or []
+    targets = read_targets(spec_dir)
     if not targets:
         return project_dir.resolve()
     if len(targets) != 1:

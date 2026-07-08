@@ -77,10 +77,11 @@ specify extension add --dev ~/echelon/extension
 
 echelon workspace init    # bootstrap .echelon/config.yml; prompts for local host-tool approval on a TTY
 # or: echelon workspace init --allow-unsafe-host-execution
-echelon delivery init    # write harness: section into .echelon/config.yml, mirror-clone target repo, detect language + image
+echelon delivery init    # write workspace-level delivery defaults into .echelon/config.yml
 ```
 
-Both `echelon workspace init` and `echelon delivery init` are pure Python — no AI session required.
+`echelon workspace init`, `echelon delivery init`, and `echelon delivery target`
+are pure Python — no AI session required.
 
 ### Workspace contract
 
@@ -121,9 +122,10 @@ echelon spec rewind <phase-id>             # recover a safe Phase 3 checkpoint, 
 echelon delivery run 001                    # echelon squad build (default)
 echelon delivery run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
-# Polyrepo/workspace: select the implementation source root before build when needed
-echelon spec target 001 og-platform            # explicit source path in spec frontmatter
+# Polyrepo/workspace: select and prepare the implementation source root before build
+echelon spec target 001 og-platform            # write specs/001-*/targets.yml
 echelon spec target 001 sources/new-tool --init # create/prepare a new target repo
+echelon delivery target 001                     # detect target verify metadata from targets.yml
 echelon delivery run 001 mode=semi              # uses a single source root, blocks on multiple
 echelon delivery run 001 mode=banzai            # same deterministic source-root selection
 
@@ -150,8 +152,9 @@ compatibility contract.
 echelon spec change 001 "scope change description" # mid-build spec change
 echelon codegen 001                              # SOAR pipeline directly (no harness)
 echelon build   001                              # agent-driven build (no harness)
-echelon delivery init                            # auto-detect high-confidence verify_command, if possible
-# If init reports "not configured", set top-level verify_command manually before harness run/resume.
+echelon delivery init                            # workspace/global delivery setup
+echelon delivery target 001                      # target-specific verify detection
+# If target detection reports "not configured", set delivery.verify_command in specs/<id>/targets.yml.
 ```
 
 ### Harness fulfillment refresh policy
@@ -636,7 +639,8 @@ This keeps commands readable and makes individual phases independently editable 
 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
-| `echelon delivery init [<repo>]` | `speckit.echelon.harness-init` | One-time harness setup — config, mirror clone, image fingerprint |
+| `echelon delivery init` | `speckit.echelon.harness-init` | One-time workspace delivery setup — provider, sandbox, config defaults |
+| `echelon delivery target <id>` | — | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
 | `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
 | `echelon delivery run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
 | `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |

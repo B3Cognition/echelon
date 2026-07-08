@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from harness.spec_frontmatter import read_frontmatter, write_status, write_targets
+from harness.spec_frontmatter import (
+    read_frontmatter,
+    read_target_entries,
+    read_targets,
+    write_target_delivery,
+    write_status,
+    write_targets,
+)
 
 
 def _make_spec_dir(tmp_path: Path, content: str, filename: str = "spec.md") -> Path:
@@ -53,11 +60,18 @@ class TestWriteTargets:
         write_targets(spec_dir, ["og-platform"])
         data = read_frontmatter(spec_dir)
         assert data["targets"] == ["og-platform"]
+        assert data["targets_file"] == "targets.yml"
+        assert read_targets(spec_dir) == ["og-platform"]
+        assert (spec_dir / "targets.yml").exists()
 
     def test_replaces_existing_targets(self, tmp_path: Path) -> None:
         spec_dir = _make_spec_dir(tmp_path, "---\ntargets:\n  - old-repo\n---\n# Body\n")
         write_targets(spec_dir, ["new-repo"])
         assert read_frontmatter(spec_dir)["targets"] == ["new-repo"]
+        content = (spec_dir / "spec.md").read_text(encoding="utf-8")
+        assert "\ntargets:\n" not in content
+        assert "targets_file: targets.yml" in content
+        assert read_target_entries(spec_dir)[0]["path"] == "new-repo"
 
     def test_preserves_body_content(self, tmp_path: Path) -> None:
         body = "# My Spec\n\nSome content.\n"
@@ -79,7 +93,9 @@ class TestWriteTargets:
         write_targets(spec_dir, ["c"])
         md = next(spec_dir.glob("*.md"))
         text = md.read_text(encoding="utf-8")
-        assert text.count("targets:") == 1
+        assert text.count("targets:") == 0
+        assert text.count("targets_file: targets.yml") == 1
+        assert read_targets(spec_dir) == ["c"]
 
     def test_no_md_file_raises(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "024-empty"
@@ -91,7 +107,47 @@ class TestWriteTargets:
         spec_dir = _make_spec_dir(tmp_path, "# body\n")
         result = write_targets(spec_dir, ["r"])
         assert result.exists()
-        assert result.suffix == ".md"
+        assert result.name == "targets.yml"
+
+    def test_preserves_delivery_metadata_for_matching_target(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "# body\n")
+        write_targets(spec_dir, ["sources/app"])
+        targets_file = spec_dir / "targets.yml"
+        targets_file.write_text(
+            "schema_version: 1\n"
+            "targets:\n"
+            "  - id: app\n"
+            "    path: sources/app\n"
+            "    role: primary\n"
+            "    branch: 024-test\n"
+            "    delivery:\n"
+            "      verify_command: npm test\n",
+            encoding="utf-8",
+        )
+
+        write_targets(spec_dir, ["sources/app", "sources/api"])
+
+        entries = read_target_entries(spec_dir)
+        assert entries[0]["delivery"]["verify_command"] == "npm test"
+        assert entries[1]["path"] == "sources/api"
+
+    def test_write_target_delivery_updates_matching_entry(self, tmp_path: Path) -> None:
+        spec_dir = _make_spec_dir(tmp_path, "# body\n")
+        write_targets(spec_dir, ["sources/app"])
+
+        write_target_delivery(
+            spec_dir,
+            "sources/app",
+            {
+                "verify_command": "npm test",
+                "verify_detection": "high",
+                "verify_evidence": ["package.json scripts.test"],
+            },
+        )
+
+        entry = read_target_entries(spec_dir)[0]
+        assert entry["delivery"]["verify_command"] == "npm test"
+        assert entry["delivery"]["verify_detection"] == "high"
 
 
 @pytest.mark.unit

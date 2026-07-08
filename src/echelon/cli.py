@@ -110,6 +110,7 @@ Commands:
                                             Check selected stack commands, registries, and tool probes.
 
   delivery init                              Initialize delivery environment: sandbox, mirror, verify.
+  delivery target <spec_id>                  Prepare target-scoped delivery metadata from spec targets.
   delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
                     [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
@@ -843,6 +844,7 @@ def _cmd_delivery(args: list[str]) -> None:
             "Delivery is Echelon Phase B: build, verify, recover, review, and land a completed spec.\n\n"
             "Subcommands:\n"
             "  init                              Initialize delivery environment — sandbox, mirror, verify\n"
+            "  target <spec_id>                  Prepare target-scoped delivery metadata\n"
             "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
             "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
             "                                     Run build→verify→PR loop\n"
@@ -857,6 +859,7 @@ def _cmd_delivery(args: list[str]) -> None:
             "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
             "Examples:\n"
             "  echelon delivery init\n"
+            "  echelon delivery target 001\n"
             "  echelon delivery run 001\n"
             "  echelon delivery run 001 strategy=codegen\n"
             "  echelon delivery run 001 mode=banzai max_outer=3\n"
@@ -869,6 +872,8 @@ def _cmd_delivery(args: list[str]) -> None:
     subcmd = args[0]
     if subcmd == "init":
         _cmd_harness_init(args[1:], command_prefix="echelon delivery init")
+    elif subcmd == "target":
+        _cmd_delivery_target(args[1:])
     elif subcmd == "run":
         _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
     elif subcmd == "resume":
@@ -976,6 +981,77 @@ def _cmd_harness_init(
     fields.extend(_harness_init_detection_fields(config_file))
     fields.append(("Next step", _harness_init_next_step(config_file)))
     _banner("HARNESS INIT — COMPLETE", fields)
+
+
+def _cmd_delivery_target(args: list[str]) -> None:
+    if not args or args[0] in {"-h", "--help"}:
+        print(
+            "Usage: echelon delivery target <spec_id>\n\n"
+            "Prepare target-scoped delivery metadata for the repo(s) declared by "
+            "`echelon spec target`.",
+        )
+        return
+
+    spec_id = args[0]
+    from harness.spec_frontmatter import (
+        find_spec_dir,
+        read_target_entries,
+        write_target_delivery,
+    )
+
+    workspace_root = Path.cwd()
+    spec_dir = find_spec_dir(spec_id, workspace_root)
+    if spec_dir is None:
+        print(f"✗ Spec {spec_id!r} not found (searched from {workspace_root})", file=sys.stderr)
+        sys.exit(1)
+
+    targets = read_target_entries(spec_dir)
+    if not targets:
+        print(
+            f"✗ Spec {spec_dir.name} has no delivery target.\n"
+            f"  Fix: echelon spec target {spec_dir.name} <source-path>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    spec_root = spec_dir.parent.parent
+    fields: list[tuple[str, str]] = [("Spec", spec_dir.name)]
+    for entry in targets:
+        target_rel = str(entry.get("path") or "").strip()
+        if not target_rel:
+            continue
+        target_path = Path(target_rel).expanduser()
+        if not target_path.is_absolute():
+            target_path = (spec_root / target_path).resolve()
+        if not target_path.exists():
+            print(
+                f"✗ Target repo not found: {target_rel}\n"
+                f"  Fix: echelon spec target {spec_dir.name} {target_rel} --init",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if not (target_path / ".git").exists():
+            print(
+                f"✗ Target is not a Git repo: {target_rel}\n"
+                f"  Fix: echelon spec target {spec_dir.name} {target_rel} --init",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        delivery = _detect_target_verify_delivery(target_path, spec_dir.name)
+        write_target_delivery(spec_dir, target_rel, delivery)
+        fields.append(("Target", target_rel))
+        fields.append(("Branch", str(entry.get("branch") or spec_dir.name)))
+        verify = delivery.get("verify_command")
+        if verify:
+            fields.append(("Verify", str(verify)))
+        else:
+            reason = delivery.get("verify_reason") or "no high-confidence verify command detected"
+            fields.append(("Verify", f"not configured - {reason}"))
+
+    fields.append(("Metadata", str(spec_dir / "targets.yml")))
+    fields.append(("Next", f"echelon delivery run {spec_dir.name} --mode=banzai"))
+    _banner("DELIVERY TARGET", fields)
 
 
 def _harness_verify_status(config_file: Path) -> tuple[str, str, str]:
@@ -1148,7 +1224,7 @@ def _target_feature_branch_candidates(target_repo: Path, spec_id: str) -> list[s
     return branches
 
 
-def _detect_verify_command_from_git_ref(target_repo: Path, git_ref: str) -> str | None:
+def _detect_verify_result_from_git_ref(target_repo: Path, git_ref: str) -> object | None:
     import tempfile
 
     from harness.verify_detection import detect_verify_command
@@ -1168,11 +1244,46 @@ def _detect_verify_command_from_git_ref(target_repo: Path, git_ref: str) -> str 
         try:
             detected = detect_verify_command(worktree)
             if detected.confidence == "high" and detected.command:
-                return detected.command
+                return detected
             return None
         finally:
             _run_git_quiet(["worktree", "remove", "--force", str(worktree)], cwd=target_repo)
             _run_git_quiet(["worktree", "prune"], cwd=target_repo)
+
+
+def _detect_verify_command_from_git_ref(target_repo: Path, git_ref: str) -> str | None:
+    detected = _detect_verify_result_from_git_ref(target_repo, git_ref)
+    command = getattr(detected, "command", None)
+    return str(command) if command else None
+
+
+def _detect_target_verify_delivery(target_repo: Path, spec_id: str) -> dict[str, object]:
+    from harness.verify_detection import detect_verify_command
+
+    detected = detect_verify_command(target_repo)
+    source = "target_checkout"
+    if detected.confidence != "high" or not detected.command:
+        for branch in _target_feature_branch_candidates(target_repo, spec_id):
+            branch_detected = _detect_verify_result_from_git_ref(target_repo, branch)
+            if branch_detected is not None:
+                detected = branch_detected  # type: ignore[assignment]
+                source = f"branch:{branch}"
+                break
+
+    result: dict[str, object] = {
+        "verify_detection": str(getattr(detected, "confidence", "none")),
+        "verify_source": source,
+    }
+    command = getattr(detected, "command", None)
+    if command:
+        result["verify_command"] = str(command)
+    evidence = getattr(detected, "evidence", None)
+    if isinstance(evidence, list) and evidence:
+        result["verify_evidence"] = [str(item) for item in evidence]
+    reason = getattr(detected, "reason", None)
+    if reason:
+        result["verify_reason"] = str(reason)
+    return result
 
 
 def _apply_target_verify_command_detection(
@@ -1484,7 +1595,7 @@ def _cmd_harness_run(
     # deploy) doesn't silently bypass target validation and run against the wrong repo.
     from harness.spec_frontmatter import (
         find_spec_dir,
-        read_frontmatter,
+        read_targets,
         write_status as _write_spec_status,
         write_targets,
     )
@@ -1525,8 +1636,7 @@ def _cmd_harness_run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        frontmatter = read_frontmatter(spec_dir)
-        targets_rel: list[str] = frontmatter.get("targets") or []
+        targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel and not target_env:
             if len(targets_rel) == 1:
                 workspace_target = _resolve_harness_workspace_target(
@@ -1997,7 +2107,7 @@ def _cmd_harness_resume(
     from harness.docker_provider import DockerWorktreeProvider
     from harness.gitops import GitOpsManager
     from harness.paths import build_dir, current_build_marker, runs_dir
-    from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+    from harness.spec_frontmatter import find_spec_dir, read_targets
     from harness.state import StateStore
 
     target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
@@ -2028,8 +2138,7 @@ def _cmd_harness_resume(
 
         resolved_spec_id = spec_dir.name
         polyrepo_root = spec_dir.parent.parent
-        frontmatter = read_frontmatter(spec_dir)
-        targets_rel: list[str] = frontmatter.get("targets") or []
+        targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel:
             if len(targets_rel) == 1:
                 workspace_target = _resolve_harness_workspace_target(
@@ -6085,7 +6194,7 @@ def _cmd_spec_target(args: list[str]) -> None:
         print(f"    - {r}")
     if init_targets:
         print()
-        print(f"Next: echelon delivery run {spec_dir.name} --mode=banzai")
+        print(f"Next: echelon delivery target {spec_dir.name}")
 
 
 def _cmd_workspace(args: list[str]) -> None:

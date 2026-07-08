@@ -76,15 +76,17 @@ When a workspace has multiple source roots, select the implementation target bef
 
 ```bash
 echelon spec target 001-feature og-platform
+echelon delivery target 001-feature
 echelon delivery run 001-feature
 ```
 
-Use the source path in `echelon spec target`. A source id may be displayed for readability, but the stored target is the path relative to the workspace root.
+Use the source path in `echelon spec target`. A source id may be displayed for readability, but the stored target is the path relative to the workspace root in `specs/<id>/targets.yml`. Run `echelon delivery target <id>` after setting the target so Echelon records target-scoped delivery metadata such as the detected `verify_command`.
 
 For a new implementation repo, let Echelon prepare the target directory, Git
 repository, initial commit, and feature branch:
 
 ```bash
 echelon spec target 001-feature sources/new-tool --init
+echelon delivery target 001-feature
 echelon delivery run 001-feature --mode=banzai
 ```

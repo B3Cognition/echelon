@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -151,6 +153,63 @@ def test_delivery_init_routes_to_harness_init(monkeypatch: pytest.MonkeyPatch) -
         main()
 
     mock_init.assert_called_once_with([], command_prefix="echelon delivery init")
+
+
+@pytest.mark.unit
+def test_delivery_target_detects_verify_command_from_spec_target_branch(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import main
+    from harness.spec_frontmatter import read_target_entries, write_targets
+
+    workspace = tmp_path
+    (workspace / ".git").mkdir()
+    spec_dir = workspace / "specs" / "001-prose-distribution-engine"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Prosaic\n", encoding="utf-8")
+    write_targets(spec_dir, ["sources/prosaic"])
+
+    target = workspace / "sources" / "prosaic"
+    target.mkdir(parents=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=target, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=target, check=True)
+    (target / "README.md").write_text("# Prosaic\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=target, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "switch", "-c", "001-prose-distribution-engine"],
+        cwd=target,
+        check=True,
+        capture_output=True,
+    )
+    (target / "package.json").write_text(
+        json.dumps({"scripts": {"test": "jest"}}),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "package.json"], cwd=target, check=True)
+    subprocess.run(["git", "commit", "-m", "add app"], cwd=target, check=True, capture_output=True)
+    subprocess.run(["git", "switch", "main"], cwd=target, check=True, capture_output=True)
+
+    monkeypatch.chdir(workspace)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["echelon", "delivery", "target", "001-prose-distribution-engine"],
+    )
+
+    main()
+
+    entry = read_target_entries(spec_dir)[0]
+    assert entry["delivery"]["verify_command"] == "npm test"
+    assert entry["delivery"]["verify_detection"] == "high"
+    assert "package.json scripts.test" in entry["delivery"]["verify_evidence"]
+    out = capsys.readouterr().out
+    assert "DELIVERY TARGET" in out
+    assert "sources/prosaic" in out
+    assert "npm test" in out
+    assert "echelon delivery run 001-prose-distribution-engine --mode=banzai" in out
 
 
 @pytest.mark.unit

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.spec_frontmatter import read_frontmatter
+from harness.spec_frontmatter import read_frontmatter, read_targets
 
 
 def _setup_spec(tmp_path: Path, spec_name: str, content: str = "# spec\n") -> Path:
@@ -38,6 +38,8 @@ class TestCliSpecTarget:
         assert rc == 0
         spec_dir = tmp_path / "specs" / "024-psd-import"
         assert read_frontmatter(spec_dir)["targets"] == ["og-platform"]
+        assert read_targets(spec_dir) == ["og-platform"]
+        assert (spec_dir / "targets.yml").exists()
 
     def test_multiple_targets_written(self, tmp_path: Path) -> None:
         _setup_spec(tmp_path, "024-psd-import")
@@ -45,13 +47,17 @@ class TestCliSpecTarget:
         assert rc == 0
         spec_dir = tmp_path / "specs" / "024-psd-import"
         assert read_frontmatter(spec_dir)["targets"] == ["og-platform", "fet-libs"]
+        assert read_targets(spec_dir) == ["og-platform", "fet-libs"]
 
     def test_in_place_replacement_no_duplication(self, tmp_path: Path) -> None:
         _setup_spec(tmp_path, "024-psd-import", "---\ntargets:\n  - old\n---\n# body\n")
         self._run_spec_target(tmp_path, ["024", "new-repo"])
         spec_dir = tmp_path / "specs" / "024-psd-import"
         md = next(spec_dir.glob("*.md"))
-        assert md.read_text(encoding="utf-8").count("targets:") == 1
+        content = md.read_text(encoding="utf-8")
+        assert content.count("targets:") == 0
+        assert content.count("targets_file: targets.yml") == 1
+        assert read_targets(spec_dir) == ["new-repo"]
 
     def test_spec_not_found_exits_one(self, tmp_path: Path) -> None:
         rc = self._run_spec_target(tmp_path, ["999", "og-platform"])
@@ -103,7 +109,7 @@ class TestCliSpecTarget:
         out = capsys.readouterr().out
         assert "Initialized target repo: sources/prosaic" in out
         assert "Created feature branch: 001-prose-distribution-engine" in out
-        assert "echelon delivery run 001-prose-distribution-engine --mode=banzai" in out
+        assert "echelon delivery target 001-prose-distribution-engine" in out
 
     def test_init_inside_workspace_git_creates_nested_source_repo(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
