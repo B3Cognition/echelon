@@ -3288,6 +3288,48 @@ class TestPromptHelpers:
         assert "Ralph owns fulfillment refresh" in result
         assert "Run `echelon spec verify spec-001` before convergence." in result
 
+    @pytest.mark.parametrize(
+        "failure_id",
+        ["fulfillment-report-stale", "fulfillment-report-scoped"],
+    )
+    def test_inner_loop_does_not_dispatch_llm_for_fulfillment_freshness_failure(
+        self, tmp_path: Path, failure_id: str
+    ) -> None:
+        from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+
+        controller, *_ = _make_controller(tmp_path)
+        controller._exec_feedback = MagicMock()
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    category=FailureCategory.OTHER,
+                    id=failure_id,
+                    error=f"{failure_id} is Ralph-owned fulfillment evidence",
+                )
+            ],
+            duration_s=1.0,
+            token_usage=0,
+        )
+
+        result = controller._run_inner_loop(
+            handle=SandboxHandle(id="mock-sandbox-1", session_id="sess-1"),
+            verify_result=verify,
+            outer_iter=0,
+            max_inner=3,
+            tokens_used=0,
+            token_budget=None,
+            state={},
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(tmp_path),
+            build_prompt="spec 001",
+        )
+
+        controller._exec_feedback.assert_not_called()
+        assert result["inner_count"] == 0
+        assert result["final_verify"] is verify
+
 
 @pytest.mark.unit
 class TestSignalDuringBuild:

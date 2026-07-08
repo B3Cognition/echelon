@@ -961,7 +961,9 @@ class RalphController:
 
         Returns dict with: converged, blocked, inner_count, tokens_used, final_verify.
         """
-        if _is_fulfillment_refresh_deferred(verify_result):
+        if _is_fulfillment_refresh_deferred(verify_result) or _is_fulfillment_freshness_failure(
+            verify_result
+        ):
             return {
                 "converged": False,
                 "blocked": False,
@@ -1182,7 +1184,9 @@ class RalphController:
             # loop checkpoints this slice and advances to the next task instead
             # of dispatching fixers against an unfixable deferral until
             # max_inner (the milestone-boundary defer-loop).
-            if _is_fulfillment_refresh_deferred(current_verify):
+            if _is_fulfillment_refresh_deferred(
+                current_verify
+            ) or _is_fulfillment_freshness_failure(current_verify):
                 return {
                     "converged": False,
                     "blocked": False,
@@ -3415,6 +3419,13 @@ def _porcelain_path(line: str) -> str:
 
 def _is_fulfillment_refresh_deferred(verify_result: VerifyResult) -> bool:
     return any(f.id == "fulfillment-refresh-deferred" for f in verify_result.failures)
+
+
+def _is_fulfillment_freshness_failure(verify_result: VerifyResult) -> bool:
+    return any(
+        f.id in {"fulfillment-report-stale", "fulfillment-report-scoped"}
+        for f in verify_result.failures
+    )
 
 
 def _is_provider_session_limit_verify_result(verify_result: VerifyResult) -> bool:
