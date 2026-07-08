@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from echelon.cli import _cmd_rewind
+from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
 
 def _write_real_constitution(project_root: Path) -> None:
@@ -175,3 +176,43 @@ def test_rewind_rejects_unsupported_phase(
     captured = capsys.readouterr()
     assert "Unsupported rewind target" in captured.err
     assert "phase3-consensus" in captured.err
+
+
+def test_rewind_missing_checkpoint_exits_without_traceback(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    spec_dir = tmp_path / "specs" / "013-vod-cms-modernization"
+    spec_dir.mkdir(parents=True)
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id="phase2-decide",
+            spec_id="013-vod-cms-modernization",
+            phase="phase2-decide",
+            next_phase="phase2-strategic-overview",
+            commit="397c8bb",
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-08T12:00:00Z",
+        ),
+    )
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "spec_dir": "specs/013-vod-cms-modernization",
+        },
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_rewind(["phase3-plan"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "Cannot rewind to phase3-plan" in captured.err
+    assert "checkpoint not found for spec 013-vod-cms-modernization: phase3-plan" in captured.err
+    assert "Available checkpoints: phase2-decide" in captured.err
+    assert "Traceback" not in captured.err

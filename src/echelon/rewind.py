@@ -13,7 +13,7 @@ from echelon.git_helpers import (
     reset_branch_to_commit,
     run_git,
 )
-from harness.phase_checkpoints import load_checkpoint_ledger, resolve_checkpoint
+from harness.phase_checkpoints import CheckpointLedger, load_checkpoint_ledger, resolve_checkpoint
 
 
 class RewindError(RuntimeError):
@@ -52,7 +52,17 @@ def prepare_rewind(
 ) -> RewindResult:
     spec_dir = _find_spec_dir(project_root, spec)
     ledger = load_checkpoint_ledger(spec_dir)
-    checkpoint = resolve_checkpoint(ledger, target)
+    try:
+        checkpoint = resolve_checkpoint(ledger, target)
+    except KeyError as exc:
+        available = _available_checkpoint_targets(ledger)
+        message = str(exc.args[0]) if exc.args else f"checkpoint not found: {target}"
+        suffix = (
+            f"\nAvailable checkpoints: {', '.join(available)}"
+            if available
+            else "\nNo checkpoints are recorded for this spec."
+        )
+        raise RewindError(message + suffix) from exc
     branch = current_branch(project_root)
     if checkpoint.spec_id not in branch:
         raise RewindError(
@@ -104,3 +114,15 @@ def prepare_rewind(
         created,
         "Rewind complete.",
     )
+
+
+def _available_checkpoint_targets(ledger: CheckpointLedger) -> list[str]:
+    seen: set[str] = set()
+    targets: list[str] = []
+    for checkpoint in ledger.checkpoints:
+        for value in (checkpoint.phase, checkpoint.id):
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            targets.append(value)
+    return targets

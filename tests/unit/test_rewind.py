@@ -58,7 +58,7 @@ def test_rewind_requires_confirmation_when_branch_has_later_commits(tmp_path: Pa
     assert not result.applied
     assert result.from_commit == later
     assert result.to_commit == checkpoint
-    assert "echelon rewind phase3-plan --confirm" in result.message
+    assert "echelon spec rewind phase3-plan --confirm" in result.message
 
 
 def test_rewind_creates_backup_ref_and_resets_branch_when_confirmed(tmp_path: Path) -> None:
@@ -77,3 +77,14 @@ def test_rewind_refuses_dirty_worktree(tmp_path: Path) -> None:
 
     with pytest.raises(RewindError, match="dirty worktree"):
         prepare_rewind(project_root=repo, spec="001", target="phase3-plan", confirm=True)
+
+
+def test_rewind_missing_checkpoint_reports_available_targets(tmp_path: Path) -> None:
+    repo, _spec_dir, _checkpoint, _later = _repo_with_checkpoint(tmp_path)
+
+    with pytest.raises(RewindError) as exc:
+        prepare_rewind(project_root=repo, spec="001", target="phase2-decide", confirm=False)
+
+    message = str(exc.value)
+    assert "checkpoint not found for spec 001-demo: phase2-decide" in message
+    assert "Available checkpoints: phase3-plan" in message
