@@ -406,13 +406,32 @@ class TestFulfillmentRunner:
         orchestration_root = tmp_path / "polyrepo"
         spec_dir = orchestration_root / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
+        (orchestration_root / "runs").mkdir(parents=True)
+        (orchestration_root / "runs" / ".current").write_text(
+            "spec-20260708-123456",
+            encoding="utf-8",
+        )
+        (worktree / "runs").mkdir(parents=True)
+        (worktree / "runs" / ".current").write_text(
+            "target-build-run",
+            encoding="utf-8",
+        )
+        _write_matching_audit(orchestration_root)
+        target_audit = worktree / "runs" / "verify-spec-spec-001-target"
+        target_audit.mkdir(parents=True)
+        (target_audit / "requirement-audit.md").write_text(
+            "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-999 | FR | spec.md | Wrong target audit | Should not be used |\n",
+            encoding="utf-8",
+        )
         report = spec_dir / "fulfillment-report.md"
 
         provider = MagicMock()
         provider.cli = "claude"
 
         def write_report(_worktree_path: str, _prompt: str) -> int:
-            report.write_text("# Fulfillment\n", encoding="utf-8")
+            _write_matching_report(report)
             return 0
 
         provider.exec_prompt.side_effect = write_report
@@ -431,6 +450,7 @@ class TestFulfillmentRunner:
         metadata = read_fulfillment_metadata(report)
         assert metadata["spec_id"] == "spec-001"
         assert metadata["verified_commit"] == "abc123"
+        assert metadata["verify_run_id"] == "spec-20260708-123456"
 
     def test_refresh_uses_cached_full_report_when_commit_and_spec_hash_match(self, tmp_path):
         _write_verify_skill(tmp_path)

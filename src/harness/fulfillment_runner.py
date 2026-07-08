@@ -211,6 +211,11 @@ class FulfillmentRunner:
                 worktree,
                 spec_id,
                 spec_dir=resolved_spec_dir,
+                artifact_root=_run_pointer_root(
+                    worktree,
+                    spec_dir=resolved_spec_dir,
+                    orchestration_root=orchestration_root,
+                ),
             ):
                 return FulfillmentRefreshResult(
                     status="failed",
@@ -224,6 +229,7 @@ class FulfillmentRunner:
                 worktree,
                 spec_id,
                 spec_dir=resolved_spec_dir,
+                orchestration_root=orchestration_root,
                 commit=commit,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
@@ -419,6 +425,7 @@ def _stamp_latest_report(
     spec_id: str,
     *,
     spec_dir: Path | None = None,
+    orchestration_root: Path | str | None = None,
     commit: str | None = None,
     spec_input_hash: str | None = None,
     implementation_input_hash: str | None = None,
@@ -432,7 +439,12 @@ def _stamp_latest_report(
     if report is None:
         return
 
-    run_id = _current_run_id(worktree)
+    run_root = _run_pointer_root(
+        worktree,
+        spec_dir=spec_dir,
+        orchestration_root=orchestration_root,
+    )
+    run_id = _current_run_id(run_root)
     extra_metadata: dict[str, str] = {"verify_scope": "full"}
     if spec_input_hash:
         extra_metadata["spec_input_hash"] = spec_input_hash
@@ -650,16 +662,18 @@ def _latest_report_matches_latest_audit(
     spec_id: str,
     *,
     spec_dir: Path | None = None,
+    artifact_root: Path | None = None,
 ) -> bool:
     spec_dir = spec_dir or find_spec_dir(spec_id, worktree)
+    artifact_root = artifact_root or worktree
     if spec_dir is None:
         return True
     report = latest_fulfillment_report(spec_dir)
-    audit = _latest_requirement_audit(worktree, spec_id)
+    audit = _latest_requirement_audit(artifact_root, spec_id)
     if report is None or audit is None:
         return True
     if not _latest_audit_scope_is_stable(
-        worktree,
+        artifact_root,
         spec_id,
         latest_audit=audit,
         spec_dir=spec_dir,
@@ -668,7 +682,7 @@ def _latest_report_matches_latest_audit(
     return validate_fulfillment_artifacts(
         requirement_audit_path=audit,
         fulfillment_report_path=report,
-        canonical_inventory_path=_latest_canonical_inventory(worktree, spec_id),
+        canonical_inventory_path=_latest_canonical_inventory(artifact_root, spec_id),
     ).ok
 
 
@@ -751,6 +765,20 @@ def _current_git_commit(worktree: Path) -> str | None:
         return None
     commit = result.stdout.strip()
     return commit or None
+
+
+def _run_pointer_root(
+    worktree: Path,
+    *,
+    spec_dir: Path | None = None,
+    orchestration_root: Path | str | None = None,
+) -> Path:
+    if orchestration_root is not None:
+        return Path(orchestration_root)
+    if spec_dir is not None:
+        if spec_dir.parent.name == "specs":
+            return spec_dir.parent.parent
+    return worktree
 
 
 def _current_run_id(worktree: Path) -> str | None:
