@@ -123,6 +123,7 @@ echelon delivery run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
 # Polyrepo/workspace: select the implementation source root before build when needed
 echelon spec target 001 og-platform            # explicit source path in spec frontmatter
+echelon spec target 001 sources/new-tool --init # create/prepare a new target repo
 echelon delivery run 001 mode=semi              # uses a single source root, blocks on multiple
 echelon delivery run 001 mode=banzai            # same deterministic source-root selection
 

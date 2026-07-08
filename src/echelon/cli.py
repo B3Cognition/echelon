@@ -79,7 +79,9 @@ Commands:
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
   spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
-  spec target <spec_id> <repo> [repo...]     Set target repos in spec frontmatter.
+  spec target <spec_id> <repo> [repo...] [--init]
+                                            Set target repos in spec frontmatter.
+                                            With --init, create/prepare target Git repo(s).
   spec artifacts <spec_id>                  Generate specs/<id>/ARTIFACTS.md.
   spec verify <spec_id> [--reconcile] [--dry-run]
                                             Audit implementation against spec.
@@ -1204,9 +1206,7 @@ def _resolve_harness_workspace_target(
     new_repo_hint = (
         "\n\n"
         "  For a new implementation repo:\n"
-        "    mkdir -p sources/<new-repo>\n"
-        "    git -C sources/<new-repo> init\n"
-        f"    echelon spec target {spec_id or '<spec-id>'} sources/<new-repo>"
+        f"    echelon spec target {spec_id or '<spec-id>'} sources/<new-repo> --init"
     )
 
     if result.decision == "no_source_roots":
@@ -1239,7 +1239,9 @@ def _resolve_harness_workspace_target(
             f"{configured}\n\n"
             "  Source roots:\n"
             f"{_candidate_lines()}\n\n"
-            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'.\n"
+            f"       For a new repo: echelon spec target {spec_ref} "
+            "sources/<new-repo> --init"
             + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
             file=sys.stderr,
         )
@@ -1496,12 +1498,16 @@ def _cmd_harness_run(
         sys.exit(1)
 
     try:
-        config = load_config(project_root=config_root)
+        config = load_config(project_root=config_root, squad_only=bool(target_env))
     except HarnessValidationError as e:
         print(f"✗ Harness config error: {e}\n  Fix: re-run 'echelon harness init'.", file=sys.stderr)
         sys.exit(1)
     if target_env:
         config.target_repo = str(Path(target_env).resolve())
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
     gitops = GitOpsManager(config, base_dir=str(harness_base_dir))
     if target_env and not mirror_path.exists():
         gitops.clone_mirror(config.target_repo)
@@ -5442,15 +5448,133 @@ def _cmd_spec_resume(args: list[str]) -> None:
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
 
 
-def _cmd_spec_target(args: list[str]) -> None:
-    if len(args) < 2:
+def _run_spec_target_git(
+    repo: Path, args: list[str], *, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=check,
+    )
+
+
+def _is_git_repo(path: Path) -> bool:
+    marker = path / ".git"
+    return marker.is_dir() or marker.is_file()
+
+
+def _git_has_head_commit(repo: Path) -> bool:
+    result = _run_spec_target_git(repo, ["rev-parse", "--verify", "HEAD"], check=False)
+    return result.returncode == 0
+
+
+def _git_branch_exists(repo: Path, branch: str) -> bool:
+    result = _run_spec_target_git(
+        repo, ["rev-parse", "--verify", f"refs/heads/{branch}"], check=False
+    )
+    return result.returncode == 0
+
+
+def _prepare_spec_target_repo(workspace_root: Path, spec_dir: Path, repo: str) -> list[str]:
+    target = Path(repo).expanduser()
+    if not target.is_absolute():
+        target = workspace_root / target
+
+    messages: list[str] = []
+    try:
+        if target.exists() and not target.is_dir():
+            raise RuntimeError(f"target path exists but is not a directory: {target}")
+
+        if not target.exists():
+            target.mkdir(parents=True)
+            messages.append(f"Created target directory: {repo}")
+
+        if not _is_git_repo(target):
+            init = subprocess.run(
+                ["git", "init", "-b", "main", str(target)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if init.returncode != 0:
+                subprocess.run(
+                    ["git", "init", str(target)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                _run_spec_target_git(target, ["branch", "-M", "main"])
+            messages.append(f"Initialized target repo: {repo}")
+
+        if not _git_has_head_commit(target):
+            _run_spec_target_git(target, ["symbolic-ref", "HEAD", "refs/heads/main"])
+            _run_spec_target_git(
+                target,
+                [
+                    "-c",
+                    "user.name=Echelon",
+                    "-c",
+                    "user.email=echelon@example.invalid",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    "chore: initialize target repository",
+                ],
+            )
+            messages.append(
+                "Created initial target commit: chore: initialize target repository"
+            )
+
+        feature_branch = spec_dir.name
+        if _git_branch_exists(target, feature_branch):
+            messages.append(f"Feature branch already exists: {feature_branch}")
+        else:
+            _run_spec_target_git(target, ["branch", feature_branch])
+            messages.append(f"Created feature branch: {feature_branch}")
+    except (subprocess.CalledProcessError, OSError, RuntimeError) as exc:
+        if isinstance(exc, subprocess.CalledProcessError):
+            detail = (exc.stderr or exc.stdout or str(exc)).strip()
+        else:
+            detail = str(exc)
         print(
-            "echelon spec target: usage: echelon spec target <spec_id> <repo> [repo...]\n",
+            f"✗ Could not initialize target repo {repo!r}.\n"
+            f"  Error: {detail}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    spec_id, repos = args[0], args[1:]
+    return messages
+
+
+def _cmd_spec_target(args: list[str]) -> None:
+    if len(args) < 2:
+        print(
+            "echelon spec target: usage: echelon spec target <spec_id> <repo> "
+            "[repo...] [--init]\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    spec_id = args[0]
+    init_targets = False
+    repos: list[str] = []
+    for arg in args[1:]:
+        if arg == "--init":
+            init_targets = True
+        elif arg.startswith("--"):
+            print(f"echelon spec target: unknown option '{arg}'", file=sys.stderr)
+            sys.exit(1)
+        else:
+            repos.append(arg)
+
+    if not repos:
+        print(
+            "echelon spec target: usage: echelon spec target <spec_id> <repo> "
+            "[repo...] [--init]\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     from harness.spec_frontmatter import find_spec_dir, write_targets
 
@@ -5476,15 +5600,25 @@ def _cmd_spec_target(args: list[str]) -> None:
         print(f"✗ Spec '{spec_id}' not found (searched from {start})", file=sys.stderr)
         sys.exit(1)
 
+    init_messages: list[str] = []
+    if init_targets:
+        for repo in repos:
+            init_messages.extend(_prepare_spec_target_repo(start, spec_dir, repo))
+
     md = write_targets(spec_dir, repos)
     try:
         display = md.relative_to(start)
     except ValueError:
         display = md
+    for message in init_messages:
+        print(message)
     print(f"Updated {display}")
     print("  targets:")
     for r in repos:
         print(f"    - {r}")
+    if init_targets:
+        print()
+        print(f"Next: echelon delivery run {spec_dir.name} --mode=banzai")
 
 
 def _cmd_workspace(args: list[str]) -> None:

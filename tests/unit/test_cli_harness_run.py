@@ -631,6 +631,7 @@ class TestHarnessTargetPreflight:
         assert "og-platform" in err
         assert "pbg-api" in err
         assert "echelon spec target 001-feature <source-path>" in err
+        assert "echelon spec target 001-feature sources/<new-repo> --init" in err
 
     def test_no_workspace_source_roots_stop_before_workspace_config(
         self,

@@ -168,7 +168,7 @@ def test_delivery_run_multiple_source_roots_reports_delivery_rerun_command(
     err = capsys.readouterr().err
     assert "Multiple source roots found; choose one before running delivery" in err
     assert "For a new implementation repo:" in err
-    assert "mkdir -p sources/<new-repo>" in err
+    assert "echelon spec target 001-feature sources/<new-repo> --init" in err
     assert "echelon spec target 001-feature <source-path>" in err
     assert "Then rerun:  echelon delivery run 001-feature --mode=banzai" in err
     assert "echelon harness run" not in err

@@ -207,6 +207,78 @@ class TestSingleRepoPathUnchanged:
         assert mock_run.call_args.kwargs["config"].target_repo == str(target.resolve())
         mock_gitops.clone_mirror.assert_called_once_with(str(target.resolve()))
 
+    def test_target_side_run_tolerates_workspace_config_without_target_repo(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Target-dispatched runs get target_repo from env, not workspace config."""
+        from harness.config import ValidationError
+
+        polyrepo = tmp_path / "wrapper"
+        target = polyrepo / "sources" / "prosaic"
+        target.mkdir(parents=True)
+        (target / ".git").mkdir()
+        config_file = polyrepo / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("llm:\n  cli: claude\n", encoding="utf-8")
+        ext = polyrepo / ".specify" / "extensions" / "echelon"
+        (ext / "agents" / "control").mkdir(parents=True)
+        (ext / "workflow").mkdir(parents=True)
+        (ext / "agents" / "control" / "commander.md").write_text(
+            "# Commander\n",
+            encoding="utf-8",
+        )
+        (ext / "workflow" / "definition.yaml").write_text(
+            "phases: []\n",
+            encoding="utf-8",
+        )
+
+        spec_dir = polyrepo / "specs" / "001-prose-distribution-engine"
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n  - sources/prosaic\n---\n# spec\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(polyrepo))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "prosaic")
+
+        import os
+
+        def fake_load_config(*, project_root=None, squad_only=False):
+            if not squad_only:
+                raise ValidationError(
+                    "Required field 'target_repo' is missing or empty",
+                    field_path="target_repo",
+                )
+            return MagicMock(
+                buffer_limit_bytes=1024 * 1024,
+                target_repo="",
+                target_default_branch="",
+                provider="github",
+            )
+
+        orig = os.getcwd()
+        try:
+            os.chdir(target)
+            from echelon.cli import _cmd_harness_run
+            with patch("harness.config.load_config", side_effect=fake_load_config) as mock_cfg:
+                with patch("harness.gitops.GitOpsManager") as MockGitOps:
+                    mock_gitops = MagicMock()
+                    MockGitOps.return_value = mock_gitops
+                    with patch("harness.docker_provider.DockerWorktreeProvider"):
+                        with patch("harness.skills.run_skill.run") as mock_run:
+                            _cmd_harness_run(["001-prose-distribution-engine", "mode=banzai"])
+        finally:
+            os.chdir(orig)
+
+        mock_cfg.assert_called_once()
+        assert mock_cfg.call_args.kwargs["project_root"] == polyrepo
+        assert mock_cfg.call_args.kwargs["squad_only"] is True
+        assert mock_run.call_args.kwargs["config"].target_repo == str(target.resolve())
+        assert mock_run.call_args.kwargs["config"].target_default_branch == "main"
+        assert mock_run.call_args.kwargs["config"].provider == "docker"
+
     def test_spec_without_targets_in_polyrepo_blocks_before_wrapper_harness(
         self, tmp_path: Path, capsys
     ) -> None:

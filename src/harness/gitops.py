@@ -476,21 +476,46 @@ class GitOpsManager:
             # Legacy mode: create a new harness/* branch from default branch HEAD.
             default_branch = self.get_default_branch()
             branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
-            try:
+            worktree_created = False
+            existing_branch = _run_git(
+                ["rev-parse", "--verify", f"refs/heads/{branch_name}"],
+                cwd=str(self._mirror_path),
+                check=False,
+            )
+            if existing_branch.returncode == 0:
+                logger.warning("Branch %s may already exist, continuing", branch_name)
+            else:
+                try:
+                    _run_git(
+                        ["branch", branch_name, default_branch],
+                        cwd=str(self._mirror_path),
+                    )
+                except GitOpsError as e:
+                    message = str(e)
+                    if "not a valid object name" not in message:
+                        raise
+                    logger.warning(
+                        "Default branch %s has no commit in target mirror; creating orphan worktree branch %s",
+                        default_branch, branch_name,
+                    )
+                    _run_git(
+                        ["worktree", "add", "--orphan", "-b", branch_name, str(worktree_dir)],
+                        cwd=str(self._mirror_path),
+                    )
+                    worktree_created = True
+                    logger.info(
+                        "Created orphan worktree at %s on branch %s",
+                        worktree_dir, branch_name,
+                    )
+            if not worktree_created:
                 _run_git(
-                    ["branch", branch_name, default_branch],
+                    ["worktree", "add", str(worktree_dir), branch_name],
                     cwd=str(self._mirror_path),
                 )
-            except GitOpsError:
-                logger.warning("Branch %s may already exist, continuing", branch_name)
-            _run_git(
-                ["worktree", "add", str(worktree_dir), branch_name],
-                cwd=str(self._mirror_path),
-            )
-            logger.info(
-                "Created worktree at %s on branch %s (base: %s)",
-                worktree_dir, branch_name, default_branch,
-            )
+                logger.info(
+                    "Created worktree at %s on branch %s (base: %s)",
+                    worktree_dir, branch_name, default_branch,
+                )
 
         # Add 'upstream' remote pointing to the real target repo.
         # The worktree's 'origin' inherits the mirror's remote, which may have

@@ -28,6 +28,7 @@ def test_harness_command_docs_document_target_preflight_and_recovery() -> None:
     assert "resolves source roots" in run_doc
     assert "source root" in run_doc
     assert "echelon spec target <spec_id> <source-path>" in run_doc
+    assert "echelon spec target <spec_id> sources/<new-repo> --init" in run_doc
     assert "recorded target repo metadata" in resume_doc
     assert "build_incomplete" in resume_doc
 
@@ -41,6 +42,7 @@ def test_workspace_model_docs_define_single_repo_as_one_source_root() -> None:
     assert "branchless workspace" in text
     assert "echelon workspace migrate" in text
     assert "echelon spec target" in text
+    assert "echelon spec target 001-feature sources/new-tool --init" in text
 
     assert (ROOT / "extension/scripts/python/migrate_workspace_git.py").exists()
 

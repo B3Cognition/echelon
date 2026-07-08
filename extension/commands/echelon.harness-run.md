@@ -33,7 +33,10 @@ Normal implementation specs use exactly one source root. If `targets:` is
 missing, `echelon harness run` resolves source roots before local harness
 checks: a single source root is used automatically; multiple source roots stop
 with deterministic candidates. Resolve the block with
-`echelon spec target <spec_id> <source-path>`.
+`echelon spec target <spec_id> <source-path>`. For a new implementation repo,
+use `echelon spec target <spec_id> sources/<new-repo> --init` so Echelon creates
+the target directory, Git repository, initial commit, and feature branch before
+delivery starts.
 
 ---
 

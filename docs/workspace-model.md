@@ -80,3 +80,11 @@ echelon delivery run 001-feature
 ```
 
 Use the source path in `echelon spec target`. A source id may be displayed for readability, but the stored target is the path relative to the workspace root.
+
+For a new implementation repo, let Echelon prepare the target directory, Git
+repository, initial commit, and feature branch:
+
+```bash
+echelon spec target 001-feature sources/new-tool --init
+echelon delivery run 001-feature --mode=banzai
+```
