@@ -79,6 +79,8 @@ Commands:
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
   spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
+  spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
+                                            Manage Phase A/spec checkpoints.
   spec target <spec_id> <repo> [repo...] [--init]
                                             Set target repos in spec frontmatter.
                                             With --init, create/prepare target Git repo(s).
@@ -95,7 +97,7 @@ Commands:
                                             Run one explicit phase through COMMANDER contracts.
   checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
                     [--run-id <id>] [--message <msg>]
-                                            Manage spec-scoped phase checkpoints.
+                                            Compatibility alias for spec checkpoint.
 
   benchmark list                            List experimental benchmark fixtures and variants.
   benchmark show [latest|<summary-path-or-run-dir>]
@@ -116,13 +118,15 @@ Commands:
                     Legacy key=value options remain accepted for compatibility.
   delivery resume <spec_id> [--strategy <s>] [--mode <guided|semi|banzai>]
                                             Resume a blocked delivery run.
+  delivery checkpoint list <spec_id> [--strategy <s>]
+                                            List delivery checkpoint/recovery commits.
   delivery land <spec_id> [--continue] [--prepare-only] [--no-autoresolve]
                     [--allow-fulfillment-gaps] [--strategy merge|rebase]
                                             Land a spec: merge PR/branch, clean up.
 
 Compatibility aliases:
   init, run, status, continue, resume, rewind
-  bugfix, verify-spec, reopen, build, review, change, codegen, artifacts
+  checkpoint, bugfix, verify-spec, reopen, build, review, change, codegen, artifacts
   harness init|run|resume                    Alias for delivery init|run|resume.
   land <spec_id> [...]                       Alias for delivery land.
   cicd                                      Retired; use 'echelon delivery init'.
@@ -848,6 +852,8 @@ def _cmd_delivery(args: list[str]) -> None:
             "                                     strategy: default (echelon squad) or codegen (SOAR)\n"
             "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
             "                                     Resume a blocked delivery run\n"
+            "  checkpoint list <spec_id> [strategy=<s>]\n"
+            "                                     List delivery checkpoint/recovery commits\n"
             "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
             "Compatibility aliases:\n"
             "  echelon harness init|run|resume\n"
@@ -869,6 +875,8 @@ def _cmd_delivery(args: list[str]) -> None:
         _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
     elif subcmd == "resume":
         _cmd_harness_resume(args[1:])
+    elif subcmd == "checkpoint":
+        _cmd_delivery_checkpoint(args[1:])
     elif subcmd == "land":
         _cmd_land(args[1:])
     else:
@@ -2712,6 +2720,110 @@ def _find_latest_harness_build_state(project_root: Path) -> Optional[dict]:
             except Exception:
                 pass
     return None
+
+
+def _iter_harness_build_states(project_root: Path) -> list[dict]:
+    import json as _json
+
+    states: list[dict] = []
+    runs = project_root / "runs"
+    if not runs.exists():
+        return states
+    for build in sorted(runs.glob("build-*/"), reverse=True):
+        state_dir = build / "state"
+        if not state_dir.exists():
+            continue
+        for state_file in sorted(state_dir.glob("*.json")):
+            try:
+                data = _json.loads(state_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                data.setdefault("build_id", build.name)
+                data.setdefault("strategy_id", state_file.stem)
+                states.append(data)
+    return states
+
+
+def _find_harness_checkpoint_state(
+    project_root: Path,
+    spec_id: str,
+    strategy_id: str = "",
+) -> Optional[dict]:
+    for state in _iter_harness_build_states(project_root):
+        if str(state.get("spec_id") or "") != spec_id:
+            continue
+        if strategy_id and str(state.get("strategy_id") or "") != strategy_id:
+            continue
+        return state
+    return None
+
+
+def _cmd_delivery_checkpoint(args: list[str], *, project_root: Path | None = None) -> None:
+    if not args or args[0] in {"-h", "--help", "help"}:
+        print(
+            "Usage:\n"
+            "  echelon delivery checkpoint list <spec_id> [--strategy <id>]\n\n"
+            "Lists delivery checkpoint/recovery commits recorded by Ralph/harness.\n"
+        )
+        return
+    subcmd = args[0]
+    if subcmd != "list":
+        print(f"echelon delivery checkpoint: unknown subcommand '{subcmd}'\n", file=sys.stderr)
+        sys.exit(1)
+    if len(args) < 2:
+        print("Usage: echelon delivery checkpoint list <spec_id> [--strategy <id>]", file=sys.stderr)
+        sys.exit(1)
+
+    spec_id = args[1]
+    strategy = ""
+    if "--strategy" in args:
+        idx = args.index("--strategy")
+        if idx + 1 >= len(args):
+            print("--strategy requires a value", file=sys.stderr)
+            sys.exit(1)
+        strategy = args[idx + 1]
+    for raw in args[2:]:
+        if raw.startswith("strategy="):
+            strategy = raw.split("=", 1)[1]
+
+    root = project_root or Path.cwd()
+    state = _find_harness_checkpoint_state(root, spec_id, strategy)
+    if state is None:
+        strategy_suffix = f" strategy {strategy!r}" if strategy else ""
+        print(f"No delivery checkpoint state found for {spec_id!r}{strategy_suffix}.", file=sys.stderr)
+        sys.exit(1)
+
+    strategy_label = str(state.get("strategy_id") or strategy or "default")
+    print(f"CHECKPOINTS - delivery {spec_id} (strategy {strategy_label})\n")
+    rows: list[tuple[str, str, str, str, str]] = []
+    checkpoints = state.get("checkpoint_commits")
+    if isinstance(checkpoints, list):
+        for checkpoint in checkpoints:
+            if not isinstance(checkpoint, dict):
+                continue
+            commit = str(checkpoint.get("commit") or "").strip()
+            if not commit:
+                continue
+            phase = str(checkpoint.get("phase") or "").strip() or "-"
+            phase_group = str(checkpoint.get("phase_group") or "").strip()
+            task_ids = checkpoint.get("task_ids")
+            tasks = ",".join(str(item) for item in task_ids) if isinstance(task_ids, list) else "-"
+            label = phase_group or phase
+            rows.append((commit[:7], "checkpoint", phase, tasks or "-", label or "-"))
+
+    for key, kind in (("salvage_commit", "salvage"), ("target_commit", "target")):
+        commit = str(state.get(key) or "").strip()
+        if commit:
+            rows.append((commit[:7], kind, "-", "-", str(state.get("target_branch") or state.get("salvage_branch") or "-")))
+
+    if not rows:
+        print("(none)")
+        return
+
+    print("COMMIT   KIND        PHASE      TASKS                 CONTEXT")
+    for commit, kind, phase, tasks, context in rows:
+        print(f"{commit:<8} {kind:<11} {phase:<10} {tasks:<21} {context}")
 
 
 def _find_converged_harness_build(project_root: Path) -> Optional[tuple[str, Optional[str]]]:
@@ -5541,6 +5653,7 @@ def _cmd_spec(args: list[str]) -> None:
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  checkpoint list|accept|commit       Manage Phase A/spec checkpoints\n"
             "  target <spec_id> <repo> [repo...]   Set targets: in spec frontmatter\n"
             "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
             "  verify <spec_id> [--reconcile] [--dry-run]\n"
@@ -5564,6 +5677,10 @@ def _cmd_spec(args: list[str]) -> None:
         _cmd_spec_resume(args[1:])
     elif subcmd == "rewind":
         _cmd_rewind(args[1:], project_root=Path.cwd())
+    elif subcmd == "checkpoint":
+        from echelon.checkpoint_cli import run_checkpoint_command
+
+        run_checkpoint_command(args[1:], project_root=Path.cwd())
     elif subcmd == "artifacts":
         _cmd_artifacts(args[1:])
     elif subcmd == "verify":

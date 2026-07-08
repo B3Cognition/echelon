@@ -16,10 +16,11 @@ from harness.spec_frontmatter import find_spec_dir
 
 _USAGE = (
     "Usage:\n"
-    "  echelon checkpoint list [--spec <id>]\n"
-    "  echelon checkpoint accept --phase <phase-id> [--spec <id>] [--run-id <id>]\n"
-    "  echelon checkpoint commit --phase <phase-id> [--spec <id>] "
+    "  echelon spec checkpoint list [--spec <id>]\n"
+    "  echelon spec checkpoint accept --phase <phase-id> [--spec <id>] [--run-id <id>]\n"
+    "  echelon spec checkpoint commit --phase <phase-id> [--spec <id>] "
     "[--run-id <id>] [--message <msg>]\n"
+    "\nCompatibility alias: echelon checkpoint ...\n"
 )
 
 
@@ -141,8 +142,7 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
         print(
             "No active spec resolved.\n\n"
             "Use:\n"
-            "  echelon checkpoint list --spec 001\n"
-            "  echelon phase list",
+            "  echelon spec checkpoint list --spec 001",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -153,7 +153,7 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     if subcommand == "accept":
         phase = _arg_value(args, "--phase")
         if not phase:
-            print("Usage: echelon checkpoint accept --phase <phase-id> [--spec <id>]", file=sys.stderr)
+            print("Usage: echelon spec checkpoint accept --phase <phase-id> [--spec <id>]", file=sys.stderr)
             raise SystemExit(1)
         checkpoint = accept_checkpoint_baseline(
             project_root=project_root,
@@ -168,7 +168,7 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
         phase = _arg_value(args, "--phase")
         message = _arg_value(args, "--message") or "docs: accept manual Phase A checkpoint"
         if not phase:
-            print("Usage: echelon checkpoint commit --phase <phase-id> [--spec <id>]", file=sys.stderr)
+            print("Usage: echelon spec checkpoint commit --phase <phase-id> [--spec <id>]", file=sys.stderr)
             raise SystemExit(1)
         checkpoint = commit_manual_checkpoint(
             project_root=project_root,

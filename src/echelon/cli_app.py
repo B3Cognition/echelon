@@ -22,6 +22,11 @@ delivery_app = typer.Typer(
     help="Delivery commands: build, verify, recover, review, and land specs.",
     no_args_is_help=True,
 )
+delivery_checkpoint_app = typer.Typer(
+    add_completion=False,
+    help="Delivery checkpoint discovery commands.",
+    no_args_is_help=True,
+)
 harness_app = typer.Typer(
     add_completion=False,
     help="Compatibility alias for delivery init/run/resume.",
@@ -30,6 +35,7 @@ harness_app = typer.Typer(
 
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness")
+delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 
 
 def _option_pairs(**values: object) -> list[str]:
@@ -324,6 +330,25 @@ def delivery_land(ctx: typer.Context, spec_id: str) -> None:
     from echelon import cli as legacy_cli
 
     legacy_cli._cmd_land([spec_id, *ctx.args])
+
+
+@delivery_checkpoint_app.command(
+    "list",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def delivery_checkpoint_list(
+    ctx: typer.Context,
+    spec_id: str,
+    strategy: Optional[str] = typer.Option(None, "--strategy"),
+) -> None:
+    """List delivery checkpoint and recovery commits for a spec."""
+    from echelon import cli as legacy_cli
+
+    args = ["list", spec_id]
+    if strategy is not None:
+        args.extend(["--strategy", strategy])
+    args.extend(list(ctx.args))
+    legacy_cli._cmd_delivery_checkpoint(args)
 
 
 def run(argv: list[str] | None = None) -> None:

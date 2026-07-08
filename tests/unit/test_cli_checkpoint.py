@@ -15,7 +15,7 @@ def test_checkpoint_list_requires_spec_when_no_active_spec(tmp_path: Path, capsy
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "No active spec resolved" in err
-    assert "echelon checkpoint list --spec 001" in err
+    assert "echelon spec checkpoint list --spec 001" in err
 
 
 def test_checkpoint_list_prints_spec_scoped_ledger(tmp_path: Path, capsys) -> None:

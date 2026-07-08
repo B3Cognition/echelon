@@ -34,7 +34,8 @@ def test_help_command_prints_usage_without_unknown_command(
     assert "[--message <text>] [--next-phase <id>]" in captured.out
     assert "phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]" in captured.out
     assert "[--message <text>]" in captured.out
-    assert "checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
+    assert "spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
+    assert "delivery checkpoint list <spec_id> [--strategy <s>]" in captured.out
     assert "benchmark show [latest|<summary-path-or-run-dir>]" in captured.out
     assert "[--baseline-ref <ref>] [--dry-run]" in captured.out
 
@@ -72,11 +73,76 @@ def test_checkpoint_help_documents_subcommands_and_exits_zero(
 
     assert exc.value.code == 0
     captured = capsys.readouterr()
-    assert "echelon checkpoint list" in captured.out
-    assert "echelon checkpoint accept --phase <phase-id>" in captured.out
-    assert "echelon checkpoint commit --phase <phase-id>" in captured.out
+    assert "echelon spec checkpoint list" in captured.out
+    assert "echelon spec checkpoint accept --phase <phase-id>" in captured.out
+    assert "echelon spec checkpoint commit --phase <phase-id>" in captured.out
+    assert "Compatibility alias: echelon checkpoint" in captured.out
     assert "--run-id <id>" in captured.out
     assert "--message <msg>" in captured.out
+
+
+@pytest.mark.unit
+def test_spec_checkpoint_list_routes_to_spec_checkpoint_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "spec", "checkpoint", "list", "--spec", "001"])
+
+    with patch("echelon.checkpoint_cli.run_checkpoint_command") as mock_checkpoint:
+        main()
+
+    mock_checkpoint.assert_called_once()
+    assert mock_checkpoint.call_args.args[0] == ["list", "--spec", "001"]
+
+
+@pytest.mark.unit
+def test_delivery_checkpoint_list_prints_harness_checkpoint_commits(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import main
+
+    state_dir = tmp_path / "runs" / "build-20260708-120000-000000" / "state"
+    state_dir.mkdir(parents=True)
+    (state_dir / "default.json").write_text(
+        """
+{
+  "spec_id": "001-demo",
+  "strategy_id": "default",
+  "status": "blocked",
+  "termination_reason": "build_incomplete",
+  "checkpoint_commits": [
+    {
+      "commit": "abcdef1234567890",
+      "phase": "build",
+      "task_ids": ["T-001", "T-002"],
+      "phase_group": "phase-1-foundation",
+      "created_at": "2026-07-08T12:00:00Z"
+    }
+  ],
+  "salvage_commit": "feedface12345678",
+  "target_commit": "0123456789abcdef"
+}
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["echelon", "delivery", "checkpoint", "list", "001-demo"])
+
+    main()
+
+    out = capsys.readouterr().out
+    assert "CHECKPOINTS - delivery 001-demo" in out
+    assert "abcdef1" in out
+    assert "phase-1-foundation" in out
+    assert "T-001,T-002" in out
+    assert "salvage" in out
+    assert "feedfac" in out
+    assert "target" in out
+    assert "0123456" in out
 
 
 @pytest.mark.unit
