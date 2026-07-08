@@ -41,4 +41,20 @@ Use the Agent tool to dispatch a subagent with:
 - `user-intent.md` (in staging, later moved to spec directory)
 - `stakeholder-model.md` (if multiple stakeholders are detectable)
 
+### Routing Verdict Contract — MANDATORY
+
+TRACKER must emit one of these canonical `echelon_result.verdict` values:
+
+- `ALIGNED` — intent is clear enough to continue to assumption challenge.
+- `DRIFT` — intent risks were recorded, but progress may continue.
+- `STOP_AND_ASK` — user input is required before continuing.
+
+The workflow still accepts legacy `DRIFTING` and `ESCALATE` verdicts for
+compatibility, but new outputs must use the canonical values above.
+
+When emitting `STOP_AND_ASK`, return `status: blocked`, a concise
+`blocked_reason`, and a concrete `escalation_question` in
+`echelon_result.state_updates` so `echelon resume "<answer>"` can recover the
+run deterministically.
+
 **Transition:** `phases[phase1-why1]` — see `workflow/definition.yaml`

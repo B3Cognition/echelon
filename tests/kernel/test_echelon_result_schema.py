@@ -1,14 +1,17 @@
 """Tests for deterministic echelon_result schema validation."""
+import re
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.echelon_result_schema import (  # noqa: E402
+    ALLOWED_VERDICTS,
     EchelonResultValidationError,
     validate_echelon_result,
 )
@@ -27,12 +30,48 @@ def test_valid_result_is_normalized_without_mutating_input():
     assert normalized is not payload
 
 
-def test_build_routing_verdicts_are_supported():
-    for verdict in ("CHANGES_REQUESTED", "NEEDS_CONTEXT"):
+def test_known_routing_verdicts_are_supported():
+    for verdict in ("CHANGES_REQUESTED", "DRIFT", "NEEDS_CONTEXT", "STOP_AND_ASK"):
         normalized = validate_echelon_result(
-            {"verdict": verdict, "state_updates": {}}
+            {
+                "verdict": verdict,
+                "state_updates": (
+                    {
+                        "status": "blocked",
+                        "blocked_reason": "user intent needs clarification",
+                        "escalation_question": "Which target should Echelon use?",
+                    }
+                    if verdict == "STOP_AND_ASK"
+                    else {}
+                ),
+            }
         )
         assert normalized["verdict"] == verdict
+
+
+def test_workflow_condition_verdicts_are_supported_by_schema():
+    definition = yaml.safe_load(
+        (EXT_ROOT / "extension" / "workflow" / "definition.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    verdicts = set()
+    for phase in definition.get("phases") or []:
+        for transition in phase.get("transitions") or []:
+            condition = transition.get("condition")
+            if not isinstance(condition, str):
+                continue
+            verdicts.update(
+                re.findall(r"\bverdict\s*=\s*([A-Z][A-Z0-9_]*)", condition)
+            )
+            for match in re.finditer(r"\bverdict\s+in\s+\[([^\]]+)\]", condition):
+                verdicts.update(
+                    value.strip()
+                    for value in match.group(1).split(",")
+                    if re.fullmatch(r"[A-Z][A-Z0-9_]*", value.strip())
+                )
+
+    assert not sorted(verdicts - ALLOWED_VERDICTS)
 
 
 def test_bad_top_level_type_is_rejected():
@@ -62,6 +101,39 @@ def test_missing_state_updates_defaults_for_non_blocking_verdict():
 def test_blocked_result_requires_state_updates():
     with pytest.raises(EchelonResultValidationError, match="state_updates"):
         validate_echelon_result({"verdict": "BLOCKED"})
+
+
+def test_stop_and_ask_result_requires_escalation_question():
+    with pytest.raises(EchelonResultValidationError, match="escalation_question"):
+        validate_echelon_result({
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "user intent needs clarification",
+            },
+        })
+
+
+def test_stop_and_ask_result_requires_blocked_status():
+    with pytest.raises(EchelonResultValidationError, match="status"):
+        validate_echelon_result({
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "blocked_reason": "user intent needs clarification",
+                "escalation_question": "Which target should Echelon use?",
+            },
+        })
+
+
+def test_stop_and_ask_result_requires_blocked_reason():
+    with pytest.raises(EchelonResultValidationError, match="blocked_reason"):
+        validate_echelon_result({
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "escalation_question": "Which target should Echelon use?",
+            },
+        })
 
 
 def test_bad_state_updates_type_is_rejected():

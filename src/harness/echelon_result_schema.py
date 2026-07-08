@@ -26,6 +26,7 @@ ALLOWED_VERDICTS = frozenset({
     "DEFER",
     "DONE",
     "DONE_WITH_CONCERNS",
+    "DRIFT",
     "DRIFTING",
     "ESCALATE",
     "FAILED",
@@ -45,6 +46,7 @@ ALLOWED_VERDICTS = frozenset({
     "RESOLVED",
     "SCORED",
     "STABLE",
+    "STOP_AND_ASK",
     "SUFFICIENT",
     "VERIFIED",
     "VISUAL_PASS",
@@ -101,6 +103,22 @@ def validate_echelon_result(
         raise EchelonResultValidationError(
             "echelon_result.state_updates must be an object"
         )
+    if verdict == "STOP_AND_ASK":
+        status = state_updates.get("status")
+        if status != "blocked":
+            raise EchelonResultValidationError(
+                "STOP_AND_ASK verdicts require state_updates.status = 'blocked'"
+            )
+        blocked_reason = state_updates.get("blocked_reason")
+        if not isinstance(blocked_reason, str) or not blocked_reason.strip():
+            raise EchelonResultValidationError(
+                "STOP_AND_ASK verdicts require state_updates.blocked_reason"
+            )
+        escalation_question = state_updates.get("escalation_question")
+        if not isinstance(escalation_question, str) or not escalation_question.strip():
+            raise EchelonResultValidationError(
+                "STOP_AND_ASK verdicts require state_updates.escalation_question"
+            )
 
     allowed_keys = (
         frozenset(allowed_state_update_keys)

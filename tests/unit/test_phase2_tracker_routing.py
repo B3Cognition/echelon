@@ -1,4 +1,4 @@
-"""Regression coverage for phase2 tracker routing.
+"""Regression coverage for tracker routing.
 
 TRACKER returns `verdict: ALIGNED` or `verdict: DRIFT`. The workflow must route
 on that verdict directly; there is no separate `alignment` state key unless an
@@ -18,10 +18,10 @@ DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
 EXT_YML = ROOT / "extension" / "extension.yml"
 
 
-def _route_tracker_verdict(tmp_path: Path, verdict: str) -> str:
+def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
     graph = PhaseGraph(DEFINITION, EXT_YML)
     store = SquadStateStore(tmp_path / "squad" / "run-test")
-    store.initialize("r", "semi", "msg", 0, "phase2-tracker-alignment", max_iterations=5)
+    store.initialize("r", "semi", "msg", 0, phase_id, max_iterations=5)
 
     ctrl = SquadController(
         provider=MagicMock(),
@@ -42,24 +42,40 @@ def _route_tracker_verdict(tmp_path: Path, verdict: str) -> str:
         duration_ms=0,
         timed_out=False,
     )
-    return ctrl._evaluate_transitions(graph.get("phase2-tracker-alignment"), result)
+    return ctrl._evaluate_transitions(graph.get(phase_id), result)
+
+
+def _route_phase2_tracker_verdict(tmp_path: Path, verdict: str) -> str:
+    return _route_tracker_verdict(tmp_path, "phase2-tracker-alignment", verdict)
+
+
+def _route_phase1_tracker_verdict(tmp_path: Path, verdict: str) -> str:
+    return _route_tracker_verdict(tmp_path, "phase1-tracker", verdict)
 
 
 def test_tracker_aligned_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_tracker_verdict(tmp_path, "ALIGNED") == "phase3-specialists"
+    assert _route_phase2_tracker_verdict(tmp_path, "ALIGNED") == "phase3-specialists"
 
 
 def test_tracker_drift_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_tracker_verdict(tmp_path, "DRIFT") == "phase3-specialists"
+    assert _route_phase2_tracker_verdict(tmp_path, "DRIFT") == "phase3-specialists"
 
 
 def test_tracker_legacy_drifting_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_tracker_verdict(tmp_path, "DRIFTING") == "phase3-specialists"
+    assert _route_phase2_tracker_verdict(tmp_path, "DRIFTING") == "phase3-specialists"
 
 
-def test_tracker_stop_and_ask_verdict_routes_to_escalate(tmp_path: Path) -> None:
-    assert _route_tracker_verdict(tmp_path, "STOP_AND_ASK") == "escalate"
+def test_tracker_stop_and_ask_verdict_stays_on_alignment_phase(tmp_path: Path) -> None:
+    assert _route_phase2_tracker_verdict(tmp_path, "STOP_AND_ASK") == "phase2-tracker-alignment"
 
 
-def test_tracker_legacy_escalate_verdict_routes_to_escalate(tmp_path: Path) -> None:
-    assert _route_tracker_verdict(tmp_path, "ESCALATE") == "escalate"
+def test_tracker_legacy_escalate_verdict_stays_on_alignment_phase(tmp_path: Path) -> None:
+    assert _route_phase2_tracker_verdict(tmp_path, "ESCALATE") == "phase2-tracker-alignment"
+
+
+def test_phase1_tracker_clear_intent_routes_to_why1(tmp_path: Path) -> None:
+    assert _route_phase1_tracker_verdict(tmp_path, "ALIGNED") == "phase1-why1"
+
+
+def test_phase1_tracker_stop_and_ask_stays_on_tracker(tmp_path: Path) -> None:
+    assert _route_phase1_tracker_verdict(tmp_path, "STOP_AND_ASK") == "phase1-tracker"

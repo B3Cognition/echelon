@@ -114,6 +114,12 @@ Place `drift_severity: {ALIGNED|MINOR_DRIFT|MAJOR_DRIFT}` on the second line of 
 - If in doubt about intent, always ask the user — don't assume
 - Intent corrections are the HIGHEST priority change (even above constitution)
 
+ALWAYS include `status: blocked`, `blocked_reason`, and a concrete
+`escalation_question` in `echelon_result.state_updates` when returning
+`verdict: STOP_AND_ASK`.
+NEVER return `verdict: STOP_AND_ASK` with empty `state_updates` or without the
+question the user must answer.
+
 ## Stakeholder Model
 
 Real projects have multiple stakeholders with competing priorities. Track them:
@@ -162,7 +168,7 @@ echelon_result:
   output_files:
     - ${STAGING_DIR}/user-intent.md
     - ${STAGING_DIR}/stakeholder-model.md
-  state_updates: {}
+  state_updates: {}  # For STOP_AND_ASK, set status/blocked_reason/escalation_question.
   journal_entries:
     - type: prediction
       phase: <current phase>

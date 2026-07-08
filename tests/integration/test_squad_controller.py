@@ -811,6 +811,35 @@ class TestSquadControllerBasics:
         # escalation_question must be in state for echelon resume to pick up
         assert store.load().get("escalation_question")
 
+    def test_phase1_tracker_stop_and_ask_blocks_with_resume_question(self, tmp_path):
+        """TRACKER STOP_AND_ASK must produce a resumable blocked run."""
+        from harness.squad_provider import SquadAgentResult
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "STOP_AND_ASK",
+                "state_updates": {
+                    "status": "blocked",
+                    "blocked_reason": "phase1-tracker: user intent needs clarification",
+                    "escalation_question": "Should Echelon target Opta Stark, MSA, or both?",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "semi", "msg", 0, "phase1-tracker", max_iterations=5)
+
+        result = ctrl.run("msg", "semi")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "phase1-tracker"
+        assert state["blocked_reason"] == "phase1-tracker: user intent needs clarification"
+        assert state["escalation_question"] == "Should Echelon target Opta Stark, MSA, or both?"
+
     def test_fresh_checkpoint_question_ignores_stale_escalation_resolved(self, tmp_path):
         """A prior resume must not suppress a later checkpoint human-gate question."""
         provider = _mock_provider()

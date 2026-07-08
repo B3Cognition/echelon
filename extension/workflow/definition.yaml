@@ -354,10 +354,18 @@ phases:
       - user-intent.md
       - stakeholder-model.md     # if multiple stakeholders are detectable
     allowed_state_updates:
+      - status
+      - blocked_reason
+      - escalation_question
+      - escalation_options
+      - escalation_recommended_answer
+      - escalation_default_answer
       - shadow_output_recovered
     transitions:
+      - to: phase1-tracker
+        condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
       - to: phase1-why1
-        condition: always
+        condition: "verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
 
   # --------------------------------------------------------------------------
   - id: phase1-why1
@@ -633,6 +641,12 @@ phases:
     allowed_state_updates:
       - intent_alignment_check_structural_pass
       - intent_alignment_check_structural_attempts
+      - status
+      - blocked_reason
+      - escalation_question
+      - escalation_options
+      - escalation_recommended_answer
+      - escalation_default_answer
       - shadow_output_recovered
     transitions:
       # Intent alignment check structural gate (INERT unless governance.enabled in echelon-config.yml).
@@ -653,7 +667,7 @@ phases:
         action: increment_iteration
       - to: phase3-specialists    # specialists run BEFORE speckit-echelon-architect (ARCHITECT) so their findings feed the design
         condition: "verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
-      - to: escalate
+      - to: phase2-tracker-alignment
         condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
 
   # --------------------------------------------------------------------------
