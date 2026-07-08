@@ -138,6 +138,40 @@ def test_recover_blocked_run_prefers_preserved_worktree(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_accepts_plain_committed_preserved_worktree_head(
+    tmp_path: Path,
+) -> None:
+    """Resume should not require checkpoint-style subjects for preserved worktrees."""
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    recovered = _commit_file(
+        project,
+        "src/generated.txt",
+        "generated\n",
+        "feat: implement generated work",
+    )
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "checkout", "001-feature")
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={"termination_reason": "build_incomplete"},
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.source == "worktree"
+    assert result.commit == recovered
+    assert result.applied is False
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_uses_state_salvage_commit_from_preserved_worktree(
     tmp_path: Path,
 ) -> None:

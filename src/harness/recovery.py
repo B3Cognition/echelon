@@ -180,9 +180,17 @@ def _find_preserved_worktree_source(
         spec_id=spec_id,
         strategy_id=strategy_id,
     )
-    if commit is None:
-        return None
-    return worktree_path, commit
+    if commit is not None:
+        return worktree_path, commit
+
+    head = _run_git(
+        ["rev-parse", "HEAD"],
+        cwd=str(worktree_path),
+        check=False,
+    )
+    if head.returncode == 0 and head.stdout.strip():
+        return worktree_path, head.stdout.strip()
+    return None
 
 
 def _latest_existing_checkpoint_commit(repo: Path, checkpoint_commits: Any) -> Optional[str]:

@@ -61,6 +61,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-113 / #137 build resume recovery** — `delivery resume` can now recover
+  from a clean preserved build worktree whose committed output uses normal
+  feature commit subjects instead of harness/checkpoint metadata, allowing the
+  resumed run to reach verify and the TECH WRITER documentation gate.
 - **EGR-112 / #136 TECH WRITER first-run README manuals** — TECH WRITER now
   treats newly created or substantially rewritten READMEs as first-run local
   manuals, requiring evidence-backed prerequisites, minimal configuration, dry
