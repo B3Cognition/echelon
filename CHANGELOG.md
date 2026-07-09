@@ -101,6 +101,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   forbidden sibling source roots found in tool output blocks as containment
   violations, not only paths shown on the same `Read`/`Bash` invocation line.
   Prompt echoes of `forbidden_source_roots` remain ignored.
+- **EGR-119 / #143 verify-spec run initialization** — added
+  `python -m harness init-verify-spec-run` to create the verify-spec runtime
+  directory and stamp `state.json` from Python-owned logic. The
+  `verify-spec-1-init` phase now tells COMMANDER to consume the command's JSON
+  instead of reading `runs/.current`, deriving orchestration roots, choosing
+  timestamps, or writing state by hand.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG

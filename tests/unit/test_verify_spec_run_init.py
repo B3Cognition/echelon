@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+from harness.verify_spec_run import init_verify_spec_run
+
+
+def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "harness", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+
+def test_init_verify_spec_run_uses_orchestration_current_pointer(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-prose-distribution-engine"
+    active_run = workspace / "runs" / "spec-20260707-175124-167707"
+    for path in (source, spec_dir, active_run):
+        path.mkdir(parents=True)
+    (workspace / "runs" / ".current").write_text(
+        "spec-20260707-175124-167707\n", encoding="utf-8"
+    )
+
+    result = init_verify_spec_run(
+        project_root=source,
+        spec_id="001-prose-distribution-engine",
+        spec_dir=spec_dir,
+    )
+
+    assert result.verify_run_dir == (
+        active_run / "verify-spec" / "001-prose-distribution-engine"
+    )
+    state = json.loads((result.verify_run_dir / "state.json").read_text())
+    assert state["project_root"] == str(source.resolve())
+    assert state["orchestration_root"] == str(workspace.resolve())
+    assert state["spec_dir"] == str(spec_dir.resolve())
+    assert state["verify_scope"] == "full"
+    assert state["status"] == "in_progress"
+    assert state["structural_evidence"] == "pending"
+
+
+def test_init_verify_spec_run_creates_timestamped_scoped_run_without_current(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    result = init_verify_spec_run(
+        project_root=project,
+        spec_id="001-demo",
+        spec_dir=spec_dir,
+        verify_scope="scoped",
+        scoped_ids=["FR-002", "FR-001", "FR-002"],
+        base_full_verify_commit="abc123",
+        strict=True,
+        reconcile=True,
+        dry_run=True,
+        timestamp="20260709-120000",
+    )
+
+    assert result.verify_run_dir == (
+        project / "runs" / "verify-spec-001-demo-20260709-120000"
+    )
+    state = json.loads((result.verify_run_dir / "state.json").read_text())
+    assert state["verify_run_dir"] == str(result.verify_run_dir)
+    assert state["verify_scope"] == "scoped"
+    assert state["scoped_ids"] == ["FR-001", "FR-002"]
+    assert state["base_full_verify_commit"] == "abc123"
+    assert state["strict"] is True
+    assert state["reconcile"] is True
+    assert state["dry_run"] is True
+
+
+def test_init_verify_spec_run_cli_writes_state_and_prints_json(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--scope",
+            "scoped",
+            "--scoped-ids",
+            "FR-002,FR-001,FR-002",
+            "--base-full-verify-commit",
+            "abc123",
+            "--strict",
+            "--reconcile",
+            "--dry-run",
+            "--timestamp",
+            "20260709-130000",
+        ]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    verify_run_dir = project / "runs" / "verify-spec-001-demo-20260709-130000"
+    assert payload["verify_run_dir"] == str(verify_run_dir.resolve())
+    state = json.loads((verify_run_dir / "state.json").read_text())
+    assert state["verify_scope"] == "scoped"
+    assert state["scoped_ids"] == ["FR-001", "FR-002"]
+    assert state["base_full_verify_commit"] == "abc123"

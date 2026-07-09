@@ -13,6 +13,7 @@ Subcommands:
   apply-task-requirement-mapping — apply deterministic req= metadata mappings
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
+  init-verify-spec-run — create verify-spec runtime directory and state.json
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
   inspect-fulfillment-report — print deterministic fulfillment report metadata JSON
@@ -243,6 +244,88 @@ def _write_progress_integrity() -> None:
     out_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     out_md.write_text(_progress_integrity_markdown(payload), encoding="utf-8")
     print(f"OK: wrote progress integrity to {out_json} and {out_md}")
+
+
+def _init_verify_spec_run() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness init-verify-spec-run "
+            "<project-root> <spec-id> <spec-dir> "
+            "[--scope full|scoped] [--scoped-ids ID,ID] "
+            "[--base-full-verify-commit SHA] [--strict] [--reconcile] "
+            "[--dry-run] [--timestamp YYYYMMDD-HHMMSS]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import json
+    from pathlib import Path
+
+    from harness.verify_spec_run import init_verify_spec_run
+
+    project_root = Path(sys.argv[2])
+    spec_id = sys.argv[3]
+    spec_dir = Path(sys.argv[4])
+    args = sys.argv[5:]
+    verify_scope = "full"
+    scoped_ids: list[str] = []
+    base_full_verify_commit = ""
+    strict = False
+    reconcile = False
+    dry_run = False
+    timestamp = None
+
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--scope":
+            index += 1
+            if index >= len(args):
+                print("--scope requires a value", file=sys.stderr)
+                sys.exit(1)
+            verify_scope = args[index]
+        elif arg == "--scoped-ids":
+            index += 1
+            if index >= len(args):
+                print("--scoped-ids requires a value", file=sys.stderr)
+                sys.exit(1)
+            scoped_ids = args[index].split(",")
+        elif arg == "--base-full-verify-commit":
+            index += 1
+            if index >= len(args):
+                print("--base-full-verify-commit requires a value", file=sys.stderr)
+                sys.exit(1)
+            base_full_verify_commit = args[index]
+        elif arg == "--strict":
+            strict = True
+        elif arg == "--reconcile":
+            reconcile = True
+        elif arg == "--dry-run":
+            dry_run = True
+        elif arg == "--timestamp":
+            index += 1
+            if index >= len(args):
+                print("--timestamp requires a value", file=sys.stderr)
+                sys.exit(1)
+            timestamp = args[index]
+        else:
+            print(f"unknown init-verify-spec-run option: {arg}", file=sys.stderr)
+            sys.exit(1)
+        index += 1
+
+    result = init_verify_spec_run(
+        project_root=project_root,
+        spec_id=spec_id,
+        spec_dir=spec_dir,
+        verify_scope=verify_scope,
+        scoped_ids=scoped_ids,
+        base_full_verify_commit=base_full_verify_commit,
+        strict=strict,
+        reconcile=reconcile,
+        dry_run=dry_run,
+        timestamp=timestamp,
+    )
+    print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 
 def _write_judgment_prepass() -> None:
@@ -748,6 +831,8 @@ def main() -> None:
         _apply_progress_reconciliation()
     elif subcommand == "plan-reopen-gaps":
         _plan_reopen_gaps()
+    elif subcommand == "init-verify-spec-run":
+        _init_verify_spec_run()
     elif subcommand == "write-canonical-requirements":
         _write_canonical_requirements()
     elif subcommand == "write-judgment-prepass":
@@ -774,7 +859,8 @@ def main() -> None:
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
             "'write-progress-integrity', 'apply-task-requirement-mapping', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
-            "'write-canonical-requirements', 'write-judgment-prepass', "
+            "'init-verify-spec-run', 'write-canonical-requirements', "
+            "'write-judgment-prepass', "
             "'assemble-fulfillment-report', 'write-codegraph-evidence', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
             "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",

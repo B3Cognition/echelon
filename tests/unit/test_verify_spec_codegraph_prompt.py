@@ -35,16 +35,18 @@ def test_verify_spec_init_accepts_scoped_verify_arguments() -> None:
 def test_verify_spec_init_uses_runs_current_without_latest_run_search() -> None:
     text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
 
-    assert "read `{orchestration_root}/runs/.current` exactly once" in text
+    assert "python -m harness init-verify-spec-run" in text
+    assert "Do not read `runs/.current`" in text
+    assert "The command owns\n`{orchestration_root}/runs/.current` handling" in text
     assert "Do not list, sort, or search `runs/` to infer the\nlatest run" in text
 
 
 def test_verify_spec_init_uses_spec_dir_root_for_run_pointer_when_authoritative() -> None:
     text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
 
-    assert "derive\n  `orchestration_root` from `spec_dir.parent.parent`" in text
+    assert "Do not read `runs/.current`, derive `orchestration_root`" in text
     assert "`{orchestration_root}/runs/.current`" in text
-    assert "do not read\n`{project_root}/runs/.current` in this case" in text
+    assert "Treat those values as\nauthoritative for all later verify-spec phases" in text
 
 
 def test_verify_spec_codegraph_uses_deterministic_harness_command() -> None:

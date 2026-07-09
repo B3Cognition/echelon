@@ -12,19 +12,15 @@ When `spec_dir=` is present, treat it as authoritative and do not locate or
 glob `specs/{spec_id}-*/`. When `spec_dir=` is absent, locate
 `specs/{spec_id}-*/` from the current project root.
 
-Set `project_root` to the absolute current project root. Set
-`orchestration_root` as follows:
-- If `spec_dir=` is present and resolves under a `specs/` directory, derive
-  `orchestration_root` from `spec_dir.parent.parent`.
-- Otherwise, use `project_root`.
+Set `project_root` to the absolute current project root.
 
 This split matters for workspace/source delivery: `project_root` is the
 implementation tree used for CodeGraph/source evidence, while
 `orchestration_root` owns `specs/` and `runs/`.
 
 If `scope=scoped` is present, set `verify_scope: scoped`; otherwise set
-`verify_scope: full`. For scoped runs, parse `scoped_ids` into a stable,
-de-duplicated list and write it as `scoped_ids` in state. Also write
+`verify_scope: full`. For scoped runs, parse `scoped_ids` into a
+comma-separated list for the deterministic init command. Also pass
 `base_full_verify_commit` when supplied. Scoped runs may judge only these
 requirement IDs and must preserve unaffected fulfillment rows from the base full
 report.
@@ -32,21 +28,32 @@ report.
 `--dry-run` only has meaning with `--reconcile`; if `--dry-run` is present
 without `--reconcile`, set `dry_run: true` but keep `reconcile: false` and do
 not mutate any artifacts.
-Create a verification runtime directory:
-- active run: read `{orchestration_root}/runs/.current` exactly once and use
-  `{orchestration_root}/runs/<run-id>/verify-spec/{spec_id}/`
-- no active run: `{orchestration_root}/runs/verify-spec-{spec_id}-{timestamp}/`
-When `orchestration_root` differs from `project_root`, do not read
-`{project_root}/runs/.current` in this case; that reads the target source repo,
-not the workspace run state. Do not list, sort, or search `runs/` to infer the
+Initialize the verification runtime with the deterministic harness command.
+Do not read `runs/.current`, derive `orchestration_root`, create directories,
+choose timestamps, or write `state.json` yourself.
+
+```bash
+python -m harness init-verify-spec-run "{project_root}" "{spec_id}" "{spec_dir}" \
+  --scope "{verify_scope}" \
+  --scoped-ids "{comma-separated scoped_ids or empty string}" \
+  --base-full-verify-commit "{base_full_verify_commit or empty string}" \
+  {--strict when strict=true} \
+  {--reconcile when reconcile=true} \
+  {--dry-run when dry_run=true}
+```
+
+The command prints JSON containing `project_root`, `orchestration_root`,
+`spec_dir`, `verify_run_dir`, and `state_path`. Treat those values as
+authoritative for all later verify-spec phases. The command owns
+`{orchestration_root}/runs/.current` handling: it uses an active run pointer
+when present and valid, otherwise it creates a timestamped verify-spec run under
+`{orchestration_root}/runs/`. Do not list, sort, or search `runs/` to infer the
 latest run.
-`{orchestration_root}/runs/.current` is the only active-run pointer; if it is
-absent or points to a missing directory, create the timestamped no-active-run
-directory under `{orchestration_root}/runs/`.
 
 ## State
 
-Write `state.json` in the verification runtime directory with:
+The harness command writes `state.json` in the verification runtime directory
+with:
 - `spec_id`
 - `project_root` as the absolute current project root
 - `orchestration_root`
