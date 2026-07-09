@@ -481,11 +481,12 @@ def land(
     else:
         pr_url = _find_pr_url_all_builds(spec_id, wrapper_project_dir)
 
+    readiness_ref = feature_branch if project_dir == wrapper_project_dir else None
     if not options.prepare_only and not _check_ready_before_land(
         spec_id,
         wrapper_project_dir,
         options,
-        ref=feature_branch,
+        ref=readiness_ref,
     ):
         return False
 

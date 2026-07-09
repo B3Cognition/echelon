@@ -958,6 +958,56 @@ def _commit(path: Path, rel: str, text: str, message: str) -> str:
 
 
 @pytest.mark.unit
+def test_workspace_target_land_uses_workspace_spec_readiness_not_target_branch_ref(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    target = workspace / "sources" / "prosaic"
+    _init_repo(target)
+
+    spec = workspace / "specs" / "001-demo" / "spec.md"
+    spec.parent.mkdir(parents=True)
+    spec.write_text(
+        "---\n"
+        "status: In Progress\n"
+        "targets:\n"
+        "- sources/prosaic\n"
+        "---\n"
+        "# Spec\n\n"
+        "**Status**: In Progress\n",
+        encoding="utf-8",
+    )
+    _git(workspace, "add", "specs/001-demo/spec.md")
+    _git(workspace, "commit", "-m", "spec in progress")
+    _git(workspace, "branch", "001-demo")
+    spec.write_text(
+        "---\n"
+        "status: ready_to_land\n"
+        "targets:\n"
+        "- sources/prosaic\n"
+        "---\n"
+        "# Spec\n\n"
+        "**Status**: ready_to_land\n",
+        encoding="utf-8",
+    )
+
+    gitops = _make_gitops(feature_branch="001-demo")
+
+    with (
+        patch("harness.land._fulfillment_warning", return_value=None),
+        patch("harness.land._default_branch_already_contains_feature", return_value=True),
+        patch("harness.land._checkout_default_for_landing_cleanup", return_value=True),
+        patch("harness.land._finish_landing", return_value=True),
+        patch("harness.land._banner") as banner,
+    ):
+        result = land("001", project_dir=workspace, gitops=gitops)
+
+    assert result is True
+    assert all(call.args[0] != "LAND — SPEC NOT READY" for call in banner.call_args_list)
+
+
+@pytest.mark.unit
 def test_land_prepares_feature_branch_before_direct_merge(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)
