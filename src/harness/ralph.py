@@ -2540,7 +2540,26 @@ class RalphController:
                 "- Report completed progress through the harness build status marker.",
             ]
         )
-        context_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+        context_text = "\n".join(lines).rstrip() + "\n"
+        context_file.write_text(context_text, encoding="utf-8")
+        context_index_file = context_file.with_suffix(".json")
+        context_index_file.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "strategy": self._strategy_id,
+                    "markdown_path": str(context_file),
+                    "spec_dir": spec_dir_text,
+                    "spec_file": spec_file_text,
+                    "tasks_file": tasks_file_text,
+                    "sections": _markdown_section_headings(context_text),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return context_file
 
     def _build_slice_quality_commands(self) -> list[str]:
@@ -5089,6 +5108,18 @@ def _target_config_files(root: Path, *, limit: int = 12) -> list[str]:
         if name in exact_names or any(name.startswith(prefix) for prefix in prefixes):
             found.append(name)
     return sorted(set(found), key=str.lower)[:limit]
+
+
+def _markdown_section_headings(text: str) -> list[str]:
+    sections: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("## "):
+            continue
+        heading = stripped[3:].strip()
+        if heading:
+            sections.append(heading)
+    return sections
 
 
 def _target_doc_artifacts(root: Path) -> list[str]:

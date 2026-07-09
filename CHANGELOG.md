@@ -125,6 +125,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rules, and the prompt tells agents to read it before implementation. Prompt
   contract tests now reject build-agent instructions that ask models to
   rediscover target git state with exploratory `git status`/`git log` turns.
+- **EGR-126 / #150 build context-pack compiler groundwork** — Ralph now writes a
+  machine-readable `context/<strategy>-build-slice-context.json` sidecar beside
+  the Markdown build-slice context. The sidecar records the Markdown path, spec
+  inputs, strategy, and generated section list so future per-agent build context
+  packs can consume Python-owned context without parsing prompt prose.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

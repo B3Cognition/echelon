@@ -740,6 +740,15 @@ class TestOuterLoopConvergence:
         assert f"- spec_dir: `{spec_dir}`" in context
         assert "completed_tasks: 1/2" in context
         assert "completed_task_ids: T-001" in context
+        context_index_file = (
+            state_store.state_dir.parent / "context" / "default-build-slice-context.json"
+        )
+        context_index = json.loads(context_index_file.read_text(encoding="utf-8"))
+        assert context_index["version"] == 1
+        assert context_index["markdown_path"] == str(context_file)
+        assert context_index["spec_dir"] == str(spec_dir)
+        assert "Current Build Slice" in context_index["sections"]
+        assert "Current Requirement Excerpts" in context_index["sections"]
         assert "Do not search for the application repo" in prompt
 
     def test_build_slice_context_includes_bounded_open_task_rows(
