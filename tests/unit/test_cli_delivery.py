@@ -70,16 +70,15 @@ def test_spec_help_lists_current_run_and_target_options(
 
     monkeypatch.setattr("sys.argv", ["echelon", "spec", "--help"])
 
-    with pytest.raises(SystemExit) as exc:
-        main()
+    main()
 
-    assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "run <description> [--mode semi|banzai|guided] [--reset]" in captured.out
     assert "[--target <source-id-or-path>]" in captured.out
-    assert "[--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]" in captured.out
+    assert "--re-policy" in captured.out
+    assert "none|cached-only|changed|target-changed|target-only|refresh-all" in captured.out
     assert "checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
-    assert "target <spec_id> <repo> [repo...] [--init]" in captured.out
+    assert "target <spec_id> <repo> <repo...> [--init]" in captured.out
     assert "With --init, create/prepare target Git repo(s)." in captured.out
 
 

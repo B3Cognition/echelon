@@ -194,3 +194,29 @@ def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
         "--strategy",
         "rebase",
     ]]
+
+
+@pytest.mark.unit
+def test_spec_help_uses_typer_front_door():
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "--help"])
+
+    assert result.exit_code == 0
+    assert "Usage: root spec [OPTIONS] COMMAND [ARGS]..." in result.output
+    assert "Phase A/spec lifecycle commands" in result.output
+    assert "run" in result.output
+    assert "status" in result.output
+    assert "Usage: echelon spec <subcommand>" not in result.output
+
+
+@pytest.mark.unit
+def test_spec_status_routes_to_legacy_status(monkeypatch):
+    from echelon.cli_app import run
+
+    calls = []
+    monkeypatch.setattr("echelon.cli._cmd_status", lambda project_root: calls.append(project_root))
+
+    run(["spec", "status"])
+
+    assert len(calls) == 1

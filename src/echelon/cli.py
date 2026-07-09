@@ -6847,7 +6847,7 @@ def main() -> None:
 
     command = args[0]
 
-    if command in {"delivery", "harness"}:
+    if command in {"spec", "delivery", "harness"}:
         from click import ClickException
         from echelon.cli_app import run as run_typer_cli
 
@@ -6872,10 +6872,6 @@ def main() -> None:
 
     if command == "cicd":
         _cmd_cicd(args[1:])
-        return
-
-    if command == "spec":
-        _cmd_spec(args[1:])
         return
 
     if command == "workspace":
