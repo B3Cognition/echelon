@@ -132,10 +132,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   future per-agent build context packs can consume Python-owned context without
   parsing prompt prose. It also includes `agent_sections` selector maps and
   materialized context packs for IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, and
-  TEST_GUARDIAN, TECH_WRITER, and DOCS_VERIFIER, and Ralph names both
-  `build_slice_context_index_file` and `build_implementer_context_file` in
-  harness context. Build and documentation phase docs now instruct COMMANDER to
-  use the Ralph-owned context pack files instead of compiling ad hoc packs.
+  TEST_GUARDIAN, TECH_WRITER, DOCS_VERIFIER, PROGRESS_TRACKER, INTEGRATOR, and
+  VISUAL_VALIDATOR, and Ralph names both `build_slice_context_index_file` and
+  `build_implementer_context_file` in harness context. Build and documentation
+  phase docs now instruct COMMANDER to use the Ralph-owned context pack files
+  instead of compiling ad hoc packs.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

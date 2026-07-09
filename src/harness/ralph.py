@@ -5227,6 +5227,37 @@ def _build_context_agent_sections(sections: list[str]) -> dict[str, list[str]]:
             "Last Verify Failures",
             "Build Rules",
         ],
+        "PROGRESS_TRACKER": [
+            "Spec Inputs",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Candidate Open Task Rows",
+            "Referenced Requirement Excerpts",
+            "Last Verify Failures",
+            "Build Rules",
+        ],
+        "INTEGRATOR": [
+            "Roots",
+            "Spec Inputs",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Spec-Adjacent Artifact Excerpts",
+            "Target Manifest Excerpts",
+            "Target Layout Excerpts",
+            "Last Verify Failures",
+            "Build Rules",
+        ],
+        "VISUAL_VALIDATOR": [
+            "Roots",
+            "Spec Inputs",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Target Manifest Excerpts",
+            "Target Layout Excerpts",
+            "Quality Commands",
+            "Last Verify Failures",
+            "Build Rules",
+        ],
     }
     return {
         agent_name: [section for section in profile if section in available]
