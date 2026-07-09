@@ -2548,6 +2548,18 @@ class RalphController:
                         if command:
                             lines.append(f"  - bin {bin_name}: `{command}`")
 
+                dependency_names = _manifest_dependency_names(manifest, "dependencies")
+                if dependency_names:
+                    lines.append("  - dependencies: " + ", ".join(dependency_names))
+
+                dev_dependency_names = _manifest_dependency_names(
+                    manifest, "devDependencies"
+                )
+                if dev_dependency_names:
+                    lines.append(
+                        "  - dev_dependencies: " + ", ".join(dev_dependency_names)
+                    )
+
                 scripts = manifest.get("scripts")
                 if isinstance(scripts, dict):
                     for script_name in sorted(str(name) for name in scripts.keys())[
@@ -4692,6 +4704,18 @@ def _detect_python_package_manager(root: Path) -> tuple[str, str] | None:
         if (root / lockfile).is_file():
             return manager, lockfile
     return None
+
+
+def _manifest_dependency_names(
+    manifest: dict[str, Any],
+    field: str,
+    *,
+    limit: int = 10,
+) -> list[str]:
+    value = manifest.get(field)
+    if not isinstance(value, dict):
+        return []
+    return sorted(str(name) for name in value.keys())[:limit]
 
 
 def _render_layout_entry(path: Path) -> str:

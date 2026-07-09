@@ -946,6 +946,14 @@ class TestOuterLoopConvergence:
                     "bin": {
                         "prosaic": "dist/cli.js",
                     },
+                    "dependencies": {
+                        "commander": "^12.0.0",
+                        "yaml": "^2.5.0",
+                    },
+                    "devDependencies": {
+                        "typescript": "^5.5.0",
+                        "jest": "^29.0.0",
+                    },
                     "scripts": {
                         "build": "tsc -p tsconfig.json",
                         "test": "jest",
@@ -973,6 +981,8 @@ class TestOuterLoopConvergence:
         assert "  - main: `dist/index.js`" in context
         assert "  - types: `dist/index.d.ts`" in context
         assert "  - bin prosaic: `dist/cli.js`" in context
+        assert "  - dependencies: commander, yaml" in context
+        assert "  - dev_dependencies: jest, typescript" in context
         assert "  - script build: `tsc -p tsconfig.json`" in context
         assert "  - script test: `jest`" in context
 
