@@ -205,6 +205,38 @@ def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
     assert not (runtime / "scripts" / "python").exists()
 
 
+def test_sync_runtime_extension_excludes_reverse_engineering_bash_helpers(tmp_path):
+    """Delivery worktrees should not expose reverse-engineering shell helpers."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "bash" / "re").mkdir(parents=True)
+    (source / "scripts" / "bash").mkdir(exist_ok=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "scripts" / "bash" / "echelon-config-get.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    (source / "scripts" / "bash" / "re" / "discover-repos.sh").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime = worktree / ".specify" / "extensions" / "echelon"
+    assert (runtime / "scripts" / "bash" / "echelon-config-get.sh").exists()
+    assert not (runtime / "scripts" / "bash" / "re").exists()
+
+
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

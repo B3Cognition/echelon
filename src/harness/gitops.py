@@ -41,6 +41,7 @@ RUNTIME_EXTENSION_REQUIRED = (
 RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
 RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("scripts") / "python",
+    Path("scripts") / "bash" / "re",
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (
     ".git",

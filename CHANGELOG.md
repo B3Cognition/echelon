@@ -79,6 +79,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   source such as `src/harness/ralph.py` or `fulfillment_runner.py`, while still
   allowing target-worktree reads when Echelon itself is the project under
   delivery.
+- **EGR-117 / #141 runtime surface reduction** — delivery runtime sync now
+  omits reverse-engineering shell helpers under
+  `.specify/extensions/echelon/scripts/bash/re` from target worktrees and
+  workspace-target harness roots.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG
