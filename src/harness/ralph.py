@@ -2785,27 +2785,36 @@ class RalphController:
             lines.append("- current_task_ids: " + ", ".join(task_ids))
         if phase_group:
             lines.append(f"- current_phase_group: {phase_group}")
-        for row in self._build_slice_task_rows_for_ids(tasks_path, task_ids):
+        rows, requirements = self._build_slice_task_rows_for_ids(tasks_path, task_ids)
+        if requirements:
+            lines.append("- current_requirements: " + ", ".join(requirements))
+        for row in rows:
             lines.append(f"- current_task_row: {row}")
         return lines
 
     def _build_slice_task_rows_for_ids(
         self, tasks_path: Path | None, task_ids: list[str]
-    ) -> list[str]:
+    ) -> tuple[list[str], list[str]]:
         if not task_ids or tasks_path is None or not tasks_path.is_file():
-            return []
+            return [], []
         try:
             tasks = parse_task_rows(
                 tasks_path.read_text(encoding="utf-8", errors="replace")
             )
         except Exception:
-            return []
+            return [], []
         requested = set(task_ids)
         rows: list[str] = []
+        requirements: list[str] = []
         for task in tasks:
             if task.task_id in requested:
                 rows.append(_render_canonical_task_row(task))
-        return rows
+                requirements.extend(
+                    requirement
+                    for requirement in task.requirements
+                    if requirement != "UNMAPPED"
+                )
+        return rows, sorted(dict.fromkeys(requirements))
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
         try:

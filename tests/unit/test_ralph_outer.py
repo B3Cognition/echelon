@@ -726,6 +726,7 @@ class TestOuterLoopConvergence:
             "- current_task_row: - [ ] T-002 complexity=standard phase=ui req=FR-002 depends=T-001"
             in context
         )
+        assert "- current_requirements: FR-002" in context
         assert f"- worktree: `{worktree}`" in context
         assert f"- spec_dir: `{spec_dir}`" in context
         assert "completed_tasks: 1/2" in context
