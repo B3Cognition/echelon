@@ -922,6 +922,65 @@ class TestOuterLoopConvergence:
             in context
         )
 
+    def test_build_slice_context_includes_target_git_state(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should summarize target git state without agent discovery."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        (worktree / "src").mkdir()
+        (worktree / "src" / "index.ts").write_text("export const x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True, capture_output=True)
+        subprocess.run(["git", "add", "src/index.ts"], cwd=worktree, check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Echelon Test",
+                "-c",
+                "user.email=echelon@example.invalid",
+                "commit",
+                "-m",
+                "initial",
+            ],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+        )
+        head = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        (worktree / "src" / "index.ts").write_text("export const x = 2\n", encoding="utf-8")
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Target Git State" in context
+        assert "- branch: `main`" in context
+        assert f"- head: `{head}`" in context
+        assert "- status: dirty (1 path)" in context
+        assert "  - M src/index.ts" in context
+
     def test_build_slice_context_includes_target_package_manifest(
         self, tmp_path: Path
     ) -> None:

@@ -100,6 +100,20 @@ def _current_git_commit(worktree: Path) -> str | None:
     return commit or None
 
 
+def _current_git_branch(worktree: Path) -> str | None:
+    result = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
 class CommitPushError(RuntimeError):
     """Raised when verified work cannot be committed or pushed."""
 
@@ -2452,6 +2466,9 @@ class RalphController:
             f"- tasks_file: `{tasks_file_text}`",
             "",
         ]
+        target_git_state = self._build_slice_target_git_state(Path(worktree_path))
+        if target_git_state:
+            lines.extend(["## Target Git State", *target_git_state, ""])
         open_task_rows = self._build_slice_open_task_rows(tasks_path)
         if open_task_rows:
             lines.extend(["## Candidate Open Task Rows", *open_task_rows, ""])
@@ -2696,6 +2713,36 @@ class RalphController:
             lines.append("- source files: " + ", ".join(source_files[:8]))
         if test_files:
             lines.append("- test files: " + ", ".join(test_files[:8]))
+        return lines
+
+    def _build_slice_target_git_state(
+        self, worktree_path: Path, *, dirty_limit: int = 8
+    ) -> list[str]:
+        if not worktree_path.is_dir():
+            return []
+        branch = _current_git_branch(worktree_path)
+        commit = _current_git_commit(worktree_path)
+        status_lines = _git_status_lines(worktree_path)
+        if branch is None and commit is None and status_lines is None:
+            return []
+
+        lines: list[str] = []
+        if branch:
+            lines.append(f"- branch: `{branch}`")
+        if commit:
+            lines.append(f"- head: `{commit[:12]}`")
+        if status_lines is None:
+            lines.append("- status: unavailable")
+        elif not status_lines:
+            lines.append("- status: clean")
+        else:
+            count = len(status_lines)
+            noun = "path" if count == 1 else "paths"
+            lines.append(f"- status: dirty ({count} {noun})")
+            for entry in status_lines[:dirty_limit]:
+                lines.append(f"  - {entry.strip()}")
+            if count > dirty_limit:
+                lines.append(f"  - ... {count - dirty_limit} more")
         return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
