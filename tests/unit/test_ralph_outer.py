@@ -1060,6 +1060,8 @@ class TestOuterLoopConvergence:
             encoding="utf-8",
         )
         (worktree / "README.md").write_text("# Prosaic\n", encoding="utf-8")
+        (worktree / "jest.config.ts").write_text("export default {}\n", encoding="utf-8")
+        (worktree / "tsconfig.json").write_text("{}\n", encoding="utf-8")
         (worktree / "src").mkdir()
         (worktree / "src" / "index.ts").write_text("export {}\n", encoding="utf-8")
         (worktree / "src" / "config.ts").write_text("export const x = 1\n", encoding="utf-8")
@@ -1082,9 +1084,10 @@ class TestOuterLoopConvergence:
         context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
         context = context_file.read_text(encoding="utf-8")
         assert "## Target Layout Excerpts" in context
-        assert "- top-level: README.md, src/, tests/" in context
+        assert "- top-level: jest.config.ts, README.md, src/, tests/, tsconfig.json" in context
         assert "- source dirs: src/" in context
         assert "- test dirs: tests/" in context
+        assert "- config files: jest.config.ts, tsconfig.json" in context
         assert "- source files: src/config.ts, src/index.ts" in context
         assert "- test files: tests/cli.test.ts" in context
         assert "tests/fixtures/sample.json" not in context

@@ -2667,6 +2667,10 @@ class RalphController:
         if rendered:
             lines.append("- top-level: " + ", ".join(rendered))
 
+        config_files = _target_config_files(worktree_path)
+        if config_files:
+            lines.append("- config files: " + ", ".join(config_files))
+
         source_dirs = _existing_named_dirs(
             worktree_path,
             ("src", "Sources", "lib", "app", "packages"),
@@ -4829,6 +4833,41 @@ def _sample_files_under_dirs(
             if len(files) >= limit:
                 return files
     return files
+
+
+def _target_config_files(root: Path, *, limit: int = 12) -> list[str]:
+    exact_names = {
+        "babel.config.js",
+        "eslint.config.js",
+        "jest.config.js",
+        "jest.config.ts",
+        "mypy.ini",
+        "package.json",
+        "playwright.config.js",
+        "playwright.config.ts",
+        "pytest.ini",
+        "ruff.toml",
+        "setup.cfg",
+        "tsconfig.json",
+        "tsconfig.test.json",
+        "vite.config.js",
+        "vite.config.ts",
+        "vitest.config.js",
+        "vitest.config.ts",
+    }
+    prefixes = ("jest.config.", "vitest.config.", "vite.config.", "playwright.config.")
+    found: list[str] = []
+    try:
+        entries = list(root.iterdir())
+    except Exception:
+        return []
+    for path in entries:
+        if not path.is_file():
+            continue
+        name = path.name
+        if name in exact_names or any(name.startswith(prefix) for prefix in prefixes):
+            found.append(name)
+    return sorted(set(found), key=str.lower)[:limit]
 
 
 def _estimate_tokens(result: ExecResult) -> int:
