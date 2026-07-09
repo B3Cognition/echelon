@@ -694,6 +694,12 @@ class TestOuterLoopConvergence:
             "- [ ] T-002 complexity=standard phase=ui req=FR-002 depends=T-001\n",
             encoding="utf-8",
         )
+        (spec_dir / "spec.md").write_text(
+            "## Requirements\n\n"
+            "- **FR-001**: Already implemented.\n"
+            "- **FR-002**: Render the deployment preview.\n",
+            encoding="utf-8",
+        )
 
         state = state_store.read()
         state["workspace_root"] = str(workspace)
@@ -727,6 +733,9 @@ class TestOuterLoopConvergence:
             in context
         )
         assert "- current_requirements: FR-002" in context
+        assert "## Current Requirement Excerpts" in context
+        assert "- FR-002 (spec.md:4): - **FR-002**: Render the deployment preview." in context
+        assert "FR-001 (spec.md" not in context
         assert f"- worktree: `{worktree}`" in context
         assert f"- spec_dir: `{spec_dir}`" in context
         assert "completed_tasks: 1/2" in context

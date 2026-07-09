@@ -2485,6 +2485,14 @@ class RalphController:
         current_slice = self._build_slice_current_slice(tasks_path)
         if current_slice:
             lines.extend(["## Current Build Slice", *current_slice, ""])
+        current_requirement_excerpts = self._build_slice_current_requirement_excerpts(
+            spec_dir=spec_dir,
+            tasks_path=tasks_path,
+        )
+        if current_requirement_excerpts:
+            lines.extend(
+                ["## Current Requirement Excerpts", *current_requirement_excerpts, ""]
+            )
         open_task_rows = self._build_slice_open_task_rows(tasks_path)
         if open_task_rows:
             lines.extend(["## Candidate Open Task Rows", *open_task_rows, ""])
@@ -2816,6 +2824,36 @@ class RalphController:
                 )
         return rows, sorted(dict.fromkeys(requirements))
 
+    def _build_slice_current_requirement_excerpts(
+        self,
+        *,
+        spec_dir: Path | None,
+        tasks_path: Path | None,
+        limit: int = 5,
+    ) -> list[str]:
+        requirement_ids = set(self._build_slice_current_requirement_ids(tasks_path))
+        if not requirement_ids:
+            return []
+        return self._build_slice_requirement_excerpts_for_ids(
+            spec_dir=spec_dir,
+            requirement_ids=requirement_ids,
+            limit=limit,
+        )
+
+    def _build_slice_current_requirement_ids(self, tasks_path: Path | None) -> list[str]:
+        try:
+            build = self._state_store.read().get("build")
+        except Exception:
+            return []
+        if not isinstance(build, dict):
+            return []
+        task_ids = _clean_task_ids(build.get("current_task_ids"))
+        current_task = str(build.get("current_task") or "").strip()
+        if current_task and current_task not in task_ids:
+            task_ids.append(current_task)
+        _rows, requirements = self._build_slice_task_rows_for_ids(tasks_path, task_ids)
+        return requirements
+
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
         try:
             last_verify_result = self._state_store.read().get("last_verify_result")
@@ -2876,9 +2914,22 @@ class RalphController:
         tasks_path: Path | None,
         limit: int = 10,
     ) -> list[str]:
+        requirement_ids = self._build_slice_open_requirement_ids(tasks_path)
+        return self._build_slice_requirement_excerpts_for_ids(
+            spec_dir=spec_dir,
+            requirement_ids=requirement_ids,
+            limit=limit,
+        )
+
+    def _build_slice_requirement_excerpts_for_ids(
+        self,
+        *,
+        spec_dir: Path | None,
+        requirement_ids: set[str],
+        limit: int,
+    ) -> list[str]:
         if spec_dir is None or not spec_dir.is_dir():
             return []
-        requirement_ids = self._build_slice_open_requirement_ids(tasks_path)
         if not requirement_ids:
             return []
         try:
