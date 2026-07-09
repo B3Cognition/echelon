@@ -7,6 +7,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
+from harness.runtime_surface import DELIVERY_COMMAND_FILES
+
 
 ExcludeLine = Callable[[str], None]
 
@@ -14,14 +16,6 @@ RUNTIME_CLAUDE_AGENT_DIRS = (
     Path("control"),
     Path("build"),
 )
-RUNTIME_CLAUDE_COMMAND_FILES = frozenset(
-    {
-        "echelon.build.md",
-        "echelon.verify-spec.md",
-    }
-)
-
-
 class ProviderRuntimeScaffolder(Protocol):
     """Materializes AI-CLI-specific helper files for a synced runtime extension."""
 
@@ -72,7 +66,7 @@ class ClaudeProviderRuntimeScaffolder:
             return
 
         for command_file in sorted(commands_dir.glob("echelon.*.md")):
-            if command_file.name not in RUNTIME_CLAUDE_COMMAND_FILES:
+            if command_file.name not in DELIVERY_COMMAND_FILES:
                 continue
             command_name = command_file.stem
             skill_name = "speckit-" + command_name.replace(".", "-")

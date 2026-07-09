@@ -92,6 +92,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   a provider runtime scaffolder boundary rather than GitOps-owned Claude logic.
   Generated `.claude/skills` command wrappers are now likewise limited to the
   delivery-safe `echelon.build` and `echelon.verify-spec` commands.
+- **EGR-117 / #141 delivery command surface** — delivery runtime extension sync
+  now copies only delivery-safe command docs (`echelon.build.md` and
+  `echelon.verify-spec.md`) into target worktrees and workspace-target harness
+  roots, matching the provider wrapper allowlist and hiding Phase A/RE command
+  docs from build turns.
 - **EGR-116 / #142 fulfillment report inspection command** — added
   `python -m harness inspect-fulfillment-report <spec-dir> [current-commit]`
   as an opaque JSON command for fulfillment report metadata, freshness, scope,

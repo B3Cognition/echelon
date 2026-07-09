@@ -94,3 +94,34 @@ def test_polyrepo_runtime_extension_excludes_phase_a_presets(
     runtime = harness_base / ".specify" / "extensions" / "echelon"
     assert (runtime / "templates" / "tasks-template.md").exists()
     assert not (runtime / "presets").exists()
+
+
+def test_polyrepo_runtime_extension_excludes_non_delivery_command_docs(
+    tmp_path: Path,
+) -> None:
+    """Target-specific harness roots should expose only delivery command docs."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "commands").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    for name in [
+        "echelon.build.md",
+        "echelon.verify-spec.md",
+        "echelon.run.md",
+        "echelon.re-extract.md",
+    ]:
+        (source / "commands" / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    commands = harness_base / ".specify" / "extensions" / "echelon" / "commands"
+    assert (commands / "echelon.build.md").exists()
+    assert (commands / "echelon.verify-spec.md").exists()
+    assert not (commands / "echelon.run.md").exists()
+    assert not (commands / "echelon.re-extract.md").exists()
