@@ -1131,6 +1131,7 @@ class TestOuterLoopConvergence:
         worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
         worktree.mkdir(parents=True)
         orchestration_root = tmp_path / "polyrepo"
+        _init_git_repo(orchestration_root)
         spec_dir = orchestration_root / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(
@@ -1138,6 +1139,7 @@ class TestOuterLoopConvergence:
             encoding="utf-8",
         )
         _write_no_impact_documentation_report(spec_dir)
+        _commit_all(orchestration_root, "initial spec")
         controller, _, gitops, state_store = _make_controller(
             tmp_path,
             verify_results=[{"passed": True, "failures": []}],
@@ -1160,6 +1162,55 @@ class TestOuterLoopConvergence:
         assert read_frontmatter(spec_dir)["status"] == "ready_to_land"
         assert (spec_dir / "run-history.json").exists()
         assert (spec_dir / "ARTIFACTS.md").exists()
+
+    def test_convergence_commits_orchestration_spec_artifacts_for_polyrepo(
+        self, tmp_path: Path
+    ) -> None:
+        """Polyrepo convergence commits workspace spec state separately from target output."""
+        worktree = tmp_path / "target" / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        orchestration_root = tmp_path / "polyrepo"
+        _init_git_repo(orchestration_root)
+        spec_dir = orchestration_root / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: In Progress\n---\n\n**Status**: In Progress\n",
+            encoding="utf-8",
+        )
+        _write_no_impact_documentation_report(spec_dir)
+        _commit_all(orchestration_root, "initial spec")
+        controller, _, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.create_worktree.return_value = str(worktree)
+        gitops.base_dir = orchestration_root
+        state = state_store.read()
+        state["target_repo"] = "target"
+        state["target_path"] = str(tmp_path / "target")
+        state["spec_dir"] = str(spec_dir)
+        state["spec_file"] = str(spec_dir / "spec.md")
+        state_store.write(state)
+
+        result = controller.run_loop(max_outer=1, max_inner=0)
+
+        assert result.status == "converged"
+        committed_spec = subprocess.run(
+            ["git", "show", f"HEAD:{spec_dir.relative_to(orchestration_root) / 'spec.md'}"],
+            cwd=orchestration_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        assert "status: ready_to_land" in committed_spec
+        assert "**Status**: ready_to_land" in committed_spec
+        assert "run-history.json" in subprocess.run(
+            ["git", "show", "--name-only", "--format=", "HEAD"],
+            cwd=orchestration_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
 
     def test_does_not_converge_when_fulfillment_report_has_gaps(
         self, tmp_path: Path

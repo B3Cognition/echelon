@@ -74,6 +74,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-121 / #146 workspace spec convergence commits** — workspace-target
+  delivery now commits workspace-owned spec lifecycle artifacts after target
+  output is committed and before Ralph reports convergence, using a bounded
+  spec-directory pathspec so unrelated workspace changes are not swept in.
 - **EGR-122 / #147 TECH WRITER docs verification** — the documentation gate now
   rejects overview-only README updates for runnable npm/CLI projects when they
   omit first-run manual essentials such as prerequisites, minimal working input,

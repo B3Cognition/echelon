@@ -42,6 +42,7 @@ from harness.mode import ModeController
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_history import append_implementation_run
 from harness.phase_a_readiness import validate_phase_a_readiness
+from harness.secret_scan import scan_git_staged
 from harness.spec_frontmatter import find_spec_dir, write_status
 from harness.state import StateStore
 from harness.task_progress import (
@@ -713,6 +714,9 @@ class RalphController:
                             )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
+                            self._commit_orchestration_spec_artifacts(
+                                worktree_path, outer_iter, branch=branch
+                            )
                         except CommitPushError as e:
                             preserve_worktree = True
                             return self._finalize(
@@ -801,6 +805,9 @@ class RalphController:
                             )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
+                            self._commit_orchestration_spec_artifacts(
+                                worktree_path, outer_iter, branch=branch
+                            )
                         except CommitPushError as e:
                             preserve_worktree = True
                             return self._finalize(
@@ -2999,6 +3006,115 @@ class RalphController:
                 branch=branch,
                 worktree_path=worktree_path,
             ) from e
+
+    def _commit_orchestration_spec_artifacts(
+        self,
+        worktree_path: str,
+        outer_iter: int,
+        *,
+        branch: str,
+    ) -> str | None:
+        """Commit external workspace-owned spec artifacts after target convergence."""
+        if self._spec_artifacts_mode() != "external":
+            return None
+
+        spec_dir = self._find_spec_dir(worktree_path)
+        if spec_dir is None:
+            return None
+
+        root = self._orchestration_root(Path(worktree_path))
+        try:
+            spec_rel = spec_dir.resolve().relative_to(root.resolve())
+        except ValueError as exc:
+            raise CommitPushError(
+                f"Spec dir {spec_dir} is outside orchestration root {root}",
+                branch=branch,
+                worktree_path=str(root),
+            ) from exc
+
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", str(spec_rel)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if status.returncode != 0:
+            raise CommitPushError(
+                f"Could not inspect orchestration spec artifacts: {status.stderr.strip()}",
+                branch=branch,
+                worktree_path=str(root),
+            )
+        if not status.stdout.strip():
+            return None
+
+        try:
+            subprocess.run(
+                ["git", "add", "-A", "--", str(spec_rel)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            secret_scan = scan_git_staged(root)
+            if not secret_scan.ok:
+                raise RuntimeError(
+                    "secret scan blocked orchestration spec commit: "
+                    f"{secret_scan.format_summary()}"
+                )
+            staged = subprocess.run(
+                ["git", "diff", "--cached", "--quiet", "--", str(spec_rel)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            if staged.returncode == 0:
+                return None
+            if staged.returncode not in {0, 1}:
+                raise RuntimeError(staged.stderr.strip() or "git diff --cached failed")
+
+            message = build_echelon_commit_message(
+                f"chore: record delivery convergence for {self._spec_id}",
+                EchelonCommitMetadata(
+                    origin="delivery",
+                    action="workspace-spec-convergence",
+                    spec_id=self._spec_id,
+                    run_id=self._build_id,
+                    strategy=self._strategy_id,
+                ),
+            )
+            subprocess.run(
+                ["git", "commit", "-m", message, "--", str(spec_rel)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=True,
+            )
+            head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+            ).stdout.strip()
+            logger.info(
+                "Committed orchestration spec artifacts in %s: %s",
+                root,
+                head[:12],
+            )
+            return head
+        except Exception as exc:
+            raise CommitPushError(
+                f"Could not commit orchestration spec artifacts: {exc}",
+                branch=branch,
+                worktree_path=str(root),
+            ) from exc
 
     def _manage_pr(self, pr_url: Optional[str], branch: str, converged: bool) -> Optional[str]:
         """Create/update/promote PR as needed."""
