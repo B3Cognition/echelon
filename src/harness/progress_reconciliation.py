@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from kernel.task_contract import parse_task_rows
 from harness.task_progress import (
     summarize_task_progress,
     update_task_progress_markdown,
@@ -27,6 +28,69 @@ class _CandidateUpdate:
     status: str
     evidence: str
     reason: str
+
+
+def write_progress_reconciliation_candidates(
+    *,
+    tasks_path: Path,
+    fulfillment_report_path: Path,
+    fulfillment_gaps_path: Path,
+    out_path: Path,
+) -> dict[str, Any]:
+    tasks = parse_task_rows(tasks_path.read_text(encoding="utf-8", errors="replace"))
+    statuses = _fulfillment_statuses(
+        fulfillment_report_path.read_text(encoding="utf-8", errors="replace")
+    )
+    safe: list[dict[str, str]] = []
+    ambiguous: list[dict[str, str]] = []
+
+    for task in tasks:
+        if task.status.lower() == "x":
+            continue
+        requirements = [req for req in task.requirements if req != "UNMAPPED"]
+        if not requirements:
+            ambiguous.append(
+                {
+                    "task_id": task.task_id,
+                    "evidence": "tasks.md req=UNMAPPED",
+                    "reason": "task requirement ownership is unmapped",
+                }
+            )
+            continue
+        known_statuses = {req: statuses.get(req) for req in requirements}
+        if all(status == "IMPLEMENTED" for status in known_statuses.values()):
+            joined = ",".join(requirements)
+            safe.append(
+                {
+                    "task_id": task.task_id,
+                    "status": "DONE",
+                    "evidence": f"fulfillment-report.md#{joined}",
+                    "reason": f"all mapped requirements are IMPLEMENTED: {joined}",
+                }
+            )
+        else:
+            missing_or_open = [
+                f"{req}={status or 'UNKNOWN'}"
+                for req, status in known_statuses.items()
+                if status != "IMPLEMENTED"
+            ]
+            ambiguous.append(
+                {
+                    "task_id": task.task_id,
+                    "evidence": "fulfillment-report.md#" + ",".join(requirements),
+                    "reason": "not all mapped requirements are IMPLEMENTED: "
+                    + ", ".join(missing_or_open),
+                }
+            )
+
+    payload = {
+        "safe_task_updates": safe,
+        "ambiguous_task_matches": ambiguous,
+        "fulfillment_gap_tasks": _fulfillment_gap_tasks(fulfillment_gaps_path),
+        "manual_followups": [],
+    }
+    _write_json(out_path, payload)
+    return payload
 
 
 def reconcile_progress(
@@ -108,6 +172,35 @@ def _load_candidate(candidate_path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("candidate reconciliation file must be a JSON object")
     return data
+
+
+def _fulfillment_statuses(markdown: str) -> dict[str, str]:
+    statuses: dict[str, str] = {}
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if len(cells) < 2 or cells[0] in {"ID", "---", "Status"}:
+            continue
+        if _looks_like_requirement_id(cells[0]):
+            statuses[cells[0]] = cells[1].upper()
+    return statuses
+
+
+def _looks_like_requirement_id(value: str) -> bool:
+    return bool(re.match(r"^(?:FR|US|AC|EDGE|NFR|SC|REQ)-?[A-Za-z0-9_.:-]+$", value))
+
+
+def _fulfillment_gap_tasks(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    text = path.read_text(encoding="utf-8", errors="replace")
+    count = len(re.findall(r"\b(?:FR|US|AC|EDGE|NFR|SC|REQ)-?[A-Za-z0-9_.:-]+\b", text))
+    return {
+        "count": count,
+        "details": str(path),
+    }
 
 
 def _candidate_updates(value: object) -> list[_CandidateUpdate]:

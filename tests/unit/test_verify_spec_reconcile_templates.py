@@ -45,6 +45,7 @@ def test_verify_spec_workflow_has_optional_reconcile_phase() -> None:
 def test_reconcile_phase_requires_harness_apply_command() -> None:
     text = VERIFY_RECONCILE.read_text(encoding="utf-8")
 
+    assert "write-progress-reconciliation-candidates" in text
     assert "apply-progress-reconciliation" in text
     assert "progress-reconciliation-candidates.json" in text
     assert "progress-reconciliation-plan.md" in text
@@ -66,3 +67,4 @@ def test_reconcile_phase_forbids_direct_tasks_editing() -> None:
     assert "NEVER edit task checkboxes" in text
     assert "python -m harness mark-task-progress" in text
     assert "ALWAYS use the deterministic harness command" in text
+    assert "Do not hand-write\n`progress-reconciliation-candidates.json`" in text

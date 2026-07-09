@@ -124,6 +124,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `write-codegraph-evidence-map` now handles degraded/missing CodeGraph analysis
   by writing skipped map artifacts and stamping `state.json`, so
   `verify-spec-4-map` no longer asks COMMANDER to skip and edit state manually.
+- **EGR-119 / #143 progress reconciliation candidates** — added
+  `python -m harness write-progress-reconciliation-candidates` to generate
+  conservative task DONE candidates from canonical task metadata and
+  `fulfillment-report.md`, replacing COMMANDER-authored reconciliation
+  candidate JSON for mapped implemented requirements.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG

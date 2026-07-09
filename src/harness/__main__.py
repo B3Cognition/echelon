@@ -11,6 +11,7 @@ Subcommands:
   write-judgment-prepass — write deterministic verify-spec judgment pre-pass artifacts
   assemble-fulfillment-report — assemble final fulfillment report from pre-pass and fallback rows
   apply-task-requirement-mapping — apply deterministic req= metadata mappings
+  write-progress-reconciliation-candidates — generate deterministic progress reconciliation candidates
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   init-verify-spec-run — create verify-spec runtime directory and state.json
@@ -488,6 +489,32 @@ def _apply_progress_reconciliation() -> None:
         )
         return
     print(f"OK: progress reconciliation applied {result.applied_count} task updates")
+
+
+def _write_progress_reconciliation_candidates() -> None:
+    if len(sys.argv) != 6:
+        print(
+            "Usage: python -m harness write-progress-reconciliation-candidates "
+            "<tasks.md> <fulfillment-report.md> <fulfillment-gaps.md> <out.json>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.progress_reconciliation import write_progress_reconciliation_candidates
+
+    payload = write_progress_reconciliation_candidates(
+        tasks_path=Path(sys.argv[2]),
+        fulfillment_report_path=Path(sys.argv[3]),
+        fulfillment_gaps_path=Path(sys.argv[4]),
+        out_path=Path(sys.argv[5]),
+    )
+    print(
+        "OK: wrote progress reconciliation candidates "
+        f"({len(payload['safe_task_updates'])} safe, "
+        f"{len(payload['ambiguous_task_matches'])} ambiguous)"
+    )
 
 
 def _apply_task_requirement_mapping() -> None:
@@ -976,6 +1003,8 @@ def main() -> None:
         _write_progress_integrity()
     elif subcommand == "apply-task-requirement-mapping":
         _apply_task_requirement_mapping()
+    elif subcommand == "write-progress-reconciliation-candidates":
+        _write_progress_reconciliation_candidates()
     elif subcommand == "apply-progress-reconciliation":
         _apply_progress_reconciliation()
     elif subcommand == "plan-reopen-gaps":
@@ -1011,6 +1040,7 @@ def main() -> None:
             f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', "
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
             "'write-progress-integrity', 'apply-task-requirement-mapping', "
+            "'write-progress-reconciliation-candidates', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'init-verify-spec-run', 'write-canonical-requirements', "
             "'write-requirement-audit', 'write-judgment-prepass', "

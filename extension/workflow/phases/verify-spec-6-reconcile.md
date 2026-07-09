@@ -103,50 +103,23 @@ The harness writes:
 
 ## Candidate Plan
 
-Write `{verify_run_dir}/progress-reconciliation-candidates.json`.
+Generate `{verify_run_dir}/progress-reconciliation-candidates.json` with the
+deterministic harness command:
 
-Candidate schema:
-
-```json
-{
-  "safe_task_updates": [
-    {
-      "task_id": "T-014",
-      "status": "DONE",
-      "evidence": "fulfillment-report.md#FR-003",
-      "reason": "FR-003 is IMPLEMENTED and maps to task T-014"
-    }
-  ],
-  "ambiguous_task_matches": [
-    {
-      "task_id": "T-021",
-      "evidence": "implementation-map.md#FR-004",
-      "reason": "Evidence is PARTIAL or dependency is open"
-    }
-  ],
-  "fulfillment_gap_tasks": {
-    "count": 55,
-    "details": "specs/001-demo/reopen-1.md"
-  },
-  "manual_followups": [
-    {
-      "kind": "spec_plan_divergence",
-      "details": "specs/001-demo/fulfillment-report.md#plan-spec-divergences"
-    }
-  ]
-}
+```bash
+python -m harness write-progress-reconciliation-candidates \
+  "{spec_dir}/tasks.md" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{spec_dir}/fulfillment-gaps.md" \
+  "{verify_run_dir}/progress-reconciliation-candidates.json"
 ```
 
-Only include a task in `safe_task_updates` when the fulfillment evidence is
-`IMPLEMENTED`, the task ID exists in canonical `tasks.md`, and no fulfillment
-gap contradicts completion.
-
-If a task originally had `req=UNMAPPED`, use the applied task requirement
-mapping output as the deterministic source of its FR/US/AC ownership before
-considering it for `safe_task_updates`.
-
-If evidence is partial, deviated, missing, unverified, or ambiguous, put it in
-`ambiguous_task_matches` or `manual_followups`.
+The command includes a task in `safe_task_updates` only when the task is pending,
+has mapped requirement metadata, and every mapped requirement is `IMPLEMENTED`
+in `fulfillment-report.md`. Tasks with `req=UNMAPPED`, partial/deviated/missing/
+unverified/unknown fulfillment status, or insufficient evidence are emitted as
+`ambiguous_task_matches`. Do not hand-write
+`progress-reconciliation-candidates.json`.
 
 ## Deterministic Apply
 

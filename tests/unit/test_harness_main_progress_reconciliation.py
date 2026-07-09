@@ -88,3 +88,55 @@ def test_apply_progress_reconciliation_cli_marks_done(tmp_path: Path) -> None:
     assert "applied 1 task updates" in result.stdout
     assert "- [x] T-001" in tasks_path.read_text(encoding="utf-8")
     assert (out_dir / "progress-reconciliation-applied.md").exists()
+
+
+def test_write_progress_reconciliation_candidates_cli_uses_fulfillment_statuses(
+    tmp_path: Path,
+) -> None:
+    tasks_path = tmp_path / "tasks.md"
+    tasks_path.write_text(
+        "# Tasks\n\n"
+        "- [ ] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+        "- [ ] T-002 complexity=standard phase=engine req=FR-002 depends=none\n"
+        "- [ ] T-003 complexity=standard phase=engine req=UNMAPPED depends=none\n"
+        "- [x] T-004 complexity=standard phase=engine req=FR-001 depends=none\n",
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "fulfillment-report.md"
+    report_path.write_text(
+        "# Fulfillment Report\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | source and tests |\n"
+        "| FR-002 | PARTIAL | needs more work |\n",
+        encoding="utf-8",
+    )
+    gaps_path = tmp_path / "fulfillment-gaps.md"
+    gaps_path.write_text("# Gaps\n", encoding="utf-8")
+    out_path = tmp_path / "progress-reconciliation-candidates.json"
+
+    result = _run(
+        [
+            "write-progress-reconciliation-candidates",
+            str(tasks_path),
+            str(report_path),
+            str(gaps_path),
+            str(out_path),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["safe_task_updates"] == [
+        {
+            "task_id": "T-001",
+            "status": "DONE",
+            "evidence": "fulfillment-report.md#FR-001",
+            "reason": "all mapped requirements are IMPLEMENTED: FR-001",
+        }
+    ]
+    ambiguous_ids = {
+        item["task_id"] for item in payload["ambiguous_task_matches"]
+    }
+    assert ambiguous_ids == {"T-002", "T-003"}
+    assert payload["fulfillment_gap_tasks"]["details"] == str(gaps_path)
