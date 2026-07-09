@@ -2590,6 +2590,20 @@ class RalphController:
                         f"  - python_package_manager: `{manager_name}` (lockfile: `{lockfile}`)"
                     )
 
+                dependency_names = _pyproject_dependency_names(project)
+                if dependency_names:
+                    lines.append("  - dependencies: " + ", ".join(dependency_names))
+
+                optional_dependency_groups = project.get("optional-dependencies")
+                if isinstance(optional_dependency_groups, dict):
+                    group_names = sorted(str(name) for name in optional_dependency_groups.keys())[
+                        :script_limit
+                    ]
+                    if group_names:
+                        lines.append(
+                            "  - optional_dependency_groups: " + ", ".join(group_names)
+                        )
+
                 project_scripts = project.get("scripts")
                 if isinstance(project_scripts, dict):
                     for script_name in sorted(
@@ -4716,6 +4730,28 @@ def _manifest_dependency_names(
     if not isinstance(value, dict):
         return []
     return sorted(str(name) for name in value.keys())[:limit]
+
+
+def _pyproject_dependency_names(project: dict[str, Any], *, limit: int = 10) -> list[str]:
+    dependencies = project.get("dependencies")
+    if not isinstance(dependencies, list):
+        return []
+    names: list[str] = []
+    for dependency in dependencies:
+        name = _python_requirement_name(str(dependency))
+        if name:
+            names.append(name)
+    return sorted(names)[:limit]
+
+
+def _python_requirement_name(requirement: str) -> str:
+    text = requirement.strip()
+    if not text:
+        return ""
+    text = text.split(";", 1)[0].strip()
+    text = text.split("[", 1)[0].strip()
+    match = re.match(r"([A-Za-z0-9_.-]+)", text)
+    return match.group(1) if match else ""
 
 
 def _render_layout_entry(path: Path) -> str:

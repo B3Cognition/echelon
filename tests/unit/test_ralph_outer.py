@@ -1004,12 +1004,17 @@ class TestOuterLoopConvergence:
             "[project]\n"
             "name = \"tooling\"\n"
             "version = \"0.2.0\"\n"
+            "dependencies = [\"click>=8\", \"pydantic>=2\"]\n"
             "\n"
             "[project.scripts]\n"
             "tooling = \"tooling.cli:main\"\n"
             "\n"
             "[project.gui-scripts]\n"
             "tooling-gui = \"tooling.gui:main\"\n"
+            "\n"
+            "[project.optional-dependencies]\n"
+            "dev = [\"pytest\", \"ruff\"]\n"
+            "docs = [\"mkdocs\"]\n"
             "\n"
             "[tool.pytest.ini_options]\n"
             "testpaths = [\"tests\"]\n"
@@ -1034,6 +1039,8 @@ class TestOuterLoopConvergence:
         assert "## Target Manifest Excerpts" in context
         assert "- pyproject.toml: name=`tooling`, version=`0.2.0`" in context
         assert "  - python_package_manager: `uv` (lockfile: `uv.lock`)" in context
+        assert "  - dependencies: click, pydantic" in context
+        assert "  - optional_dependency_groups: dev, docs" in context
         assert "  - script tooling: `tooling.cli:main`" in context
         assert "  - gui-script tooling-gui: `tooling.gui:main`" in context
         assert "  - tool sections: pytest, ruff" in context
