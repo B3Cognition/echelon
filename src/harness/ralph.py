@@ -2465,6 +2465,13 @@ class RalphController:
             lines.extend(
                 ["## Spec-Adjacent Artifact Excerpts", *adjacent_artifacts, ""]
             )
+        target_manifest_excerpts = self._build_slice_target_manifest_excerpts(
+            Path(worktree_path)
+        )
+        if target_manifest_excerpts:
+            lines.extend(
+                ["## Target Manifest Excerpts", *target_manifest_excerpts, ""]
+            )
         quality_commands = self._build_slice_quality_commands()
         if quality_commands:
             lines.extend(["## Quality Commands", *quality_commands, ""])
@@ -2494,6 +2501,31 @@ class RalphController:
             f"- verify_command: `{verify_command}`",
             "- Run this from `worktree` before reporting completed_task_ids when feasible.",
         ]
+
+    def _build_slice_target_manifest_excerpts(
+        self, worktree_path: Path, *, script_limit: int = 6
+    ) -> list[str]:
+        package_json = worktree_path / "package.json"
+        if not package_json.is_file():
+            return []
+        try:
+            manifest = json.loads(package_json.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+        if not isinstance(manifest, dict):
+            return []
+
+        name = _single_line(str(manifest.get("name") or "unknown"))
+        version = _single_line(str(manifest.get("version") or "unknown"))
+        lines = [f"- package.json: name=`{name}`, version=`{version}`"]
+
+        scripts = manifest.get("scripts")
+        if isinstance(scripts, dict):
+            for script_name in sorted(str(name) for name in scripts.keys())[:script_limit]:
+                command = _single_line(str(scripts.get(script_name) or ""))
+                if command:
+                    lines.append(f"  - script {script_name}: `{command}`")
+        return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
         try:
