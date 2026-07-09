@@ -766,6 +766,8 @@ def _check_ready_before_land(
         project_dir,
         options,
         warning=fulfillment_warning,
+        commit_project_dir=fulfillment_project_dir,
+        commit_ref=fulfillment_ref,
     )
 
 
@@ -861,6 +863,8 @@ def _check_fulfillment_before_land(
     options: LandOptions,
     ref: str | None = None,
     warning: str | None = None,
+    commit_project_dir: Path | None = None,
+    commit_ref: str | None = None,
 ) -> bool:
     fulfillment_warning = warning
     if fulfillment_warning is None:
@@ -869,6 +873,8 @@ def _check_fulfillment_before_land(
             project_dir,
             strict=False,
             ref=ref,
+            commit_project_dir=commit_project_dir,
+            commit_ref=commit_ref,
         )
     if not fulfillment_warning:
         return True

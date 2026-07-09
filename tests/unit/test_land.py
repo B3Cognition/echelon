@@ -13,6 +13,7 @@ import pytest
 from harness.land import (
     LandOptions,
     LandPrepareResult,
+    _check_ready_before_land,
     _fulfillment_warning,
     _finish_landing,
     _land_status_warning,
@@ -1050,6 +1051,18 @@ def test_workspace_target_fulfillment_freshness_uses_target_repo_ref(
     )
 
     assert warning is None
+    with patch("harness.land._banner") as banner:
+        assert _check_ready_before_land(
+            "001",
+            workspace,
+            LandOptions(),
+            fulfillment_project_dir=target,
+            fulfillment_ref="001-demo",
+        )
+    assert all(
+        call.args[0] != "LAND — FULFILLMENT GAPS BLOCKED"
+        for call in banner.call_args_list
+    )
 
 
 @pytest.mark.unit
