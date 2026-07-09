@@ -482,6 +482,14 @@ provides:
         capability: balanced
         tools: write         # writes README.md, CHANGELOG.md, documentation-impact-report.md
         color: red
+    - name: "speckit.echelon.docs-verifier"
+      file: "agents/build/docs-verifier.md"
+      description: "DOCS VERIFIER - checks README/CHANGELOG usefulness and routes targeted documentation repair"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write         # writes docs-verification-report.md
+        color: red
     - name: "speckit.echelon.integrator"
       file: "agents/build/integrator.md"
       description: "INTEGRATOR — verifies system integration after each build phase"

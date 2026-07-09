@@ -1321,6 +1321,36 @@ class TestBuildPhaseRouting:
         )
         assert transitions[0] == ("build-7-integration", "build-8-documentation")
 
+    def test_documentation_routes_to_docs_verifier(self, tmp_path):
+        """TECH WRITER output is verified before build finalization."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-8-documentation",
+            initial_state={},
+            provider=self._sequenced([("DONE", {})]),
+        )
+        assert transitions[0] == ("build-8-documentation", "build-8-verify-docs")
+
+    def test_docs_verifier_pass_routes_to_finalize(self, tmp_path):
+        """Docs verifier PASS → build-8-finalize."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-8-verify-docs",
+            initial_state={},
+            provider=self._sequenced([("PASS", {})]),
+        )
+        assert transitions[0] == ("build-8-verify-docs", "build-8-finalize")
+
+    def test_docs_verifier_fail_routes_to_documentation_repair(self, tmp_path):
+        """Docs verifier FAIL → TECH WRITER repair loop."""
+        transitions = self._run_and_capture(
+            tmp_path,
+            start_phase="build-8-verify-docs",
+            initial_state={},
+            provider=self._sequenced([("FAIL", {})]),
+        )
+        assert transitions[0] == ("build-8-verify-docs", "build-8-documentation")
+
     # ── build-2-implement (self-loop on NEEDS_CONTEXT) ──────────────────────
 
     def test_implement_needs_context_early_retries(self, tmp_path):

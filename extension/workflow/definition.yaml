@@ -1440,8 +1440,40 @@ phases:
     allowed_state_updates:
       - shadow_output_recovered
     transitions:
-      - to: build-8-finalize
+      - to: build-8-verify-docs
         condition: always
+
+  - id: build-8-verify-docs
+    label: "Documentation Verification (DOCS VERIFIER)"
+    spec_file: workflow/phases/build-8-verify-docs.md
+    type: agent
+    agent: speckit-echelon-docs-verifier
+    tier: build
+    description: >
+      Verifies TECH WRITER output before build finalization. Checks that README.md
+      works as a first-run manual for runnable projects, CHANGELOG.md records
+      actual changes, and documentation-impact-report.md honestly reflects the
+      update. Produces docs-verification-report.md with structured repair findings.
+    context_pack:
+      - spec.md
+      - tasks.md
+      - documentation-impact-report.md
+      - README.md
+      - CHANGELOG.md
+      - package/app metadata when present
+      - safe harness smoke evidence when present
+      - changed files from the build worktree
+    outputs:
+      - docs-verification-report.md
+    allowed_state_updates:
+      - shadow_output_recovered
+    transitions:
+      - to: build-8-finalize
+        condition: verdict = PASS
+      - to: build-8-documentation
+        condition: verdict = FAIL
+      - to: build-8-documentation
+        condition: verdict = BLOCKED
 
   - id: build-8-finalize
     label: "Build Finalize"

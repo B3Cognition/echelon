@@ -22,6 +22,7 @@ Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MAN
 - `integration-report.md`
 - `progress-report.md`
 - `documentation-impact-report.md`
+- `docs-verification-report.md`
 - repo-root `README.md`
 - repo-root `CHANGELOG.md`
 - all build gate reports
@@ -35,7 +36,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, documentation-impact-report.md, README.md, CHANGELOG.md, all build gate reports, state.json, reasoning-journal.jsonl]
+  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, documentation-impact-report.md, docs-verification-report.md, README.md, CHANGELOG.md, all build gate reports, state.json, reasoning-journal.jsonl]
   </context>
 
   <instructions>
@@ -52,7 +53,7 @@ speckit-echelon-engineering-manager (ENGINEERING MANAGER) must confirm:
 2. Task status, state tracking, and reports are internally consistent.
 3. The build is ready for full speckit-echelon-verification (VERIFICATION).
 4. **`verify.sh` exists and contains a smoke test** (see below).
-5. **Documentation Currency Gate passed**: `documentation-impact-report.md` exists; when docs are required, `README.md` and `CHANGELOG.md` were updated and `CHANGELOG.md` follows Keep a Changelog-style `[Unreleased]` entries.
+5. **Documentation Convergence Gate passed**: `documentation-impact-report.md` and `docs-verification-report.md` exist; when docs are required, `README.md` and `CHANGELOG.md` were updated, README.md works as a first-run manual for runnable projects, CHANGELOG.md follows Keep a Changelog-style `[Unreleased]` entries, and DOCS VERIFIER returned PASS.
 
 If any of these fail, always route to rework first. Do not proceed to BUILD_DONE.
 
@@ -137,6 +138,7 @@ Verify all report files are populated:
 - `integration-report.md` — One section per phase checkpoint + final
 - `progress-report.md` — One section per task + summary
 - `documentation-impact-report.md` — README/CHANGELOG impact decision and update evidence
+- `docs-verification-report.md` — README/CHANGELOG quality verification and repair-loop evidence
 - `gap-report.md` — Verification coverage and gaps
 - `verification-summary.md` — Final PASS / FAIL completion verdict
 

@@ -79,7 +79,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   omit first-run manual essentials such as prerequisites, minimal working input,
   expected dry-run output, generated output, troubleshooting, and development
   commands. Keep a Changelog `[Unreleased]` entries that describe planned
-  roadmap work are also rejected.
+  roadmap work are also rejected. The build workflow now routes TECH WRITER
+  output through a DOCS VERIFIER phase that writes `docs-verification-report.md`
+  and loops structured repair findings back to TECH WRITER before finalization.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The
