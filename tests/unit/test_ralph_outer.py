@@ -1008,6 +1008,46 @@ class TestOuterLoopConvergence:
         assert "- pyproject.toml: name=`tooling`, version=`0.2.0`" in context
         assert "  - tool sections: pytest, ruff" in context
 
+    def test_build_slice_context_includes_target_layout_excerpts(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should summarize target layout without broad discovery."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        (worktree / "README.md").write_text("# Prosaic\n", encoding="utf-8")
+        (worktree / "src").mkdir()
+        (worktree / "src" / "index.ts").write_text("export {}\n", encoding="utf-8")
+        (worktree / "tests").mkdir()
+        (worktree / "tests" / "cli.test.ts").write_text("test('x', () => {})\n", encoding="utf-8")
+        (worktree / "node_modules").mkdir()
+        (worktree / "dist").mkdir()
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Target Layout Excerpts" in context
+        assert "- top-level: README.md, src/, tests/" in context
+        assert "- source dirs: src/" in context
+        assert "- test dirs: tests/" in context
+        assert "node_modules" not in context
+        assert "dist/" not in context
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(

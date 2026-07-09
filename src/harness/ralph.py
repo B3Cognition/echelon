@@ -2473,6 +2473,11 @@ class RalphController:
             lines.extend(
                 ["## Target Manifest Excerpts", *target_manifest_excerpts, ""]
             )
+        target_layout_excerpts = self._build_slice_target_layout_excerpts(
+            Path(worktree_path)
+        )
+        if target_layout_excerpts:
+            lines.extend(["## Target Layout Excerpts", *target_layout_excerpts, ""])
         quality_commands = self._build_slice_quality_commands()
         if quality_commands:
             lines.extend(["## Quality Commands", *quality_commands, ""])
@@ -2547,6 +2552,56 @@ class RalphController:
                     lines.append(
                         "  - tool sections: " + ", ".join(tool_names[:script_limit])
                     )
+        return lines
+
+    def _build_slice_target_layout_excerpts(
+        self, worktree_path: Path, *, entry_limit: int = 16
+    ) -> list[str]:
+        if not worktree_path.is_dir():
+            return []
+        ignored = {
+            ".git",
+            ".echelon",
+            ".specify",
+            ".claude",
+            ".venv",
+            "__pycache__",
+            "node_modules",
+            "dist",
+            "build",
+            ".build",
+            "coverage",
+            "runs",
+            "target",
+            ".pytest_cache",
+        }
+        try:
+            entries = [
+                path
+                for path in worktree_path.iterdir()
+                if path.name not in ignored and not path.name.startswith(".DS_Store")
+            ]
+        except Exception:
+            return []
+        entries = sorted(entries, key=lambda path: path.name.lower())
+        rendered = [_render_layout_entry(path) for path in entries[:entry_limit]]
+        lines = []
+        if rendered:
+            lines.append("- top-level: " + ", ".join(rendered))
+
+        source_dirs = _existing_named_dirs(
+            worktree_path,
+            ("src", "Sources", "lib", "app", "packages"),
+        )
+        if source_dirs:
+            lines.append("- source dirs: " + ", ".join(source_dirs))
+
+        test_dirs = _existing_named_dirs(
+            worktree_path,
+            ("tests", "test", "__tests__", "Tests"),
+        )
+        if test_dirs:
+            lines.append("- test dirs: " + ", ".join(test_dirs))
         return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
@@ -4554,6 +4609,19 @@ def _single_line(text: str) -> str:
 
 def _pyproject_tool_label(name: str) -> str:
     return name.split(".", 1)[0] if name.startswith("pytest.") else name
+
+
+def _render_layout_entry(path: Path) -> str:
+    return f"{path.name}/" if path.is_dir() else path.name
+
+
+def _existing_named_dirs(root: Path, names: tuple[str, ...]) -> list[str]:
+    found: list[str] = []
+    for name in names:
+        path = root / name
+        if path.is_dir():
+            found.append(f"{name}/")
+    return found
 
 
 def _estimate_tokens(result: ExecResult) -> int:
