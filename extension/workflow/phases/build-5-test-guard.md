@@ -7,13 +7,14 @@
 
 ### 5.1 Dispatch speckit-echelon-test-guardian (TEST speckit-echelon-guardian (GUARDIAN))
 
-Compile context pack:
+Use the Ralph-owned context pack:
 
-- Test files from speckit-echelon-implementer (IMPLEMENTER)
-- Source files from speckit-echelon-implementer (IMPLEMENTER)
-- Task acceptance criteria
-- Relevant section of `test-strategy.md`
-- `coverage-map.md`
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.TEST_GUARDIAN` as the prepared TEST GUARDIAN context pack.
+- Use only the named context pack and explicit verifier/build outputs already
+  provided by Ralph.
+- Do not compile a separate context pack by searching source files, test files,
+  task acceptance criteria, test strategy, or coverage artifacts.
 
 Use the Agent tool:
 
@@ -22,7 +23,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include files listed above]
+  [include agent_context_files.TEST_GUARDIAN from build_slice_context_index_file]
   </context>
 
   <instructions>

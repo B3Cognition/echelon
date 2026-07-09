@@ -7,12 +7,14 @@
 
 ### 3.1 Dispatch speckit-echelon-spec-guard (SPEC GUARD)
 
-Compile context pack:
+Use the Ralph-owned context pack:
 
-- Files changed by speckit-echelon-implementer (IMPLEMENTER)
-- The task definition (acceptance criteria, FR-* references)
-- Referenced FR-* requirements from `spec.md`
-- Full `spec.md` for cross-reference
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.SPEC_GUARD` as the prepared SPEC GUARD context pack.
+- Use only the named context pack and explicit verifier/build outputs already
+  provided by Ralph.
+- Do not compile a separate context pack by searching changed files, task rows,
+  requirements, or `spec.md`.
 
 Use the Agent tool:
 
@@ -21,7 +23,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include files listed above]
+  [include agent_context_files.SPEC_GUARD from build_slice_context_index_file]
   </context>
 
   <instructions>

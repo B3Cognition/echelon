@@ -40,16 +40,14 @@ Before allowing QA entry, enforce blocked semantics:
 
 ### 2.3 Dispatch speckit-echelon-implementer (IMPLEMENTER)
 
-Compile context pack:
+Use the Ralph-owned context pack:
 
-- The specific task (from parsed task list)
-- Referenced FR-* requirements (from `spec.md`)
-- `constitution.md`
-- Relevant ADRs from `research.md`
-- Existing code from completed tasks (for integration context)
-- Relevant section of `test-strategy.md`
-- `data-model.md` (if present)
-- Relevant `contracts/` files (if present)
+- Read `build_implementer_context_file` first; it is the prepared IMPLEMENTER
+  context pack for the current task slice.
+- Use `build_slice_context_index_file` only to inspect the machine-readable
+  section map and `agent_context_files` entries.
+- Do not compile a separate context pack by searching spec, task, ADR,
+  constitution, test-strategy, data-model, contract, or source files.
 
 Use the Agent tool:
 
@@ -58,7 +56,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include files listed above]
+  [include the Ralph-owned context pack from build_implementer_context_file]
   </context>
 
   <instructions>

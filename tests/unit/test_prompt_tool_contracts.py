@@ -121,6 +121,25 @@ def test_flags_build_prompt_git_state_discovery(tmp_path: Path) -> None:
     assert findings[0].reason == "build_git_state_discovery"
 
 
+def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:
+    root = Path(__file__).resolve().parents[2]
+    phase_files = [
+        root / "extension" / "workflow" / "phases" / name
+        for name in (
+            "build-2-implement.md",
+            "build-3-spec-guard.md",
+            "build-4-code-review.md",
+            "build-5-test-guard.md",
+        )
+    ]
+
+    for phase_file in phase_files:
+        text = phase_file.read_text(encoding="utf-8")
+        assert "Compile context pack:" not in text
+        assert "Ralph-owned context pack" in text
+        assert "build_slice_context_index_file" in text
+
+
 def test_current_agent_and_phase_prompts_have_contracted_tool_references() -> None:
     root = Path(__file__).resolve().parents[2]
 

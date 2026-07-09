@@ -7,12 +7,14 @@
 
 ### 4.1 Dispatch speckit-echelon-code-reviewer (CODE REVIEWER)
 
-Compile context pack:
+Use the Ralph-owned context pack:
 
-- Files changed by speckit-echelon-implementer (IMPLEMENTER)
-- `constitution.md`
-- Relevant ADRs from `research.md`
-- Existing codebase patterns (files from prior tasks)
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.CODE_REVIEWER` as the prepared CODE REVIEWER context pack.
+- Use only the named context pack and explicit verifier/build outputs already
+  provided by Ralph.
+- Do not compile a separate context pack by searching changed files,
+  constitution, ADRs, or prior-task source patterns.
 
 Use the Agent tool:
 
@@ -21,7 +23,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include files listed above]
+  [include agent_context_files.CODE_REVIEWER from build_slice_context_index_file]
   </context>
 
   <instructions>
