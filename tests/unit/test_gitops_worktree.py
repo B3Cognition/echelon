@@ -237,6 +237,44 @@ def test_sync_runtime_extension_excludes_reverse_engineering_bash_helpers(tmp_pa
     assert not (runtime / "scripts" / "bash" / "re").exists()
 
 
+def test_sync_runtime_extension_excludes_phase_a_presets(tmp_path):
+    """Delivery worktrees should not expose Phase A preset seed material."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "presets" / "echelon-brownfield-cloud-native" / "templates").mkdir(
+        parents=True
+    )
+    (source / "templates").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (
+        source
+        / "presets"
+        / "echelon-brownfield-cloud-native"
+        / "templates"
+        / "spec-template.md"
+    ).write_text("# preset spec template\n", encoding="utf-8")
+    (source / "templates" / "tasks-template.md").write_text(
+        "# runtime task template\n", encoding="utf-8"
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime = worktree / ".specify" / "extensions" / "echelon"
+    assert (runtime / "templates" / "tasks-template.md").exists()
+    assert not (runtime / "presets").exists()
+
+
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
