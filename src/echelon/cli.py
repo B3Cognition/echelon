@@ -1686,8 +1686,11 @@ def _cmd_harness_run(
             free_text.append(arg)
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
+    explicit_target = kv.get("target") or kv.get("target_source")
 
     parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
+    if explicit_target:
+        parts.append(f"target={explicit_target}")
     if kv.get("max_outer"):
         parts.append(f"max {kv['max_outer']} outer iterations")
     if kv.get("max_inner"):
@@ -1755,6 +1758,32 @@ def _cmd_harness_run(
                 file=sys.stderr,
             )
             sys.exit(1)
+        if explicit_target and not target_env:
+            workspace_target = _resolve_harness_workspace_target(
+                polyrepo_root,
+                explicit_target,
+                spec_dir=spec_dir,
+                spec_id=resolved_spec_id,
+                rerun_command=rerun_command,
+            )
+            target_rel = (
+                "."
+                if workspace_target.source_root == workspace_target.workspace_root
+                else workspace_target.source_root.relative_to(
+                    workspace_target.workspace_root
+                ).as_posix()
+            )
+            if workspace_target.source_root == workspace_target.workspace_root:
+                direct_target_path = workspace_target.source_root
+            else:
+                target = validate_single_target([target_rel], polyrepo_root)
+                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
+                sys.exit(run_multi_target(
+                    spec_id,
+                    [target],
+                    args[1:],
+                    **_workspace_target_dispatch_metadata(workspace_target),
+                ))
         targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel and not target_env:
             if len(targets_rel) == 1:

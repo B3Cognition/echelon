@@ -40,7 +40,17 @@ stack_app = typer.Typer(
 )
 delivery_app = typer.Typer(
     add_completion=False,
-    help="Delivery commands: build, verify, recover, review, and land specs.",
+    help=(
+        "Phase B/delivery commands: build, verify, recover, review, and land specs.\n\n"
+        "Common forms:\n"
+        "  init\n"
+        "  target <spec_id>\n"
+        "  run <spec_id> [--target <source-id-or-path>] [--mode <m>] [--strategy <s>]\n"
+        "  continue <spec_id> [--mode <m>] [--strategy <s>]\n"
+        "  resume <spec_id> \"<answer>\" [--mode <m>] [--strategy <s>]\n"
+        "  land <spec_id> [--continue] [--prepare-only]"
+    ),
+    rich_markup_mode=None,
     no_args_is_help=True,
 )
 delivery_checkpoint_app = typer.Typer(
@@ -331,6 +341,7 @@ def _merge_run_args(
     *,
     mode: str | None,
     strategy: str | None,
+    target: str | None,
     max_outer: int | None,
     max_inner: int | None,
     token_budget: int | None,
@@ -343,6 +354,7 @@ def _merge_run_args(
         _option_pairs(
             mode=mode,
             strategy=strategy,
+            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -362,6 +374,7 @@ def _display_run_args(
     *,
     mode: str | None,
     strategy: str | None,
+    target: str | None,
     max_outer: int | None,
     max_inner: int | None,
     token_budget: int | None,
@@ -374,6 +387,8 @@ def _display_run_args(
         args.append(f"--mode={mode}")
     if strategy is not None:
         args.append(f"--strategy={strategy}")
+    if target is not None:
+        args.append(f"--target={target}")
     if max_outer is not None:
         args.append(f"--max-outer={max_outer}")
     if max_inner is not None:
@@ -641,6 +656,11 @@ def delivery_run(
         "--strategy",
         help="Build strategy, usually default or codegen.",
     ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        help="Implementation source id or path to run delivery against.",
+    ),
     max_outer: Optional[int] = typer.Option(
         None,
         "--max-outer",
@@ -681,6 +701,7 @@ def delivery_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
+            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -694,6 +715,7 @@ def delivery_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
+            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -713,6 +735,7 @@ def harness_run(
     spec_id: str,
     mode: Optional[str] = typer.Option(None, "--mode"),
     strategy: Optional[str] = typer.Option(None, "--strategy"),
+    target: Optional[str] = typer.Option(None, "--target"),
     max_outer: Optional[int] = typer.Option(None, "--max-outer"),
     max_inner: Optional[int] = typer.Option(None, "--max-inner"),
     token_budget: Optional[int] = typer.Option(None, "--token-budget"),
@@ -729,6 +752,7 @@ def harness_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
+            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -742,6 +766,7 @@ def harness_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
+            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,

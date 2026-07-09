@@ -32,6 +32,8 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "2",
         "--token-budget",
         "1000",
+        "--target",
+        "api",
         "--no-auto-merge",
         "--kill-losers",
         "--reset",
@@ -41,6 +43,7 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "001",
         "mode=banzai",
         "strategy=codegen",
+        "target=api",
         "max_outer=3",
         "max_inner=2",
         "token_budget=1000",
@@ -135,6 +138,7 @@ def test_delivery_run_declares_canonical_flags():
     assert "--mode" in declared_options
     assert "--strategy" in declared_options
     assert "--max-outer" in declared_options
+    assert "--target" in declared_options
 
 
 @pytest.mark.unit
@@ -251,9 +255,25 @@ def test_spec_help_uses_typer_front_door():
     assert result.exit_code == 0
     assert "Usage: root spec [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase A/spec lifecycle commands" in result.output
+    assert "Common forms:" in result.output
+    assert "run <description> [--mode semi|banzai|guided] [--reset]" in result.output
     assert "run" in result.output
     assert "status" in result.output
     assert "Usage: echelon spec <subcommand>" not in result.output
+
+
+@pytest.mark.unit
+def test_delivery_help_uses_phase_b_common_forms():
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["delivery", "--help"])
+
+    assert result.exit_code == 0
+    assert "Usage: root delivery [OPTIONS] COMMAND [ARGS]..." in result.output
+    assert "Phase B/delivery commands" in result.output
+    assert "Common forms:" in result.output
+    assert "run <spec_id> [--target <source-id-or-path>] [--mode <m>]" in result.output
+    assert "land <spec_id> [--continue] [--prepare-only]" in result.output
 
 
 @pytest.mark.unit

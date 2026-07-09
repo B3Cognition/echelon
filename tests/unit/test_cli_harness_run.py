@@ -598,6 +598,44 @@ class TestHarnessTargetPreflight:
         dispatched_targets = mock_run.call_args.args[1]
         assert dispatched_targets == [target.resolve()]
 
+    def test_explicit_target_argument_controls_delivery_run_dispatch(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        root = tmp_path
+        spec_dir = root / "specs" / "001-feature"
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+
+        target = root / "services" / "api"
+        (target / ".git").mkdir(parents=True)
+        (target / "package.json").write_text("{}\n", encoding="utf-8")
+        other = root / "services" / "web"
+        (other / ".git").mkdir(parents=True)
+
+        monkeypatch.chdir(root)
+        from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
+
+        def fake_resolve(project_root, explicit_target, **kwargs):
+            assert explicit_target == "api"
+            return HarnessWorkspaceTarget(
+                workspace_root=root.resolve(),
+                workspace_git_role="orchestration",
+                source_root=target.resolve(),
+                source_id="api",
+                source_git_role="source",
+            )
+
+        monkeypatch.setattr("echelon.cli._resolve_harness_workspace_target", fake_resolve)
+        with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["001", "mode=banzai", "target=api"])
+
+        assert exc.value.code == 0
+        dispatched_targets = mock_run.call_args.args[1]
+        assert dispatched_targets == [target.resolve()]
+
     def test_multiple_workspace_source_roots_stop_before_workspace_config(
         self,
         tmp_path: Path,
