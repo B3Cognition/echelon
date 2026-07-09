@@ -785,6 +785,8 @@ class TestOuterLoopConvergence:
             ("SPEC_GUARD", "default-spec-guard-context.md"),
             ("CODE_REVIEWER", "default-code-reviewer-context.md"),
             ("TEST_GUARDIAN", "default-test-guardian-context.md"),
+            ("TECH_WRITER", "default-tech-writer-context.md"),
+            ("DOCS_VERIFIER", "default-docs-verifier-context.md"),
         ):
             agent_context_file = state_store.state_dir.parent / "context" / filename
             assert context_index["agent_context_files"][agent_name] == str(
