@@ -569,6 +569,7 @@ class TestOuterLoopConvergence:
         state["workspace_root"] = str(workspace)
         state["workspace_git_role"] = "workspace"
         state["source_root"] = str(target)
+        state["target_path"] = str(target)
         state["source_id"] = "prosaic"
         state["source_git_role"] = "source"
         state_store.write(state)
@@ -584,6 +585,52 @@ class TestOuterLoopConvergence:
         )[0]
         assert str(target) not in forbidden_block
         assert "Do not inspect, read, list, grep, or search sibling source roots" in prompt
+
+    def test_harness_context_writes_delivery_containment_policy(
+        self, tmp_path: Path
+    ) -> None:
+        """Targeted delivery must expose roots as a Python-owned policy artifact."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        target = workspace / "sources" / "prosaic"
+        sibling = workspace / "sources" / "ruler"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree = (
+            tmp_path
+            / "runs"
+            / "targets"
+            / "prosaic"
+            / "runs"
+            / "build-1"
+            / "worktrees"
+            / "default"
+            / "iter-0"
+        )
+        for path in (target, sibling, spec_dir, worktree):
+            path.mkdir(parents=True)
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["workspace_git_role"] = "workspace"
+        state["source_root"] = str(target)
+        state["target_path"] = str(target)
+        state["source_id"] = "prosaic"
+        state["source_git_role"] = "source"
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        policy_file = state_store.state_dir / "delivery-containment-policy.json"
+        policy = json.loads(policy_file.read_text(encoding="utf-8"))
+        assert f"containment_policy_file: {policy_file}" in prompt
+        assert policy["workspace_root"] == str(workspace)
+        assert policy["source_root"] == str(target)
+        assert policy["worktree"] == str(worktree)
+        assert policy["allowed_roots"]["implementation"] == [str(worktree)]
+        assert str(spec_dir) in policy["allowed_roots"]["spec_inputs"]
+        assert str(state_store.state_dir) in policy["allowed_roots"]["harness_state"]
+        assert policy["forbidden_source_roots"] == [str(sibling)]
 
     def test_harness_context_includes_delivery_progress_ledger(
         self, tmp_path: Path

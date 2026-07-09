@@ -2304,6 +2304,16 @@ class RalphController:
             workspace_root=workspace_root,
             source_root=source_root,
         )
+        containment_policy_file = self._write_delivery_containment_policy(
+            worktree_path=worktree_path,
+            workspace_root=workspace_root,
+            workspace_git_role=workspace_git_role,
+            source_root=source_root,
+            source_id=source_id,
+            source_git_role=source_git_role,
+            spec_dir=spec_dir,
+            forbidden_source_roots=forbidden_source_roots,
+        )
         forbidden_source_roots_block = ""
         forbidden_source_roots_instruction = ""
         if forbidden_source_roots:
@@ -2340,6 +2350,7 @@ class RalphController:
             f"source_root: {source_root}\n"
             f"source_id: {source_id}\n"
             f"source_git_role: {source_git_role}\n"
+            f"containment_policy_file: {containment_policy_file}\n"
             f"{forbidden_source_roots_block}"
             f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"
@@ -2367,6 +2378,51 @@ class RalphController:
             f"{progress_ledger_block}"
         )
         return f"{block}\n{prompt}"
+
+    def _write_delivery_containment_policy(
+        self,
+        *,
+        worktree_path: str,
+        workspace_root: object,
+        workspace_git_role: object,
+        source_root: object,
+        source_id: object,
+        source_git_role: object,
+        spec_dir: Path | None,
+        forbidden_source_roots: list[str],
+    ) -> Path:
+        """Write machine-readable delivery root boundaries for provider enforcement."""
+        policy_file = self._state_store.state_dir / "delivery-containment-policy.json"
+        spec_inputs = [str(spec_dir)] if spec_dir is not None else []
+        policy = {
+            "schema_version": 1,
+            "worktree": str(worktree_path),
+            "target_repo_worktree": str(worktree_path),
+            "workspace_root": str(workspace_root),
+            "workspace_git_role": str(workspace_git_role),
+            "source_root": str(source_root),
+            "source_id": str(source_id),
+            "source_git_role": str(source_git_role),
+            "state_dir": str(self._state_store.state_dir),
+            "allowed_roots": {
+                "implementation": [str(worktree_path)],
+                "spec_inputs": spec_inputs,
+                "harness_state": [str(self._state_store.state_dir)],
+                "orchestration": [str(workspace_root)],
+            },
+            "forbidden_source_roots": forbidden_source_roots,
+            "rules": [
+                "implementation reads, searches, edits, and tests must stay in worktree",
+                "spec_inputs are read-only",
+                "harness_state is Ralph-owned",
+                "forbidden_source_roots must not be inspected, listed, searched, read, or edited",
+            ],
+        }
+        policy_file.write_text(
+            json.dumps(policy, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return policy_file
 
     def _forbidden_sibling_source_roots(
         self,
