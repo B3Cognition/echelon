@@ -74,6 +74,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
+  delivery slice's changed-file list into the TECH WRITER documentation gate,
+  so later checkpoint/status commits do not trigger false README/CHANGELOG
+  repair loops after documentation was already updated in the implementation
+  slice.
 - **EGR-121 / #146 workspace spec convergence commits** — workspace-target
   delivery now commits workspace-owned spec lifecycle artifacts after target
   output is committed and before Ralph reports convergence, using a bounded

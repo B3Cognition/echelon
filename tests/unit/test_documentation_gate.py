@@ -235,6 +235,57 @@ def test_gate_accepts_required_docs_with_keepachangelog_changes(tmp_path: Path) 
     assert result.passed
 
 
+def test_gate_accepts_required_docs_changed_in_delivery_slice(tmp_path: Path) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "package.json").write_text(
+        '{"name":"demo","bin":{"demo":"dist/cli.js"},"engines":{"node":">=20"},"scripts":{"build":"tsc","test":"vitest","lint":"eslint ."}}\n',
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented new behavior.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+    _write_docs_verification_pass(spec_dir)
+    _commit_all(tmp_path, "docs update")
+    (spec_dir / "echelon-result.json").write_text('{"status":"done"}\n', encoding="utf-8")
+    _commit_all(tmp_path, "status update")
+
+    result = evaluate_documentation_gate(
+        tmp_path,
+        spec_dir,
+        changed_files=["README.md", "CHANGELOG.md"],
+    )
+
+    assert result.passed
+
+
 def test_gate_blocks_required_docs_without_docs_verification_report(
     tmp_path: Path,
 ) -> None:

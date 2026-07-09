@@ -23,6 +23,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness.config import HarnessConfig, ResourceLimits, NetworkConfig
+from harness.documentation_gate import DocumentationGateResult
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
 from harness.fulfillment_runner import FulfillmentRefreshResult
@@ -835,6 +836,35 @@ class TestOuterLoopConvergence:
         result = controller._apply_documentation_gate(verify, str(worktree))
 
         assert result.passed
+
+    def test_documentation_gate_receives_delivery_slice_changed_files(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
+        seen: dict[str, object] = {}
+
+        def fake_gate(worktree_path: Path, resolved_spec_dir: Path, *, changed_files=None):
+            seen["worktree_path"] = worktree_path
+            seen["spec_dir"] = resolved_spec_dir
+            seen["changed_files"] = changed_files
+            return DocumentationGateResult(passed=True)
+
+        monkeypatch.setattr("harness.ralph.evaluate_documentation_gate", fake_gate)
+
+        result = controller._apply_documentation_gate(
+            verify,
+            str(worktree),
+            changed_files=["README.md", "CHANGELOG.md"],
+        )
+
+        assert result.passed
+        assert seen["worktree_path"] == worktree
+        assert seen["spec_dir"] == spec_dir
+        assert seen["changed_files"] == ["README.md", "CHANGELOG.md"]
 
     def test_external_missing_documentation_report_blocks_without_inner_fix(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

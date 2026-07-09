@@ -639,7 +639,9 @@ class RalphController:
                         verify_result, worktree_path
                     )
                     verify_result = self._apply_documentation_gate(
-                        verify_result, worktree_path
+                        verify_result,
+                        worktree_path,
+                        changed_files=scoped_changed_files,
                     )
                     tokens_used += verify_result.token_usage
 
@@ -1151,17 +1153,20 @@ class RalphController:
 
             # Re-verify
             current_verify = self._exec_verify(handle, worktree_path=worktree_path)
+            inner_changed_files = self._changed_files_since_head(worktree_path)
             current_verify = self._refresh_fulfillment_report(
                 current_verify,
                 worktree_path,
                 completed_task_ids=scoped_completed_task_ids,
-                changed_files=self._changed_files_since_head(worktree_path),
+                changed_files=inner_changed_files,
             )
             current_verify = self._apply_fulfillment_gate(
                 current_verify, worktree_path
             )
             current_verify = self._apply_documentation_gate(
-                current_verify, worktree_path
+                current_verify,
+                worktree_path,
+                changed_files=inner_changed_files,
             )
             tokens_used += current_verify.token_usage
 
@@ -1442,6 +1447,7 @@ class RalphController:
         self,
         verify_result: VerifyResult,
         worktree_path: str,
+        changed_files: Optional[List[str]] = None,
     ) -> VerifyResult:
         """Treat stale or missing README/CHANGELOG decisions as verification failures."""
         if not verify_result.passed or not worktree_path:
@@ -1451,7 +1457,11 @@ class RalphController:
         if spec_dir is None:
             return verify_result
 
-        gate = evaluate_documentation_gate(Path(worktree_path), spec_dir)
+        gate = evaluate_documentation_gate(
+            Path(worktree_path),
+            spec_dir,
+            changed_files=changed_files,
+        )
         if gate.passed:
             return verify_result
 

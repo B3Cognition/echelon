@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 import subprocess
+from typing import Iterable
 
 import yaml
 
@@ -26,6 +27,8 @@ class DocumentationGateResult:
 def evaluate_documentation_gate(
     worktree_path: Path | str,
     spec_dir: Path | str,
+    *,
+    changed_files: Iterable[str] | None = None,
 ) -> DocumentationGateResult:
     """Validate TECH WRITER's documentation impact report and required docs."""
     worktree = Path(worktree_path)
@@ -70,11 +73,15 @@ def evaluate_documentation_gate(
             "docs are required but README.md or CHANGELOG.md is missing",
         )
 
-    changed = _changed_paths(worktree)
+    changed = (
+        _normalize_changed_paths(changed_files)
+        if changed_files is not None
+        else _changed_paths(worktree)
+    )
     if "README.md" not in changed or "CHANGELOG.md" not in changed:
         return _fail(
             "documentation-required-without-doc-changes",
-            "docs are required but README.md and CHANGELOG.md are not both changed at current HEAD",
+            "docs are required but README.md and CHANGELOG.md are not both changed in the delivery slice",
         )
 
     deterministic_failure = _deterministic_docs_failure(worktree, spec, metadata)
@@ -107,11 +114,20 @@ def _changed_paths(worktree: Path) -> set[str]:
         text=True,
         check=False,
     )
-    changed: set[str] = set()
+    paths: list[str] = []
     for line in result.stdout.splitlines():
         if len(line) < 4:
             continue
-        path = line[3:].strip()
+        paths.append(line[3:].strip())
+    return _normalize_changed_paths(paths)
+
+
+def _normalize_changed_paths(paths: Iterable[str]) -> set[str]:
+    changed: set[str] = set()
+    for raw_path in paths:
+        path = str(raw_path).strip()
+        if not path:
+            continue
         if " -> " in path:
             path = path.split(" -> ", 1)[1]
         changed.add(path.strip('"'))
