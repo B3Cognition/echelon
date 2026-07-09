@@ -2679,21 +2679,23 @@ class RalphController:
             worktree_path,
             ("src", "Sources", "lib", "app", "packages"),
         )
+        source_files = _code_files_under_dirs(worktree_path, source_dirs)
         if source_dirs:
             lines.append("- source dirs: " + ", ".join(source_dirs))
-            source_files = _sample_files_under_dirs(worktree_path, source_dirs)
-            if source_files:
-                lines.append("- source files: " + ", ".join(source_files))
 
         test_dirs = _existing_named_dirs(
             worktree_path,
             ("tests", "test", "__tests__", "Tests"),
         )
+        test_files = _code_files_under_dirs(worktree_path, test_dirs)
         if test_dirs:
             lines.append("- test dirs: " + ", ".join(test_dirs))
-            test_files = _sample_files_under_dirs(worktree_path, test_dirs)
-            if test_files:
-                lines.append("- test files: " + ", ".join(test_files))
+        if source_files or test_files:
+            lines.append(f"- file counts: source={len(source_files)}, test={len(test_files)}")
+        if source_files:
+            lines.append("- source files: " + ", ".join(source_files[:8]))
+        if test_files:
+            lines.append("- test files: " + ", ".join(test_files[:8]))
         return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
@@ -4768,18 +4770,30 @@ def _render_layout_entry(path: Path) -> str:
 
 def _existing_named_dirs(root: Path, names: tuple[str, ...]) -> list[str]:
     found: list[str] = []
+    seen_paths: set[Path | tuple[int, int]] = set()
     for name in names:
         path = root / name
         if path.is_dir():
+            try:
+                stat = path.stat()
+                resolved: Path | tuple[int, int] = (stat.st_dev, stat.st_ino)
+            except Exception:
+                try:
+                    resolved = path.resolve()
+                except Exception:
+                    resolved = path
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
             found.append(f"{name}/")
     return found
 
 
-def _sample_files_under_dirs(
+def _code_files_under_dirs(
     root: Path,
     dirs: list[str],
     *,
-    limit: int = 8,
+    limit: int | None = None,
     max_depth: int = 3,
 ) -> list[str]:
     ignored_parts = {
@@ -4834,7 +4848,7 @@ def _sample_files_under_dirs(
             if any(part in ignored_parts for part in relative.parts[:-1]):
                 continue
             files.append(relative.as_posix())
-            if len(files) >= limit:
+            if limit is not None and len(files) >= limit:
                 return files
     return files
 

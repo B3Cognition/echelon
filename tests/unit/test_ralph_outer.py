@@ -1093,6 +1093,7 @@ class TestOuterLoopConvergence:
         assert "- source dirs: src/" in context
         assert "- test dirs: tests/" in context
         assert "- config files: jest.config.ts, tsconfig.json" in context
+        assert "- file counts: source=2, test=1" in context
         assert "- source files: src/config.ts, src/index.ts" in context
         assert "- test files: tests/cli.test.ts" in context
         assert "tests/fixtures/sample.json" not in context
