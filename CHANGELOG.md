@@ -84,6 +84,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `.specify/extensions/echelon/scripts/bash/re` from target worktrees and
   workspace-target harness roots. It also omits Phase A preset seed material
   under `.specify/extensions/echelon/presets`.
+- **EGR-117 / #141 delivery agent wrapper scope** — generated
+  `.claude/agents` files in delivery worktrees are now limited to control and
+  build agents instead of exposing exploration, solution, reverse-engineering,
+  learning, feasibility, and specialist agents.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG

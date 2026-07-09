@@ -50,6 +50,10 @@ RUNTIME_EXTENSION_EXCLUDED_NAMES = (
     ".pytest_cache",
     "node_modules",
 )
+RUNTIME_CLAUDE_AGENT_DIRS = (
+    Path("control"),
+    Path("build"),
+)
 
 
 def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
@@ -701,7 +705,12 @@ class GitOpsManager:
 
         target = worktree / ".claude" / "agents"
         target.mkdir(parents=True, exist_ok=True)
-        for agent_file in sorted(agents_dir.rglob("*.md")):
+        agent_files: list[Path] = []
+        for relative_dir in RUNTIME_CLAUDE_AGENT_DIRS:
+            source_dir = agents_dir / relative_dir
+            if source_dir.exists():
+                agent_files.extend(source_dir.rglob("*.md"))
+        for agent_file in sorted(agent_files):
             agent_name = f"speckit-echelon-{agent_file.stem}"
             (target / f"{agent_name}.md").write_text(
                 _claude_agent_from_runtime_agent(agent_file, agent_name),

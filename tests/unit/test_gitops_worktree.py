@@ -316,10 +316,20 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     source = tmp_path / ".specify" / "extensions" / "echelon"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "agents" / "build").mkdir(parents=True)
+    (source / "agents" / "exploration").mkdir(parents=True)
+    (source / "agents" / "solution").mkdir(parents=True)
     (source / "workflow").mkdir()
     (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
     (source / "agents" / "build" / "spec-guard.md").write_text(
         "# SPEC GUARD\n\nguard\n",
+        encoding="utf-8",
+    )
+    (source / "agents" / "exploration" / "scout.md").write_text(
+        "# SCOUT\n\nscout\n",
+        encoding="utf-8",
+    )
+    (source / "agents" / "solution" / "architect.md").write_text(
+        "# ARCHITECT\n\narchitect\n",
         encoding="utf-8",
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
@@ -335,6 +345,8 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
 
     commander = worktree / ".claude" / "agents" / "speckit-echelon-commander.md"
     spec_guard = worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md"
+    scout = worktree / ".claude" / "agents" / "speckit-echelon-scout.md"
+    architect = worktree / ".claude" / "agents" / "speckit-echelon-architect.md"
     commander_text = commander.read_text(encoding="utf-8")
     assert commander_text.startswith("---\nname: speckit-echelon-commander\n")
     assert "\ncommander\n" in commander_text
@@ -342,6 +354,8 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     assert spec_guard_text.startswith("---\nname: speckit-echelon-spec-guard\n")
     assert "description: SPEC GUARD" in spec_guard_text
     assert "# SPEC GUARD\n\nguard\n" in spec_guard_text
+    assert not scout.exists()
+    assert not architect.exists()
     assert ".claude/agents/" in exclude.read_text(encoding="utf-8")
 
 
