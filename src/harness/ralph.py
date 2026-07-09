@@ -24,7 +24,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
@@ -2411,18 +2411,15 @@ class RalphController:
         )
         if not text.strip():
             return None
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line or not _looks_like_tool_access_line(line):
-                continue
-            for root in forbidden_roots:
-                if root in line:
-                    return {
-                        "workspace_root": str(state.get("workspace_root") or ""),
-                        "source_root": str(state.get("source_root") or ""),
-                        "forbidden_root": root,
-                        "matched_line": line,
-                    }
+        match = _find_forbidden_root_in_tool_transcript(text, forbidden_roots)
+        if match is not None:
+            root, line = match
+            return {
+                "workspace_root": str(state.get("workspace_root") or ""),
+                "source_root": str(state.get("source_root") or ""),
+                "forbidden_root": root,
+                "matched_line": line,
+            }
         return None
 
     def _detect_forbidden_harness_source_access(
@@ -2439,17 +2436,15 @@ class RalphController:
         )
         if not text.strip():
             return None
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line or not _looks_like_tool_access_line(line):
-                continue
-            for root in forbidden_roots:
-                if root in line:
-                    return {
-                        "worktree": str(worktree_path),
-                        "forbidden_root": root,
-                        "matched_line": line,
-                    }
+        match = _find_forbidden_root_in_tool_transcript(text, forbidden_roots)
+        if match is not None:
+            root, line = match
+            return {
+                "worktree": str(worktree_path),
+                "forbidden_root": root,
+                "matched_line": line,
+            }
+        for line in _iter_tool_transcript_lines(text):
             marker = _forbidden_harness_source_marker(line, Path(worktree_path))
             if marker:
                 return {
@@ -3828,6 +3823,46 @@ _HOST_HARNESS_SOURCE_MARKERS = (
 
 def _looks_like_tool_access_line(line: str) -> bool:
     return bool(_TOOL_ACCESS_LINE_RE.search(line))
+
+
+def _looks_like_tool_output_line(raw_line: str) -> bool:
+    stripped = raw_line.strip()
+    if not stripped:
+        return False
+    if stripped.startswith(("⎿", "…")):
+        return True
+    return raw_line.startswith(("  ", "    ", "\t"))
+
+
+def _iter_tool_transcript_lines(text: str) -> Iterable[str]:
+    in_tool_block = False
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            in_tool_block = False
+            continue
+        if _looks_like_tool_access_line(line):
+            in_tool_block = True
+            yield line
+            continue
+        if in_tool_block and _looks_like_tool_output_line(raw_line):
+            yield line
+            continue
+        in_tool_block = False
+
+
+def _find_forbidden_root_in_tool_transcript(
+    text: str,
+    forbidden_roots: Iterable[str],
+) -> tuple[str, str] | None:
+    roots = [root for root in forbidden_roots if root]
+    if not roots:
+        return None
+    for line in _iter_tool_transcript_lines(text):
+        for root in roots:
+            if root in line:
+                return root, line
+    return None
 
 
 def _forbidden_harness_source_marker(line: str, worktree: Path) -> str | None:
