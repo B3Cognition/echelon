@@ -4,6 +4,89 @@ import subprocess
 from harness.documentation_gate import evaluate_documentation_gate
 
 
+FIRST_RUN_README = """# Demo
+
+Demo distributes project artifacts to local tools.
+
+## Prerequisites
+
+- Node.js 20 or newer.
+- npm.
+
+## Install
+
+```bash
+npm install
+npm run build
+npm link
+demo --version
+```
+
+## First Run
+
+Create `.demo/rules/style.md`:
+
+```markdown
+---
+description: Shared style.
+---
+
+Be concise.
+```
+
+Create `demo.config.yaml`:
+
+```yaml
+targets:
+  - claude-code
+```
+
+## Preview the write plan
+
+```bash
+demo apply --dry-run
+```
+
+Expected output:
+
+```text
+Dry run (apply): 1 create, 0 overwrite, 0 backup, 0 remove, 0 unchanged.
+create  .claude/style.md [claude-code]
+```
+
+## Apply the generated files
+
+```bash
+demo apply
+```
+
+Expected files:
+
+```text
+.claude/style.md
+.demo-manifest.json
+```
+
+## Revert generated files
+
+```bash
+demo revert --dry-run
+demo revert
+```
+
+## Troubleshooting
+
+Run commands from the project root when the dry run creates nothing.
+
+## Develop
+
+```bash
+npm test
+npm run lint
+```
+"""
+
+
 def _git_repo(path: Path) -> None:
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
     subprocess.run(
@@ -100,9 +183,7 @@ def test_gate_accepts_required_docs_with_keepachangelog_changes(tmp_path: Path) 
     )
     _commit_all(tmp_path)
 
-    (tmp_path / "README.md").write_text(
-        "# Demo\n\nNew documented behavior.\n", encoding="utf-8"
-    )
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
     (tmp_path / "CHANGELOG.md").write_text(
         "# Changelog\n\n"
         "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
@@ -126,3 +207,107 @@ def test_gate_accepts_required_docs_with_keepachangelog_changes(tmp_path: Path) 
     result = evaluate_documentation_gate(tmp_path, spec_dir)
 
     assert result.passed
+
+
+def test_gate_blocks_overview_only_readme_for_required_cli_docs(tmp_path: Path) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "package.json").write_text(
+        '{"name":"demo","bin":{"demo":"dist/cli.js"},"engines":{"node":">=20"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(
+        "# Demo\n\n"
+        "Demo is a distribution engine.\n\n"
+        "## Install\n\n"
+        "```bash\n"
+        "npm install -g demo\n"
+        "```\n\n"
+        "## Use\n\n"
+        "```bash\n"
+        "demo apply --dry-run\n"
+        "demo apply\n"
+        "```\n\n"
+        "## Configuration\n\n"
+        "Create `demo.config.yaml`.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented the CLI.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "readme-first-run-manual-incomplete"
+    assert "Prerequisites" in result.failure.error
+    assert "minimal working input" in result.failure.error
+    assert "expected dry-run output" in result.failure.error
+
+
+def test_gate_blocks_changelog_planned_entries_for_required_docs(tmp_path: Path) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Planned: watch mode will be added later.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "changelog-planned-entry"

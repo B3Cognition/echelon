@@ -74,6 +74,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-122 / #147 TECH WRITER docs verification** — the documentation gate now
+  rejects overview-only README updates for runnable npm/CLI projects when they
+  omit first-run manual essentials such as prerequisites, minimal working input,
+  expected dry-run output, generated output, troubleshooting, and development
+  commands. Keep a Changelog `[Unreleased]` entries that describe planned
+  roadmap work are also rejected.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The
