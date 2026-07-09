@@ -19,27 +19,17 @@ def test_help_command_prints_usage_without_unknown_command(
 
     monkeypatch.setattr("sys.argv", ["echelon", "help"])
 
-    with pytest.raises(SystemExit) as exc:
-        main()
+    main()
 
-    assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "echelon: unknown command" not in captured.err
-    assert "Usage: echelon <command>" in captured.out
-    assert "delivery init" in captured.out
-    assert "delivery run <spec_id> [--mode <m>] [--strategy <s>]" in captured.out
-    assert "--max-outer <n>" in captured.out
-    assert "--auto-merge|--no-auto-merge" in captured.out
-    assert "Legacy key=value options remain accepted for compatibility." in captured.out
-    assert "workspace migrate [--write] [--commit] [--message <msg>]" in captured.out
-    assert "spec run <description> [--mode semi|banzai|guided] [--reset]" in captured.out
-    assert "[--message <text>] [--next-phase <id>]" in captured.out
-    assert "phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]" in captured.out
-    assert "[--message <text>]" in captured.out
-    assert "spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
-    assert "delivery checkpoint list <spec_id> [--strategy <s>]" in captured.out
-    assert "benchmark show [latest|<summary-path-or-run-dir>]" in captured.out
-    assert "[--baseline-ref <ref>] [--dry-run]" in captured.out
+    assert "Echelon CLI" in captured.out
+    assert "delivery" in captured.out
+    assert "spec" in captured.out
+    assert "workspace" in captured.out
+    assert "phase" in captured.out
+    assert "benchmark" in captured.out
+    assert "stack" in captured.out
 
 
 @pytest.mark.unit
@@ -51,14 +41,13 @@ def test_phase_help_does_not_require_installed_extension(
 
     monkeypatch.setattr("sys.argv", ["echelon", "phase", "--help"])
 
-    with pytest.raises(SystemExit) as exc:
-        main()
+    main()
 
-    assert exc.value.code == 0
     captured = capsys.readouterr()
     assert "Echelon extension not installed" not in captured.err
-    assert "echelon phase run <phase-id>" in captured.out
-    assert "--message <text>" in captured.out
+    assert "phase [OPTIONS] COMMAND [ARGS]" in captured.out
+    assert "Workflow phase inspection and manual replay commands." in captured.out
+    assert "run" in captured.out
 
 
 @pytest.mark.unit
@@ -94,9 +83,9 @@ def test_top_level_checkpoint_is_not_a_compatibility_alias(
     with pytest.raises(SystemExit) as exc:
         main()
 
-    assert exc.value.code == 1
+    assert exc.value.code == 2
     captured = capsys.readouterr()
-    assert "unknown command 'checkpoint'" in captured.err
+    assert "No such command 'checkpoint'" in captured.err
     assert "echelon spec checkpoint list" not in captured.out
 
 

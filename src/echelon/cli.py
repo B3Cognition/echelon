@@ -6836,166 +6836,28 @@ def _stack_definition_to_dict(stack) -> dict:
 
 def main() -> None:
     args = sys.argv[1:]
-
-    if not args or args[0] in ("-h", "--help", "help"):
-        print(USAGE)
-        sys.exit(0)
-
-    if args[0] in ("-v", "--version", "version"):
+    if args[:1] == ["help"]:
+        args = ["--help"]
+    if args[:1] in (["-v"], ["--version"]):
         print(f"echelon {CLI_VERSION}")
-        sys.exit(0)
-
-    command = args[0]
-
-    if command in {"spec", "delivery", "harness"}:
-        from click import ClickException
-        from echelon.cli_app import run as run_typer_cli
-
-        click_exceptions: tuple[type[BaseException], ...] = (ClickException,)
-        try:
-            from typer._click.exceptions import ClickException as TyperClickException
-
-            click_exceptions = (ClickException, TyperClickException)
-        except Exception:
-            pass
-
-        try:
-            run_typer_cli(args)
-        except click_exceptions as exc:
-            exc.show()
-            sys.exit(exc.exit_code)
+        return
+    if args[:1] == ["version"]:
+        print(f"echelon {CLI_VERSION}")
         return
 
-    if command == "init":
-        _cmd_init(Path.cwd())
-        return
+    from click import ClickException
+    from echelon.cli_app import run as run_typer_cli
 
-    if command == "cicd":
-        _cmd_cicd(args[1:])
-        return
+    click_exceptions: tuple[type[BaseException], ...] = (ClickException,)
+    try:
+        from typer._click.exceptions import ClickException as TyperClickException
 
-    if command == "workspace":
-        _cmd_workspace(args[1:])
-        return
+        click_exceptions = (ClickException, TyperClickException)
+    except Exception:
+        pass
 
-    if command == "benchmark":
-        _cmd_benchmark(args[1:], project_root=Path.cwd())
-        return
-
-    if command == "stack":
-        _cmd_stack(args[1:], project_root=Path.cwd())
-        return
-
-    if command == "artifacts":
-        _cmd_artifacts(args[1:])
-        return
-
-    if command == "land":
-        _cmd_land(args[1:])
-        return
-
-    if command == "status":
-        _cmd_status(Path.cwd())
-        return
-
-    if command == "continue":
-        project_root = Path.cwd()
-        ext_dir = project_root / ".specify" / "extensions" / "echelon"
-        if not ext_dir.exists():
-            print(
-                f"✗ Echelon extension not installed: {ext_dir}\n"
-                "  Run: specify extension add echelon",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        _cmd_continue(args[1:], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if command == "rewind":
-        _cmd_rewind(args[1:], project_root=Path.cwd())
-        return
-
-    if command == "phase":
-        project_root = Path.cwd()
-        ext_dir = project_root / ".specify" / "extensions" / "echelon"
-        if not args[1:] or args[1] in ("-h", "--help"):
-            print(
-                "Usage:\n"
-                "  echelon phase list\n"
-                "  echelon phase run <phase-id> [--spec <id>] "
-                "[--mode semi|banzai|guided] [--message <text>]"
-            )
-            sys.exit(0)
-        if not ext_dir.exists():
-            print(
-                f"✗ Echelon extension not installed: {ext_dir}\n"
-                "  Run: specify extension add echelon",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        cfg_file = _project_echelon_config(project_root)
-        if not cfg_file.exists():
-            print(
-                f"✗ Project not initialized — config not found: {cfg_file}\n"
-                "  Run: echelon workspace init",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        _cmd_phase(args[1:], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if command == "resume":
-        if os.environ.get("ECHELON_SQUAD_ACTIVE"):
-            print(
-                "✗ echelon spec resume: refusing nested invocation (ECHELON_SQUAD_ACTIVE is set).",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        project_root = Path.cwd()
-        ext_dir = project_root / ".specify" / "extensions" / "echelon"
-        if not ext_dir.exists():
-            print(
-                f"✗ Echelon extension not installed: {ext_dir}\n"
-                "  Run: specify extension add echelon",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        _cmd_resume(args[1:], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if command == "run":
-        if os.environ.get("ECHELON_SQUAD_ACTIVE"):
-            print(
-                "✗ echelon spec run: refusing nested invocation — already inside a squad "
-                "agent dispatch (ECHELON_SQUAD_ACTIVE is set).\n"
-                "  Squad agents must not call 'echelon spec run'. "
-                "Return echelon_result: from your agent instead.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        project_root = Path.cwd()
-        ext_dir = project_root / ".specify" / "extensions" / "echelon"
-        if not ext_dir.exists():
-            print(
-                f"✗ Echelon extension not installed: {ext_dir}\n"
-                "  Run: specify extension add echelon",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        cfg_file = _project_echelon_config(project_root)
-        if not cfg_file.exists():
-            print(
-                f"✗ Project not initialized — config not found: {cfg_file}\n"
-                "  Run: echelon workspace init",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        _cmd_run(args[1:], project_root=project_root, ext_dir=ext_dir)
-        return
-
-    if command not in SKILL_MAP:
-        print(f"echelon: unknown command '{command}'\n", file=sys.stderr)
-        print(USAGE)
-        sys.exit(1)
-
-    _dispatch_skill_command(command, args[1:])
+    try:
+        run_typer_cli(args)
+    except click_exceptions as exc:
+        exc.show()
+        sys.exit(exc.exit_code)

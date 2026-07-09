@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 from typer.testing import CliRunner
 
@@ -197,6 +199,41 @@ def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
 
 
 @pytest.mark.unit
+def test_typer_front_door_declares_all_top_level_commands():
+    from echelon.cli_app import app
+    from typer.main import get_command
+
+    command = get_command(app)
+
+    assert {
+        "artifacts",
+        "benchmark",
+        "bugfix",
+        "build",
+        "change",
+        "cicd",
+        "codegen",
+        "continue",
+        "delivery",
+        "harness",
+        "init",
+        "land",
+        "phase",
+        "reopen",
+        "resume",
+        "review",
+        "rewind",
+        "run",
+        "spec",
+        "stack",
+        "status",
+        "verify-spec",
+        "version",
+        "workspace",
+    }.issubset(command.commands)
+
+
+@pytest.mark.unit
 def test_spec_help_uses_typer_front_door():
     from echelon.cli_app import app
 
@@ -220,3 +257,17 @@ def test_spec_status_routes_to_legacy_status(monkeypatch):
     run(["spec", "status"])
 
     assert len(calls) == 1
+
+
+@pytest.mark.unit
+def test_main_routes_workspace_help_through_typer(monkeypatch, capsys):
+    from echelon.cli import main
+
+    monkeypatch.setattr(sys, "argv", ["echelon", "workspace", "--help"])
+
+    main()
+
+    out = capsys.readouterr().out
+    assert "workspace [OPTIONS] COMMAND [ARGS]..." in out
+    assert "Workspace setup, doctor, and migration commands." in out
+    assert "Usage: echelon workspace <subcommand>" not in out
