@@ -82,3 +82,47 @@ def test_apply_task_requirement_mapping_cli_updates_req_metadata(tmp_path: Path)
     assert "applied 1 task requirement mappings" in result.stdout
     assert "req=FR-001" in tasks_path.read_text(encoding="utf-8")
     assert (out_dir / "task-requirement-map-applied.md").exists()
+
+
+def test_write_task_requirement_mapping_candidates_cli_maps_explicit_ids(
+    tmp_path: Path,
+) -> None:
+    tasks_path = tmp_path / "tasks.md"
+    out_path = tmp_path / "task-requirement-map.candidates.json"
+    tasks_path.write_text(
+        "# Tasks\n\n"
+        "- [ ] T-001 complexity=standard phase=engine req=UNMAPPED depends=none\n"
+        "  **Title:** Implement FR-001 course formula\n\n"
+        "- [ ] T-002 complexity=standard phase=engine req=UNMAPPED depends=none\n"
+        "  **Title:** Build grid behavior\n\n"
+        "- [ ] T-003 complexity=standard phase=engine req=FR-002 depends=none\n"
+        "  **Title:** Already mapped\n",
+        encoding="utf-8",
+    )
+
+    result = _run(
+        [
+            "write-task-requirement-mapping-candidates",
+            str(tasks_path),
+            str(out_path),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["task_requirement_mappings"] == [
+        {
+            "task_id": "T-001",
+            "requirements": ["FR-001"],
+            "evidence": "tasks.md#T-001 explicit requirement IDs: FR-001",
+            "reason": "task text explicitly names mapped requirement IDs",
+        }
+    ]
+    assert payload["ambiguous_task_requirement_mappings"] == [
+        {
+            "task_id": "T-002",
+            "requirements": [],
+            "evidence": "tasks.md#T-002",
+            "reason": "task has req=UNMAPPED and no explicit requirement IDs in task text",
+        }
+    ]

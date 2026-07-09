@@ -14,6 +14,9 @@ from kernel.task_contract import parse_task_rows, validate_tasks_markdown
 _REQ_ID_RE = re.compile(
     r"^(?:FR|US|AC|EDGE|NFR|SC|REQ|OQ|INV|TC)-?[A-Za-z0-9_.-]+$|^INFRA$"
 )
+_REQ_ID_FIND_RE = re.compile(
+    r"\b(?:FR|US|AC|EDGE|NFR|SC|REQ|OQ|INV|TC)-?[A-Za-z0-9_.-]+\b|\bINFRA\b"
+)
 _TASK_ROW_RE = re.compile(
     r"^(?P<prefix>- \[[ xX]\]\s+(?P<task_id>T-(?:\d{3,4}|S\d{2}[A-Za-z]?))"
     r"(?:\s+\[P\])?\s+complexity=(?:trivial|standard|complex)\s+"
@@ -35,6 +38,53 @@ class _Mapping:
     requirements: tuple[str, ...]
     evidence: str
     reason: str
+
+
+def write_task_requirement_mapping_candidates(
+    *,
+    tasks_path: Path,
+    out_path: Path,
+) -> dict[str, Any]:
+    """Write conservative req= metadata candidates from explicit task text IDs."""
+    markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+    validation = validate_tasks_markdown(markdown)
+    if not validation.valid:
+        raise ValueError(f"invalid tasks.md: {'; '.join(validation.errors)}")
+
+    task_blocks = _task_blocks(markdown)
+    mappings: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
+
+    for task in parse_task_rows(markdown):
+        if task.requirements != ["UNMAPPED"]:
+            continue
+        requirement_ids = _explicit_requirement_ids(task_blocks.get(task.task_id, ""))
+        if requirement_ids:
+            joined = ", ".join(requirement_ids)
+            mappings.append(
+                {
+                    "task_id": task.task_id,
+                    "requirements": requirement_ids,
+                    "evidence": f"tasks.md#{task.task_id} explicit requirement IDs: {joined}",
+                    "reason": "task text explicitly names mapped requirement IDs",
+                }
+            )
+        else:
+            ambiguous.append(
+                {
+                    "task_id": task.task_id,
+                    "requirements": [],
+                    "evidence": f"tasks.md#{task.task_id}",
+                    "reason": "task has req=UNMAPPED and no explicit requirement IDs in task text",
+                }
+            )
+
+    payload = {
+        "task_requirement_mappings": mappings,
+        "ambiguous_task_requirement_mappings": ambiguous,
+    }
+    _write_json(out_path, payload)
+    return payload
 
 
 def apply_task_requirement_mapping(
@@ -98,6 +148,35 @@ def apply_task_requirement_mapping(
         applied_count=len(applied),
         skipped_count=len(skipped),
     )
+
+
+def _task_blocks(markdown: str) -> dict[str, str]:
+    blocks: dict[str, list[str]] = {}
+    current_task_id: str | None = None
+    in_fence = False
+    for line in markdown.splitlines():
+        if line.startswith("```"):
+            in_fence = not in_fence
+        match = None if in_fence else _TASK_ROW_RE.match(line.rstrip())
+        if match:
+            current_task_id = match.group("task_id")
+            blocks[current_task_id] = [line]
+            continue
+        if current_task_id is not None:
+            blocks[current_task_id].append(line)
+    return {task_id: "\n".join(lines) for task_id, lines in blocks.items()}
+
+
+def _explicit_requirement_ids(text: str) -> list[str]:
+    seen: set[str] = set()
+    ids: list[str] = []
+    for match in _REQ_ID_FIND_RE.finditer(text):
+        requirement_id = match.group(0)
+        if requirement_id == "UNMAPPED" or requirement_id in seen:
+            continue
+        seen.add(requirement_id)
+        ids.append(requirement_id)
+    return ids
 
 
 def _load_candidate(candidate_path: Path) -> dict[str, Any]:

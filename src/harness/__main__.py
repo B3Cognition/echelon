@@ -10,6 +10,7 @@ Subcommands:
   write-progress-integrity — write deterministic progress integrity artifacts
   write-judgment-prepass — write deterministic verify-spec judgment pre-pass artifacts
   assemble-fulfillment-report — assemble final fulfillment report from pre-pass and fallback rows
+  write-task-requirement-mapping-candidates — generate deterministic req= metadata candidates
   apply-task-requirement-mapping — apply deterministic req= metadata mappings
   write-progress-reconciliation-candidates — generate deterministic progress reconciliation candidates
   apply-progress-reconciliation — apply verify-spec task-progress reconciliation
@@ -556,6 +557,32 @@ def _apply_task_requirement_mapping() -> None:
     print(f"OK: applied {result.applied_count} task requirement mappings")
 
 
+def _write_task_requirement_mapping_candidates() -> None:
+    if len(sys.argv) != 4:
+        print(
+            "Usage: python -m harness write-task-requirement-mapping-candidates "
+            "<tasks.md> <out.json>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.task_requirement_mapping import (
+        write_task_requirement_mapping_candidates,
+    )
+
+    payload = write_task_requirement_mapping_candidates(
+        tasks_path=Path(sys.argv[2]),
+        out_path=Path(sys.argv[3]),
+    )
+    print(
+        "OK: wrote task requirement mapping candidates "
+        f"({len(payload['task_requirement_mappings'])} safe, "
+        f"{len(payload['ambiguous_task_requirement_mappings'])} ambiguous)"
+    )
+
+
 def _plan_reopen_gaps() -> None:
     if len(sys.argv) < 5:
         print(
@@ -1001,6 +1028,8 @@ def main() -> None:
         _mark_task_progress()
     elif subcommand == "write-progress-integrity":
         _write_progress_integrity()
+    elif subcommand == "write-task-requirement-mapping-candidates":
+        _write_task_requirement_mapping_candidates()
     elif subcommand == "apply-task-requirement-mapping":
         _apply_task_requirement_mapping()
     elif subcommand == "write-progress-reconciliation-candidates":
@@ -1039,7 +1068,9 @@ def main() -> None:
         print(
             f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', "
             "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
-            "'write-progress-integrity', 'apply-task-requirement-mapping', "
+            "'write-progress-integrity', "
+            "'write-task-requirement-mapping-candidates', "
+            "'apply-task-requirement-mapping', "
             "'write-progress-reconciliation-candidates', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'init-verify-spec-run', 'write-canonical-requirements', "

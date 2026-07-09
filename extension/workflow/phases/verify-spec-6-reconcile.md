@@ -26,7 +26,7 @@ Reconciliation is two-stage:
 
 ## Safety Rules
 
-ALWAYS use the deterministic harness commands `python -m harness apply-task-requirement-mapping` and `python -m harness mark-task-progress` for metadata or progress changes.
+ALWAYS use the deterministic harness commands `python -m harness write-task-requirement-mapping-candidates`, `python -m harness apply-task-requirement-mapping`, and `python -m harness mark-task-progress` for metadata or progress changes.
 NEVER edit task checkboxes or `**Status:**` lines directly.
 NEVER edit task `req=` metadata directly.
 NEVER modify application source code, `spec.md`, or `plan.md`.
@@ -49,39 +49,21 @@ python -m harness mark-task-progress "{spec_dir}/tasks.md" "{task_id}" DONE
 
 ## Task Requirement Mapping Plan
 
-When canonical tasks carry `req=UNMAPPED`, first infer task-to-requirement
-ownership from `tasks.md`, `spec.md`, `plan.md`, `coverage-map.md`,
-`implementation-map.md`, and `fulfillment-report.md`.
+When canonical tasks carry `req=UNMAPPED`, generate
+`{verify_run_dir}/task-requirement-map.candidates.json` with the deterministic
+harness command:
 
-Write `{verify_run_dir}/task-requirement-map.candidates.json`.
-
-Candidate schema:
-
-```json
-{
-  "task_requirement_mappings": [
-    {
-      "task_id": "T-014",
-      "requirements": ["FR-003", "EDGE-003"],
-      "evidence": "tasks.md T-014 names GridGeometry.swift; fulfillment-report.md FR-003 is IMPLEMENTED",
-      "reason": "Task owns polar grid crossing behavior and tangent crossing edge-case"
-    }
-  ],
-  "ambiguous_task_requirement_mappings": [
-    {
-      "task_id": "T-021",
-      "requirements": ["FR-004"],
-      "evidence": "fulfillment-report.md FR-004 is PARTIAL",
-      "reason": "Requirement evidence is not complete enough for progress reconciliation"
-    }
-  ]
-}
+```bash
+python -m harness write-task-requirement-mapping-candidates \
+  "{spec_dir}/tasks.md" \
+  "{verify_run_dir}/task-requirement-map.candidates.json"
 ```
 
-Only include mappings in `task_requirement_mappings` when the task's title,
-files, description, or acceptance criteria clearly name the mapped requirement
-or its canonical implementation files. If ownership is plausible but not clear,
-leave the task in `ambiguous_task_requirement_mappings`.
+The command only includes mappings in `task_requirement_mappings` when an
+unmapped task's own text explicitly names canonical requirement IDs such as
+`FR-001`, `NFR-004`, or `EDGE-009`. Tasks without explicit requirement IDs
+remain in `ambiguous_task_requirement_mappings`. Do not hand-write
+`task-requirement-map.candidates.json`.
 
 Run task requirement mapping before progress reconciliation:
 

@@ -134,6 +134,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   conservative task DONE candidates from canonical task metadata and
   `fulfillment-report.md`, replacing COMMANDER-authored reconciliation
   candidate JSON for mapped implemented requirements.
+- **EGR-119 / #143 task requirement mapping candidates** — added
+  `python -m harness write-task-requirement-mapping-candidates` to generate
+  conservative `req=UNMAPPED` mapping candidates only when canonical task text
+  explicitly names requirement IDs, replacing COMMANDER-authored
+  `task-requirement-map.candidates.json`.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG
