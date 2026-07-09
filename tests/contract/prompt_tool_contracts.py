@@ -84,6 +84,12 @@ HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
+    r"\b(?:check|inspect|read|run|use)\b"
+    r".{0,120}\b(?:git\s+status|git\s+log|git\s+rev-parse|rev-parse)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -140,6 +146,16 @@ def _is_negative_boundary(line: str) -> bool:
     )
 
 
+def _is_build_prompt(path: Path) -> bool:
+    normalized = path.as_posix()
+    return (
+        "/extension/agents/build/" in normalized
+        or normalized.startswith("extension/agents/build/")
+        or "/extension/workflow/phases/build-" in normalized
+        or normalized.startswith("extension/workflow/phases/build-")
+    )
+
+
 def scan_prompt_tool_contracts(
     root: Path,
     paths: list[Path] | None = None,
@@ -170,6 +186,18 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="harness_internal_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if _is_build_prompt(path) and BUILD_GIT_STATE_DISCOVERY_RE.search(stripped):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="build_git_state_discovery",
                         text=stripped,
                     )
                 )

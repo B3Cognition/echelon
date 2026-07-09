@@ -120,7 +120,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   target layout excerpts with representative source/test files, target
   source/test file-count hints, target config-file hints, documentation artifact
   hints, target git branch/HEAD/recent-commit/dirty-state hints, and build
-  rules, and the prompt tells agents to read it before implementation.
+  rules, and the prompt tells agents to read it before implementation. Prompt
+  contract tests now reject build-agent instructions that ask models to
+  rediscover target git state with exploratory `git status`/`git log` turns.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

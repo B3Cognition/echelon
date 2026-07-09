@@ -107,6 +107,20 @@ def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
     assert scan_prompt_tool_contracts(tmp_path, [prompt]) == []
 
 
+def test_flags_build_prompt_git_state_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Check git status and git log in the worktree before implementing.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "build_git_state_discovery"
+
+
 def test_current_agent_and_phase_prompts_have_contracted_tool_references() -> None:
     root = Path(__file__).resolve().parents[2]
 
