@@ -123,6 +123,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fingerprinting for future reverse-engineering cache keys, covering clean Git
   sources, dirty Git sources with tracked/untracked changes, non-Git file trees,
   and RE profile inputs.
+- **EGR-123 / #148 RE cache storage** — added persistent per-source
+  reverse-engineering cache storage primitives with safe source-id path
+  resolution, manifest-backed cache-hit validation, and replacement writes that
+  remove stale artifacts.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The
