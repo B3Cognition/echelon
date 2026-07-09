@@ -2502,7 +2502,10 @@ class RalphController:
         )
         if requirement_excerpts:
             lines.extend(["## Referenced Requirement Excerpts", *requirement_excerpts, ""])
-        adjacent_artifacts = self._build_slice_spec_adjacent_artifacts(spec_dir)
+        adjacent_artifacts = self._build_slice_spec_adjacent_artifacts(
+            spec_dir,
+            workspace_root=Path(str(workspace_root)),
+        )
         if adjacent_artifacts:
             lines.extend(
                 ["## Spec-Adjacent Artifact Excerpts", *adjacent_artifacts, ""]
@@ -2878,11 +2881,16 @@ class RalphController:
         return lines
 
     def _build_slice_spec_adjacent_artifacts(
-        self, spec_dir: Path | None, *, contracts_limit: int = 5
+        self,
+        spec_dir: Path | None,
+        *,
+        workspace_root: Path | None = None,
+        contracts_limit: int = 5,
     ) -> list[str]:
         if spec_dir is None or not spec_dir.is_dir():
             return []
         candidates: list[tuple[str, Path]] = []
+        seen_paths: set[Path] = set()
         for name in (
             "plan.md",
             "test-strategy.md",
@@ -2893,10 +2901,27 @@ class RalphController:
             path = spec_dir / name
             if path.is_file():
                 candidates.append((name, path))
+                seen_paths.add(path.resolve())
+        canonical_constitution = (
+            workspace_root / ".specify" / "memory" / "constitution.md"
+            if workspace_root is not None
+            else None
+        )
+        if (
+            canonical_constitution is not None
+            and canonical_constitution.is_file()
+            and canonical_constitution.resolve() not in seen_paths
+        ):
+            candidates.append((".specify/memory/constitution.md", canonical_constitution))
+            seen_paths.add(canonical_constitution.resolve())
         contracts_dir = spec_dir / "contracts"
         if contracts_dir.is_dir():
             for path in sorted(contracts_dir.glob("*.md"))[:contracts_limit]:
+                resolved = path.resolve()
+                if resolved in seen_paths:
+                    continue
                 candidates.append((f"contracts/{path.name}", path))
+                seen_paths.add(resolved)
 
         lines: list[str] = []
         for label, path in candidates:

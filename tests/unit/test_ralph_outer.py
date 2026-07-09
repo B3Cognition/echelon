@@ -823,8 +823,10 @@ class TestOuterLoopConvergence:
         worktree = workspace / "sources" / "prosaic"
         spec_dir = workspace / "specs" / "001-prosaic"
         contracts_dir = spec_dir / "contracts"
+        constitution_path = workspace / ".specify" / "memory" / "constitution.md"
         worktree.mkdir(parents=True)
         contracts_dir.mkdir(parents=True)
+        constitution_path.parent.mkdir(parents=True)
         (spec_dir / "tasks.md").write_text(
             "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
             encoding="utf-8",
@@ -843,6 +845,10 @@ class TestOuterLoopConvergence:
         )
         (contracts_dir / "cli.md").write_text(
             "# CLI Contract\n\n`prosaic deploy --dry-run` reports planned writes.\n",
+            encoding="utf-8",
+        )
+        constitution_path.write_text(
+            "# Constitution\n\nPrefer deterministic orchestration over model-owned discovery.\n",
             encoding="utf-8",
         )
 
@@ -866,6 +872,11 @@ class TestOuterLoopConvergence:
         assert "  - ArtifactMapping stores source and target paths." in context
         assert f"- contracts/cli.md: `{contracts_dir / 'cli.md'}`" in context
         assert "  - `prosaic deploy --dry-run` reports planned writes." in context
+        assert f"- .specify/memory/constitution.md: `{constitution_path}`" in context
+        assert (
+            "  - Prefer deterministic orchestration over model-owned discovery."
+            in context
+        )
 
     def test_build_slice_context_includes_quality_commands(
         self, tmp_path: Path
