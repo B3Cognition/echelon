@@ -25,6 +25,30 @@ def _runtime_extension(root: Path) -> Path:
         "Read `agents/control/commander.md`.\n",
         encoding="utf-8",
     )
+    (extension / "commands" / "echelon.build.md").write_text(
+        "---\n"
+        "name: speckit.echelon.build\n"
+        "description: Build spec\n"
+        "---\n\n"
+        "Build from `workflow/definition.yaml`.\n",
+        encoding="utf-8",
+    )
+    (extension / "commands" / "echelon.run.md").write_text(
+        "---\n"
+        "name: speckit.echelon.run\n"
+        "description: Run Phase A\n"
+        "---\n\n"
+        "Run Phase A.\n",
+        encoding="utf-8",
+    )
+    (extension / "commands" / "echelon.re-extract.md").write_text(
+        "---\n"
+        "name: speckit.echelon.re-extract\n"
+        "description: Reverse engineer\n"
+        "---\n\n"
+        "Run reverse engineering.\n",
+        encoding="utf-8",
+    )
     (extension / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     return extension
 
@@ -42,9 +66,15 @@ def test_claude_provider_scaffolder_materializes_claude_runtime_wrappers(tmp_pat
     )
 
     assert (worktree / ".claude" / "skills" / "speckit-echelon-verify-spec" / "SKILL.md").exists()
+    assert (worktree / ".claude" / "skills" / "speckit-echelon-build" / "SKILL.md").exists()
+    assert not (worktree / ".claude" / "skills" / "speckit-echelon-run").exists()
+    assert not (worktree / ".claude" / "skills" / "speckit-echelon-re-extract").exists()
     assert (worktree / ".claude" / "agents" / "speckit-echelon-commander.md").exists()
     assert (worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md").exists()
     assert ".claude/skills/speckit-echelon-verify-spec/" in excluded
+    assert ".claude/skills/speckit-echelon-build/" in excluded
+    assert ".claude/skills/speckit-echelon-run/" not in excluded
+    assert ".claude/skills/speckit-echelon-re-extract/" not in excluded
     assert ".claude/agents/" in excluded
 
 

@@ -90,6 +90,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   learning, feasibility, and specialist agents. Claude-specific `.claude`
   wrapper materialization now runs only when `harness.llm.cli: claude`, through
   a provider runtime scaffolder boundary rather than GitOps-owned Claude logic.
+  Generated `.claude/skills` command wrappers are now likewise limited to the
+  delivery-safe `echelon.build` and `echelon.verify-spec` commands.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG
