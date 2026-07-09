@@ -726,6 +726,11 @@ class TestOuterLoopConvergence:
         )
         assert f"build_slice_context_file: {context_file}" in prompt
         assert f"build_slice_context_index_file: {context_index_file}" in prompt
+        implementer_context_file = (
+            state_store.state_dir.parent / "context" / "default-implementer-context.md"
+        )
+        assert f"build_implementer_context_file: {implementer_context_file}" in prompt
+        assert "Read `build_implementer_context_file` before implementation" in prompt
         assert "Read `build_slice_context_file` before implementation" in prompt
         context = context_file.read_text(encoding="utf-8")
         assert "# Build Slice Context" in context
@@ -767,9 +772,6 @@ class TestOuterLoopConvergence:
             "Referenced Requirement Excerpts",
             "Build Rules",
         ]
-        implementer_context_file = (
-            state_store.state_dir.parent / "context" / "default-implementer-context.md"
-        )
         assert context_index["agent_context_files"]["IMPLEMENTER"] == str(
             implementer_context_file
         )

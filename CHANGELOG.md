@@ -132,8 +132,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   future per-agent build context packs can consume Python-owned context without
   parsing prompt prose. It also includes an `agent_sections` selector map starting
   with IMPLEMENTER, materializes `context/<strategy>-implementer-context.md` from
-  that selector map, and Ralph names the sidecar as `build_slice_context_index_file`
-  in harness context.
+  that selector map, and Ralph names both `build_slice_context_index_file` and
+  `build_implementer_context_file` in harness context.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

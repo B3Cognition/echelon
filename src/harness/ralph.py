@@ -2399,6 +2399,10 @@ class RalphController:
             progress_ledger_block=progress_ledger_block,
         )
         build_slice_context_index_file = build_slice_context_file.with_suffix(".json")
+        build_implementer_context_file = (
+            build_slice_context_file.parent
+            / f"{self._strategy_id}-implementer-context.md"
+        )
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -2412,6 +2416,7 @@ class RalphController:
             f"containment_policy_file: {containment_policy_file}\n"
             f"build_slice_context_file: {build_slice_context_file}\n"
             f"build_slice_context_index_file: {build_slice_context_index_file}\n"
+            f"build_implementer_context_file: {build_implementer_context_file}\n"
             f"{forbidden_source_roots_block}"
             f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"
@@ -2419,6 +2424,7 @@ class RalphController:
             f"tasks_file: {tasks_file_text}\n"
             f"{dirty_verify_block}"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
+            "Read `build_implementer_context_file` before implementation; it is the Python-owned context pack for IMPLEMENTER work.\n"
             "Read `build_slice_context_file` before implementation; it is the Python-owned bounded context for this build slice.\n"
             "Use `source_root` only as source identity/context; implementation edits must stay in `worktree`.\n"
             f"{forbidden_source_roots_instruction}"
