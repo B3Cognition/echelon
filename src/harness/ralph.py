@@ -58,6 +58,7 @@ from kernel.fulfillment import (
     latest_fulfillment_report,
     read_fulfillment_metadata,
 )
+from kernel.task_contract import TaskRow, parse_task_rows
 
 logger = logging.getLogger(__name__)
 
@@ -2363,6 +2364,7 @@ class RalphController:
             spec_dir_text=spec_dir_text,
             spec_file_text=spec_file_text,
             tasks_file_text=tasks_file_text,
+            tasks_path=(spec_dir / "tasks.md" if spec_dir is not None else None),
             dirty_verify_block=dirty_verify_block,
             progress_ledger_block=progress_ledger_block,
         )
@@ -2417,6 +2419,7 @@ class RalphController:
         spec_dir_text: str,
         spec_file_text: str,
         tasks_file_text: str,
+        tasks_path: Path | None,
         dirty_verify_block: str,
         progress_ledger_block: str,
     ) -> Path:
@@ -2445,6 +2448,9 @@ class RalphController:
             f"- tasks_file: `{tasks_file_text}`",
             "",
         ]
+        open_task_rows = self._build_slice_open_task_rows(tasks_path)
+        if open_task_rows:
+            lines.extend(["## Candidate Open Task Rows", *open_task_rows, ""])
         if dirty_verify_block:
             lines.extend(["## Dirty Verify Artifacts", dirty_verify_block.strip(), ""])
         if progress_ledger_block:
@@ -2459,6 +2465,26 @@ class RalphController:
         )
         context_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return context_file
+
+    def _build_slice_open_task_rows(
+        self, tasks_path: Path | None, *, limit: int = 5
+    ) -> list[str]:
+        if tasks_path is None or not tasks_path.is_file():
+            return []
+        try:
+            tasks = parse_task_rows(
+                tasks_path.read_text(encoding="utf-8", errors="replace")
+            )
+        except Exception:
+            return []
+        rows: list[str] = []
+        for task in tasks:
+            if task.status.strip().lower() == "x":
+                continue
+            rows.append(_render_canonical_task_row(task))
+            if len(rows) >= limit:
+                break
+        return rows
 
     def _write_delivery_containment_policy(
         self,
@@ -4312,6 +4338,16 @@ def _newly_completed_task_ids(
         if _is_done(result) and not _is_done(before_results.get(task_id)):
             newly_done.append(str(task_id))
     return sorted(newly_done)
+
+
+def _render_canonical_task_row(task: TaskRow) -> str:
+    parallel = " [P]" if task.parallel else ""
+    requirements = ",".join(task.requirements) if task.requirements else "UNMAPPED"
+    dependencies = ",".join(task.dependencies) if task.dependencies else "none"
+    return (
+        f"- [ ] {task.task_id}{parallel} complexity={task.complexity} "
+        f"phase={task.phase} req={requirements} depends={dependencies}"
+    )
 
 
 def _estimate_tokens(result: ExecResult) -> int:

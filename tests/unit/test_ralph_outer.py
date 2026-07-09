@@ -718,6 +718,39 @@ class TestOuterLoopConvergence:
         assert "completed_task_ids: T-001" in context
         assert "Do not search for the application repo" in prompt
 
+    def test_build_slice_context_includes_bounded_open_task_rows(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should name candidate task rows without scanning all tasks."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n"
+            "- [ ] T-002 [P] complexity=standard phase=base req=FR-002 depends=T-001\n"
+            "- [ ] T-003 complexity=complex phase=ui req=FR-003,FR-004 depends=T-002\n",
+            encoding="utf-8",
+        )
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Candidate Open Task Rows" in context
+        assert "- [ ] T-002 [P] complexity=standard phase=base req=FR-002 depends=T-001" in context
+        assert "- [ ] T-003 complexity=complex phase=ui req=FR-003,FR-004 depends=T-002" in context
+        assert "- [x] T-001" not in context
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(
