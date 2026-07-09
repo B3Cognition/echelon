@@ -111,9 +111,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
   `context/<strategy>-build-slice-context.md` artifact for delivery build and
   feedback turns. The initial context includes deterministic roots, spec input
-  paths, bounded open task rows, dirty verify artifact notes, the progress
-  ledger, and build rules, and the prompt tells agents to read it before
-  implementation.
+  paths, bounded open task rows, referenced requirement excerpts, dirty verify
+  artifact notes, the progress ledger, and build rules, and the prompt tells
+  agents to read it before implementation.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

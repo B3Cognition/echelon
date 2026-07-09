@@ -51,6 +51,7 @@ from harness.task_progress import (
     update_task_progress_markdown,
 )
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
+from harness.canonical_requirements import extract_canonical_requirements
 from kernel.fulfillment import (
     blocking_statuses,
     fulfillment_has_blocking_gaps,
@@ -2364,6 +2365,7 @@ class RalphController:
             spec_dir_text=spec_dir_text,
             spec_file_text=spec_file_text,
             tasks_file_text=tasks_file_text,
+            spec_dir=spec_dir,
             tasks_path=(spec_dir / "tasks.md" if spec_dir is not None else None),
             dirty_verify_block=dirty_verify_block,
             progress_ledger_block=progress_ledger_block,
@@ -2419,6 +2421,7 @@ class RalphController:
         spec_dir_text: str,
         spec_file_text: str,
         tasks_file_text: str,
+        spec_dir: Path | None,
         tasks_path: Path | None,
         dirty_verify_block: str,
         progress_ledger_block: str,
@@ -2451,6 +2454,12 @@ class RalphController:
         open_task_rows = self._build_slice_open_task_rows(tasks_path)
         if open_task_rows:
             lines.extend(["## Candidate Open Task Rows", *open_task_rows, ""])
+        requirement_excerpts = self._build_slice_requirement_excerpts(
+            spec_dir=spec_dir,
+            tasks_path=tasks_path,
+        )
+        if requirement_excerpts:
+            lines.extend(["## Referenced Requirement Excerpts", *requirement_excerpts, ""])
         if dirty_verify_block:
             lines.extend(["## Dirty Verify Artifacts", dirty_verify_block.strip(), ""])
         if progress_ledger_block:
@@ -2465,6 +2474,53 @@ class RalphController:
         )
         context_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return context_file
+
+    def _build_slice_requirement_excerpts(
+        self,
+        *,
+        spec_dir: Path | None,
+        tasks_path: Path | None,
+        limit: int = 10,
+    ) -> list[str]:
+        if spec_dir is None or not spec_dir.is_dir():
+            return []
+        requirement_ids = self._build_slice_open_requirement_ids(tasks_path)
+        if not requirement_ids:
+            return []
+        try:
+            requirements = extract_canonical_requirements(spec_dir)
+        except Exception:
+            return []
+        excerpts: list[str] = []
+        seen: set[str] = set()
+        for row in requirements:
+            if row.id not in requirement_ids or row.id in seen:
+                continue
+            seen.add(row.id)
+            excerpts.append(
+                f"- {row.id} ({row.source_file}:{row.source_line}): {row.source_text}"
+            )
+            if len(excerpts) >= limit:
+                break
+        return excerpts
+
+    def _build_slice_open_requirement_ids(self, tasks_path: Path | None) -> set[str]:
+        if tasks_path is None or not tasks_path.is_file():
+            return set()
+        try:
+            tasks = parse_task_rows(
+                tasks_path.read_text(encoding="utf-8", errors="replace")
+            )
+        except Exception:
+            return set()
+        requirement_ids: set[str] = set()
+        for task in tasks:
+            if task.status.strip().lower() == "x":
+                continue
+            requirement_ids.update(
+                requirement for requirement in task.requirements if requirement != "UNMAPPED"
+            )
+        return requirement_ids
 
     def _build_slice_open_task_rows(
         self, tasks_path: Path | None, *, limit: int = 5

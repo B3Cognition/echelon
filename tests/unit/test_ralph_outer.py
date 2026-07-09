@@ -751,6 +751,45 @@ class TestOuterLoopConvergence:
         assert "- [ ] T-003 complexity=complex phase=ui req=FR-003,FR-004 depends=T-002" in context
         assert "- [x] T-001" not in context
 
+    def test_build_slice_context_includes_referenced_requirement_excerpts(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should include requirement lines referenced by open tasks."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "## Requirements\n\n"
+            "- **FR-001**: Already delivered behavior.\n"
+            "- **FR-002**: Deploy markdown agents to Codex.\n"
+            "- **FR-003**: Rewrite frontmatter for target tools.\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=base req=FR-002,FR-003 depends=T-001\n",
+            encoding="utf-8",
+        )
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Referenced Requirement Excerpts" in context
+        assert "- FR-002 (spec.md:4): - **FR-002**: Deploy markdown agents to Codex." in context
+        assert "- FR-003 (spec.md:5): - **FR-003**: Rewrite frontmatter for target tools." in context
+        assert "FR-001 (spec.md" not in context
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(
