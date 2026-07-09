@@ -678,6 +678,44 @@ class TestOuterLoopConvergence:
         assert "Do not redo completed_task_ids" in prompt
         assert "Select only unchecked/open canonical tasks" in prompt
         assert "Stale or scoped fulfillment reports are Ralph-owned evidence refresh context" in prompt
+
+    def test_harness_context_writes_build_slice_context_artifact(
+        self, tmp_path: Path
+    ) -> None:
+        """Build agents should receive a prepared context artifact, not reassemble it."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["workspace_git_role"] = "workspace"
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["source_id"] = "prosaic"
+        state["source_git_role"] = "source"
+        state["spec_dir"] = str(spec_dir)
+        state["build"] = {
+            "total_tasks": 2,
+            "completed_tasks": 1,
+            "task_results": {"T-001": {"status": "DONE"}},
+        }
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        assert f"build_slice_context_file: {context_file}" in prompt
+        assert "Read `build_slice_context_file` before implementation" in prompt
+        context = context_file.read_text(encoding="utf-8")
+        assert "# Build Slice Context" in context
+        assert f"- worktree: `{worktree}`" in context
+        assert f"- spec_dir: `{spec_dir}`" in context
+        assert "completed_tasks: 1/2" in context
+        assert "completed_task_ids: T-001" in context
         assert "Do not search for the application repo" in prompt
 
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:

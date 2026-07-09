@@ -108,6 +108,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Ralph's mutable `state/default.json` path. Agents receive bounded progress
   facts in the prompt and must report progress through the build status marker,
   leaving harness state reads/writes owned by Ralph.
+- **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
+  `context/<strategy>-build-slice-context.md` artifact for delivery build and
+  feedback turns. The initial context includes deterministic roots, spec input
+  paths, dirty verify artifact notes, the progress ledger, and build rules, and
+  the prompt tells agents to read it before implementation.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest
