@@ -75,6 +75,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   consistently recommend canonical `echelon workspace ...`,
   `echelon spec ...`, and `echelon delivery ...` commands instead of legacy
   top-level or `harness` aliases.
+- **EGR-124 / #138 result repair** — squad agent dispatch now performs one
+  no-edit repair invocation after a clean provider exit when the final
+  `echelon_result` control payload is missing or schema-invalid. Timeout and
+  nonzero exits remain blocking, and repaired payloads still pass through the
+  existing schema validator before state can advance.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

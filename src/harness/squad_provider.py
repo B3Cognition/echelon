@@ -24,6 +24,8 @@ class SquadAgentResult:
     duration_ms: int
     timed_out: bool
     cost_usd: float = 0.0
+    echelon_result_repair_attempted: bool = False
+    echelon_result_repair_succeeded: bool = False
 
     @property
     def verdict(self) -> Optional[str]:
@@ -170,6 +172,38 @@ def _validate_or_block_echelon_result(
         return _validation_block_result(str(exc), debug_path)
 
 
+def _validate_echelon_result_or_reason(
+    echelon_result: object,
+) -> tuple[Optional[dict], Optional[str]]:
+    if echelon_result is None:
+        return None, "missing echelon_result"
+    try:
+        return validate_echelon_result(echelon_result), None
+    except EchelonResultValidationError as exc:
+        return None, str(exc)
+
+
+def _build_echelon_result_repair_prompt(
+    original_prompt: str,
+    raw_output: str,
+    reason: str,
+) -> str:
+    return (
+        "The previous agent invocation exited cleanly, but its final "
+        "`echelon_result` control payload was missing or invalid.\n\n"
+        "Do not edit files. Do not inspect the repository. Do not rerun tests. "
+        "Only reconstruct the final `echelon_result` block from the original "
+        "prompt and raw output below.\n\n"
+        f"Validation problem: {reason}\n\n"
+        "Return exactly one valid YAML block starting with `echelon_result:`. "
+        "Do not wrap it in Markdown fences and do not add prose before or after it.\n\n"
+        "## Original Prompt\n"
+        f"{original_prompt}\n\n"
+        "## Raw Output From Clean Invocation\n"
+        f"{raw_output}\n"
+    )
+
+
 class SquadCliProvider(AICodingCliProvider):
     """Extends AICodingCliProvider with exec_agent() for squad phase dispatch.
 
@@ -193,13 +227,45 @@ class SquadCliProvider(AICodingCliProvider):
         exit_code = backend_result.exit_code
         raw = backend_result.stdout
         timed_out = backend_result.timed_out
-        echelon_result = _extract_echelon_result(raw)
-        echelon_result = _validate_or_block_echelon_result(
-            echelon_result,
-            raw,
-            exit_code,
-            duration_ms,
+        cost_usd = backend_result.cost_usd
+        parsed_result = _extract_echelon_result(raw)
+        echelon_result, validation_reason = _validate_echelon_result_or_reason(
+            parsed_result
         )
+        repair_attempted = False
+        repair_succeeded = False
+
+        if (
+            echelon_result is None
+            and exit_code == 0
+            and not timed_out
+            and validation_reason
+        ):
+            repair_attempted = True
+            repair_prompt = _build_echelon_result_repair_prompt(
+                prompt,
+                raw,
+                validation_reason,
+            )
+            repair_result = self.run_agent_result(
+                project_root,
+                repair_prompt,
+                timeout_ms=timeout_ms,
+            )
+            cost_usd += repair_result.cost_usd
+            if repair_result.exit_code == 0 and not repair_result.timed_out:
+                repair_parsed = _extract_echelon_result(repair_result.stdout)
+                repaired, repair_reason = _validate_echelon_result_or_reason(
+                    repair_parsed
+                )
+                if repaired is not None:
+                    echelon_result = repaired
+                    repair_succeeded = True
+                else:
+                    validation_reason = repair_reason or validation_reason
+
+        if echelon_result is None and parsed_result is not None:
+            echelon_result = _validation_block_result(validation_reason or "invalid")
 
         # Debug capture: write raw + parse result to /tmp/echelon-raw-<pid>.txt
         # when the parse returns None or missing state_updates so we can inspect
@@ -213,5 +279,7 @@ class SquadCliProvider(AICodingCliProvider):
             raw_output=raw,
             duration_ms=duration_ms,
             timed_out=timed_out,
-            cost_usd=backend_result.cost_usd,
+            cost_usd=cost_usd,
+            echelon_result_repair_attempted=repair_attempted,
+            echelon_result_repair_succeeded=repair_succeeded,
         )
