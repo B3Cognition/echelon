@@ -721,7 +721,11 @@ class TestOuterLoopConvergence:
         prompt = controller._with_harness_context("body", str(worktree))
 
         context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context_index_file = (
+            state_store.state_dir.parent / "context" / "default-build-slice-context.json"
+        )
         assert f"build_slice_context_file: {context_file}" in prompt
+        assert f"build_slice_context_index_file: {context_index_file}" in prompt
         assert "Read `build_slice_context_file` before implementation" in prompt
         context = context_file.read_text(encoding="utf-8")
         assert "# Build Slice Context" in context
@@ -740,9 +744,6 @@ class TestOuterLoopConvergence:
         assert f"- spec_dir: `{spec_dir}`" in context
         assert "completed_tasks: 1/2" in context
         assert "completed_task_ids: T-001" in context
-        context_index_file = (
-            state_store.state_dir.parent / "context" / "default-build-slice-context.json"
-        )
         context_index = json.loads(context_index_file.read_text(encoding="utf-8"))
         assert context_index["version"] == 1
         assert context_index["markdown_path"] == str(context_file)

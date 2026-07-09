@@ -2398,6 +2398,7 @@ class RalphController:
             dirty_verify_block=dirty_verify_block,
             progress_ledger_block=progress_ledger_block,
         )
+        build_slice_context_index_file = build_slice_context_file.with_suffix(".json")
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -2410,6 +2411,7 @@ class RalphController:
             f"source_git_role: {source_git_role}\n"
             f"containment_policy_file: {containment_policy_file}\n"
             f"build_slice_context_file: {build_slice_context_file}\n"
+            f"build_slice_context_index_file: {build_slice_context_index_file}\n"
             f"{forbidden_source_roots_block}"
             f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"

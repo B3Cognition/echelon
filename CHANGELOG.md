@@ -130,7 +130,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the Markdown build-slice context. The sidecar records the Markdown path, spec
   inputs, strategy, generated section list, and structured section blocks so
   future per-agent build context packs can consume Python-owned context without
-  parsing prompt prose.
+  parsing prompt prose. Ralph also names the sidecar as
+  `build_slice_context_index_file` in harness context.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest
