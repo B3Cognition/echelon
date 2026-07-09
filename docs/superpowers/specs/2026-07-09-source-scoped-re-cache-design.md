@@ -243,14 +243,15 @@ Implement in slices:
 5. Move ordinary feature-run RE docs out of canonical `specs/NNN-re-*`.
 6. Update docs, changelog, and EGR register.
 
-## Open Decisions
+## Resolved Decisions And Remaining Question
 
-- Whether materialization should copy cache files or symlink them. Copying is
-  more portable and makes archived runs self-contained; symlinks save disk.
-  Default to copying unless disk pressure becomes measurable.
-- Whether `cross-repo.json` should be cached by workspace fingerprint or always
-  recomputed cheaply from per-source metadata. Start with recomputation during
-  materialization because it depends on the selected source set.
-- Whether `target-only` should still include source IDs as forbidden context for
-  containment prompts. It should not include their RE content, but may list them
-  as excluded workspace siblings for safety.
+- Materialization copies cache artifacts into `runs/<run-id>/re/` instead of
+  symlinking them. Runs must be self-contained so they can be archived after work
+  is done.
+- `cross-repo.json` is recomputed cheaply during materialization from the
+  selected per-source metadata. It is not cached by workspace fingerprint in the
+  first implementation because its contents depend on the selected source set.
+- Remaining question: when `--re-policy target-only` excludes sibling source
+  context, should prompts still list excluded sibling source IDs as forbidden
+  roots for containment? This would not expose their RE content; it would only
+  tell agents which workspace siblings they must not inspect.
