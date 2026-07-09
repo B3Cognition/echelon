@@ -874,6 +874,54 @@ class TestOuterLoopConvergence:
         assert "- verify_command: `npm test && npm run build`" in context
         assert "Run this from `worktree` before reporting completed_task_ids" in context
 
+    def test_build_slice_context_includes_last_verify_failures(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should carry Ralph-owned verify failures forward."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state["last_verify_result"] = {
+            "passed": False,
+            "failures": [
+                {
+                    "category": "test",
+                    "id": "unit-tests",
+                    "error": "npm test failed: expected 3 writes, got 2",
+                },
+                {
+                    "category": "other",
+                    "id": "fulfillment-report-stale",
+                    "error": "Ralph must refresh fulfillment evidence before convergence.",
+                },
+            ],
+        }
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Last Verify Failures" in context
+        assert "- [test] unit-tests: npm test failed: expected 3 writes, got 2" in context
+        assert (
+            "- [other] fulfillment-report-stale: Ralph must refresh fulfillment evidence before convergence."
+            in context
+        )
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(

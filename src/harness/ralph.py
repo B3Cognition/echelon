@@ -2468,6 +2468,9 @@ class RalphController:
         quality_commands = self._build_slice_quality_commands()
         if quality_commands:
             lines.extend(["## Quality Commands", *quality_commands, ""])
+        last_verify_failures = self._build_slice_last_verify_failures()
+        if last_verify_failures:
+            lines.extend(["## Last Verify Failures", *last_verify_failures, ""])
         if dirty_verify_block:
             lines.extend(["## Dirty Verify Artifacts", dirty_verify_block.strip(), ""])
         if progress_ledger_block:
@@ -2491,6 +2494,29 @@ class RalphController:
             f"- verify_command: `{verify_command}`",
             "- Run this from `worktree` before reporting completed_task_ids when feasible.",
         ]
+
+    def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
+        try:
+            last_verify_result = self._state_store.read().get("last_verify_result")
+        except Exception:
+            return []
+        if not isinstance(last_verify_result, dict):
+            return []
+        failures = last_verify_result.get("failures")
+        if not isinstance(failures, list) or not failures:
+            return []
+
+        lines: list[str] = []
+        for failure in failures[:limit]:
+            if not isinstance(failure, dict):
+                continue
+            category = str(failure.get("category") or "other").strip() or "other"
+            failure_id = str(failure.get("id") or "unknown").strip() or "unknown"
+            error = _single_line(str(failure.get("error") or "").strip())
+            if len(error) > 300:
+                error = error[:297].rstrip() + "..."
+            lines.append(f"- [{category}] {failure_id}: {error}")
+        return lines
 
     def _build_slice_spec_adjacent_artifacts(
         self, spec_dir: Path | None, *, contracts_limit: int = 5
@@ -4466,6 +4492,10 @@ def _first_meaningful_markdown_line(path: Path, *, max_chars: int = 220) -> str:
             return text[: max_chars - 3].rstrip() + "..."
         return text
     return ""
+
+
+def _single_line(text: str) -> str:
+    return " ".join(text.split())
 
 
 def _estimate_tokens(result: ExecResult) -> int:
