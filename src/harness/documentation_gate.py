@@ -265,6 +265,7 @@ def _docs_verification_report_failure(spec_dir: Path) -> tuple[str, str] | None:
         "readme_first_run_manual",
         "changelog_valid",
         "impact_report_valid",
+        "project_evidence_checked",
     )
     missing_true = [key for key in required_true if metadata.get(key) is not True]
     if missing_true:
@@ -284,6 +285,19 @@ def _docs_verification_report_failure(spec_dir: Path) -> tuple[str, str] | None:
         return (
             "docs-verification-report-failed",
             f"{report} has {blocking_findings} blocking documentation finding(s)",
+        )
+
+    try:
+        evidence_items_checked = int(metadata.get("evidence_items_checked"))
+    except (TypeError, ValueError):
+        return (
+            "docs-verification-report-invalid",
+            f"{report} must set evidence_items_checked to at least 4",
+        )
+    if evidence_items_checked < 4:
+        return (
+            "docs-verification-report-invalid",
+            f"{report} must check README, CHANGELOG, impact report, and project evidence",
         )
 
     return None

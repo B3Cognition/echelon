@@ -41,7 +41,7 @@ DOCS VERIFIER must:
 2. Check README.md for first-run manual completeness using project understanding and safe harness smoke evidence when present.
 3. Check CHANGELOG.md for Keep a Changelog-style completed-change entries, not roadmap or planned-work bullets.
 4. Check `{spec_dir}/documentation-impact-report.md` against the actual README/CHANGELOG state.
-5. Include YAML frontmatter in `docs-verification-report.md` with `verdict`, `readme_first_run_manual`, `changelog_valid`, `impact_report_valid`, and `blocking_findings`.
+5. Include YAML frontmatter in `docs-verification-report.md` with `verdict`, `readme_first_run_manual`, `changelog_valid`, `impact_report_valid`, `project_evidence_checked`, `evidence_items_checked`, and `blocking_findings`.
 6. Return `echelon_result.verdict: PASS` when all documentation is adequate.
 7. Return `echelon_result.verdict: FAIL` with structured repair findings when TECH WRITER must repair docs.
 8. Return `echelon_result.verdict: BLOCKED` only when required inputs cannot be read.

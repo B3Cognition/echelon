@@ -92,6 +92,8 @@ verdict: PASS
 readme_first_run_manual: true
 changelog_valid: true
 impact_report_valid: true
+project_evidence_checked: true
+evidence_items_checked: 4
 blocking_findings: 0
 ---
 
@@ -115,7 +117,7 @@ PASS | FAIL
 | DOCS-001 | blocking | README.md | First Run | ... | ... | ... |
 ```
 
-Use `verdict: FAIL` in frontmatter and in the body when blocking findings remain. Set `readme_first_run_manual`, `changelog_valid`, or `impact_report_valid` to `false` for the failed area, and set `blocking_findings` to the number of blocking findings. When all checks pass, write an empty findings table and explain why the docs are adequate.
+Use `verdict: FAIL` in frontmatter and in the body when blocking findings remain. Set `readme_first_run_manual`, `changelog_valid`, `impact_report_valid`, or `project_evidence_checked` to `false` for the failed area, set `evidence_items_checked` to the number of concrete evidence items inspected, and set `blocking_findings` to the number of blocking findings. A PASS report must inspect at least README.md, CHANGELOG.md, documentation-impact-report.md, and one project evidence source such as package metadata, scripts, CLI/config source, tests, changed files, or safe smoke evidence. When all checks pass, write an empty findings table and explain why the docs are adequate.
 
 ## Output
 

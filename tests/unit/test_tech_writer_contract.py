@@ -126,6 +126,8 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
     assert "readme_first_run_manual" in text
     assert "changelog_valid" in text
     assert "impact_report_valid" in text
+    assert "project_evidence_checked" in text
+    assert "evidence_items_checked" in text
     assert "blocking_findings" in text
     assert "first-run" in lowered
     assert "safe harness smoke" in lowered

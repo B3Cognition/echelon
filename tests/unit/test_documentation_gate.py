@@ -92,6 +92,8 @@ verdict: PASS
 readme_first_run_manual: true
 changelog_valid: true
 impact_report_valid: true
+project_evidence_checked: true
+evidence_items_checked: 4
 blocking_findings: 0
 ---
 
@@ -326,6 +328,61 @@ def test_gate_blocks_required_docs_when_docs_verifier_failed(tmp_path: Path) -> 
     assert not result.passed
     assert result.failure is not None
     assert result.failure.id == "docs-verification-report-failed"
+
+
+def test_gate_blocks_docs_verifier_pass_without_project_evidence(
+    tmp_path: Path,
+) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented new behavior.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "docs-verification-report.md").write_text(
+        "---\n"
+        "verdict: PASS\n"
+        "readme_first_run_manual: true\n"
+        "changelog_valid: true\n"
+        "impact_report_valid: true\n"
+        "blocking_findings: 0\n"
+        "---\n"
+        "# Docs Verification Report\n",
+        encoding="utf-8",
+    )
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "docs-verification-report-invalid"
+    assert "project_evidence_checked" in result.failure.error
 
 
 def test_gate_blocks_overview_only_readme_for_required_cli_docs(tmp_path: Path) -> None:
