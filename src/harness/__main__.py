@@ -665,25 +665,94 @@ def _write_codegraph_evidence_map() -> None:
 
     from harness.codegraph_evidence_mapper import write_codegraph_evidence_map
 
+    analysis_path = Path(sys.argv[3])
+    out_json_path = Path(sys.argv[5])
+    out_md_path = Path(sys.argv[6])
+    verify_run_dir = out_json_path.parent
+    if not analysis_path.is_file() and _verify_spec_state_value(
+        verify_run_dir, "structural_evidence"
+    ) == "degraded":
+        _write_skipped_codegraph_evidence_map(
+            out_json_path=out_json_path,
+            out_md_path=out_md_path,
+            analysis_path=analysis_path,
+        )
+        _stamp_verify_spec_state(
+            verify_run_dir,
+            {"codegraph_evidence_map": "skipped_degraded_codegraph"},
+        )
+        print(
+            "OK: skipped degraded CodeGraph evidence map "
+            f"({out_json_path} and {out_md_path})"
+        )
+        return
+
     _require_inputs(
         [
             Path(sys.argv[2]),
-            Path(sys.argv[3]),
+            analysis_path,
             Path(sys.argv[4]),
         ]
     )
     result = write_codegraph_evidence_map(
         requirement_audit_path=Path(sys.argv[2]),
-        codegraph_analysis_path=Path(sys.argv[3]),
+        codegraph_analysis_path=analysis_path,
         tasks_path=Path(sys.argv[4]),
-        out_json_path=Path(sys.argv[5]),
-        out_md_path=Path(sys.argv[6]),
+        out_json_path=out_json_path,
+        out_md_path=out_md_path,
         coverage_map_path=Path(sys.argv[7]) if len(sys.argv) >= 8 else None,
     )
     print(
         "OK: wrote CodeGraph evidence map to "
         f"{result.out_json_path} and {result.out_md_path} "
         f"({result.total_requirements} requirements)"
+    )
+
+
+def _verify_spec_state_value(verify_run_dir: "Path", key: str) -> str | None:
+    import json
+
+    try:
+        state = json.loads((verify_run_dir / "state.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    if not isinstance(state, dict):
+        return None
+    value = state.get(key)
+    return str(value) if value is not None else None
+
+
+def _write_skipped_codegraph_evidence_map(
+    *,
+    out_json_path: "Path",
+    out_md_path: "Path",
+    analysis_path: "Path",
+) -> None:
+    import json
+
+    payload = {
+        "schema_version": 1,
+        "status": "skipped_degraded_codegraph",
+        "reason": "CodeGraph evidence was degraded and codegraph-analysis.json is absent.",
+        "source_files": {
+            "codegraph_analysis": str(analysis_path),
+        },
+        "summary": {
+            "total_requirements": 0,
+            "fallback_requirement_ids": [],
+        },
+        "requirements": [],
+    }
+    out_json_path.parent.mkdir(parents=True, exist_ok=True)
+    out_md_path.parent.mkdir(parents=True, exist_ok=True)
+    out_json_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    out_md_path.write_text(
+        "# CodeGraph Evidence Map\n\n"
+        "CodeGraph evidence was degraded and `codegraph-analysis.json` is absent.\n",
+        encoding="utf-8",
     )
 
 

@@ -141,6 +141,14 @@ def test_verify_spec_stage4_and_stage5_stop_on_missing_deterministic_inputs() ->
         assert "do not hand-write" in lowered
 
 
+def test_verify_spec_stage4_degraded_codegraph_skip_is_command_owned() -> None:
+    text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+
+    assert "codegraph_evidence_map: skipped_degraded_codegraph" in text
+    assert "Do not\nskip the command manually" in text
+    assert "do not hand-edit `state.json`" in text
+
+
 def test_verify_spec_stage5_forbids_llm_provenance_discovery() -> None:
     text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
 

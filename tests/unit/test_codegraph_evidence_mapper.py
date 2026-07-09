@@ -499,3 +499,42 @@ def test_write_codegraph_evidence_map_cli_reports_missing_audit_without_tracebac
     assert "missing required input:" in completed.stderr
     assert "requirement-audit.md" in completed.stderr
     assert "Traceback" not in completed.stderr
+
+
+def test_write_codegraph_evidence_map_cli_skips_when_codegraph_degraded(
+    tmp_path: Path,
+):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | functional | spec.md:1 | Build one thing | Observe one thing |\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text("- [ ] T-001 req=FR-001\n", encoding="utf-8")
+    (tmp_path / "state.json").write_text(
+        '{"structural_evidence":"degraded"}\n',
+        encoding="utf-8",
+    )
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+
+    completed = _run_harness(
+        [
+            "write-codegraph-evidence-map",
+            str(audit),
+            str(tmp_path / "codegraph-analysis.json"),
+            str(tasks),
+            str(out_json),
+            str(out_md),
+        ]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "skipped degraded CodeGraph evidence map" in completed.stdout
+    payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["status"] == "skipped_degraded_codegraph"
+    assert "CodeGraph evidence was degraded" in out_md.read_text(encoding="utf-8")
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["codegraph_evidence_map"] == "skipped_degraded_codegraph"

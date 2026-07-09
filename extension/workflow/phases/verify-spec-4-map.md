@@ -32,10 +32,10 @@ python -m harness write-codegraph-evidence-map \
 If `{spec_dir}/coverage-map.md` is absent, rerun the same command without the
 final coverage-map argument.
 
-If CodeGraph evidence was degraded and `codegraph-analysis.json` is absent, skip
-the pre-map, record `codegraph_evidence_map: skipped_degraded_codegraph` in
-`state.json`, and tell IMPLEMENTATION-MAPPER to perform the previous manual
-mapping path.
+If CodeGraph evidence was degraded and `codegraph-analysis.json` is absent, the
+command writes skipped map artifacts and records
+`codegraph_evidence_map: skipped_degraded_codegraph` in `state.json`. Do not
+skip the command manually and do not hand-edit `state.json`.
 
 If the command exits non-zero for any other reason, especially a missing
 `requirement-audit.md`, `tasks.md`, or `codegraph-analysis.json`, hard stop with

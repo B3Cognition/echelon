@@ -120,6 +120,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `python -m harness validate-fulfillment-artifacts` and updated
   `verify-spec-5-judge` to use it for final row-set integrity instead of asking
   COMMANDER to compare fulfillment report IDs by hand.
+- **EGR-119 / #143 degraded CodeGraph map handling** —
+  `write-codegraph-evidence-map` now handles degraded/missing CodeGraph analysis
+  by writing skipped map artifacts and stamping `state.json`, so
+  `verify-spec-4-map` no longer asks COMMANDER to skip and edit state manually.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG
