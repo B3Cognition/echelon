@@ -1025,8 +1025,11 @@ class TestOuterLoopConvergence:
         (worktree / "README.md").write_text("# Prosaic\n", encoding="utf-8")
         (worktree / "src").mkdir()
         (worktree / "src" / "index.ts").write_text("export {}\n", encoding="utf-8")
+        (worktree / "src" / "config.ts").write_text("export const x = 1\n", encoding="utf-8")
         (worktree / "tests").mkdir()
         (worktree / "tests" / "cli.test.ts").write_text("test('x', () => {})\n", encoding="utf-8")
+        (worktree / "tests" / "fixtures").mkdir()
+        (worktree / "tests" / "fixtures" / "sample.json").write_text("{}\n", encoding="utf-8")
         (worktree / "node_modules").mkdir()
         (worktree / "dist").mkdir()
 
@@ -1045,6 +1048,9 @@ class TestOuterLoopConvergence:
         assert "- top-level: README.md, src/, tests/" in context
         assert "- source dirs: src/" in context
         assert "- test dirs: tests/" in context
+        assert "- source files: src/config.ts, src/index.ts" in context
+        assert "- test files: tests/cli.test.ts" in context
+        assert "tests/fixtures/sample.json" not in context
         assert "node_modules" not in context
         assert "dist/" not in context
 

@@ -2595,6 +2595,9 @@ class RalphController:
         )
         if source_dirs:
             lines.append("- source dirs: " + ", ".join(source_dirs))
+            source_files = _sample_files_under_dirs(worktree_path, source_dirs)
+            if source_files:
+                lines.append("- source files: " + ", ".join(source_files))
 
         test_dirs = _existing_named_dirs(
             worktree_path,
@@ -2602,6 +2605,9 @@ class RalphController:
         )
         if test_dirs:
             lines.append("- test dirs: " + ", ".join(test_dirs))
+            test_files = _sample_files_under_dirs(worktree_path, test_dirs)
+            if test_files:
+                lines.append("- test files: " + ", ".join(test_files))
         return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
@@ -4622,6 +4628,70 @@ def _existing_named_dirs(root: Path, names: tuple[str, ...]) -> list[str]:
         if path.is_dir():
             found.append(f"{name}/")
     return found
+
+
+def _sample_files_under_dirs(
+    root: Path,
+    dirs: list[str],
+    *,
+    limit: int = 8,
+    max_depth: int = 3,
+) -> list[str]:
+    ignored_parts = {
+        "__pycache__",
+        "fixtures",
+        "__fixtures__",
+        "snapshots",
+        "__snapshots__",
+        "node_modules",
+        "dist",
+        "build",
+        "coverage",
+    }
+    code_suffixes = {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".go",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".m",
+        ".mm",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+    files: list[str] = []
+    for rendered_dir in dirs:
+        base = root / rendered_dir.rstrip("/")
+        if not base.is_dir():
+            continue
+        try:
+            candidates = sorted(base.rglob("*"), key=lambda path: str(path).lower())
+        except Exception:
+            continue
+        for path in candidates:
+            if not path.is_file() or path.suffix not in code_suffixes:
+                continue
+            try:
+                relative = path.relative_to(root)
+            except ValueError:
+                continue
+            if len(relative.parts) - 1 > max_depth:
+                continue
+            if any(part in ignored_parts for part in relative.parts[:-1]):
+                continue
+            files.append(relative.as_posix())
+            if len(files) >= limit:
+                return files
+    return files
 
 
 def _estimate_tokens(result: ExecResult) -> int:
