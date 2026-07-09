@@ -22,6 +22,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tomllib
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Optional
@@ -2505,26 +2506,47 @@ class RalphController:
     def _build_slice_target_manifest_excerpts(
         self, worktree_path: Path, *, script_limit: int = 6
     ) -> list[str]:
+        lines: list[str] = []
         package_json = worktree_path / "package.json"
-        if not package_json.is_file():
-            return []
-        try:
-            manifest = json.loads(package_json.read_text(encoding="utf-8"))
-        except Exception:
-            return []
-        if not isinstance(manifest, dict):
-            return []
+        if package_json.is_file():
+            try:
+                manifest = json.loads(package_json.read_text(encoding="utf-8"))
+            except Exception:
+                manifest = None
+            if isinstance(manifest, dict):
+                name = _single_line(str(manifest.get("name") or "unknown"))
+                version = _single_line(str(manifest.get("version") or "unknown"))
+                lines.append(f"- package.json: name=`{name}`, version=`{version}`")
 
-        name = _single_line(str(manifest.get("name") or "unknown"))
-        version = _single_line(str(manifest.get("version") or "unknown"))
-        lines = [f"- package.json: name=`{name}`, version=`{version}`"]
+                scripts = manifest.get("scripts")
+                if isinstance(scripts, dict):
+                    for script_name in sorted(str(name) for name in scripts.keys())[
+                        :script_limit
+                    ]:
+                        command = _single_line(str(scripts.get(script_name) or ""))
+                        if command:
+                            lines.append(f"  - script {script_name}: `{command}`")
 
-        scripts = manifest.get("scripts")
-        if isinstance(scripts, dict):
-            for script_name in sorted(str(name) for name in scripts.keys())[:script_limit]:
-                command = _single_line(str(scripts.get(script_name) or ""))
-                if command:
-                    lines.append(f"  - script {script_name}: `{command}`")
+        pyproject = worktree_path / "pyproject.toml"
+        if pyproject.is_file():
+            try:
+                manifest = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+            except Exception:
+                manifest = None
+            if isinstance(manifest, dict):
+                project = manifest.get("project")
+                if not isinstance(project, dict):
+                    project = {}
+                name = _single_line(str(project.get("name") or "unknown"))
+                version = _single_line(str(project.get("version") or "unknown"))
+                lines.append(f"- pyproject.toml: name=`{name}`, version=`{version}`")
+
+                tool = manifest.get("tool")
+                if isinstance(tool, dict) and tool:
+                    tool_names = sorted(_pyproject_tool_label(str(name)) for name in tool.keys())
+                    lines.append(
+                        "  - tool sections: " + ", ".join(tool_names[:script_limit])
+                    )
         return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
@@ -4528,6 +4550,10 @@ def _first_meaningful_markdown_line(path: Path, *, max_chars: int = 220) -> str:
 
 def _single_line(text: str) -> str:
     return " ".join(text.split())
+
+
+def _pyproject_tool_label(name: str) -> str:
+    return name.split(".", 1)[0] if name.startswith("pytest.") else name
 
 
 def _estimate_tokens(result: ExecResult) -> int:
