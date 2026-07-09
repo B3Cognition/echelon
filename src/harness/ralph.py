@@ -2571,6 +2571,13 @@ class RalphController:
                 version = _single_line(str(project.get("version") or "unknown"))
                 lines.append(f"- pyproject.toml: name=`{name}`, version=`{version}`")
 
+                python_package_manager = _detect_python_package_manager(worktree_path)
+                if python_package_manager:
+                    manager_name, lockfile = python_package_manager
+                    lines.append(
+                        f"  - python_package_manager: `{manager_name}` (lockfile: `{lockfile}`)"
+                    )
+
                 project_scripts = project.get("scripts")
                 if isinstance(project_scripts, dict):
                     for script_name in sorted(
@@ -4669,6 +4676,18 @@ def _detect_package_manager(root: Path) -> tuple[str, str] | None:
         ("bun.lockb", "bun"),
         ("package-lock.json", "npm"),
         ("npm-shrinkwrap.json", "npm"),
+    ):
+        if (root / lockfile).is_file():
+            return manager, lockfile
+    return None
+
+
+def _detect_python_package_manager(root: Path) -> tuple[str, str] | None:
+    for lockfile, manager in (
+        ("uv.lock", "uv"),
+        ("poetry.lock", "poetry"),
+        ("pdm.lock", "pdm"),
+        ("requirements.txt", "pip"),
     ):
         if (root / lockfile).is_file():
             return manager, lockfile

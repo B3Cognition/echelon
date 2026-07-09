@@ -1008,6 +1008,7 @@ class TestOuterLoopConvergence:
             "line-length = 100\n",
             encoding="utf-8",
         )
+        (worktree / "uv.lock").write_text("version = 1\n", encoding="utf-8")
 
         state = state_store.read()
         state["workspace_root"] = str(workspace)
@@ -1022,6 +1023,7 @@ class TestOuterLoopConvergence:
         context = context_file.read_text(encoding="utf-8")
         assert "## Target Manifest Excerpts" in context
         assert "- pyproject.toml: name=`tooling`, version=`0.2.0`" in context
+        assert "  - python_package_manager: `uv` (lockfile: `uv.lock`)" in context
         assert "  - script tooling: `tooling.cli:main`" in context
         assert "  - gui-script tooling-gui: `tooling.gui:main`" in context
         assert "  - tool sections: pytest, ruff" in context
