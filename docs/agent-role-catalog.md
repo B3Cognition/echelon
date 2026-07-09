@@ -15,9 +15,9 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Registered agent roles | 54 | `extension.yml` entries whose `file` is under `agents/` |
+| Registered agent roles | 55 | `extension.yml` entries whose `file` is under `agents/` |
 | Active-routed manifest roles | 46 | Registered roles referenced by `definition.yaml` |
-| Manifest-only roles | 8 | Registered roles not currently referenced by `definition.yaml` |
+| Manifest-only roles | 9 | Registered roles not currently referenced by `definition.yaml` |
 | Workflow-only dispatch aliases | 1 | Dispatch identifiers in `definition.yaml` that are not separate manifest roles |
 | Support prompt files | 15 | Markdown appendices/templates under `extension/agents/` that are not agent entry points |
 

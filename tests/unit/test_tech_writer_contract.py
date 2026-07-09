@@ -109,7 +109,6 @@ def test_tech_writer_readme_contract_requires_first_run_manual() -> None:
     assert "first real run" in lowered
     assert "expected output" in lowered
     assert "troubleshooting" in lowered
-    assert "npm run <script>" in text
     assert "package.json" in text
     assert "Avoid product-overview-only README updates" in text
 

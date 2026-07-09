@@ -49,7 +49,7 @@ TRACKER must emit one of these canonical `echelon_result.verdict` values:
 - `DRIFT` — intent risks were recorded, but progress may continue.
 - `STOP_AND_ASK` — user input is required before continuing.
 
-The workflow still accepts legacy `DRIFTING` and `ESCALATE` verdicts for
+The workflow still accepts legacy `DONE`, `DRIFTING`, and `ESCALATE` verdicts for
 compatibility, but new outputs must use the canonical values above.
 
 When emitting `STOP_AND_ASK`, return `status: blocked`, a concise

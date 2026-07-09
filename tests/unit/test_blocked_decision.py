@@ -93,7 +93,7 @@ def test_build_resume_metadata_records_free_text_answer() -> None:
         "schema_version": 1,
         "answered_at": "2026-06-23T10:05:00+00:00",
         "answered_by": "user",
-        "source": "echelon resume",
+        "source": "echelon spec resume",
         "answer_type": "free_text",
         "answer_text": "Use a narrower audience and keep missions under 10 minutes.",
         "blocked_phase": "phase1-why1",

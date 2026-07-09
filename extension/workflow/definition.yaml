@@ -365,7 +365,7 @@ phases:
       - to: phase1-tracker
         condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
       - to: phase1-why1
-        condition: "verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
+        condition: "verdict = DONE OR verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
 
   # --------------------------------------------------------------------------
   - id: phase1-why1

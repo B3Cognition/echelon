@@ -35,7 +35,7 @@ def test_build_quality_gate_prompt_contract_forbids_parallel_or_vacuity_skips() 
     assert "Build Quality Gate Sequencing" not in commander_text
     assert "skip CODE REVIEWER/TEST GUARDIAN by vacuity" not in commander_text
     assert (
-        "When running under `echelon harness run`, follow build gate workflow transitions sequentially"
+        "When running under `echelon delivery run`, follow build gate workflow transitions sequentially"
         in build_command_text
     )
     assert "Quality gates are sequential hard gates, not a parallel batch" in combined

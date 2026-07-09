@@ -129,7 +129,7 @@ class TestPhaseOutputPaths:
     def test_phase4_document_generates_artifact_index_deterministically(self) -> None:
         text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
 
-        assert "echelon artifacts" in text
+        assert "echelon spec artifacts" in text
         assert "NEVER hand-author `ARTIFACTS.md`" in text
 
     def test_build_finalize_generates_artifact_index_deterministically(self) -> None:
@@ -137,7 +137,7 @@ class TestPhaseOutputPaths:
             ROOT / "extension" / "workflow" / "phases" / "build-8-finalize.md"
         ).read_text(encoding="utf-8")
 
-        assert "echelon artifacts" in text
+        assert "echelon spec artifacts" in text
         assert "NEVER hand-author `ARTIFACTS.md`" in text
 
     def test_license_exception_paths_use_canonical_spec_dir(self) -> None:

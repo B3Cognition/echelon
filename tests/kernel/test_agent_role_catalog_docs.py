@@ -44,9 +44,9 @@ def test_readme_and_catalog_match_agent_role_inventory() -> None:
     workflow_only = workflow - registered
     support_files = set(AGENTS_DIR.rglob("*.md")) - _agent_entrypoint_files()
 
-    assert len(registered) == 54
+    assert len(registered) == 55
     assert len(active_manifest) == 46
-    assert len(manifest_only) == 8
+    assert len(manifest_only) == 9
     assert workflow_only == {"speckit-echelon-gatekeeper-assess2"}
     assert len(support_files) == 15
 
@@ -54,13 +54,13 @@ def test_readme_and_catalog_match_agent_role_inventory() -> None:
     catalog = CATALOG.read_text(encoding="utf-8")
 
     assert "41-agent" not in readme
-    assert "54 registered agent roles" in readme
+    assert "55 registered agent roles" in readme
     assert "46 active-routed manifest roles" in readme
     assert "Agent Role Catalog](docs/agent-role-catalog.md)" in readme
 
-    assert "| Registered agent roles | 54 |" in catalog
+    assert "| Registered agent roles | 55 |" in catalog
     assert "| Active-routed manifest roles | 46 |" in catalog
-    assert "| Manifest-only roles | 8 |" in catalog
+    assert "| Manifest-only roles | 9 |" in catalog
     assert "| Workflow-only dispatch aliases | 1 |" in catalog
     assert "| Support prompt files | 15 |" in catalog
     assert "`speckit-echelon-gatekeeper-assess2`" in catalog

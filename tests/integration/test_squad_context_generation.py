@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
@@ -27,6 +29,26 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
         echelon_result={"verdict": verdict, "state_updates": {}},
+        raw_output="",
+        duration_ms=100,
+        timed_out=False,
+    )
+    return provider
+
+
+def _tracker_provider(verdict: str) -> MagicMock:
+    state_updates = {}
+    if verdict == "STOP_AND_ASK":
+        state_updates = {
+            "status": "blocked",
+            "blocked_reason": "phase1-tracker: user intent needs clarification",
+            "escalation_question": "Which target repository should Echelon inspect?",
+        }
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": verdict, "state_updates": state_updates},
         raw_output="",
         duration_ms=100,
         timed_out=False,
@@ -69,15 +91,22 @@ def test_run_context_generation_uses_runs_directory(tmp_path: Path) -> None:
     assert result.stale_report.exists()
 
 
-def test_fresh_squad_run_generates_context_files_and_persists_context_dir(tmp_path: Path) -> None:
-    provider = _mock_provider()
+@pytest.mark.parametrize("verdict", ["DONE", "ALIGNED", "DRIFT", "DRIFTING"])
+def test_phase1_tracker_done_and_alignment_verdicts_route_forward(
+    tmp_path: Path,
+    verdict: str,
+) -> None:
+    provider = _tracker_provider(verdict)
     ctrl, store = _controller(tmp_path, provider=provider)
 
-    result = ctrl.run("build photo sharing", "banzai")
+    result = ctrl.run_single_phase("phase1-tracker", "build photo sharing", "semi")
     state = store.load()
     context_dir = Path(state["context_dir"])
 
-    assert result.status == "blocked"
+    assert result.phase == "phase1-why1"
+    assert state["last_dispatch"]["phase_id"] == "phase1-tracker"
+    assert state["last_dispatch"]["verdict"] == verdict
+    assert state["manual_phase_runs"][-1]["next_phase"] == "phase1-why1"
     assert context_dir == tmp_path / "runs" / "run-test" / "context"
     assert context_dir.exists()
     assert (context_dir / "prior-spec-context.md").exists()
@@ -85,6 +114,27 @@ def test_fresh_squad_run_generates_context_files_and_persists_context_dir(tmp_pa
     assert (context_dir / "feature-registry.snapshot.json").exists()
     assert (context_dir / "mempalace-reconciliation.json").exists()
     assert (context_dir / "stale-memory-report.md").exists()
+
+
+@pytest.mark.parametrize("verdict", ["STOP_AND_ASK", "ESCALATE"])
+def test_phase1_tracker_stop_and_escalate_verdicts_route_back(
+    tmp_path: Path,
+    verdict: str,
+) -> None:
+    provider = _tracker_provider(verdict)
+    ctrl, store = _controller(tmp_path, provider=provider)
+
+    result = ctrl.run_single_phase("phase1-tracker", "build photo sharing", "semi")
+    state = store.load()
+
+    assert result.phase == "phase1-tracker"
+    assert state["last_dispatch"]["phase_id"] == "phase1-tracker"
+    assert state["last_dispatch"]["verdict"] == verdict
+    assert state["manual_phase_runs"][-1]["next_phase"] == "phase1-tracker"
+    if verdict == "STOP_AND_ASK":
+        assert result.status == "blocked"
+        assert state["blocked_reason"] == "phase1-tracker: user intent needs clarification"
+        assert state["escalation_question"] == "Which target repository should Echelon inspect?"
 
 
 def test_run_context_refresh_retrieves_and_reconciles_mempalace_drawers(tmp_path: Path) -> None:
