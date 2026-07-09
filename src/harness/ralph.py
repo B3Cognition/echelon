@@ -2523,6 +2523,24 @@ class RalphController:
                 version = _single_line(str(manifest.get("version") or "unknown"))
                 lines.append(f"- package.json: name=`{name}`, version=`{version}`")
 
+                for field in ("main", "module", "types"):
+                    value = _single_line(str(manifest.get(field) or ""))
+                    if value:
+                        lines.append(f"  - {field}: `{value}`")
+
+                package_bin = manifest.get("bin")
+                if isinstance(package_bin, str):
+                    command = _single_line(package_bin)
+                    if command:
+                        lines.append(f"  - bin: `{command}`")
+                elif isinstance(package_bin, dict):
+                    for bin_name in sorted(str(name) for name in package_bin.keys())[
+                        :script_limit
+                    ]:
+                        command = _single_line(str(package_bin.get(bin_name) or ""))
+                        if command:
+                            lines.append(f"  - bin {bin_name}: `{command}`")
+
                 scripts = manifest.get("scripts")
                 if isinstance(scripts, dict):
                     for script_name in sorted(str(name) for name in scripts.keys())[

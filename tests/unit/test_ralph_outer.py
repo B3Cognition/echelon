@@ -941,6 +941,11 @@ class TestOuterLoopConvergence:
                 {
                     "name": "prosaic",
                     "version": "0.1.0",
+                    "main": "dist/index.js",
+                    "types": "dist/index.d.ts",
+                    "bin": {
+                        "prosaic": "dist/cli.js",
+                    },
                     "scripts": {
                         "build": "tsc -p tsconfig.json",
                         "test": "jest",
@@ -963,6 +968,9 @@ class TestOuterLoopConvergence:
         context = context_file.read_text(encoding="utf-8")
         assert "## Target Manifest Excerpts" in context
         assert "- package.json: name=`prosaic`, version=`0.1.0`" in context
+        assert "  - main: `dist/index.js`" in context
+        assert "  - types: `dist/index.d.ts`" in context
+        assert "  - bin prosaic: `dist/cli.js`" in context
         assert "  - script build: `tsc -p tsconfig.json`" in context
         assert "  - script test: `jest`" in context
 
