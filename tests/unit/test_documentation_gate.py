@@ -87,6 +87,22 @@ npm run lint
 """
 
 
+DOCS_VERIFICATION_PASS = """---
+verdict: PASS
+readme_first_run_manual: true
+changelog_valid: true
+impact_report_valid: true
+blocking_findings: 0
+---
+
+# Docs Verification Report
+
+## Verdict
+
+PASS
+"""
+
+
 def _git_repo(path: Path) -> None:
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
     subprocess.run(
@@ -98,6 +114,13 @@ def _git_repo(path: Path) -> None:
 def _commit_all(path: Path, message: str = "base") -> None:
     subprocess.run(["git", "add", "."], cwd=path, check=True)
     subprocess.run(["git", "commit", "-m", message], cwd=path, check=True, capture_output=True)
+
+
+def _write_docs_verification_pass(spec_dir: Path) -> None:
+    (spec_dir / "docs-verification-report.md").write_text(
+        DOCS_VERIFICATION_PASS,
+        encoding="utf-8",
+    )
 
 
 def test_gate_blocks_missing_report(tmp_path: Path) -> None:
@@ -203,10 +226,106 @@ def test_gate_accepts_required_docs_with_keepachangelog_changes(tmp_path: Path) 
         "# Documentation Impact Report\n",
         encoding="utf-8",
     )
+    _write_docs_verification_pass(spec_dir)
 
     result = evaluate_documentation_gate(tmp_path, spec_dir)
 
     assert result.passed
+
+
+def test_gate_blocks_required_docs_without_docs_verification_report(
+    tmp_path: Path,
+) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented new behavior.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "docs-verification-report-missing"
+
+
+def test_gate_blocks_required_docs_when_docs_verifier_failed(tmp_path: Path) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented new behavior.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "docs-verification-report.md").write_text(
+        "---\n"
+        "verdict: FAIL\n"
+        "readme_first_run_manual: false\n"
+        "changelog_valid: true\n"
+        "impact_report_valid: true\n"
+        "blocking_findings: 1\n"
+        "---\n"
+        "# Docs Verification Report\n",
+        encoding="utf-8",
+    )
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "docs-verification-report-failed"
 
 
 def test_gate_blocks_overview_only_readme_for_required_cli_docs(tmp_path: Path) -> None:
@@ -261,6 +380,7 @@ def test_gate_blocks_overview_only_readme_for_required_cli_docs(tmp_path: Path) 
         "# Documentation Impact Report\n",
         encoding="utf-8",
     )
+    _write_docs_verification_pass(spec_dir)
 
     result = evaluate_documentation_gate(tmp_path, spec_dir)
 
@@ -305,6 +425,7 @@ def test_gate_blocks_changelog_planned_entries_for_required_docs(tmp_path: Path)
         "# Documentation Impact Report\n",
         encoding="utf-8",
     )
+    _write_docs_verification_pass(spec_dir)
 
     result = evaluate_documentation_gate(tmp_path, spec_dir)
 

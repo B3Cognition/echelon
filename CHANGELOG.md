@@ -82,6 +82,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   roadmap work are also rejected. The build workflow now routes TECH WRITER
   output through a DOCS VERIFIER phase that writes `docs-verification-report.md`
   and loops structured repair findings back to TECH WRITER before finalization.
+  Ralph now requires a machine-readable PASS `docs-verification-report.md` with
+  zero blocking findings before required documentation can pass the final gate.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The

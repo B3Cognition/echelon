@@ -87,6 +87,14 @@ Check:
 Write `{spec_dir}/docs-verification-report.md`:
 
 ```markdown
+---
+verdict: PASS
+readme_first_run_manual: true
+changelog_valid: true
+impact_report_valid: true
+blocking_findings: 0
+---
+
 # Docs Verification Report
 
 ## Verdict
@@ -107,7 +115,7 @@ PASS | FAIL
 | DOCS-001 | blocking | README.md | First Run | ... | ... | ... |
 ```
 
-When all checks pass, write an empty findings table and explain why the docs are adequate.
+Use `verdict: FAIL` in frontmatter and in the body when blocking findings remain. Set `readme_first_run_manual`, `changelog_valid`, or `impact_report_valid` to `false` for the failed area, and set `blocking_findings` to the number of blocking findings. When all checks pass, write an empty findings table and explain why the docs are adequate.
 
 ## Output
 

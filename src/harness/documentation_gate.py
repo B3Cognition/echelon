@@ -14,6 +14,7 @@ from harness.verify_result import FailureCategory, FailureEntry
 
 
 REPORT_NAME = "documentation-impact-report.md"
+DOCS_VERIFICATION_REPORT_NAME = "docs-verification-report.md"
 CHANGELOG_CATEGORIES = (
     "Added",
     "Changed",
@@ -106,6 +107,11 @@ def evaluate_documentation_gate(
     readme_failure = _readme_first_run_manual_failure(readme, worktree)
     if readme_failure:
         return _fail("readme-first-run-manual-incomplete", readme_failure)
+
+    docs_verification_failure = _docs_verification_report_failure(spec)
+    if docs_verification_failure:
+        identifier, error = docs_verification_failure
+        return _fail(identifier, error)
 
     return DocumentationGateResult(passed=True)
 
@@ -231,6 +237,56 @@ def _has_expected_dry_run_output(text: str) -> bool:
     if "expected output" not in text:
         return False
     return "dry-run" in text or "dry run" in text
+
+
+def _docs_verification_report_failure(spec_dir: Path) -> tuple[str, str] | None:
+    report = spec_dir / DOCS_VERIFICATION_REPORT_NAME
+    if not report.exists():
+        return (
+            "docs-verification-report-missing",
+            f"missing {report}",
+        )
+
+    metadata = _frontmatter(report)
+    if not metadata:
+        return (
+            "docs-verification-report-invalid",
+            f"{report} must include machine-readable YAML frontmatter",
+        )
+
+    verdict = str(metadata.get("verdict") or "").strip().upper()
+    if verdict != "PASS":
+        return (
+            "docs-verification-report-failed",
+            f"{report} must declare verdict: PASS before finalization",
+        )
+
+    required_true = (
+        "readme_first_run_manual",
+        "changelog_valid",
+        "impact_report_valid",
+    )
+    missing_true = [key for key in required_true if metadata.get(key) is not True]
+    if missing_true:
+        return (
+            "docs-verification-report-invalid",
+            f"{report} must set {', '.join(missing_true)} to true",
+        )
+
+    try:
+        blocking_findings = int(metadata.get("blocking_findings"))
+    except (TypeError, ValueError):
+        return (
+            "docs-verification-report-invalid",
+            f"{report} must set blocking_findings to 0",
+        )
+    if blocking_findings != 0:
+        return (
+            "docs-verification-report-failed",
+            f"{report} has {blocking_findings} blocking documentation finding(s)",
+        )
+
+    return None
 
 
 def _fail(identifier: str, error: str) -> DocumentationGateResult:

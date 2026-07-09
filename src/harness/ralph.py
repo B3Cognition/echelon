@@ -75,6 +75,9 @@ _EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS = {
     "documentation-not-applicable-without-reason",
     "documentation-required-report-incomplete",
     "changelog-format-not-declared",
+    "docs-verification-report-missing",
+    "docs-verification-report-invalid",
+    "docs-verification-report-failed",
 }
 
 

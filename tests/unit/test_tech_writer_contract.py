@@ -123,6 +123,10 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
     assert "CHANGELOG.md" in text
     assert "documentation-impact-report.md" in text
     assert "docs-verification-report.md" in text
+    assert "readme_first_run_manual" in text
+    assert "changelog_valid" in text
+    assert "impact_report_valid" in text
+    assert "blocking_findings" in text
     assert "first-run" in lowered
     assert "safe harness smoke" in lowered
     assert "verdict: PASS" in text
