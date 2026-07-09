@@ -11,13 +11,13 @@ After all tasks in a phase group (e.g., "Foundation") are complete, run the spec
 
 ### 7.1 Dispatch speckit-echelon-integrator (INTEGRATOR)
 
-Compile context pack:
+Use the Ralph-owned context pack:
 
-- All code produced in this phase group
-- Build configuration files
-- `contracts/`
-- `data-model.md`
-- Prior integration reports (if any)
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.INTEGRATOR` as the prepared INTEGRATOR context pack.
+- Use only explicit phase/checkpoint outputs already provided by Ralph.
+- Do not compile a separate context pack by searching produced code,
+  build configuration files, contracts, data-model, or prior integration reports.
 
 Use the Agent tool:
 
@@ -26,7 +26,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include files listed above]
+  [include agent_context_files.INTEGRATOR from build_slice_context_index_file]
   </context>
 
   <instructions>
@@ -49,6 +49,15 @@ Use the Agent tool:
 
 **If browser/SPA detected:** Dispatch speckit-echelon-visual-validator (VISUAL speckit-echelon-validator (VALIDATOR)) immediately after speckit-echelon-integrator (INTEGRATOR) PASS — before recording the checkpoint and before proceeding to the next phase group.
 
+Use the Ralph-owned context pack:
+
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.VISUAL_VALIDATOR` as the prepared VISUAL VALIDATOR
+  context pack.
+- Use only explicit app/runtime/test outputs already provided by Ralph.
+- Do not compile a separate context pack by searching `spec.md`, `plan.md`, or
+  phase source files.
+
 Use the Agent tool:
 
 - **subagent_type:** `speckit-echelon-visual-validator`
@@ -56,7 +65,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, plan.md, code from this phase]
+  [include agent_context_files.VISUAL_VALIDATOR from build_slice_context_index_file]
   </context>
 
   <instructions>

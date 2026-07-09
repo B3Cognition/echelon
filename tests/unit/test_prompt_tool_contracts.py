@@ -130,6 +130,8 @@ def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:
             "build-3-spec-guard.md",
             "build-4-code-review.md",
             "build-5-test-guard.md",
+            "build-6-progress.md",
+            "build-7-integration.md",
             "build-8-documentation.md",
             "build-8-verify-docs.md",
         )

@@ -7,14 +7,15 @@
 
 ### 6.1 Dispatch speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER))
 
-Compile context pack:
+Use the Ralph-owned context pack:
 
-- Completed task ID and estimated effort
-- Count of review cycles (how many times speckit-echelon-implementer (IMPLEMENTER) was re-dispatched)
-- `estimates.md`
-- `knowledge-base/calibration-profile.yaml`
-- `knowledge-base/estimates-log.yaml`
-- Current progress report
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.PROGRESS_TRACKER` as the prepared PROGRESS TRACKER
+  context pack.
+- Use only explicit review-cycle and completed-task outputs already provided by
+  Ralph.
+- Do not compile a separate context pack by searching estimates, calibration,
+  progress report, or task history files.
 
 Use the Agent tool:
 
@@ -23,7 +24,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include files listed above]
+  [include agent_context_files.PROGRESS_TRACKER from build_slice_context_index_file]
   </context>
 
   <instructions>
