@@ -132,11 +132,16 @@ def test_verify_spec_uses_python_owned_canonical_requirement_inventory():
     audit_phase = (EXTENSION_ROOT / "workflow" / "phases" / "verify-spec-3-audit.md").read_text()
     map_phase = (EXTENSION_ROOT / "workflow" / "phases" / "verify-spec-4-map.md").read_text()
     judge_phase = (EXTENSION_ROOT / "workflow" / "phases" / "verify-spec-5-judge.md").read_text()
+    workflow = (EXTENSION_ROOT / "workflow" / "definition.yaml").read_text()
     auditor = (EXTENSION_ROOT / "agents" / "build" / "spec-fulfillment-auditor.md").read_text()
     mapper = (EXTENSION_ROOT / "agents" / "build" / "implementation-mapper.md").read_text()
     guard = (EXTENSION_ROOT / "agents" / "build" / "spec-guard.md").read_text()
 
     assert "write-canonical-requirements" in audit_phase
+    assert "write-requirement-audit" in audit_phase
+    assert "Do not dispatch SPEC-FULFILLMENT-AUDITOR" in audit_phase
+    assert "id: verify-spec-3-audit" in workflow
+    assert "type: commander_internal" in workflow
     for text in (audit_phase, map_phase, judge_phase, auditor, mapper, guard):
         assert "canonical-requirements.json" in text
     for text in (map_phase, judge_phase, mapper, guard):

@@ -16,6 +16,7 @@ Subcommands:
   init-verify-spec-run — create verify-spec runtime directory and state.json
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
+  write-requirement-audit — write deterministic requirement audit from canonical inventory
   inspect-fulfillment-report — print deterministic fulfillment report metadata JSON
   verify-docs — write deterministic README/CHANGELOG verification report
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
@@ -592,6 +593,25 @@ def _write_canonical_requirements() -> None:
     )
 
 
+def _write_requirement_audit() -> None:
+    if len(sys.argv) < 3:
+        print(
+            "Usage: python -m harness write-requirement-audit <verify-run-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.canonical_requirements import write_requirement_audit
+
+    result = write_requirement_audit(verify_run_dir=Path(sys.argv[2]))
+    print(
+        "OK: wrote requirement audit to "
+        f"{result.audit_path} ({result.count} requirements)"
+    )
+
+
 def _write_codegraph_evidence_map() -> None:
     if len(sys.argv) < 7:
         print(
@@ -856,6 +876,8 @@ def main() -> None:
         _init_verify_spec_run()
     elif subcommand == "write-canonical-requirements":
         _write_canonical_requirements()
+    elif subcommand == "write-requirement-audit":
+        _write_requirement_audit()
     elif subcommand == "write-judgment-prepass":
         _write_judgment_prepass()
     elif subcommand == "assemble-fulfillment-report":
@@ -881,7 +903,7 @@ def main() -> None:
             "'write-progress-integrity', 'apply-task-requirement-mapping', "
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'init-verify-spec-run', 'write-canonical-requirements', "
-            "'write-judgment-prepass', "
+            "'write-requirement-audit', 'write-judgment-prepass', "
             "'assemble-fulfillment-report', 'write-codegraph-evidence', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
             "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",

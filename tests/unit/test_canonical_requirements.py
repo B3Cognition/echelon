@@ -1,8 +1,32 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import subprocess
+import sys
 
-from harness.canonical_requirements import write_canonical_requirements
+from harness.canonical_requirements import (
+    write_canonical_requirements,
+    write_requirement_audit,
+)
+
+
+def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "harness", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
 
 
 def test_write_canonical_requirements_extracts_stable_ids_from_spec_inputs(tmp_path):
@@ -47,3 +71,75 @@ def test_write_canonical_requirements_extracts_stable_ids_from_spec_inputs(tmp_p
     ]
     markdown = (verify_run_dir / "canonical-requirements.md").read_text()
     assert "| FR-005 | task_metadata | tasks.md |" in markdown
+
+
+def test_write_requirement_audit_renders_deterministic_audit_table(tmp_path):
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "id": "EDGE-004",
+                        "source_kind": "spec",
+                        "source_file": "spec.md",
+                        "source_line": 8,
+                        "source_text": "EDGE-004: Invalid fuel is rejected.",
+                    },
+                    {
+                        "id": "FR-001",
+                        "source_kind": "spec",
+                        "source_file": "spec.md",
+                        "source_line": 3,
+                        "source_text": "- **FR-001**: Users can start a mission.",
+                    },
+                    {
+                        "id": "NFR-002",
+                        "source_kind": "spec",
+                        "source_file": "spec.md",
+                        "source_line": 4,
+                        "source_text": "- **NFR-002**: Startup stays below 500ms.",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = write_requirement_audit(verify_run_dir=verify_run_dir)
+
+    assert result.count == 3
+    audit = result.audit_path.read_text(encoding="utf-8")
+    assert "| ID | Category | Source | Requirement | Acceptance Signal |" in audit
+    assert "| EDGE-004 | edge_case | spec.md:8 | Invalid fuel is rejected. | Source-defined observable behavior for EDGE-004. |" in audit
+    assert "| FR-001 | functional | spec.md:3 | Users can start a mission. | Source-defined observable behavior for FR-001. |" in audit
+    assert "| NFR-002 | non_functional | spec.md:4 | Startup stays below 500ms. | Source-defined observable behavior for NFR-002. |" in audit
+
+
+def test_write_requirement_audit_cli_uses_canonical_inventory(tmp_path):
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "id": "FR-001",
+                        "source_kind": "spec",
+                        "source_file": "spec.md",
+                        "source_line": 3,
+                        "source_text": "- **FR-001**: Users can start a mission.",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = _run_harness(["write-requirement-audit", str(verify_run_dir)])
+
+    assert completed.returncode == 0, completed.stderr
+    assert "OK: wrote requirement audit" in completed.stdout
+    audit = (verify_run_dir / "requirement-audit.md").read_text(encoding="utf-8")
+    assert "| FR-001 | functional | spec.md:3 | Users can start a mission. |" in audit

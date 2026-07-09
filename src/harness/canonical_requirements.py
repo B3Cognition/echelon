@@ -13,6 +13,7 @@ REQ_ID_RE = re.compile(r"\b(?:FR|NFR|EDGE|REQ|AC|US|SC)-[A-Za-z0-9_.:-]+\b")
 TASK_REQ_RE = re.compile(r"\breq=(?P<reqs>[A-Za-z0-9_,.:-]+)")
 INVENTORY_JSON = "canonical-requirements.json"
 INVENTORY_MD = "canonical-requirements.md"
+REQUIREMENT_AUDIT_MD = "requirement-audit.md"
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,12 @@ class CanonicalRequirementInventoryResult:
     markdown_path: Path
     count: int
     inventory_hash: str
+
+
+@dataclass(frozen=True)
+class RequirementAuditResult:
+    audit_path: Path
+    count: int
 
 
 def extract_canonical_requirements(spec_dir: Path) -> list[CanonicalRequirement]:
@@ -87,6 +94,14 @@ def canonical_requirement_ids(inventory_path: Path) -> set[str]:
         for row in data.get("requirements", [])
         if str(row.get("id", "")).strip()
     }
+
+
+def write_requirement_audit(*, verify_run_dir: Path) -> RequirementAuditResult:
+    requirements = _load_inventory_requirements(verify_run_dir / INVENTORY_JSON)
+    audit_path = verify_run_dir / REQUIREMENT_AUDIT_MD
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    audit_path.write_text(_render_requirement_audit(requirements), encoding="utf-8")
+    return RequirementAuditResult(audit_path=audit_path, count=len(requirements))
 
 
 def _collect_markdown_ids(
@@ -164,3 +179,77 @@ def _render_markdown(requirements: list[CanonicalRequirement]) -> str:
 
 def _escape_cell(value: str) -> str:
     return value.replace("|", "\\|")
+
+
+def _load_inventory_requirements(inventory_path: Path) -> list[CanonicalRequirement]:
+    data = json.loads(inventory_path.read_text(encoding="utf-8"))
+    rows: list[CanonicalRequirement] = []
+    for raw in data.get("requirements", []):
+        if not isinstance(raw, dict):
+            continue
+        item_id = str(raw.get("id") or "").strip()
+        if not item_id:
+            continue
+        rows.append(
+            CanonicalRequirement(
+                id=item_id,
+                source_kind=str(raw.get("source_kind") or ""),
+                source_file=str(raw.get("source_file") or ""),
+                source_line=int(raw.get("source_line") or 0),
+                source_text=str(raw.get("source_text") or ""),
+            )
+        )
+    return sorted(rows, key=lambda row: row.id)
+
+
+def _render_requirement_audit(requirements: list[CanonicalRequirement]) -> str:
+    lines = [
+        "# Requirement Audit",
+        "",
+        "| ID | Category | Source | Requirement | Acceptance Signal |",
+        "| --- | --- | --- | --- | --- |",
+    ]
+    for row in requirements:
+        lines.append(
+            f"| {row.id} | {_category_for(row.id)} | "
+            f"{_escape_cell(_source_ref(row))} | "
+            f"{_escape_cell(_requirement_text(row))} | "
+            f"Source-defined observable behavior for {row.id}. |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _category_for(item_id: str) -> str:
+    prefix = item_id.split("-", 1)[0].upper()
+    if prefix == "FR":
+        return "functional"
+    if prefix == "NFR":
+        return "non_functional"
+    if prefix == "EDGE":
+        return "edge_case"
+    if prefix == "US":
+        return "user_story"
+    if prefix == "AC":
+        return "acceptance"
+    if prefix in {"SC", "REQ"}:
+        return "requirement"
+    return "requirement"
+
+
+def _source_ref(row: CanonicalRequirement) -> str:
+    if row.source_file and row.source_line:
+        return f"{row.source_file}:{row.source_line}"
+    return row.source_file or row.source_kind or "unknown"
+
+
+def _requirement_text(row: CanonicalRequirement) -> str:
+    text = row.source_text.strip()
+    text = _strip_markdown_prefix(text)
+    text = re.sub(rf"^\*\*{re.escape(row.id)}\*\*\s*:\s*", "", text)
+    text = re.sub(rf"^{re.escape(row.id)}\s*:\s*", "", text)
+    text = _strip_markdown_prefix(text)
+    return text.strip() or row.id
+
+
+def _strip_markdown_prefix(text: str) -> str:
+    return re.sub(r"^[\s>#.\-]*", "", text)

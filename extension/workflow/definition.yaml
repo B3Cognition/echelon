@@ -1966,18 +1966,11 @@ verify_spec:
     - id: verify-spec-3-audit
       label: "Requirement Fulfillment Audit"
       spec_file: workflow/phases/verify-spec-3-audit.md
-      type: agent
-      agent: speckit-echelon-spec-fulfillment-auditor
+      type: commander_internal
       tier: verification
-      context_pack:
-        - "{verify_run_dir}/state.json"
-        - "{verify_run_dir}/codegraph-summary.json"
-        - "{verify_run_dir}/progress-integrity.json"
-        - "{verify_run_dir}/progress-integrity.md"
-        - "{spec_dir}/spec.md"
-        - "{spec_dir}/plan.md"
-        - "{spec_dir}/tasks.md"
       outputs:
+        - "{verify_run_dir}/canonical-requirements.json"
+        - "{verify_run_dir}/canonical-requirements.md"
         - "{verify_run_dir}/requirement-audit.md"
       transitions:
         - to: verify-spec-4-map
