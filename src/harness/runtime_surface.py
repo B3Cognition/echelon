@@ -14,6 +14,21 @@ DELIVERY_COMMAND_FILES = frozenset(
     }
 )
 
+DELIVERY_EXCLUDED_BASH_FILES = frozenset(
+    {
+        "journal-append.sh",
+        "kb-lock.sh",
+        "kb-pending-merge.sh",
+        "kb-pending-write.sh",
+        "kb-read-init.sh",
+        "kb-recover.sh",
+        "kb-seed.sh",
+        "kb-validate-evolution.sh",
+        "kb-write.sh",
+        "validate-journal-entry.sh",
+    }
+)
+
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
     "build-",
     "bugfix-",

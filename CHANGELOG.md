@@ -93,7 +93,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   verify-spec, bugfix, codegen, and appendices while excluding Phase A,
   standalone reverse-engineering, and experimental artifact-quality phase docs
   from target-visible worktrees. Copied `workflow/definition.yaml` is also
-  pruned to delivery-safe sections and phase nodes.
+  pruned to delivery-safe sections and phase nodes. Delivery runtime copies now
+  also exclude Phase A learning and journal shell helpers such as `kb-*.sh`,
+  `journal-append.sh`, and `validate-journal-entry.sh`.
 - **EGR-118 / #144 source-root containment** — Ralph now writes a
   machine-readable `delivery-containment-policy.json` beside harness state for
   build prompts. The policy records implementation, spec-input, harness-state,

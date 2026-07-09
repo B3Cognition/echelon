@@ -63,6 +63,41 @@ def test_polyrepo_runtime_extension_excludes_reverse_engineering_bash_helpers(
     assert not (runtime / "scripts" / "bash" / "re").exists()
 
 
+def test_polyrepo_runtime_extension_excludes_learning_and_journal_bash_helpers(
+    tmp_path: Path,
+) -> None:
+    """Target-specific harness roots should not expose learning/journal helpers."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "bash").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    for name in [
+        "kb-write.sh",
+        "kb-read-init.sh",
+        "journal-append.sh",
+        "validate-journal-entry.sh",
+        "echelon-config-get.sh",
+    ]:
+        (source / "scripts" / "bash" / name).write_text(
+            "#!/usr/bin/env bash\n", encoding="utf-8"
+        )
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    bash_dir = harness_base / ".specify" / "extensions" / "echelon" / "scripts" / "bash"
+    assert (bash_dir / "echelon-config-get.sh").exists()
+    assert not (bash_dir / "kb-write.sh").exists()
+    assert not (bash_dir / "kb-read-init.sh").exists()
+    assert not (bash_dir / "journal-append.sh").exists()
+    assert not (bash_dir / "validate-journal-entry.sh").exists()
+
+
 def test_polyrepo_runtime_extension_excludes_phase_a_presets(
     tmp_path: Path,
 ) -> None:
