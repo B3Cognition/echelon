@@ -535,17 +535,38 @@ def _write_codegraph_evidence() -> None:
         write_codegraph_evidence,
     )
 
+    verify_run_dir = Path(sys.argv[3])
     try:
         result = write_codegraph_evidence(
             project_root=Path(sys.argv[2]),
-            verify_run_dir=Path(sys.argv[3]),
+            verify_run_dir=verify_run_dir,
             spec_dir=Path(sys.argv[4]),
         )
     except CodeGraphEvidenceError as exc:
+        _stamp_verify_spec_state(verify_run_dir, {"structural_evidence": "degraded"})
         print(f"CodeGraph evidence degraded; see {exc}", file=sys.stderr)
         sys.exit(1)
 
+    _stamp_verify_spec_state(verify_run_dir, {"structural_evidence": "ready"})
     print(f"OK: wrote CodeGraph evidence to {result.analysis_path}")
+
+
+def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object]) -> None:
+    import json
+
+    state_path = verify_run_dir / "state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    state.update(updates)
+    state_path.write_text(
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _write_canonical_requirements() -> None:

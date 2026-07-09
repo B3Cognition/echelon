@@ -107,6 +107,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `verify-spec-1-init` phase now tells COMMANDER to consume the command's JSON
   instead of reading `runs/.current`, deriving orchestration roots, choosing
   timestamps, or writing state by hand.
+- **EGR-119 / #143 CodeGraph state stamping** — `python -m harness
+  write-codegraph-evidence` now updates `state.json.structural_evidence` to
+  `ready` or `degraded` itself, and `verify-spec-2-codegraph` now forbids
+  hand-editing state after CodeGraph degradation.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG

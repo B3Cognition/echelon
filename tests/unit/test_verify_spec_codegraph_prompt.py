@@ -58,6 +58,8 @@ def test_verify_spec_codegraph_uses_deterministic_harness_command() -> None:
     ) in text
     assert "{verify_run_dir}/codegraph-analysis.json" in text
     assert "{verify_run_dir}/codegraph-summary.json" in text
+    assert "updates `{verify_run_dir}/state.json`" in text
+    assert "Do not hand-edit `state.json`" in text
 
 
 def test_verify_spec_codegraph_forbids_prompt_side_discovery() -> None:

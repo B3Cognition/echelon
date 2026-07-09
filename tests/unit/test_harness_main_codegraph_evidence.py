@@ -145,6 +145,11 @@ def test_write_codegraph_evidence_cli_writes_analysis_and_summary(
     project_root.mkdir()
     _write_fake_bridge(project_root)
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "state.json").write_text(
+        json.dumps({"structural_evidence": "pending"}),
+        encoding="utf-8",
+    )
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -164,6 +169,8 @@ def test_write_codegraph_evidence_cli_writes_analysis_and_summary(
     assert summary["symbol_kinds"][0] == {"kind": "function", "count": 2}
     assert summary["top_callers"][0] == {"symbol": "A", "outgoing_calls": 2}
     assert summary["top_callees"][0] == {"symbol": "B", "incoming_calls": 2}
+    state = json.loads((verify_run_dir / "state.json").read_text())
+    assert state["structural_evidence"] == "ready"
     assert not (project_root / ".codegraph").exists()
 
 
@@ -238,6 +245,11 @@ def test_write_codegraph_evidence_falls_back_to_bridge_when_cli_fails(
     _write_fake_codegraph_cli(tmp_path / "bin", success=False)
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "state.json").write_text(
+        json.dumps({"structural_evidence": "pending"}),
+        encoding="utf-8",
+    )
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -255,6 +267,8 @@ def test_write_codegraph_evidence_falls_back_to_bridge_when_cli_fails(
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
     assert "provider" not in analysis
     assert summary["top_callers"][0] == {"symbol": "A", "outgoing_calls": 2}
+    state = json.loads((verify_run_dir / "state.json").read_text())
+    assert state["structural_evidence"] == "ready"
     assert not (verify_run_dir / "codegraph-error.txt").exists()
 
 
@@ -311,3 +325,5 @@ def test_write_codegraph_evidence_cli_uses_fixed_installed_bridge_path(
     assert "exit_code: 7" in error
     assert ".specify/extensions/echelon/scripts/node/re/codegraph-bridge.js" in error
     assert "fixed installed extension path" in error
+    state = json.loads((verify_run_dir / "state.json").read_text())
+    assert state["structural_evidence"] == "degraded"
