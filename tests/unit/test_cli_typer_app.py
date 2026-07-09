@@ -234,6 +234,15 @@ def test_typer_front_door_declares_all_top_level_commands():
 
 
 @pytest.mark.unit
+def test_typer_run_prints_version_without_subcommand(capsys):
+    from echelon.cli_app import run
+
+    run(["--version"])
+
+    assert capsys.readouterr().out.strip() == "echelon 3.0.0"
+
+
+@pytest.mark.unit
 def test_spec_help_uses_typer_front_door():
     from echelon.cli_app import app
 

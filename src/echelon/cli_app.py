@@ -941,4 +941,8 @@ def delivery_checkpoint_list(
 
 def run(argv: list[str] | None = None) -> None:
     """Run the Typer CLI app with an explicit argv for tests or sys.argv[1:]."""
+    if argv in (["-v"], ["--version"], ["version"]):
+        legacy_cli = _legacy_cli()
+        typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+        return
     app(args=argv, standalone_mode=False)
