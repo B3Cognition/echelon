@@ -145,7 +145,9 @@ def build_re_execution_plan(
             selected = False
         elif policy == "refresh-all":
             action = "refresh"
-        elif policy in {"cached-only", "target-changed"} and not hit:
+        elif policy == "cached-only" and not hit:
+            action = "missing"
+        elif policy == "target-changed" and target is not None and source.id != target.id and not hit:
             action = "missing"
         elif hit:
             action = "reuse"

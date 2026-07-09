@@ -124,6 +124,33 @@ def test_cached_only_never_refreshes_missing_sources(tmp_path: Path) -> None:
     }
 
 
+def test_target_changed_refreshes_missing_target_but_requires_cached_siblings(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    for source_id in ("original-a", "original-b", "prosaic"):
+        _write_source(root, source_id)
+    manifest = _manifest(root, "original-a", "original-b", "prosaic")
+    profile = ReFingerprintProfile()
+    cache_root = root / ".echelon" / "cache" / "re"
+    _cache_source(root, cache_root, "original-a", profile)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=manifest,
+        cache_root=cache_root,
+        target_source="prosaic",
+        requested_policy="",
+        profile=profile,
+    )
+
+    assert plan.policy == "target-changed"
+    assert plan.refresh_sources_count == 1
+    assert {source.id: source.action for source in plan.sources} == {
+        "original-a": "reuse",
+        "original-b": "missing",
+        "prosaic": "refresh",
+    }
+
+
 def test_target_only_selects_target_and_forbids_sibling_roots(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     for source_id in ("original-a", "original-b", "prosaic"):
