@@ -119,8 +119,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   package-manager hints, Python dependency hints, Python project script hints,
   target layout excerpts with representative source/test files, target
   source/test file-count hints, target config-file hints, documentation artifact
-  hints, target git branch/HEAD/dirty-state hints, and build rules, and the
-  prompt tells agents to read it before implementation.
+  hints, target git branch/HEAD/recent-commit/dirty-state hints, and build
+  rules, and the prompt tells agents to read it before implementation.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

@@ -114,6 +114,19 @@ def _current_git_branch(worktree: Path) -> str | None:
     return branch or None
 
 
+def _recent_git_commits(worktree: Path, *, limit: int = 3) -> list[str]:
+    result = subprocess.run(
+        ["git", "log", f"--max-count={limit}", "--abbrev=12", "--format=%h %s"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
 class CommitPushError(RuntimeError):
     """Raised when verified work cannot be committed or pushed."""
 
@@ -2722,6 +2735,7 @@ class RalphController:
             return []
         branch = _current_git_branch(worktree_path)
         commit = _current_git_commit(worktree_path)
+        recent_commits = _recent_git_commits(worktree_path)
         status_lines = _git_status_lines(worktree_path)
         if branch is None and commit is None and status_lines is None:
             return []
@@ -2731,6 +2745,10 @@ class RalphController:
             lines.append(f"- branch: `{branch}`")
         if commit:
             lines.append(f"- head: `{commit[:12]}`")
+        if recent_commits:
+            lines.append("- recent commits:")
+            for entry in recent_commits:
+                lines.append(f"  - {entry}")
         if status_lines is None:
             lines.append("- status: unavailable")
         elif not status_lines:

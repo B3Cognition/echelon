@@ -978,6 +978,8 @@ class TestOuterLoopConvergence:
         assert "## Target Git State" in context
         assert "- branch: `main`" in context
         assert f"- head: `{head}`" in context
+        assert "- recent commits:" in context
+        assert f"  - {head} initial" in context
         assert "- status: dirty (1 path)" in context
         assert "  - M src/index.ts" in context
 
