@@ -571,6 +571,36 @@ def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
     assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
 
 
+def test_assemble_prompt_injects_workspace_source_roots(tmp_path):
+    """Agents receive explicit source-root boundaries for codebase searches."""
+    (tmp_path / ".git").mkdir()
+    sources_dir = tmp_path / "sources"
+    app = sources_dir / "app"
+    docs = sources_dir / "docs"
+    app.mkdir(parents=True)
+    docs.mkdir(parents=True)
+    (app / "package.json").write_text("{}", encoding="utf-8")
+    (docs / "pyproject.toml").write_text("[project]\nname = 'docs'\n", encoding="utf-8")
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(id="phase3-how", type="agent")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "## Workspace Source Roots" in prompt
+    assert f"WORKSPACE_ROOT={tmp_path}" in prompt
+    assert f"SOURCE_ROOT[app]={app}" in prompt
+    assert f"SOURCE_ROOT[docs]={docs}" in prompt
+    assert "ALWAYS perform source-code reads, searches, edits, and tests inside SOURCE_ROOT paths." in prompt
+    assert "NEVER treat PROJECT_ROOT as the source tree unless a SOURCE_ROOT entry points to PROJECT_ROOT." in prompt
+
+
 def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     """Agent prompts include the shared endocrine contract before role text."""
     squad_dir = tmp_path / "squad" / "run-test"

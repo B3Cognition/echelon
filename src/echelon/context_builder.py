@@ -81,6 +81,8 @@ def _canonical_metadata(project_root: Path) -> list[FeatureMetadata]:
     result: list[FeatureMetadata] = []
     specs_dir = project_root / "specs"
     for spec_dir in sorted(specs_dir.glob("[0-9][0-9][0-9]-*")):
+        if not (spec_dir / "spec.md").exists():
+            continue
         metadata = FeatureMetadata.from_spec_dir(spec_dir)
         merged = _merge_existing_metadata(metadata, read_feature_metadata(spec_dir))
         result.append(merged)
@@ -91,6 +93,8 @@ def _wip_metadata(run_dir: Path) -> list[FeatureMetadata]:
     result: list[FeatureMetadata] = []
     specs_dir = run_dir / "specs"
     for spec_dir in sorted(specs_dir.glob("[0-9][0-9][0-9]-*")):
+        if not (spec_dir / "spec.md").exists():
+            continue
         result.append(FeatureMetadata.from_spec_dir(spec_dir, run_id=run_dir.name))
     return result
 

@@ -46,6 +46,38 @@ def test_build_run_context_writes_prior_and_current_files(tmp_path: Path) -> Non
     assert (run_dir / "context" / "feature-registry.snapshot.json").exists()
 
 
+def test_build_run_context_resolves_run_local_requirement_paths(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / "spec-1"
+    wip = run_dir / "specs" / "002-share-album"
+    wip.mkdir(parents=True)
+    (wip / "spec.md").write_text("FR-002: Share an album.\n", encoding="utf-8")
+
+    result = build_run_context(tmp_path, run_dir, user_request="share albums")
+
+    current_context = (result.context_dir / "current-feature-context.md").read_text(encoding="utf-8")
+    assert "FR-002: Share an album." in current_context
+    assert "Requirement FR-002 is not linked to any run-local spec file." not in current_context
+
+
+def test_build_run_context_skips_canonical_dirs_without_spec_md(tmp_path: Path) -> None:
+    re_overview = tmp_path / "specs" / "000-re-overview"
+    re_overview.mkdir(parents=True)
+    (re_overview / "overview.md").write_text("# Reverse-engineering overview\n", encoding="utf-8")
+    canonical = tmp_path / "specs" / "001-photo-album"
+    canonical.mkdir(parents=True)
+    (canonical / "spec.md").write_text("FR-001: Upload a photo.\n", encoding="utf-8")
+    run_dir = tmp_path / "runs" / "spec-1"
+    wip = run_dir / "specs" / "002-share-album"
+    wip.mkdir(parents=True)
+    (wip / "spec.md").write_text("FR-002: Share an album.\n", encoding="utf-8")
+
+    result = build_run_context(tmp_path, run_dir)
+
+    prior_context = (result.context_dir / "prior-spec-context.md").read_text(encoding="utf-8")
+    assert "## 001-photo-album" in prior_context
+    assert "000-re-overview" not in prior_context
+
+
 def test_stale_drawers_are_omitted_from_prior_context_and_reported_as_stale(tmp_path: Path) -> None:
     canonical = tmp_path / "specs" / "001-photo-album"
     canonical.mkdir(parents=True)

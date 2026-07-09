@@ -140,6 +140,43 @@ def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
     return "\n".join(lines)
 
 
+def _workspace_source_roots_context(project_root: Path) -> str:
+    """Render source-root boundaries for agent codebase operations."""
+    try:
+        from echelon.workspace_model import discover_workspace
+
+        manifest = discover_workspace(project_root)
+    except Exception:
+        return (
+            "## Workspace Source Roots\n"
+            f"WORKSPACE_ROOT={project_root}\n"
+            "- Source roots could not be resolved from workspace metadata.\n"
+            "- Treat PROJECT_ROOT as orchestration context; inspect manifests before broad source-code searches.\n\n"
+        )
+
+    lines = [
+        "## Workspace Source Roots",
+        f"WORKSPACE_ROOT={manifest.workspace.root}",
+        f"WORKSPACE_GIT_ROLE={manifest.workspace.git_role}",
+    ]
+    if manifest.sources:
+        for source in manifest.sources:
+            source_path = manifest.workspace.root if source.path == "." else manifest.workspace.root / source.path
+            lines.append(f"SOURCE_ROOT[{source.id}]={source_path.resolve()}")
+    else:
+        lines.append("SOURCE_ROOTS=none")
+    lines.extend(
+        [
+            "- PROJECT_ROOT is the Echelon orchestration workspace for runs, specs, config, and source-root manifests.",
+            "- ALWAYS perform source-code reads, searches, edits, and tests inside SOURCE_ROOT paths.",
+            "- NEVER treat PROJECT_ROOT as the source tree unless a SOURCE_ROOT entry points to PROJECT_ROOT.",
+            "- NEVER search sibling directories outside WORKSPACE_ROOT for implementation source unless a phase explicitly provides that path.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
@@ -517,6 +554,7 @@ class PhaseExecutor(ABC):
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
+            f"{_workspace_source_roots_context(self._project_root)}"
             f"{self._extension_path_context()}"
         )
         if spec_dir_ref:
@@ -863,6 +901,7 @@ class PhaseExecutor(ABC):
                 + f"STAGING_DIR={staging_dir_str}\n"
                 + f"CONTEXT_DIR={context_dir_str}\n"
                 + f"PROJECT_ROOT={self._project_root}\n"
+                + _workspace_source_roots_context(self._project_root)
                 + self._extension_path_context()
                 + "<context>\n"
                 + f"project_root: {self._project_root}\n"
@@ -887,6 +926,7 @@ class PhaseExecutor(ABC):
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + _workspace_source_roots_context(self._project_root)
             + self._extension_path_context()
             + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)
@@ -936,6 +976,7 @@ class PhaseExecutor(ABC):
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
+            + _workspace_source_roots_context(self._project_root)
             + self._extension_path_context()
             + "\n".join(context_lines)
             + "\n\n<instructions>\n"
@@ -1194,6 +1235,7 @@ class StagedParallelExecutor(PhaseExecutor):
             f"STAGING_DIR={staging_dir_str}\n"
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
+            f"{_workspace_source_roots_context(self._project_root)}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 

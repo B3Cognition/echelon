@@ -114,6 +114,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   commands before finalization. `python -m harness verify-docs` now writes the
   authoritative docs verification report, and DOCS VERIFIER is instructed to run
   it before returning PASS or structured repair findings.
+- **EGR-123 / #148 Phase A source-root boundaries** — feature context builders
+  now ignore numbered directories that lack `spec.md`, preventing RE overview
+  folders from being treated as product specs, and Phase A prompts now include
+  explicit workspace `SOURCE_ROOT` boundaries so agents distinguish orchestration
+  workspace paths from implementation source roots.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The
