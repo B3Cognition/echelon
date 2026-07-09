@@ -2667,6 +2667,10 @@ class RalphController:
         if rendered:
             lines.append("- top-level: " + ", ".join(rendered))
 
+        doc_artifacts = _target_doc_artifacts(worktree_path)
+        if doc_artifacts:
+            lines.append("- docs: " + ", ".join(doc_artifacts))
+
         config_files = _target_config_files(worktree_path)
         if config_files:
             lines.append("- config files: " + ", ".join(config_files))
@@ -4868,6 +4872,17 @@ def _target_config_files(root: Path, *, limit: int = 12) -> list[str]:
         if name in exact_names or any(name.startswith(prefix) for prefix in prefixes):
             found.append(name)
     return sorted(set(found), key=str.lower)[:limit]
+
+
+def _target_doc_artifacts(root: Path) -> list[str]:
+    names = []
+    for name in ("CHANGELOG.md", "docs", "LICENSE", "README.md"):
+        path = root / name
+        if path.is_dir():
+            names.append(f"{name}/")
+        elif path.is_file():
+            names.append(name)
+    return names
 
 
 def _estimate_tokens(result: ExecResult) -> int:

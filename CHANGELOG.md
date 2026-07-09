@@ -118,8 +118,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   hints, package dependency hints, package-manager lockfile hints, Python
   package-manager hints, Python dependency hints, Python project script hints,
   target layout excerpts with representative source/test files, target
-  config-file hints, and build rules, and the prompt tells agents to read it
-  before implementation.
+  config-file hints, documentation artifact hints, and build rules, and the
+  prompt tells agents to read it before implementation.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest
