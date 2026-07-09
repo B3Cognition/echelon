@@ -689,6 +689,11 @@ class TestOuterLoopConvergence:
         spec_dir = workspace / "specs" / "001-prosaic"
         worktree.mkdir(parents=True)
         spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=ui req=FR-002 depends=T-001\n",
+            encoding="utf-8",
+        )
 
         state = state_store.read()
         state["workspace_root"] = str(workspace)
@@ -717,6 +722,10 @@ class TestOuterLoopConvergence:
         assert "## Current Build Slice" in context
         assert "- current_task_ids: T-002" in context
         assert "- current_phase_group: phase-ui" in context
+        assert (
+            "- current_task_row: - [ ] T-002 complexity=standard phase=ui req=FR-002 depends=T-001"
+            in context
+        )
         assert f"- worktree: `{worktree}`" in context
         assert f"- spec_dir: `{spec_dir}`" in context
         assert "completed_tasks: 1/2" in context

@@ -2482,7 +2482,7 @@ class RalphController:
         target_git_state = self._build_slice_target_git_state(Path(worktree_path))
         if target_git_state:
             lines.extend(["## Target Git State", *target_git_state, ""])
-        current_slice = self._build_slice_current_slice()
+        current_slice = self._build_slice_current_slice(tasks_path)
         if current_slice:
             lines.extend(["## Current Build Slice", *current_slice, ""])
         open_task_rows = self._build_slice_open_task_rows(tasks_path)
@@ -2766,7 +2766,7 @@ class RalphController:
                 lines.append(f"  - ... {count - dirty_limit} more")
         return lines
 
-    def _build_slice_current_slice(self) -> list[str]:
+    def _build_slice_current_slice(self, tasks_path: Path | None) -> list[str]:
         try:
             build = self._state_store.read().get("build")
         except Exception:
@@ -2785,7 +2785,27 @@ class RalphController:
             lines.append("- current_task_ids: " + ", ".join(task_ids))
         if phase_group:
             lines.append(f"- current_phase_group: {phase_group}")
+        for row in self._build_slice_task_rows_for_ids(tasks_path, task_ids):
+            lines.append(f"- current_task_row: {row}")
         return lines
+
+    def _build_slice_task_rows_for_ids(
+        self, tasks_path: Path | None, task_ids: list[str]
+    ) -> list[str]:
+        if not task_ids or tasks_path is None or not tasks_path.is_file():
+            return []
+        try:
+            tasks = parse_task_rows(
+                tasks_path.read_text(encoding="utf-8", errors="replace")
+            )
+        except Exception:
+            return []
+        requested = set(task_ids)
+        rows: list[str] = []
+        for task in tasks:
+            if task.task_id in requested:
+                rows.append(_render_canonical_task_row(task))
+        return rows
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
         try:
