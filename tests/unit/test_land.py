@@ -1008,6 +1008,51 @@ def test_workspace_target_land_uses_workspace_spec_readiness_not_target_branch_r
 
 
 @pytest.mark.unit
+def test_workspace_target_fulfillment_freshness_uses_target_repo_ref(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _init_repo(workspace)
+    target = workspace / "sources" / "prosaic"
+    _init_repo(target)
+
+    old_target_commit = _commit(target, "src/app.ts", "export const ok = true;\n", "impl")
+    _git(target, "checkout", "-b", "001-demo")
+    _commit(target, "README.md", "# Prosaic\n", "docs")
+
+    spec_dir = workspace / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "---\n"
+        "status: ready_to_land\n"
+        "targets:\n"
+        "- sources/prosaic\n"
+        "---\n"
+        "# Spec\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "fulfillment-report.md").write_text(
+        "---\n"
+        f"verified_commit: {old_target_commit}\n"
+        "verify_scope: full\n"
+        "---\n"
+        "| ID | Status | Evidence | Confidence | Notes |\n"
+        "|---|---|---|---|---|\n"
+        "| FR-001 | IMPLEMENTED | src/app.ts | high | ok |\n",
+        encoding="utf-8",
+    )
+
+    warning = _fulfillment_warning(
+        "001",
+        workspace,
+        commit_project_dir=target,
+        commit_ref="001-demo",
+    )
+
+    assert warning is None
+
+
+@pytest.mark.unit
 def test_land_prepares_feature_branch_before_direct_merge(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     _init_repo(repo)

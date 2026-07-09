@@ -79,7 +79,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   source repository instead of using the orchestration workspace mirror. The
   legacy `echelon harness land` alias is wired through the same path. Targeted
   land also uses the workspace spec's readiness state instead of treating a
-  stale copied spec on the target feature branch as authoritative.
+  stale copied spec on the target feature branch as authoritative, and compares
+  workspace fulfillment reports against the target repo feature branch instead
+  of the orchestration workspace commit.
 - **EGR-115 / #140 deterministic Ralph recovery boundary** — Ralph now
   continues to verification when a clean markerless build has all canonical
   tasks already marked done, instead of paying for another LLM turn only to

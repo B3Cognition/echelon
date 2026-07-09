@@ -482,11 +482,15 @@ def land(
         pr_url = _find_pr_url_all_builds(spec_id, wrapper_project_dir)
 
     readiness_ref = feature_branch if project_dir == wrapper_project_dir else None
+    fulfillment_project_dir = None if project_dir == wrapper_project_dir else project_dir
+    fulfillment_ref = feature_branch if project_dir != wrapper_project_dir else None
     if not options.prepare_only and not _check_ready_before_land(
         spec_id,
         wrapper_project_dir,
         options,
         ref=readiness_ref,
+        fulfillment_project_dir=fulfillment_project_dir,
+        fulfillment_ref=fulfillment_ref,
     ):
         return False
 
@@ -712,6 +716,8 @@ def _check_ready_before_land(
     project_dir: Path,
     options: LandOptions,
     ref: str | None = None,
+    fulfillment_project_dir: Path | None = None,
+    fulfillment_ref: str | None = None,
 ) -> bool:
     status_warning = _land_status_warning(spec_id, project_dir)
     fulfillment_warning: str | None = None
@@ -720,6 +726,8 @@ def _check_ready_before_land(
             spec_id,
             project_dir,
             strict=False,
+            commit_project_dir=fulfillment_project_dir,
+            commit_ref=fulfillment_ref,
         )
 
     if (
@@ -894,6 +902,8 @@ def _fulfillment_warning(
     project_dir: Path,
     strict: bool = False,
     ref: str | None = None,
+    commit_project_dir: Path | None = None,
+    commit_ref: str | None = None,
 ) -> str | None:
     with _land_spec_dir(spec_id, project_dir, ref=ref) as spec_dir:
         if spec_dir is None:
@@ -908,19 +918,21 @@ def _fulfillment_warning(
                 )
             return None
 
-        if ref is None:
-            current_commit = _current_git_commit(project_dir)
+        freshness_project_dir = commit_project_dir or project_dir
+        freshness_ref = commit_ref or ref
+        if freshness_ref is None:
+            current_commit = _current_git_commit(freshness_project_dir)
             current = bool(
                 current_commit
                 and fulfillment_report_is_current(report, current_commit=current_commit)
             )
         else:
-            current_commit = _ref_git_commit(project_dir, ref)
+            current_commit = _ref_git_commit(freshness_project_dir, freshness_ref)
             current = _fulfillment_report_covers_ref(
                 report=report,
-                project_dir=project_dir,
+                project_dir=freshness_project_dir,
                 spec_id=spec_id,
-                ref=ref,
+                ref=freshness_ref,
                 current_commit=current_commit,
             )
         if current_commit and not current:
