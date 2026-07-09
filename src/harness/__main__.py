@@ -17,6 +17,7 @@ Subcommands:
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
   write-requirement-audit — write deterministic requirement audit from canonical inventory
+  validate-fulfillment-artifacts — validate fulfillment report row-set integrity
   inspect-fulfillment-report — print deterministic fulfillment report metadata JSON
   verify-docs — write deterministic README/CHANGELOG verification report
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
@@ -388,6 +389,44 @@ def _assemble_fulfillment_report() -> None:
         state_path=state_path,
     )
     print(f"OK: assembled fulfillment report at {Path(sys.argv[5]).resolve()}")
+
+
+def _validate_fulfillment_artifacts() -> None:
+    if len(sys.argv) not in {4, 5}:
+        print(
+            "Usage: python -m harness validate-fulfillment-artifacts "
+            "<requirement-audit.md> <fulfillment-report.md> "
+            "[canonical-requirements.json]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from kernel.fulfillment import validate_fulfillment_artifacts
+
+    result = validate_fulfillment_artifacts(
+        requirement_audit_path=Path(sys.argv[2]),
+        fulfillment_report_path=Path(sys.argv[3]),
+        canonical_inventory_path=Path(sys.argv[4]) if len(sys.argv) == 5 else None,
+    )
+    if result.ok:
+        print(
+            "OK: fulfillment artifact row set is valid "
+            f"(audit={result.audit_count}, report={result.report_count})"
+        )
+        return
+    if result.missing_in_report:
+        print(
+            "missing_in_report: " + ", ".join(result.missing_in_report),
+            file=sys.stderr,
+        )
+    if result.extra_in_report:
+        print(
+            "extra_in_report: " + ", ".join(result.extra_in_report),
+            file=sys.stderr,
+        )
+    sys.exit(1)
 
 
 def _progress_integrity_markdown(payload: dict[str, object]) -> str:
@@ -882,6 +921,8 @@ def main() -> None:
         _write_judgment_prepass()
     elif subcommand == "assemble-fulfillment-report":
         _assemble_fulfillment_report()
+    elif subcommand == "validate-fulfillment-artifacts":
+        _validate_fulfillment_artifacts()
     elif subcommand == "write-codegraph-evidence":
         _write_codegraph_evidence()
     elif subcommand == "write-codegraph-evidence-map":
@@ -904,7 +945,8 @@ def main() -> None:
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'init-verify-spec-run', 'write-canonical-requirements', "
             "'write-requirement-audit', 'write-judgment-prepass', "
-            "'assemble-fulfillment-report', 'write-codegraph-evidence', "
+            "'assemble-fulfillment-report', 'validate-fulfillment-artifacts', "
+            "'write-codegraph-evidence', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
             "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,

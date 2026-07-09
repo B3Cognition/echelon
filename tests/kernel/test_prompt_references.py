@@ -155,6 +155,8 @@ def test_verify_spec_judge_requires_artifact_row_set_validation():
     assert "requirement-audit.md" in text
     assert "fulfillment-report.md" in text
     assert "row-set integrity" in text
+    assert "validate-fulfillment-artifacts" in text
+    assert "Do not validate\nrow sets by hand" in text
     assert "hard stop" in text.lower()
     assert "Do not render summary counts as a markdown table" in text
     assert "status labels in the first column" in text

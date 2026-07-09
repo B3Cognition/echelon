@@ -120,13 +120,20 @@ python -m harness assemble-fulfillment-report \
   "{verify_run_dir}/state.json"
 ```
 
-Before returning DONE in full scope, perform row-set integrity validation: every
-item ID in `{verify_run_dir}/canonical-requirements.json` must appear exactly
-once in `{spec_dir}/fulfillment-report.md`, and the report must not invent extra
-item IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If
-validation fails, hard stop with BLOCKED and do not summarize the run as
-complete. In scoped mode, validate that every `scoped_ids` item appears exactly
-once and that no other requirement IDs appear in the scoped output.
+Before returning DONE, run deterministic row-set integrity validation:
+
+```bash
+python -m harness validate-fulfillment-artifacts \
+  "{verify_run_dir}/requirement-audit.md" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{verify_run_dir}/canonical-requirements.json"
+```
+
+The command validates that every required item ID appears exactly once in
+`{spec_dir}/fulfillment-report.md` and that the report does not invent extra item
+IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If validation
+fails, hard stop with BLOCKED and report the command's stderr. Do not validate
+row sets by hand.
 
 Do not render summary counts as a markdown table with status labels in the first column.
 Use bullets or prose for summary counts. The first column of any report

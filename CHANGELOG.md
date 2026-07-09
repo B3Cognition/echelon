@@ -116,6 +116,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `requirement-audit.md` from `canonical-requirements.json`, and converted
   `verify-spec-3-audit` from an auditor-agent dispatch to a
   commander-internal deterministic phase.
+- **EGR-119 / #143 fulfillment row-set validation** — added
+  `python -m harness validate-fulfillment-artifacts` and updated
+  `verify-spec-5-judge` to use it for final row-set integrity instead of asking
+  COMMANDER to compare fulfillment report IDs by hand.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG

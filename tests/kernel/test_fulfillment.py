@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 from kernel.fulfillment import (
     NON_STRICT_BLOCKING,
@@ -13,6 +15,23 @@ from kernel.fulfillment import (
     stamp_fulfillment_report,
     validate_fulfillment_artifacts,
 )
+
+
+def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
+    return subprocess.run(
+        [sys.executable, "-m", "harness", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
 
 
 def test_active_run_path_uses_runs_current(tmp_path):
@@ -306,3 +325,39 @@ def test_validate_fulfillment_artifacts_accepts_python_assembled_report(tmp_path
     )
 
     assert result.ok is True
+
+
+def test_validate_fulfillment_artifacts_cli_reports_missing_rows(tmp_path):
+    inventory = tmp_path / "canonical-requirements.json"
+    inventory.write_text(
+        '{"requirements":[{"id":"FR-001"},{"id":"FR-002"}]}\n',
+        encoding="utf-8",
+    )
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "| ID | Category |\n"
+        "| --- | --- |\n"
+        "| FR-001 | functional |\n"
+        "| FR-002 | functional |\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status |\n"
+        "| --- | --- |\n"
+        "| FR-001 | IMPLEMENTED |\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_harness(
+        [
+            "validate-fulfillment-artifacts",
+            str(audit),
+            str(report),
+            str(inventory),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "missing_in_report: FR-002" in completed.stderr
+    assert "extra_in_report" not in completed.stderr
