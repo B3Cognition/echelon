@@ -1868,7 +1868,7 @@ class TestOuterLoopConvergence:
         captured = capsys.readouterr()
         assert "missing build status marker" in captured.err
         assert ".harness-build-status.json" in captured.err
-        assert "echelon delivery resume spec-001" in captured.err
+        assert "echelon delivery continue spec-001" in captured.err
         assert "missing Phase A artifacts" not in captured.err
         assert provider.destroyed is True
         gitops.commit.assert_not_called()
@@ -2219,7 +2219,7 @@ class TestOuterLoopConvergence:
         assert "You've hit your session limit" in captured.err
         assert "9:10pm" in captured.err
         assert "retry after" in captured.err
-        assert "echelon delivery resume spec-001" in captured.err
+        assert "echelon delivery continue spec-001" in captured.err
         assert "missing build status marker" not in captured.err
         assert "COMMANDER may have changed files, but did not write" not in captured.err
         state = state_store.read()
@@ -2459,6 +2459,62 @@ class TestOuterLoopConvergence:
         violation = state["source_root_containment_violation"]
         assert violation["forbidden_root"] == str(sibling)
         assert "README.md" in violation["matched_line"]
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_llm_build_blocks_when_transcript_touches_host_harness_source(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Harness detects transcript evidence of host Echelon source inspection."""
+        from harness.build_result import BuildResult
+        import harness.ralph as ralph_module
+
+        project = tmp_path / "project"
+        worktree = tmp_path / "worktree"
+        for path in (project, worktree):
+            _init_git_repo(path)
+            (path / "README.md").write_text("# Demo\n", encoding="utf-8")
+            _commit_all(path)
+
+        host_harness_root = Path(ralph_module.__file__).resolve().parents[2]
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout=f"  ▷ Read: {host_harness_root / 'src' / 'harness' / 'ralph.py'}\n",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = project
+        gitops.create_worktree.return_value = str(worktree)
+        state = state_store.read()
+        state["workspace_root"] = str(project)
+        state["source_root"] = str(project)
+        state_store.write(state)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        captured = capsys.readouterr()
+        assert "HARNESS SOURCE CONTAINMENT VIOLATION" in captured.err
+        assert str(host_harness_root) in captured.err
+        state = state_store.read()
+        assert state["termination_reason"] == "containment_violation"
+        violation = state["harness_source_containment_violation"]
+        assert violation["forbidden_root"] == str(host_harness_root)
+        assert "ralph.py" in violation["matched_line"]
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
@@ -3775,7 +3831,7 @@ class TestVerifyCommandNeeded:
         err = capsys.readouterr().err
         assert "TEST RUNNER MISSING" in err
         assert "verify_command" in err
-        assert "echelon delivery resume" in err
+        assert "echelon delivery continue" in err
 
     def test_state_written_as_blocked(self, tmp_path: Path) -> None:
         """Unknown project type → StateStore reflects blocked + verify_command_needed."""

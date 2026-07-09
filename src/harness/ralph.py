@@ -362,6 +362,29 @@ class RalphController:
                                 "source_root_containment_violation": source_root_violation,
                             },
                         )
+                    harness_source_violation = self._detect_forbidden_harness_source_access(
+                        build_result,
+                        worktree_path=worktree_path,
+                    )
+                    if harness_source_violation is not None:
+                        preserve_worktree = True
+                        _print_harness_source_containment_violation_banner(
+                            self._spec_id,
+                            self._strategy_id,
+                            harness_source_violation,
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason="containment_violation",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=None,
+                            extra_state={
+                                "harness_source_containment_violation": harness_source_violation,
+                            },
+                        )
                     containment_violation = _detect_containment_violation(
                         containment_before,
                         getattr(self._gitops, "base_dir", None),
@@ -2402,6 +2425,40 @@ class RalphController:
                     }
         return None
 
+    def _detect_forbidden_harness_source_access(
+        self,
+        build_result: Dict[str, Any],
+        *,
+        worktree_path: str,
+    ) -> Optional[Dict[str, str]]:
+        forbidden_roots = _forbidden_harness_source_roots(Path(worktree_path))
+        if not forbidden_roots:
+            return None
+        text = "\n".join(
+            str(build_result.get(key) or "") for key in ("stdout", "stderr")
+        )
+        if not text.strip():
+            return None
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or not _looks_like_tool_access_line(line):
+                continue
+            for root in forbidden_roots:
+                if root in line:
+                    return {
+                        "worktree": str(worktree_path),
+                        "forbidden_root": root,
+                        "matched_line": line,
+                    }
+            marker = _forbidden_harness_source_marker(line, Path(worktree_path))
+            if marker:
+                return {
+                    "worktree": str(worktree_path),
+                    "forbidden_root": marker,
+                    "matched_line": line,
+                }
+        return None
+
     def _delivery_progress_ledger_block(self, state: Dict[str, Any]) -> str:
         """Render persisted delivery progress as read-only prompt context."""
         build = state.get("build")
@@ -3761,9 +3818,78 @@ _TOOL_ACCESS_LINE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_HOST_HARNESS_SOURCE_MARKERS = (
+    "/src/harness/ralph.py",
+    "/src/harness/fulfillment_runner.py",
+    "/src/harness/llm_build_runner.py",
+    "/src/harness/gitops.py",
+)
+
 
 def _looks_like_tool_access_line(line: str) -> bool:
     return bool(_TOOL_ACCESS_LINE_RE.search(line))
+
+
+def _forbidden_harness_source_marker(line: str, worktree: Path) -> str | None:
+    try:
+        worktree_text = str(worktree.resolve())
+    except OSError:
+        worktree_text = str(worktree.absolute())
+    if worktree_text and worktree_text in line:
+        return None
+    for marker in _HOST_HARNESS_SOURCE_MARKERS:
+        if marker in line:
+            return f"host Echelon source outside worktree ({marker})"
+    return None
+
+
+def _forbidden_harness_source_roots(worktree: Path) -> list[str]:
+    """Return host Echelon implementation roots that build agents must not inspect."""
+    try:
+        resolved_worktree = worktree.resolve()
+    except OSError:
+        resolved_worktree = worktree.absolute()
+    try:
+        harness_root = Path(__file__).resolve().parents[2]
+    except (IndexError, OSError):
+        return []
+
+    # When Echelon itself is the target, the worktree copy of src/harness is
+    # legitimate implementation code. The host checkout used to run Ralph is not.
+    try:
+        if harness_root == resolved_worktree or harness_root.is_relative_to(resolved_worktree):
+            return []
+    except OSError:
+        pass
+    return [str(harness_root)]
+
+
+def _print_harness_source_containment_violation_banner(
+    spec_id: str,
+    strategy_id: str,
+    violation: Dict[str, str],
+) -> None:
+    from echelon.ui import banner as _ui_banner
+
+    _ui_banner(
+        "HARNESS — HARNESS SOURCE CONTAINMENT VIOLATION",
+        [
+            ("spec", spec_id),
+            ("strategy", strategy_id),
+            ("worktree", violation.get("worktree", "")),
+            ("forbidden_root", violation.get("forbidden_root", "")),
+            (
+                "why",
+                "The LLM build transcript shows access to the host Echelon implementation source instead of the target worktree contract.",
+            ),
+            ("matched", violation.get("matched_line", "")),
+            (
+                "next",
+                f"inspect the run output, then continue after confirming the build slice should use only harness-provided context: echelon delivery continue {spec_id}",
+            ),
+        ],
+        file=sys.stderr,
+    )
 
 
 def _print_source_root_containment_violation_banner(
