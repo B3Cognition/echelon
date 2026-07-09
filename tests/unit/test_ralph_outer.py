@@ -749,6 +749,14 @@ class TestOuterLoopConvergence:
         assert context_index["spec_dir"] == str(spec_dir)
         assert "Current Build Slice" in context_index["sections"]
         assert "Current Requirement Excerpts" in context_index["sections"]
+        assert (
+            "- current_task_ids: T-002"
+            in context_index["section_blocks"]["Current Build Slice"]
+        )
+        assert (
+            "- FR-002 (spec.md:4): - **FR-002**: Render the deployment preview."
+            in context_index["section_blocks"]["Current Requirement Excerpts"]
+        )
         assert "Do not search for the application repo" in prompt
 
     def test_build_slice_context_includes_bounded_open_task_rows(

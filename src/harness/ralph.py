@@ -2553,6 +2553,7 @@ class RalphController:
                     "spec_file": spec_file_text,
                     "tasks_file": tasks_file_text,
                     "sections": _markdown_section_headings(context_text),
+                    "section_blocks": _markdown_section_blocks(context_text),
                 },
                 indent=2,
                 sort_keys=True,
@@ -5120,6 +5121,22 @@ def _markdown_section_headings(text: str) -> list[str]:
         if heading:
             sections.append(heading)
     return sections
+
+
+def _markdown_section_blocks(text: str) -> dict[str, list[str]]:
+    blocks: dict[str, list[str]] = {}
+    current_heading: str | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            current_heading = stripped[3:].strip()
+            if current_heading:
+                blocks.setdefault(current_heading, [])
+            continue
+        if current_heading is None or not stripped:
+            continue
+        blocks.setdefault(current_heading, []).append(line)
+    return blocks
 
 
 def _target_doc_artifacts(root: Path) -> list[str]:

@@ -128,8 +128,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-126 / #150 build context-pack compiler groundwork** — Ralph now writes a
   machine-readable `context/<strategy>-build-slice-context.json` sidecar beside
   the Markdown build-slice context. The sidecar records the Markdown path, spec
-  inputs, strategy, and generated section list so future per-agent build context
-  packs can consume Python-owned context without parsing prompt prose.
+  inputs, strategy, generated section list, and structured section blocks so
+  future per-agent build context packs can consume Python-owned context without
+  parsing prompt prose.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest
