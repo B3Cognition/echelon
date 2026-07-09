@@ -144,6 +144,7 @@ def test_verify_spec_stage5_forbids_llm_provenance_discovery() -> None:
     assert "Do not inspect Echelon or harness source code" in text
     assert "Do not search sibling repos under `sources/`" in text
     assert "Do not add or repair provenance frontmatter by hand" in text
+    assert "python -m harness inspect-fulfillment-report" in text
 
 
 def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:

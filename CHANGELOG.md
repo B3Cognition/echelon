@@ -92,6 +92,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   a provider runtime scaffolder boundary rather than GitOps-owned Claude logic.
   Generated `.claude/skills` command wrappers are now likewise limited to the
   delivery-safe `echelon.build` and `echelon.verify-spec` commands.
+- **EGR-116 / #142 fulfillment report inspection command** — added
+  `python -m harness inspect-fulfillment-report <spec-dir> [current-commit]`
+  as an opaque JSON command for fulfillment report metadata, freshness, scope,
+  and blocking-gap facts, and pointed verify-spec prompts at it instead of
+  harness-source discovery.
 - **EGR-120 / #145 delivery-slice documentation gates** — Ralph now passes the
   delivery slice's changed-file list into the TECH WRITER documentation gate,
   so later checkpoint/status commits do not trigger false README/CHANGELOG

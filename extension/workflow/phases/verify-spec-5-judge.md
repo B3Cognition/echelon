@@ -104,6 +104,9 @@ to discover fulfillment-report provenance format. Do not add or repair provenanc
 for harness, fulfillment, or verify-spec implementation details; those repos
 are not part of the targeted implementation evidence unless they are the
 explicit delivery target.
+If you need fulfillment report metadata or freshness facts, use the opaque
+command `python -m harness inspect-fulfillment-report "{spec_dir}" "{current_commit}"`
+instead of inspecting harness implementation files.
 
 After SPEC-GUARD writes fallback-only fulfillment rows, assemble the final
 report with:

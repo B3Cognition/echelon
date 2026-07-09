@@ -15,6 +15,7 @@ Subcommands:
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
+  inspect-fulfillment-report — print deterministic fulfillment report metadata JSON
   verify-docs — write deterministic README/CHANGELOG verification report
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
@@ -649,6 +650,76 @@ def _migrate_plan() -> None:
     print(migrated, end="")
 
 
+def _inspect_fulfillment_report() -> None:
+    if len(sys.argv) < 3:
+        print(
+            "Usage: python -m harness inspect-fulfillment-report <spec-dir> [current-commit]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    import json
+    from pathlib import Path
+
+    from kernel.fulfillment import (
+        fulfillment_has_blocking_gaps,
+        fulfillment_report_is_current,
+        latest_fulfillment_report,
+        read_fulfillment_metadata,
+    )
+
+    spec_dir = Path(sys.argv[2])
+    current_commit = sys.argv[3].strip() if len(sys.argv) >= 4 else ""
+    report = latest_fulfillment_report(spec_dir)
+    if report is None:
+        payload = {
+            "exists": False,
+            "report_path": None,
+            "metadata": {},
+            "verified_commit": None,
+            "verified_at": None,
+            "verify_scope": None,
+            "current_commit": current_commit or None,
+            "is_current": False if current_commit else None,
+            "has_blocking_gaps": None,
+            "has_strict_blocking_gaps": None,
+        }
+        print(json.dumps(payload, sort_keys=True))
+        return
+
+    metadata = _json_safe(read_fulfillment_metadata(report))
+    verified_commit = metadata.get("verified_commit")
+    verify_scope = metadata.get("verify_scope")
+    verified_at = metadata.get("verified_at")
+    payload = {
+        "exists": True,
+        "report_path": str(report),
+        "metadata": metadata,
+        "verified_commit": verified_commit if isinstance(verified_commit, str) else None,
+        "verified_at": str(verified_at) if verified_at is not None else None,
+        "verify_scope": verify_scope if isinstance(verify_scope, str) else None,
+        "current_commit": current_commit or None,
+        "is_current": fulfillment_report_is_current(report, current_commit=current_commit)
+        if current_commit
+        else None,
+        "has_blocking_gaps": fulfillment_has_blocking_gaps(report),
+        "has_strict_blocking_gaps": fulfillment_has_blocking_gaps(report, strict=True),
+    }
+    print(json.dumps(payload, sort_keys=True))
+
+
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -687,6 +758,8 @@ def main() -> None:
         _write_codegraph_evidence()
     elif subcommand == "write-codegraph-evidence-map":
         _write_codegraph_evidence_map()
+    elif subcommand == "inspect-fulfillment-report":
+        _inspect_fulfillment_report()
     elif subcommand == "verify-docs":
         _verify_docs()
     elif subcommand == "migrate-tasks":
@@ -703,8 +776,8 @@ def main() -> None:
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'write-canonical-requirements', 'write-judgment-prepass', "
             "'assemble-fulfillment-report', 'write-codegraph-evidence', "
-            "'write-codegraph-evidence-map', 'verify-docs', 'migrate-tasks', "
-            "'validate-plan', or 'migrate-plan'.",
+            "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
+            "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )
         sys.exit(1)
