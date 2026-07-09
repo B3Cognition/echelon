@@ -188,6 +188,34 @@ def assemble_fulfillment_report(
     output_report_path.write_text(report, encoding="utf-8")
 
 
+def write_fallback_fulfillment_template(
+    *,
+    judgment_prepass_path: Path,
+    output_path: Path,
+    state_path: Path | None = None,
+) -> list[str]:
+    """Write a bounded fallback report template for SPEC-GUARD judgment."""
+    scoped_ids = _scoped_ids(state_path) if state_path is not None else None
+    fallback_ids = [
+        row.id
+        for row in _judgment_rows(judgment_prepass_path)
+        if not row.mechanical and (scoped_ids is None or row.id in scoped_ids)
+    ]
+    lines = [
+        "# Fallback Fulfillment Judgment",
+        "",
+        "Fill only `TODO_STATUS` and `TODO_EVIDENCE` cells for the listed IDs.",
+        "Do not add, remove, or reorder rows.",
+        "",
+        "| ID | Status | Evidence |",
+        "| --- | --- | --- |",
+    ]
+    for item_id in fallback_ids:
+        lines.append(f"| {item_id} | TODO_STATUS | TODO_EVIDENCE |")
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return fallback_ids
+
+
 def _classify_row(row: _ImplementationRow) -> JudgmentRow:
     if row.runtime_threshold and row.evidence_kind == "assertion_only":
         return JudgmentRow.mechanical_row(

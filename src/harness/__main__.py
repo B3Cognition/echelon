@@ -9,6 +9,7 @@ Subcommands:
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
   write-judgment-prepass — write deterministic verify-spec judgment pre-pass artifacts
+  write-fallback-fulfillment-template — write bounded fallback judgment template
   assemble-fulfillment-report — assemble final fulfillment report from pre-pass and fallback rows
   write-task-requirement-mapping-candidates — generate deterministic req= metadata candidates
   apply-task-requirement-mapping — apply deterministic req= metadata mappings
@@ -391,6 +392,33 @@ def _assemble_fulfillment_report() -> None:
         state_path=state_path,
     )
     print(f"OK: assembled fulfillment report at {Path(sys.argv[5]).resolve()}")
+
+
+def _write_fallback_fulfillment_template() -> None:
+    if len(sys.argv) not in {4, 5}:
+        print(
+            "Usage: python -m harness write-fallback-fulfillment-template "
+            "<judgment-prepass.json> <out-report.md> [state.json]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.judgment_prepass import write_fallback_fulfillment_template
+
+    state_path = Path(sys.argv[4]).resolve() if len(sys.argv) == 5 else None
+    prepass_path = Path(sys.argv[2]).resolve()
+    _require_inputs([prepass_path])
+    fallback_ids = write_fallback_fulfillment_template(
+        judgment_prepass_path=prepass_path,
+        output_path=Path(sys.argv[3]).resolve(),
+        state_path=state_path,
+    )
+    print(
+        "OK: wrote fallback fulfillment template "
+        f"({len(fallback_ids)} rows) at {Path(sys.argv[3]).resolve()}"
+    )
 
 
 def _validate_fulfillment_artifacts() -> None:
@@ -1046,6 +1074,8 @@ def main() -> None:
         _write_requirement_audit()
     elif subcommand == "write-judgment-prepass":
         _write_judgment_prepass()
+    elif subcommand == "write-fallback-fulfillment-template":
+        _write_fallback_fulfillment_template()
     elif subcommand == "assemble-fulfillment-report":
         _assemble_fulfillment_report()
     elif subcommand == "validate-fulfillment-artifacts":
@@ -1075,6 +1105,7 @@ def main() -> None:
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'init-verify-spec-run', 'write-canonical-requirements', "
             "'write-requirement-audit', 'write-judgment-prepass', "
+            "'write-fallback-fulfillment-template', "
             "'assemble-fulfillment-report', 'validate-fulfillment-artifacts', "
             "'write-codegraph-evidence', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "

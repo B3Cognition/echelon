@@ -95,6 +95,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   build prompts. The policy records implementation, spec-input, harness-state,
   orchestration, and forbidden sibling source roots for future provider-level
   enforcement.
+- **EGR-119 / #143 verify-spec orchestration** — verify-spec stage 5 now uses
+  `python -m harness write-fallback-fulfillment-template` to create a bounded
+  fallback report for SPEC-GUARD. The LLM fills only TODO cells for unresolved
+  IDs, and Python still assembles the final canonical fulfillment report.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

@@ -48,6 +48,21 @@ python -m harness assemble-fulfillment-report \
 
 Then proceed directly to row-set integrity validation and summary.
 
+When `fallback_ids` is not empty, create the bounded SPEC-GUARD output file
+before dispatch:
+
+```bash
+python -m harness write-fallback-fulfillment-template \
+  "{verify_run_dir}/judgment-prepass.json" \
+  "{verify_run_dir}/fulfillment-report.fallback.md" \
+  "{verify_run_dir}/state.json"
+```
+
+This file contains exactly the unresolved fallback IDs in scope. SPEC-GUARD
+must fill only `TODO_STATUS` and `TODO_EVIDENCE` cells in
+`{verify_run_dir}/fulfillment-report.fallback.md`; it must not create the report
+structure, add rows, remove rows, or reorder rows.
+
 ## Dispatch Prompt
 
 Run SPEC-GUARD in fulfillment mode. Assign exactly one status per item:
@@ -95,7 +110,7 @@ Also judge task-progress integrity from `progress-integrity.json` and
 ## Expected Outputs
 
 Write:
-- `{spec_dir}/fulfillment-report.md`
+- `{verify_run_dir}/fulfillment-report.fallback.md`
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
 
 Ralph stamps `verified_commit` and `verified_at` after a successful
@@ -108,14 +123,14 @@ If you need fulfillment report metadata or freshness facts, use the opaque
 command `python -m harness inspect-fulfillment-report "{spec_dir}" "{current_commit}"`
 instead of inspecting harness implementation files.
 
-After SPEC-GUARD writes fallback-only fulfillment rows, assemble the final
+After SPEC-GUARD fills fallback-only fulfillment rows, assemble the final
 report with:
 
 ```bash
 python -m harness assemble-fulfillment-report \
   "{verify_run_dir}/canonical-requirements.json" \
   "{verify_run_dir}/judgment-prepass.json" \
-  "{spec_dir}/fulfillment-report.md" \
+  "{verify_run_dir}/fulfillment-report.fallback.md" \
   "{spec_dir}/fulfillment-report.md" \
   "{verify_run_dir}/state.json"
 ```

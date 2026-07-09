@@ -127,6 +127,8 @@ def test_verify_spec_stage5_references_judgment_prepass() -> None:
 
     assert "judgment-prepass.json" in text
     assert "fallback_ids" in text
+    assert "write-fallback-fulfillment-template" in text
+    assert "fulfillment-report.fallback.md" in text
 
 
 def test_verify_spec_stage4_and_stage5_stop_on_missing_deterministic_inputs() -> None:

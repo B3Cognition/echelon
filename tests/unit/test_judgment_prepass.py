@@ -10,6 +10,7 @@ from harness.judgment_prepass import (
     assemble_full_report,
     assemble_fulfillment_report,
     build_judgment_prepass,
+    write_fallback_fulfillment_template,
     write_judgment_prepass,
 )
 
@@ -259,6 +260,105 @@ def test_assemble_fulfillment_report_filters_scoped_ids(tmp_path: Path):
     text = output.read_text(encoding="utf-8")
     assert "| FR-001 |" not in text
     assert "| FR-002 | PARTIAL | fallback |" in text
+
+
+def test_write_fallback_fulfillment_template_limits_rows_to_scoped_fallback_ids(
+    tmp_path: Path,
+):
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": True,
+                        "proposed_status": "IMPLEMENTED",
+                        "reason_code": "source_and_test_strong",
+                        "fallback_reason": None,
+                        "report_row": "| FR-001 | IMPLEMENTED | prepass:source_and_test_strong |",
+                    },
+                    {
+                        "id": "FR-002",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    },
+                    {
+                        "id": "FR-003",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    },
+                ],
+                "summary": {
+                    "mechanical_count": 1,
+                    "fallback_count": 2,
+                    "fallback_ids": ["FR-002", "FR-003"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    state = tmp_path / "state.json"
+    state.write_text(
+        json.dumps({"verify_scope": "scoped", "scoped_ids": ["FR-002"]}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "fulfillment-report.fallback.md"
+
+    result = write_fallback_fulfillment_template(
+        judgment_prepass_path=prepass,
+        output_path=output,
+        state_path=state,
+    )
+
+    text = output.read_text(encoding="utf-8")
+    assert result == ["FR-002"]
+    assert "| FR-001 |" not in text
+    assert "| FR-002 | TODO_STATUS | TODO_EVIDENCE |" in text
+    assert "| FR-003 |" not in text
+
+
+def test_write_fallback_fulfillment_template_cli(tmp_path: Path):
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-010",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    }
+                ],
+                "summary": {
+                    "mechanical_count": 0,
+                    "fallback_count": 1,
+                    "fallback_ids": ["FR-010"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "fulfillment-report.fallback.md"
+
+    completed = _run_harness(
+        ["write-fallback-fulfillment-template", str(prepass), str(output)]
+    )
+
+    assert completed.returncode == 0
+    assert "OK: wrote fallback fulfillment template" in completed.stdout
+    assert "| FR-010 | TODO_STATUS | TODO_EVIDENCE |" in output.read_text(
+        encoding="utf-8"
+    )
 
 
 def _audit_markdown(ids: list[str]) -> str:
