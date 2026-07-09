@@ -56,6 +56,7 @@ For runnable projects, check README.md for:
 
 - Prerequisites matching metadata, such as runtime version floors and package managers.
 - Install instructions for local clone and/or published package when applicable.
+- npm script commands only when the corresponding `package.json` script exists.
 - Minimal working input/configuration with real filenames.
 - First dry run, safe preview, or no-op verification command when supported.
 - First real run that performs the primary workflow locally.

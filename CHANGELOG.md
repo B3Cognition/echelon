@@ -84,7 +84,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and loops structured repair findings back to TECH WRITER before finalization.
   Ralph now requires a machine-readable PASS `docs-verification-report.md` with
   zero blocking findings and project-evidence metadata before required
-  documentation can pass the final gate.
+  documentation can pass the final gate. README npm script commands are now
+  checked against `package.json` so docs repair loops catch invented local
+  commands before finalization.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The

@@ -108,6 +108,14 @@ def evaluate_documentation_gate(
     if readme_failure:
         return _fail("readme-first-run-manual-incomplete", readme_failure)
 
+    unsupported_commands = _unsupported_readme_npm_script_commands(readme, worktree)
+    if unsupported_commands:
+        return _fail(
+            "readme-command-claim-unsupported",
+            "README.md references npm script command(s) not declared in package.json: "
+            + ", ".join(unsupported_commands),
+        )
+
     docs_verification_failure = _docs_verification_report_failure(spec)
     if docs_verification_failure:
         identifier, error = docs_verification_failure
@@ -209,12 +217,7 @@ def _has_terms(text: str, terms: tuple[str, ...]) -> bool:
 
 def _package_requires_node(worktree: Path) -> bool:
     package = worktree / "package.json"
-    if not package.exists():
-        return False
-    try:
-        data = json.loads(package.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
+    data = _package_json(package)
     if isinstance(data, dict):
         engines = data.get("engines")
         if isinstance(engines, dict) and engines.get("node"):
@@ -222,6 +225,41 @@ def _package_requires_node(worktree: Path) -> bool:
         if data.get("bin"):
             return True
     return False
+
+
+def _package_json(package: Path) -> object:
+    if not package.exists():
+        return None
+    try:
+        return json.loads(package.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _unsupported_readme_npm_script_commands(readme: Path, worktree: Path) -> list[str]:
+    package = _package_json(worktree / "package.json")
+    if not isinstance(package, dict):
+        return []
+
+    scripts = package.get("scripts")
+    if not isinstance(scripts, dict):
+        scripts = {}
+    declared = {key for key in scripts if isinstance(key, str)}
+    text = readme.read_text(encoding="utf-8")
+    unsupported: list[str] = []
+    seen: set[str] = set()
+
+    for match in re.finditer(
+        r"\bnpm\s+(?:run\s+([A-Za-z0-9:_-]+)|(test|start|stop|restart)\b)",
+        text,
+    ):
+        script = match.group(1) or match.group(2)
+        command = f"npm run {script}" if match.group(1) else f"npm {script}"
+        if script not in declared and command not in seen:
+            unsupported.append(command)
+            seen.add(command)
+
+    return unsupported
 
 
 def _has_minimal_working_input(text: str) -> bool:

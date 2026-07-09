@@ -489,3 +489,53 @@ def test_gate_blocks_changelog_planned_entries_for_required_docs(tmp_path: Path)
     assert not result.passed
     assert result.failure is not None
     assert result.failure.id == "changelog-planned-entry"
+
+
+def test_gate_blocks_readme_npm_script_commands_missing_from_package_json(
+    tmp_path: Path,
+) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "package.json").write_text(
+        '{"name":"demo","bin":{"demo":"dist/cli.js"},"engines":{"node":">=20"},"scripts":{"build":"tsc"}}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "README.md").write_text("# Demo\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    (tmp_path / "README.md").write_text(FIRST_RUN_README, encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented new behavior.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+    _write_docs_verification_pass(spec_dir)
+
+    result = evaluate_documentation_gate(tmp_path, spec_dir)
+
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.id == "readme-command-claim-unsupported"
+    assert "npm test" in result.failure.error
+    assert "npm run lint" in result.failure.error

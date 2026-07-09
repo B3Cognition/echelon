@@ -79,6 +79,7 @@ Cover these sections when supported by implementation evidence:
 9. **Further reading** - link deeper docs for concepts, target contracts, API references, architecture, or contribution guides.
 
 Do not invent commands, config keys, outputs, services, guarantees, runtime versions, or troubleshooting causes. If evidence is incomplete, write a short "Not documented yet" note only for the specific missing detail and point to the command or file a maintainer should verify.
+For npm projects, only document `npm run <script>` commands and npm lifecycle aliases such as `npm test` when the corresponding script exists in `package.json`.
 
 For mature existing READMEs, preserve useful overview and architecture sections, but make the first screen and Quick Start path actionable before adding broader explanation.
 

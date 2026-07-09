@@ -109,6 +109,8 @@ def test_tech_writer_readme_contract_requires_first_run_manual() -> None:
     assert "first real run" in lowered
     assert "expected output" in lowered
     assert "troubleshooting" in lowered
+    assert "npm run <script>" in text
+    assert "package.json" in text
     assert "Avoid product-overview-only README updates" in text
 
 
@@ -131,6 +133,7 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
     assert "blocking_findings" in text
     assert "first-run" in lowered
     assert "safe harness smoke" in lowered
+    assert "package.json" in text
     assert "verdict: PASS" in text
     assert "verdict: FAIL" in text
     assert "echelon_result:" in text
