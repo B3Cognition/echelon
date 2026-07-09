@@ -115,9 +115,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   spec-adjacent artifact excerpts, dirty verify artifact notes, the progress
   ledger, configured quality commands, last verifier failures, target package
   manifest excerpts for `package.json` and `pyproject.toml`, package entry-point
-  hints, Python project script hints, target layout excerpts with representative
-  source/test files, and build rules, and the prompt tells agents to read it
-  before implementation.
+  hints, package-manager lockfile hints, Python project script hints, target
+  layout excerpts with representative source/test files, and build rules, and
+  the prompt tells agents to read it before implementation.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

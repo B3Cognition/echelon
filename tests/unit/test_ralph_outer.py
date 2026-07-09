@@ -954,6 +954,7 @@ class TestOuterLoopConvergence:
             ),
             encoding="utf-8",
         )
+        (worktree / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
 
         state = state_store.read()
         state["workspace_root"] = str(workspace)
@@ -968,6 +969,7 @@ class TestOuterLoopConvergence:
         context = context_file.read_text(encoding="utf-8")
         assert "## Target Manifest Excerpts" in context
         assert "- package.json: name=`prosaic`, version=`0.1.0`" in context
+        assert "  - package_manager: `pnpm` (lockfile: `pnpm-lock.yaml`)" in context
         assert "  - main: `dist/index.js`" in context
         assert "  - types: `dist/index.d.ts`" in context
         assert "  - bin prosaic: `dist/cli.js`" in context

@@ -2523,6 +2523,13 @@ class RalphController:
                 version = _single_line(str(manifest.get("version") or "unknown"))
                 lines.append(f"- package.json: name=`{name}`, version=`{version}`")
 
+                package_manager = _detect_package_manager(worktree_path)
+                if package_manager:
+                    manager_name, lockfile = package_manager
+                    lines.append(
+                        f"  - package_manager: `{manager_name}` (lockfile: `{lockfile}`)"
+                    )
+
                 for field in ("main", "module", "types"):
                     value = _single_line(str(manifest.get(field) or ""))
                     if value:
@@ -4653,6 +4660,19 @@ def _single_line(text: str) -> str:
 
 def _pyproject_tool_label(name: str) -> str:
     return name.split(".", 1)[0] if name.startswith("pytest.") else name
+
+
+def _detect_package_manager(root: Path) -> tuple[str, str] | None:
+    for lockfile, manager in (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lockb", "bun"),
+        ("package-lock.json", "npm"),
+        ("npm-shrinkwrap.json", "npm"),
+    ):
+        if (root / lockfile).is_file():
+            return manager, lockfile
+    return None
 
 
 def _render_layout_entry(path: Path) -> str:
