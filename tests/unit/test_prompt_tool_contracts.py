@@ -133,6 +133,7 @@ def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:
             "build-6-progress.md",
             "build-7-integration.md",
             "build-8-documentation.md",
+            "build-8-finalize.md",
             "build-8-verify-docs.md",
         )
     ]

@@ -12,22 +12,18 @@ Run speckit-echelon-integrator (INTEGRATOR) one last time against the complete c
 
 ### 8.1b Engineering Manager Sign-Off
 
-Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MANAGER) with the TECH WRITER documentation output:
+Before completion, dispatch speckit-echelon-engineering-manager (ENGINEERING MANAGER) with the TECH WRITER documentation output.
 
-- `tasks.md`
-- `spec.md`
-- `traceability-matrix.md`
-- `coverage-map.md`
-- `process-metrics.md`
-- `integration-report.md`
-- `progress-report.md`
-- `documentation-impact-report.md`
-- `docs-verification-report.md`
-- repo-root `README.md`
-- repo-root `CHANGELOG.md`
-- all build gate reports
-- `state.json`
-- `reasoning-journal.jsonl`
+Use the Ralph-owned context pack:
+
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.ENGINEERING_MANAGER` as the prepared ENGINEERING MANAGER
+  context pack.
+- Use only explicit gate/report outputs already provided by Ralph.
+- Do not compile a separate context pack by searching tasks, specs,
+  traceability, coverage, process metrics, integration reports, progress
+  reports, documentation reports, README, CHANGELOG, state, journal, or gate
+  report files.
 
 Use the Agent tool:
 
@@ -36,7 +32,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include tasks.md, spec.md, traceability-matrix.md, coverage-map.md, process-metrics.md, integration-report.md, progress-report.md, documentation-impact-report.md, docs-verification-report.md, README.md, CHANGELOG.md, all build gate reports, state.json, reasoning-journal.jsonl]
+  [include agent_context_files.ENGINEERING_MANAGER from build_slice_context_index_file]
   </context>
 
   <instructions>
@@ -77,6 +73,15 @@ For exact commands, permitted licenses, and polyglot handling, load `workflow/ph
 
 Dispatch speckit-echelon-verification (VERIFICATION) after final integration and EM pre-check.
 
+Use the Ralph-owned context pack:
+
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.VERIFICATION` as the prepared VERIFICATION context pack.
+- Use only explicit implementation, gate, and documentation evidence already
+  provided by Ralph.
+- Do not compile a separate context pack by searching specs, implemented code,
+  reports, state, journal, traceability, or coverage artifacts.
+
 Use the Agent tool:
 
 - **subagent_type:** `speckit-echelon-verification`
@@ -84,7 +89,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, all implemented code, all gate reports, traceability-matrix.md, coverage-map.md, state.json, reasoning-journal.jsonl]
+  [include agent_context_files.VERIFICATION from build_slice_context_index_file]
   </context>
 
   <instructions>
