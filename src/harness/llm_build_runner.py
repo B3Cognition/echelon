@@ -30,18 +30,27 @@ class LlmBuildRunner:
     def __init__(self, prompt_executor: PromptExecutor) -> None:
         self._prompt_executor = prompt_executor
 
-    def exec_build(self, worktree_path: str, prompt: str) -> BuildResult:
+    def exec_build(
+        self,
+        worktree_path: str,
+        prompt: str,
+        *,
+        containment_policy_file: str | None = None,
+    ) -> BuildResult:
         status_file = Path(worktree_path) / BUILD_STATUS_FILENAME
         start = time.monotonic()
+        extra_env = {
+            "HARNESS_BUILD_STATUS_FILE": str(status_file),
+            "HARNESS_WORKTREE": worktree_path,
+            "PROJECT_ROOT": worktree_path,
+            "SPEC_KIT_ROOT": worktree_path,
+        }
+        if containment_policy_file:
+            extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file
         exit_code = self._prompt_executor.exec_prompt(
             worktree_path,
             prompt,
-            extra_env={
-                "HARNESS_BUILD_STATUS_FILE": str(status_file),
-                "HARNESS_WORKTREE": worktree_path,
-                "PROJECT_ROOT": worktree_path,
-                "SPEC_KIT_ROOT": worktree_path,
-            },
+            extra_env=extra_env,
         )
         duration_ms = int((time.monotonic() - start) * 1000)
         stdout = str(getattr(self._prompt_executor, "last_stdout", "") or "")

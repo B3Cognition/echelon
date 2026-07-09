@@ -54,6 +54,19 @@ class TestLlmBuildRunner:
         extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
         assert "HARNESS_SOURCE_DIR" not in extra_env
 
+    def test_exec_build_exposes_containment_policy_file_when_provided(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+        policy_file = tmp_path / "delivery-containment-policy.json"
+
+        LlmBuildRunner(executor).exec_build(
+            str(tmp_path),
+            "build this",
+            containment_policy_file=str(policy_file),
+        )
+
+        extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
+        assert extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] == str(policy_file)
+
     def test_exec_build_returns_impasse_from_status_file(self, tmp_path):
         executor = _executor(
             status={"status": "impasse", "impasse_file": "codegen-impasse.md"}

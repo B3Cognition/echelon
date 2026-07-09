@@ -2405,7 +2405,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
 
-        def dirty_real_repo(_worktree_path: str, _prompt: str):
+        def dirty_real_repo(_worktree_path: str, _prompt: str, **_kwargs):
             (project / "escaped.txt").write_text("wrong root\n", encoding="utf-8")
             return BuildResult(
                 exit_code=0,
@@ -2803,7 +2803,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
 
-        def write_without_marker(_worktree_path: str, _prompt: str):
+        def write_without_marker(_worktree_path: str, _prompt: str, **_kwargs):
             (worktree / "generated.txt").write_text("usable output\n", encoding="utf-8")
             return BuildResult(
                 exit_code=0,
@@ -2857,7 +2857,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
 
-        def commit_without_marker(_worktree_path: str, _prompt: str):
+        def commit_without_marker(_worktree_path: str, _prompt: str, **_kwargs):
             (worktree / "generated.txt").write_text("committed output\n", encoding="utf-8")
             subprocess.run(["git", "add", "generated.txt"], cwd=worktree, check=True)
             subprocess.run(["git", "commit", "-m", "feat: generated output"], cwd=worktree, check=True)
@@ -3024,7 +3024,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
 
-        def complete_one_task(_worktree_path: str, _prompt: str):
+        def complete_one_task(_worktree_path: str, _prompt: str, **_kwargs):
             state = state_store.read()
             state["build"] = {
                 "completed_tasks": 1,
@@ -3122,7 +3122,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
 
-        def complete_one_task(_worktree_path: str, _prompt: str):
+        def complete_one_task(_worktree_path: str, _prompt: str, **_kwargs):
             (worktree / "src").mkdir(exist_ok=True)
             (worktree / "src" / "generated.py").write_text("print('ok')\n", encoding="utf-8")
             return BuildResult(
@@ -3223,7 +3223,7 @@ class TestOuterLoopConvergence:
 
         llm_build_runner = MagicMock()
 
-        def advance_progress_without_marker(_worktree_path: str, _prompt: str):
+        def advance_progress_without_marker(_worktree_path: str, _prompt: str, **_kwargs):
             state = state_store.read()
             state["build"] = {
                 "completed_tasks": 1,
@@ -3589,6 +3589,38 @@ class TestLlmProviderDispatch:
         assert "Do not search for state.json" in sent_prompt
         assert "build this" in sent_prompt
 
+    def test_exec_build_passes_containment_policy_file_to_runner(
+        self, tmp_path: Path
+    ) -> None:
+        """Provider backends receive the same containment policy named in prompt."""
+        from harness.llm_build_runner import LlmBuildRunner
+        from harness.build_result import BuildResult
+
+        build_runner = MagicMock(spec=LlmBuildRunner)
+        build_runner.exec_build.return_value = BuildResult(
+            exit_code=0, status="done", impasse_file=None,
+            stdout="", stderr="", duration_ms=100,
+        )
+
+        controller, _, _, state_store = _make_controller(
+            tmp_path, llm_build_runner=build_runner
+        )
+        worktree = tmp_path / "worktree"
+
+        controller._exec_build(
+            handle=MagicMock(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path=str(worktree),
+            prompt="build this",
+        )
+
+        policy_file = state_store.state_dir / "delivery-containment-policy.json"
+        assert build_runner.exec_build.call_args.kwargs[
+            "containment_policy_file"
+        ] == str(policy_file)
+        assert policy_file.exists()
+
     def test_exec_build_injects_external_spec_paths_for_polyrepo_target(
         self, tmp_path: Path
     ) -> None:
@@ -3822,7 +3854,9 @@ class TestSignalDuringBuild:
             tmp_path, llm_build_runner=build_runner
         )
 
-        def build_sets_interrupted(worktree_path: str, prompt: str) -> BuildResult:
+        def build_sets_interrupted(
+            worktree_path: str, prompt: str, **_kwargs
+        ) -> BuildResult:
             controller._interrupted = True
             return BuildResult(
                 exit_code=1, status="unknown", impasse_file=None,
