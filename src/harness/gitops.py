@@ -31,6 +31,7 @@ from harness.provider_scaffolding import provider_runtime_scaffolder
 from harness.runtime_surface import (
     DELIVERY_COMMAND_FILES,
     is_delivery_workflow_phase_path,
+    prune_delivery_workflow_definition,
 )
 from harness.secret_scan import scan_git_staged
 
@@ -559,6 +560,7 @@ class GitOpsManager:
         if self._runtime_extension_ready(dest):
             if source.exists():
                 self._sync_codegraph_node_modules(source, dest)
+            prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
             self._sync_provider_runtime_shims(dest, worktree)
             self._exclude_runtime_extension(worktree)
             return
@@ -579,6 +581,7 @@ class GitOpsManager:
             dirs_exist_ok=True,
             ignore=runtime_extension_copy_ignore(source),
         )
+        prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
         self._sync_codegraph_node_modules(source, dest)
         self._sync_provider_runtime_shims(dest, worktree)
         self._exclude_runtime_extension(worktree)

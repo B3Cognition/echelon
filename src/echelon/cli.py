@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from harness.gitops import runtime_extension_copy_ignore
+from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
 
 try:
@@ -1478,6 +1479,7 @@ def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path
         dirs_exist_ok=True,
         ignore=runtime_extension_copy_ignore(source),
     )
+    prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
 
 
 def _target_candidate_lines(candidates: list[object]) -> str:

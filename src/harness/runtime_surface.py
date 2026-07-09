@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 
 DELIVERY_COMMAND_FILES = frozenset(
     {
@@ -26,6 +30,20 @@ DELIVERY_WORKFLOW_PHASE_FILES = frozenset(
     }
 )
 
+DELIVERY_WORKFLOW_DEFINITION_KEYS = frozenset(
+    {
+        "schema_version",
+        "glossary",
+        "evidence_hierarchy",
+        "conflict_resolution",
+        "phases",
+        "build",
+        "escalation",
+        "verify_spec",
+        "reopen",
+    }
+)
+
 
 def is_delivery_workflow_phase_path(relative_path) -> bool:
     """Return True when a workflow phase file is safe to expose to delivery agents."""
@@ -37,4 +55,47 @@ def is_delivery_workflow_phase_path(relative_path) -> bool:
     name = parts[-1]
     return name in DELIVERY_WORKFLOW_PHASE_FILES or name.startswith(
         DELIVERY_WORKFLOW_PHASE_PREFIXES
+    )
+
+
+def prune_delivery_workflow_definition(definition_path: Path) -> None:
+    """Prune copied workflow metadata to delivery-safe sections and phases."""
+    if not definition_path.exists():
+        return
+    try:
+        data = yaml.safe_load(definition_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return
+    if not isinstance(data, dict):
+        return
+
+    pruned = {
+        key: value
+        for key, value in data.items()
+        if key in DELIVERY_WORKFLOW_DEFINITION_KEYS
+    }
+    phases = pruned.get("phases")
+    if isinstance(phases, list):
+        pruned["phases"] = [
+            phase
+            for phase in phases
+            if _phase_node_is_delivery_safe(phase)
+        ]
+    definition_path.write_text(
+        yaml.safe_dump(pruned, sort_keys=False),
+        encoding="utf-8",
+    )
+
+
+def _phase_node_is_delivery_safe(phase: object) -> bool:
+    if not isinstance(phase, dict):
+        return False
+    spec_file = phase.get("spec_file")
+    if isinstance(spec_file, str) and spec_file.strip():
+        return is_delivery_workflow_phase_path(Path(spec_file))
+    phase_id = str(phase.get("id") or "").strip()
+    if not phase_id:
+        return False
+    return is_delivery_workflow_phase_path(
+        Path("workflow") / "phases" / f"{phase_id}.md"
     )

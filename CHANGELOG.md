@@ -88,7 +88,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   filters `workflow/phases` to delivery-safe contracts, keeping build,
   verify-spec, bugfix, codegen, and appendices while excluding Phase A,
   standalone reverse-engineering, and experimental artifact-quality phase docs
-  from target-visible worktrees.
+  from target-visible worktrees. Copied `workflow/definition.yaml` is also
+  pruned to delivery-safe sections and phase nodes.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

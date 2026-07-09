@@ -5,6 +5,8 @@ import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import yaml
+
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager, _clean_branch_listing
@@ -362,6 +364,67 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     assert not (phases / "re-planning-1-plan.md").exists()
     assert not (phases / "phase-exp-tasks-quality.md").exists()
     assert not (phases / "init.md").exists()
+
+
+def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(tmp_path):
+    """Delivery worktrees should not expose Phase A/RE workflow graph metadata."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow" / "phases").mkdir(parents=True)
+    (source / "commands").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "phases": [
+                    {"id": "init", "spec_file": "workflow/phases/init.md"},
+                    {"id": "phase1-what", "spec_file": "workflow/phases/phase1-what.md"},
+                    {"id": "build-1-init", "spec_file": "workflow/phases/build-1-init.md"},
+                    {
+                        "id": "verify-spec-1-init",
+                        "spec_file": "workflow/phases/verify-spec-1-init.md",
+                    },
+                ],
+                "build": {"task_loop": {}},
+                "verify_spec": {"phases": []},
+                "re_extraction": {"phases": []},
+                "re_planning": {"phases": []},
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    definition = yaml.safe_load(
+        (
+            worktree
+            / ".specify"
+            / "extensions"
+            / "echelon"
+            / "workflow"
+            / "definition.yaml"
+        ).read_text(encoding="utf-8")
+    )
+    assert [phase["id"] for phase in definition["phases"]] == [
+        "build-1-init",
+        "verify-spec-1-init",
+    ]
+    assert "build" in definition
+    assert "verify_spec" in definition
+    assert "re_extraction" not in definition
+    assert "re_planning" not in definition
 
 
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
