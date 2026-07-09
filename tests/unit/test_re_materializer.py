@@ -120,3 +120,47 @@ def test_materialize_re_run_view_copies_cached_sources_and_writes_indexes(
         str(run_re / "original-a" / "re-context.md"),
         str(run_re / "prosaic" / "re-context.md"),
     ]
+
+
+def test_materialize_re_run_view_records_refresh_sources_without_cache(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    for source_id in ("original-a", "prosaic"):
+        _write_source(root, source_id)
+    manifest = _manifest(root, "original-a", "prosaic")
+    profile = ReFingerprintProfile()
+    cache_root = root / ".echelon" / "cache" / "re"
+    _cache_source(root, cache_root, "original-a", profile)
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=manifest,
+        cache_root=cache_root,
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+    )
+
+    artifacts = materialize_re_run_view(
+        project_root=root,
+        run_re_dir=root / "runs" / "run-1" / "re",
+        workspace_manifest=manifest,
+        plan=plan,
+        cache_root=cache_root,
+    )
+
+    run_re = root / "runs" / "run-1" / "re"
+    assert (run_re / "original-a" / "analysis.json").is_file()
+    assert not (run_re / "prosaic").exists()
+
+    source_index = json.loads((run_re / "re-source-index.json").read_text(encoding="utf-8"))
+    assert {source["id"]: source["action"] for source in source_index["sources"]} == {
+        "original-a": "reuse",
+        "prosaic": "refresh",
+    }
+    assert source_index["sources"][1]["run_path"] == ""
+    assert source_index["sources"][1]["artifacts"] == []
+
+    aggregate = json.loads((run_re / "analysis.json").read_text(encoding="utf-8"))
+    assert aggregate["repo_count"] == 1
+    assert artifacts["per_repo"] == [str(run_re / "original-a")]

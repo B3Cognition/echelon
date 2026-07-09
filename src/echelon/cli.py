@@ -75,6 +75,8 @@ Commands:
 
   spec run <description> [--mode semi|banzai|guided] [--reset]
                     [--message <text>] [--next-phase <id>]
+                    [--target <source-id-or-path>]
+                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]
                                             Run Phase A squad spec authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
@@ -4209,6 +4211,8 @@ def _cmd_run(
     mode = "semi"
     reset = False
     next_phase = ""
+    target_source = os.environ.get("ECHELON_TARGET_SOURCE", "").strip()
+    re_policy = os.environ.get("ECHELON_RE_POLICY", "").strip()
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -4225,6 +4229,33 @@ def _cmd_run(
         elif args[i] == "--next-phase" and i + 1 < len(args):
             next_phase = args[i + 1]
             i += 2
+        elif args[i] in {"--target", "--target-source"}:
+            if i + 1 >= len(args):
+                print(
+                    "✗ echelon spec run: --target requires a source id or path",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            target_source = args[i + 1].strip()
+            i += 2
+        elif args[i].startswith("--target="):
+            target_source = args[i].split("=", 1)[1].strip()
+            i += 1
+        elif args[i].startswith("--target-source="):
+            target_source = args[i].split("=", 1)[1].strip()
+            i += 1
+        elif args[i] == "--re-policy":
+            if i + 1 >= len(args):
+                print(
+                    "✗ echelon spec run: --re-policy requires a policy name",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            re_policy = args[i + 1].strip()
+            i += 2
+        elif args[i].startswith("--re-policy="):
+            re_policy = args[i].split("=", 1)[1].strip()
+            i += 1
         else:
             message_parts.append(args[i])
             i += 1
@@ -4278,6 +4309,8 @@ def _cmd_run(
         token_budget=token_budget,
         max_iterations=max_iterations,
         squad_dir=squad_dir,
+        re_policy=re_policy,
+        target_source=target_source,
     )
 
     _print_cost_summary(project_root)
@@ -4292,6 +4325,8 @@ def _cmd_run(
         ("Mode", mode),
         ("Task", (message[:80] + "…") if len(message) > 80 else message),
         ("Dir", str(squad_dir.name)),
+        ("RE target", target_source or "(all sources)"),
+        ("RE policy", re_policy or "(default)"),
     ])
 
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
@@ -5787,6 +5822,8 @@ def _cmd_resume(
         token_budget=token_budget,
         max_iterations=max_iterations,
         squad_dir=squad_dir,
+        re_policy=str(state.get("requested_re_policy") or ""),
+        target_source=str(state.get("target_source") or ""),
     )
     result = controller.run(
         user_message=state.get("user_message", ""),

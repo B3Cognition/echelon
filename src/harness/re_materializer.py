@@ -41,7 +41,7 @@ def materialize_re_run_view(
     for source in plan.sources:
         run_path = ""
         artifacts: list[str] = []
-        if source.selected and source.action in {"reuse", "refresh"}:
+        if source.selected and source.action == "reuse":
             run_source_dir = copy_cached_source(Path(source.cache_path), run_re_dir / source.id)
             run_path = str(run_source_dir)
             artifacts = _relative_files(run_source_dir)

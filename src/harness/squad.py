@@ -15,6 +15,7 @@ from typing import Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
+from echelon.workspace_model import discover_workspace
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -28,6 +29,9 @@ from harness.phase_a_readiness import (
 )
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.quality_scores import normalize_why_quality_scores
+from harness.re_fingerprint import ReFingerprintProfile
+from harness.re_materializer import materialize_re_run_view
+from harness.re_planner import build_re_execution_plan
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir
 from harness.squad_executors import (
@@ -215,6 +219,8 @@ class SquadController:
         token_budget: int = 0,
         max_iterations: int = 5,
         squad_dir: Optional[Path] = None,
+        re_policy: str = "",
+        target_source: str = "",
     ) -> None:
         self._provider = provider
         self._state_store = state_store
@@ -224,6 +230,8 @@ class SquadController:
         self._token_budget = token_budget
         self._max_iterations = max_iterations
         self._squad_dir = squad_dir or state_store.squad_dir
+        self._re_policy = re_policy
+        self._target_source = target_source
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
@@ -517,6 +525,9 @@ class SquadController:
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
             )
+            self._initialize_re_context()
+            if self._state_store.load().get("status") == "blocked":
+                return SquadResult.from_state(self._state_store.load())
             self._refresh_run_context("fresh initialization")
         else:
             print(f"[squad] resuming from phase: {self._state_store.current_phase()}", flush=True)
@@ -683,6 +694,56 @@ class SquadController:
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
+
+    def _initialize_re_context(self) -> None:
+        """Plan and materialize run-local reverse-engineering context."""
+        state = self._state_store.load()
+        try:
+            manifest = discover_workspace(self._project_root)
+            profile = ReFingerprintProfile()
+            cache_root = self._project_root / ".echelon" / "cache" / "re"
+            plan = build_re_execution_plan(
+                project_root=self._project_root,
+                manifest=manifest,
+                cache_root=cache_root,
+                target_source=self._target_source,
+                requested_policy=self._re_policy,
+                profile=profile,
+            )
+            artifacts = materialize_re_run_view(
+                project_root=self._project_root,
+                run_re_dir=self._squad_dir / "re",
+                workspace_manifest=manifest,
+                plan=plan,
+                cache_root=cache_root,
+            )
+        except Exception as exc:
+            state["status"] = "blocked"
+            state["blocked_reason"] = f"re_context_initialization_failed: {exc}"
+            self._state_store.save(state)
+            return
+
+        state.update(
+            {
+                "re_policy": plan.policy,
+                "requested_re_policy": self._re_policy,
+                "target_source": plan.target_source,
+                "re_output_dir": str(self._squad_dir / "re"),
+                "re_execution_plan": plan.to_json_dict(),
+                "re_artifacts": artifacts,
+                "re_refresh_sources": [
+                    source.id for source in plan.sources if source.action == "refresh"
+                ],
+                "re_missing_sources": [
+                    source.id for source in plan.sources if source.action == "missing"
+                ],
+                "re_source_actions": {
+                    source.id: source.action for source in plan.sources
+                },
+                "re_forbidden_source_roots": plan.forbidden_source_roots,
+            }
+        )
+        self._state_store.save(state)
 
     def run_single_phase(
         self,

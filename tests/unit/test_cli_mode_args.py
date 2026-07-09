@@ -95,3 +95,48 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
         _cmd_run(["build notes", "--mode=banzai"], project_root=tmp_path, ext_dir=tmp_path / "ext")
 
     assert exc.value.code == 1
+
+
+def test_cmd_run_passes_re_target_and_policy_to_squad_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
+    captured: dict[str, object] = {}
+
+    class FakeController:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+        def run(self, **_kwargs: object) -> SimpleNamespace:
+            return SimpleNamespace(
+                status="done",
+                phase="DONE",
+                run_id="spec-20260706-120000-000001",
+            )
+
+    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight_for_squad_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._find_current_run_dir", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._select_squad_dir", lambda *_args, **_kwargs: (squad_dir, True))
+    monkeypatch.setattr("echelon.cli._print_cost_summary", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_prior_knowledge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_staging_artifacts", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_open_issues", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._print_next_steps", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("harness.config.load_config", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.config.get_full_resolved_config", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.phase_graph.PhaseGraph", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr("harness.squad.SquadController", FakeController)
+
+    _cmd_run(
+        ["build notes", "--target", "prosaic", "--re-policy=target-only"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / "ext",
+    )
+
+    assert captured["target_source"] == "prosaic"
+    assert captured["re_policy"] == "target-only"
