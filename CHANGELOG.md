@@ -119,6 +119,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   folders from being treated as product specs, and Phase A prompts now include
   explicit workspace `SOURCE_ROOT` boundaries so agents distinguish orchestration
   workspace paths from implementation source roots.
+- **EGR-123 / #148 RE source fingerprints** — added deterministic source
+  fingerprinting for future reverse-engineering cache keys, covering clean Git
+  sources, dirty Git sources with tracked/untracked changes, non-Git file trees,
+  and RE profile inputs.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The
