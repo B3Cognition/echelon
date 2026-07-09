@@ -131,6 +131,7 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
     assert "project_evidence_checked" in text
     assert "evidence_items_checked" in text
     assert "blocking_findings" in text
+    assert "python -m harness verify-docs" in text
     assert "first-run" in lowered
     assert "safe harness smoke" in lowered
     assert "package.json" in text
@@ -150,6 +151,7 @@ def test_docs_verifier_phase_spec_defines_repair_loop() -> None:
     assert "docs-verification-report.md" in text
     assert "structured repair findings" in text
     assert "safe harness smoke" in text
+    assert "python -m harness verify-docs" in text
 
 
 def test_build_finalize_consumes_documentation_gate() -> None:

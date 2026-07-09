@@ -50,7 +50,17 @@ NEVER run destructive commands, mutate generated docs, or perform project writes
 
 Identify whether the project exposes a CLI, service, library, app, generated artifact, or runnable workflow. Use package metadata, scripts, entry points, and changed files as evidence.
 
-### 2. Verify README.md
+### 2. Run Deterministic Docs Verifier
+
+Run the harness-backed verifier from the target repository root:
+
+```bash
+python -m harness verify-docs <worktree-path> <spec-dir>
+```
+
+This command writes `{spec_dir}/docs-verification-report.md` with machine-readable frontmatter and structured findings. Treat a non-zero exit as `verdict: FAIL` unless required inputs are unreadable, in which case return `verdict: BLOCKED`. Use the report as the authoritative finding list, and add only source-backed explanation in your response.
+
+### 3. Verify README.md
 
 For runnable projects, check README.md for:
 
@@ -66,7 +76,7 @@ For runnable projects, check README.md for:
 - Development commands and main source locations.
 - Further reading links for deeper docs.
 
-### 3. Verify CHANGELOG.md
+### 4. Verify CHANGELOG.md
 
 Check:
 
@@ -75,7 +85,7 @@ Check:
 - Entries describe completed user/operator/integrator-visible changes.
 - Entries do not promise future work, list raw internal task counts as product changes, or duplicate README prose.
 
-### 4. Verify documentation-impact-report.md
+### 5. Verify documentation-impact-report.md
 
 Check:
 
@@ -83,7 +93,7 @@ Check:
 - `docs_required`, `readme_updated`, and `changelog_updated` match the actual docs.
 - The report records evidence-backed reasoning and does not claim "no follow-ups" when README/CHANGELOG fail verification.
 
-### 5. Write docs-verification-report.md
+### 6. Write docs-verification-report.md
 
 Write `{spec_dir}/docs-verification-report.md`:
 

@@ -15,6 +15,7 @@ Subcommands:
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
+  verify-docs — write deterministic README/CHANGELOG verification report
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
   validate-plan — validate canonical plan.md sections
   migrate-plan — migrate legacy plan.md files to canonical sections
@@ -522,6 +523,33 @@ def _write_codegraph_evidence_map() -> None:
     )
 
 
+def _verify_docs() -> None:
+    if len(sys.argv) != 4:
+        print(
+            "Usage: python -m harness verify-docs <worktree-path> <spec-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.docs_verifier import write_docs_verification_report
+
+    result = write_docs_verification_report(
+        worktree_path=Path(sys.argv[2]).resolve(),
+        spec_dir=Path(sys.argv[3]).resolve(),
+    )
+    message = (
+        f"docs verification {result.verdict}: wrote {result.report_path} "
+        f"({result.blocking_findings} blocking finding(s))"
+    )
+    if result.verdict == "PASS":
+        print(f"OK: {message}")
+        return
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
 def _require_inputs(paths: list[Path]) -> None:
     missing = [path for path in paths if not path.is_file()]
     if missing:
@@ -659,6 +687,8 @@ def main() -> None:
         _write_codegraph_evidence()
     elif subcommand == "write-codegraph-evidence-map":
         _write_codegraph_evidence_map()
+    elif subcommand == "verify-docs":
+        _verify_docs()
     elif subcommand == "migrate-tasks":
         _migrate_tasks()
     elif subcommand == "validate-plan":
@@ -673,7 +703,7 @@ def main() -> None:
             "'apply-progress-reconciliation', 'plan-reopen-gaps', "
             "'write-canonical-requirements', 'write-judgment-prepass', "
             "'assemble-fulfillment-report', 'write-codegraph-evidence', "
-            "'write-codegraph-evidence-map', 'migrate-tasks', "
+            "'write-codegraph-evidence-map', 'verify-docs', 'migrate-tasks', "
             "'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,
         )

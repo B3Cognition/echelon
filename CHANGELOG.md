@@ -86,7 +86,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   zero blocking findings and project-evidence metadata before required
   documentation can pass the final gate. README npm script commands are now
   checked against `package.json` so docs repair loops catch invented local
-  commands before finalization.
+  commands before finalization. `python -m harness verify-docs` now writes the
+  authoritative docs verification report, and DOCS VERIFIER is instructed to run
+  it before returning PASS or structured repair findings.
 - `echelon delivery land <spec_id>` now dispatches through the spec-declared
   workspace target before landing, so polyrepo delivery lands the selected
   source repository instead of using the orchestration workspace mirror. The
