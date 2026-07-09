@@ -2886,6 +2886,7 @@ class RalphController:
         *,
         workspace_root: Path | None = None,
         contracts_limit: int = 5,
+        adrs_limit: int = 5,
     ) -> list[str]:
         if spec_dir is None or not spec_dir.is_dir():
             return []
@@ -2921,6 +2922,14 @@ class RalphController:
                 if resolved in seen_paths:
                     continue
                 candidates.append((f"contracts/{path.name}", path))
+                seen_paths.add(resolved)
+        adrs_dir = spec_dir / "adrs"
+        if adrs_dir.is_dir():
+            for path in sorted(adrs_dir.glob("*.md"))[:adrs_limit]:
+                resolved = path.resolve()
+                if resolved in seen_paths:
+                    continue
+                candidates.append((f"adrs/{path.name}", path))
                 seen_paths.add(resolved)
 
         lines: list[str] = []

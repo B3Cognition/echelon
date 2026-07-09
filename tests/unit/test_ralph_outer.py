@@ -823,9 +823,11 @@ class TestOuterLoopConvergence:
         worktree = workspace / "sources" / "prosaic"
         spec_dir = workspace / "specs" / "001-prosaic"
         contracts_dir = spec_dir / "contracts"
+        adrs_dir = spec_dir / "adrs"
         constitution_path = workspace / ".specify" / "memory" / "constitution.md"
         worktree.mkdir(parents=True)
         contracts_dir.mkdir(parents=True)
+        adrs_dir.mkdir(parents=True)
         constitution_path.parent.mkdir(parents=True)
         (spec_dir / "tasks.md").write_text(
             "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
@@ -845,6 +847,10 @@ class TestOuterLoopConvergence:
         )
         (contracts_dir / "cli.md").write_text(
             "# CLI Contract\n\n`prosaic deploy --dry-run` reports planned writes.\n",
+            encoding="utf-8",
+        )
+        (adrs_dir / "001-transformer-boundaries.md").write_text(
+            "# ADR-001: Transformer Boundaries\n\nKeep target adapters isolated.\n",
             encoding="utf-8",
         )
         constitution_path.write_text(
@@ -872,6 +878,12 @@ class TestOuterLoopConvergence:
         assert "  - ArtifactMapping stores source and target paths." in context
         assert f"- contracts/cli.md: `{contracts_dir / 'cli.md'}`" in context
         assert "  - `prosaic deploy --dry-run` reports planned writes." in context
+        assert (
+            f"- adrs/001-transformer-boundaries.md: "
+            f"`{adrs_dir / '001-transformer-boundaries.md'}`"
+            in context
+        )
+        assert "  - Keep target adapters isolated." in context
         assert f"- .specify/memory/constitution.md: `{constitution_path}`" in context
         assert (
             "  - Prefer deterministic orchestration over model-owned discovery."

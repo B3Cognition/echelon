@@ -114,8 +114,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   paths, bounded open task rows, referenced requirement excerpts, bounded
   spec-adjacent artifact excerpts, dirty verify artifact notes, the progress
   ledger, current build slice task/phase/requirement/row hints, focused current
-  requirement excerpts, canonical workspace constitution excerpts, configured
-  quality commands, last verifier failures, target package manifest excerpts for
+  requirement excerpts, canonical workspace constitution excerpts, bounded ADR
+  excerpts, configured quality commands, last verifier failures, target package manifest excerpts for
   `package.json` and `pyproject.toml`, package entry-point hints, package
   dependency hints, package-manager lockfile hints, Python package-manager
   hints, Python dependency hints, Python project script hints,
