@@ -16,6 +16,8 @@ DELIVERY_COMMAND_FILES = frozenset(
 
 DELIVERY_EXCLUDED_BASH_FILES = frozenset(
     {
+        "belief-freshness-check.sh",
+        "finalize-run.sh",
         "journal-append.sh",
         "kb-lock.sh",
         "kb-pending-merge.sh",
@@ -25,6 +27,11 @@ DELIVERY_EXCLUDED_BASH_FILES = frozenset(
         "kb-seed.sh",
         "kb-validate-evolution.sh",
         "kb-write.sh",
+        "phase-timing.sh",
+        "post-execution-audit.sh",
+        "pre-dispatch-gate.sh",
+        "prompt-budget.sh",
+        "state-backup.sh",
         "validate-journal-entry.sh",
     }
 )

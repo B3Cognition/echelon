@@ -76,9 +76,16 @@ def test_polyrepo_runtime_extension_excludes_learning_and_journal_bash_helpers(
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     for name in [
+        "belief-freshness-check.sh",
+        "finalize-run.sh",
         "kb-write.sh",
         "kb-read-init.sh",
         "journal-append.sh",
+        "phase-timing.sh",
+        "post-execution-audit.sh",
+        "pre-dispatch-gate.sh",
+        "prompt-budget.sh",
+        "state-backup.sh",
         "validate-journal-entry.sh",
         "echelon-config-get.sh",
     ]:
@@ -96,6 +103,13 @@ def test_polyrepo_runtime_extension_excludes_learning_and_journal_bash_helpers(
     assert not (bash_dir / "kb-read-init.sh").exists()
     assert not (bash_dir / "journal-append.sh").exists()
     assert not (bash_dir / "validate-journal-entry.sh").exists()
+    assert not (bash_dir / "belief-freshness-check.sh").exists()
+    assert not (bash_dir / "finalize-run.sh").exists()
+    assert not (bash_dir / "phase-timing.sh").exists()
+    assert not (bash_dir / "post-execution-audit.sh").exists()
+    assert not (bash_dir / "pre-dispatch-gate.sh").exists()
+    assert not (bash_dir / "prompt-budget.sh").exists()
+    assert not (bash_dir / "state-backup.sh").exists()
 
 
 def test_polyrepo_runtime_extension_excludes_phase_a_presets(
