@@ -71,6 +71,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-127 CLI help contract UX** — Typer now declares documented
+  arguments/options across the visible command tree instead of leaving
+  workspace, phase, benchmark, stack, spec checkpoint/target/artifacts, delivery
+  resume, and top-level skill aliases as opaque legacy passthrough help pages.
 - Operator-facing hints, recovery banners, prompts, README, and setup docs now
   consistently recommend canonical `echelon workspace ...`,
   `echelon spec ...`, and `echelon delivery ...` commands instead of legacy
