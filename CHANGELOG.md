@@ -94,7 +94,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   machine-readable `delivery-containment-policy.json` beside harness state for
   build prompts. The policy records implementation, spec-input, harness-state,
   orchestration, and forbidden sibling source roots for future provider-level
-  enforcement, and LLM build runners receive its path through
+  enforcement, and LLM build/feedback runners receive its path through
   `ECHELON_CONTAINMENT_POLICY_FILE`.
 - **EGR-119 / #143 verify-spec orchestration** — verify-spec stage 5 now uses
   `python -m harness write-fallback-fulfillment-template` to create a bounded

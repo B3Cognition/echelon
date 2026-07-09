@@ -123,6 +123,19 @@ class TestLlmBuildRunner:
         executor.exec_prompt.assert_called_once()
         assert executor.exec_prompt.call_args.args == (str(tmp_path), "fix this")
 
+    def test_exec_feedback_exposes_containment_policy_file_when_provided(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+        policy_file = tmp_path / "delivery-containment-policy.json"
+
+        LlmBuildRunner(executor).exec_feedback(
+            str(tmp_path),
+            "fix this",
+            containment_policy_file=str(policy_file),
+        )
+
+        extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
+        assert extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] == str(policy_file)
+
     def test_exec_build_returns_timeout_result_on_timeout(self, tmp_path):
         executor = _executor(returncode=-1)
 

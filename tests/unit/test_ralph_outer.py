@@ -3697,7 +3697,7 @@ class TestLlmProviderDispatch:
             stdout="", stderr="", duration_ms=100,
         )
 
-        controller, _, _, _ = _make_controller(
+        controller, _, _, state_store = _make_controller(
             tmp_path, llm_build_runner=build_runner
         )
         verify = VerifyResult(passed=False, failures=[], duration_s=1.0, token_usage=0)
@@ -3714,6 +3714,11 @@ class TestLlmProviderDispatch:
         build_runner.exec_feedback.assert_called_once()
         assert build_runner.exec_feedback.call_args.args[0] == str(tmp_path)
         assert "fix this" in build_runner.exec_feedback.call_args.args[1]
+        policy_file = state_store.state_dir / "delivery-containment-policy.json"
+        assert build_runner.exec_feedback.call_args.kwargs[
+            "containment_policy_file"
+        ] == str(policy_file)
+        assert policy_file.exists()
         assert result["passed"] is True
         assert result["impasse"] is False
 

@@ -88,5 +88,15 @@ class LlmBuildRunner:
         result.token_usage = token_usage
         return result
 
-    def exec_feedback(self, worktree_path: str, prompt: str) -> BuildResult:
-        return self.exec_build(worktree_path, prompt)
+    def exec_feedback(
+        self,
+        worktree_path: str,
+        prompt: str,
+        *,
+        containment_policy_file: str | None = None,
+    ) -> BuildResult:
+        return self.exec_build(
+            worktree_path,
+            prompt,
+            containment_policy_file=containment_policy_file,
+        )

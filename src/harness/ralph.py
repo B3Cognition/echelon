@@ -2257,7 +2257,13 @@ class RalphController:
         """
         if self._llm_build_runner and worktree_path and prompt:
             prompt = self._with_harness_context(prompt, worktree_path)
-            result = self._llm_build_runner.exec_feedback(worktree_path, prompt)
+            result = self._llm_build_runner.exec_feedback(
+                worktree_path,
+                prompt,
+                containment_policy_file=str(
+                    self._state_store.state_dir / "delivery-containment-policy.json"
+                ),
+            )
             return {
                 "exit_code": result.exit_code,
                 "passed": result.succeeded,
