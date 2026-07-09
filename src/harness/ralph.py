@@ -2564,6 +2564,26 @@ class RalphController:
                 version = _single_line(str(project.get("version") or "unknown"))
                 lines.append(f"- pyproject.toml: name=`{name}`, version=`{version}`")
 
+                project_scripts = project.get("scripts")
+                if isinstance(project_scripts, dict):
+                    for script_name in sorted(
+                        str(name) for name in project_scripts.keys()
+                    )[:script_limit]:
+                        command = _single_line(str(project_scripts.get(script_name) or ""))
+                        if command:
+                            lines.append(f"  - script {script_name}: `{command}`")
+
+                project_gui_scripts = project.get("gui-scripts")
+                if isinstance(project_gui_scripts, dict):
+                    for script_name in sorted(
+                        str(name) for name in project_gui_scripts.keys()
+                    )[:script_limit]:
+                        command = _single_line(
+                            str(project_gui_scripts.get(script_name) or "")
+                        )
+                        if command:
+                            lines.append(f"  - gui-script {script_name}: `{command}`")
+
                 tool = manifest.get("tool")
                 if isinstance(tool, dict) and tool:
                     tool_names = sorted(_pyproject_tool_label(str(name)) for name in tool.keys())

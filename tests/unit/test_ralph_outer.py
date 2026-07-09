@@ -993,6 +993,12 @@ class TestOuterLoopConvergence:
             "name = \"tooling\"\n"
             "version = \"0.2.0\"\n"
             "\n"
+            "[project.scripts]\n"
+            "tooling = \"tooling.cli:main\"\n"
+            "\n"
+            "[project.gui-scripts]\n"
+            "tooling-gui = \"tooling.gui:main\"\n"
+            "\n"
             "[tool.pytest.ini_options]\n"
             "testpaths = [\"tests\"]\n"
             "\n"
@@ -1014,6 +1020,8 @@ class TestOuterLoopConvergence:
         context = context_file.read_text(encoding="utf-8")
         assert "## Target Manifest Excerpts" in context
         assert "- pyproject.toml: name=`tooling`, version=`0.2.0`" in context
+        assert "  - script tooling: `tooling.cli:main`" in context
+        assert "  - gui-script tooling-gui: `tooling.gui:main`" in context
         assert "  - tool sections: pytest, ruff" in context
 
     def test_build_slice_context_includes_target_layout_excerpts(
