@@ -39,8 +39,12 @@ ALWAYS rely on RE scripts receiving explicit runtime arguments (`--output`, `--m
 NEVER write temporary extraction config to `.specify/extensions/echelon/local-config.yml`, `.echelon/local.yml`, `$SQUAD_DIR`, or legacy `.specify/squad` paths.
 
 ### Rule 8 - Specified Extraction Completion
-ALWAYS verify that reverse-engineering specs exist before reporting extraction complete: `specs/000-re-overview/overview.md` and at least one `specs/[0-9][0-9][0-9]-re-*/spec.md`.
-NEVER report `golddigger_status: complete` unless reverse-engineering specs exist and are included in `golddigger_artifacts`.
+ALWAYS verify that reverse-engineering specs exist before reporting a full canonical RE extraction complete: `specs/000-re-overview/overview.md` and at least one `specs/[0-9][0-9][0-9]-re-*/spec.md`.
+NEVER report a canonical extraction as complete unless reverse-engineering specs exist and are included in `golddigger_artifacts`. Run-local cached artifacts may be reported by the harness without publishing canonical RE specs.
+
+### Rule 9 - Source-Scoped RE Plans
+ALWAYS follow the `## Reverse Engineering Execution Plan` section in the dispatch prompt when present.
+NEVER inspect, search, summarize, or refresh paths listed under `FORBIDDEN_SOURCE_ROOTS`.
 
 ## Configuration Profiles
 
@@ -69,6 +73,23 @@ Always use exactly these named profiles through explicit RE runtime arguments. D
 ---
 
 ## Mode 1 — Full Reverse Engineering Run
+
+### Step 0: Honor the source-scoped run plan
+
+COMMANDER may provide a `## Reverse Engineering Execution Plan` section with:
+
+- `RE_POLICY`
+- `RE_TARGET_SOURCE`
+- `RE_REFRESH_SOURCES`
+- `RE_MISSING_SOURCES`
+- `FORBIDDEN_SOURCE_ROOTS`
+- `RE_ARTIFACTS`
+
+If `RE_REFRESH_SOURCES=(none)`, COMMANDER should normally skip dispatching you and reuse run-local cached artifacts. If you are still dispatched with no refresh sources, return `golddigger_status: partial` with a note that the dispatch was inconsistent, and do not run reverse engineering.
+
+If `RE_REFRESH_SOURCES` names one or more sources, refresh only those source IDs. Treat `RE_ARTIFACTS.source_index` and `RE_ARTIFACTS.execution_plan` as authoritative for the run-local compatibility view. Reused sibling artifacts are already copied under the run `re/` directory; do not re-read or re-summarize unchanged sibling source roots.
+
+If `FORBIDDEN_SOURCE_ROOTS` is present, those paths are containment boundaries. Do not list, read, grep, search, summarize, or use them as fallback context. You may reference their source IDs only as excluded/forbidden context from the execution plan.
 
 ### Step 1: Detect polyrepo mode
 
@@ -117,6 +138,8 @@ speckit.echelon.re-extract
 
 When the command prompt loads, provide the target path from speckit-echelon-commander (COMMANDER)'s context pack. In polyrepo mode, re-extract writes and prefers `workspace-manifest.json` when present, while retaining `repos-manifest.json` as a compatibility fallback for older runs.
 
+For a source-scoped refresh, provide the selected source root(s) from `RE_REFRESH_SOURCES` and preserve the run-local RE artifact directory from `RE_ARTIFACTS`. Do not ask the Skill tool to refresh excluded or cached-only sources.
+
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 - **On success:** proceed to Step 3 with the generated artifacts
 - **On error/timeout:** write `golddigger_status: "failed"`, note the error **verbatim** in `golddigger_notes`, proceed to Step 3 (status write). speckit-echelon-scout (SCOUT) will handle fallback.
@@ -157,6 +180,8 @@ echelon_result:
     golddigger_artifacts:
       manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"
       repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"
+      source_index: "{RE_OUTPUT_DIR}/re-source-index.json"
+      execution_plan: "{RE_OUTPUT_DIR}/re-execution-plan.json"
       cross_repo: "{RE_OUTPUT_DIR}/cross-repo.json"
       re_overview: "specs/000-re-overview/overview.md"
       re_specs:
@@ -178,6 +203,9 @@ echelon_result:
     golddigger_status: complete
     golddigger_mode: full-re
     golddigger_artifacts:
+      manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"
+      source_index: "{RE_OUTPUT_DIR}/re-source-index.json"
+      execution_plan: "{RE_OUTPUT_DIR}/re-execution-plan.json"
       analysis: "{RE_OUTPUT_DIR}/analysis.json"
       codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json"
       codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json"

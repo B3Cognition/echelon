@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-123 / #148 source-scoped RE cache** — Phase A `echelon spec run`
+  now accepts `--target`/`--target-source` and `--re-policy`, fingerprints
+  workspace source roots, materializes run-local RE artifacts from cache, and
+  skips GOLDDIGGER Mode 1 when no source needs refresh.
 - **EGR-114 / #139 checkpoint namespaces** — added explicit
   `echelon spec checkpoint list|accept|commit` and
   `echelon delivery checkpoint list <spec_id>` commands so Phase A artifact
