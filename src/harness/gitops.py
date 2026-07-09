@@ -636,8 +636,7 @@ class GitOpsManager:
         if self._runtime_extension_ready(dest):
             if source.exists():
                 self._sync_codegraph_node_modules(source, dest)
-            self._sync_claude_command_skills(dest, worktree)
-            self._sync_claude_agents(dest, worktree)
+            self._sync_provider_runtime_shims(dest, worktree)
             self._exclude_runtime_extension(worktree)
             return
 
@@ -658,10 +657,16 @@ class GitOpsManager:
             ignore=runtime_extension_copy_ignore(source),
         )
         self._sync_codegraph_node_modules(source, dest)
-        self._sync_claude_command_skills(dest, worktree)
-        self._sync_claude_agents(dest, worktree)
+        self._sync_provider_runtime_shims(dest, worktree)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)
+
+    def _sync_provider_runtime_shims(self, extension_root: Path, worktree: Path) -> None:
+        """Materialize AI-CLI-specific helper files only for their provider."""
+        if self._config.llm.cli != "claude":
+            return
+        self._sync_claude_command_skills(extension_root, worktree)
+        self._sync_claude_agents(extension_root, worktree)
 
     @staticmethod
     def _sync_codegraph_node_modules(source: Path, dest: Path) -> None:

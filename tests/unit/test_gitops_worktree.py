@@ -10,12 +10,13 @@ from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager, _clean_branch_listing
 
 
-def _make_gitops(tmp_path):
+def _make_gitops(tmp_path, *, llm_cli: str = "claude"):
     config = HarnessConfig(
         target_repo=".",
         target_default_branch="main",
         provider="docker",
     )
+    config.llm.cli = llm_cli
     return GitOpsManager(config=config, base_dir=str(tmp_path))
 
 
@@ -311,6 +312,36 @@ def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     assert ".claude/skills/speckit-echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
 
 
+def test_sync_runtime_extension_skips_claude_command_skills_for_codex(tmp_path):
+    """Provider-specific Claude skill wrappers must not appear for Codex delivery."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "commands").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "commands" / "echelon.verify-spec.md").write_text(
+        "---\n"
+        "name: speckit.echelon.verify-spec\n"
+        "description: Verify spec\n"
+        "---\n\n"
+        "$ARGUMENTS\n",
+        encoding="utf-8",
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path, llm_cli="codex")
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    assert not (worktree / ".claude" / "skills").exists()
+    assert ".claude/skills" not in exclude.read_text(encoding="utf-8")
+
+
 def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     """Harness worktrees get ignored Claude agent registry files from runtime agents."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
@@ -357,6 +388,32 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     assert not scout.exists()
     assert not architect.exists()
     assert ".claude/agents/" in exclude.read_text(encoding="utf-8")
+
+
+def test_sync_runtime_extension_skips_claude_agents_for_codex(tmp_path):
+    """Provider-specific Claude agent wrappers must not appear for Codex delivery."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "agents" / "build").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
+    (source / "agents" / "build" / "spec-guard.md").write_text(
+        "# SPEC GUARD\n\nguard\n",
+        encoding="utf-8",
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path, llm_cli="codex")
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    assert not (worktree / ".claude" / "agents").exists()
+    assert ".claude/agents" not in exclude.read_text(encoding="utf-8")
 
 
 def test_sync_runtime_extension_fails_before_llm_when_extension_missing(tmp_path):
